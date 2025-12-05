@@ -3,7 +3,7 @@
 import asyncio
 import statistics
 import time
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -66,7 +66,7 @@ class PerformanceMetrics:
         """Record execution time."""
         self.metrics["execution_times"].append(exec_time)
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get performance summary."""
         summary = {}
 
@@ -255,7 +255,7 @@ class TestInteractiveOptimizationPerformance:
 
         async def run_optimization_session(
             session_id: str, num_trials: int
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Run a single optimization session."""
             # Create independent mock client
             mock_client = AsyncMock()

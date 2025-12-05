@@ -11,7 +11,7 @@ Tests cover:
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -22,7 +22,6 @@ from traigent.cloud.auth import (
     AuthResult,
     AuthStatus,
     SecureToken,
-    TokenExpiredError,
     UnifiedAuthConfig,
 )
 from traigent.cloud.token_manager import TokenManager
@@ -269,7 +268,7 @@ class TestScheduleRefresh:
     @pytest.mark.asyncio
     async def test_schedule_refresh_with_datetime_expiry(self, token_manager):
         """Test schedule_refresh with datetime expiry."""
-        expires_at = datetime.now(timezone.utc).replace(microsecond=0) + __import__(
+        expires_at = datetime.now(UTC).replace(microsecond=0) + __import__(
             "datetime"
         ).timedelta(hours=1)
         credentials = AuthCredentials(

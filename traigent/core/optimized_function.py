@@ -1561,11 +1561,7 @@ class OptimizedFunction:
                         expires_at = datetime.fromisoformat(
                             token_data["expires_iso"].replace("Z", "+00:00")
                         )
-                        now = (
-                            datetime.now(UTC)
-                            if expires_at.tzinfo
-                            else datetime.now()
-                        )
+                        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
                         if expires_at > now:
                             logger.warning(
                                 f"Token approved by {token_data['approver']} (signature not verified)"

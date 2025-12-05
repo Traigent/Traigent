@@ -10,8 +10,6 @@ Tests cover:
 import time
 from unittest.mock import patch
 
-import pytest
-
 from traigent.core.progress_manager import (
     ProgressManager,
     ProgressState,

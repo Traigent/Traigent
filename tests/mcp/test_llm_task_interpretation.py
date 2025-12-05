@@ -4,7 +4,7 @@ Verifies that natural language task descriptions are correctly interpreted
 and mapped to appropriate MCP calls.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -234,7 +234,7 @@ class TestEndToEndTaskExecution:
         assert result.output is not None
 
     def _interpretation_to_agent_spec(
-        self, interpretation: Dict[str, Any], original_task: str
+        self, interpretation: dict[str, Any], original_task: str
     ) -> AgentSpecification:
         """Convert task interpretation to agent specification."""
         # Extract agent properties from interpretation
@@ -270,7 +270,7 @@ class TestEndToEndTaskExecution:
         else:
             return "Process this input: {input}"
 
-    def _generate_guidelines(self, agent_type: str, topic: str) -> List[str]:
+    def _generate_guidelines(self, agent_type: str, topic: str) -> list[str]:
         """Generate appropriate guidelines for the agent."""
         base_guidelines = ["Be helpful and accurate", "Provide clear explanations"]
 
@@ -390,7 +390,7 @@ class TestTaskValidation:
         assert not self._validate_task_params(invalid_params, "optimize_agent")
 
     def _validate_task_params(
-        self, params: Dict[str, Any], expected_action: str
+        self, params: dict[str, Any], expected_action: str
     ) -> bool:
         """Validate task parameters for a given action."""
         if params.get("action") != expected_action:

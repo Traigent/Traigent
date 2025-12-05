@@ -1,6 +1,6 @@
 """Tests for cost optimization AI intelligence module."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -33,7 +33,7 @@ class TestCostOptimizationAI:
         base_cost = 100
         for day in range(30):
             for hour in range(24):
-                timestamp = datetime.now(timezone.utc) - timedelta(days=day, hours=hour)
+                timestamp = datetime.now(UTC) - timedelta(days=day, hours=hour)
                 # Weekly pattern (weekends cheaper)
                 weekly_factor = 0.7 if timestamp.weekday() >= 5 else 1.0
                 # Daily pattern (peak hours more expensive)
@@ -157,7 +157,7 @@ class TestCostOptimizationAI:
         # Normal usage pattern with anomalies
         usage_data = []
         for i in range(100):
-            timestamp = datetime.now(timezone.utc) - timedelta(hours=i)
+            timestamp = datetime.now(UTC) - timedelta(hours=i)
             cost = 100 + (i % 24) * 2  # Normal daily pattern
 
             # Insert anomalies
@@ -189,7 +189,7 @@ class TestCostOptimizationAI:
 
         for month in range(12, 0, -1):
             for day in range(30):
-                timestamp = datetime.now(timezone.utc) - timedelta(
+                timestamp = datetime.now(UTC) - timedelta(
                     days=month * 30 + day
                 )
                 cost = base_cost * (1 + growth_rate) ** (12 - month)
@@ -323,7 +323,7 @@ class TestCostOptimizationAI:
         # Extreme values
         extreme_data = [
             {
-                "timestamp": datetime.now(timezone.utc),
+                "timestamp": datetime.now(UTC),
                 "cost": 1e10,  # Very high cost
                 "resource_type": "compute",
             }
@@ -464,7 +464,7 @@ class TestCostOptimizationAI:
             try:
                 data = [
                     {
-                        "timestamp": datetime.now(timezone.utc) - timedelta(hours=i),
+                        "timestamp": datetime.now(UTC) - timedelta(hours=i),
                         "cost": 100 + i * 10,
                         "resource_type": "compute",
                     }

@@ -5,7 +5,7 @@ Tests hint triggers, achievement system, and upgrade value propositions.
 
 import shutil
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -119,7 +119,7 @@ class TestIncentiveManager:
     def test_should_show_hint_frequency_limit(self):
         """Test that hints respect frequency limits."""
         # Set last hint to recent time
-        recent_time = datetime.now(timezone.utc) - timedelta(hours=12)
+        recent_time = datetime.now(UTC) - timedelta(hours=12)
         self.incentive_manager._state["last_hint"] = recent_time.isoformat()
         self.incentive_manager._state["completed_sessions"] = 3  # Should trigger hint
 
@@ -127,7 +127,7 @@ class TestIncentiveManager:
         assert self.incentive_manager.should_show_hint("session_complete") is False
 
         # Set last hint to old time
-        old_time = datetime.now(timezone.utc) - timedelta(hours=25)
+        old_time = datetime.now(UTC) - timedelta(hours=25)
         self.incentive_manager._state["last_hint"] = old_time.isoformat()
 
         # Should show now

@@ -12,7 +12,7 @@ This test suite covers:
 
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -250,7 +250,7 @@ class MockRemoteOptimizationService(RemoteOptimizationService):
         self._connected = False
         self._sessions.clear()
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         return self._health_status
 
     async def create_session(
@@ -286,9 +286,9 @@ class MockRemoteOptimizationService(RemoteOptimizationService):
     async def suggest_configuration(
         self,
         session_id: str,
-        trial_history: List[TrialResult],
-        remote_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        trial_history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if self._status != ServiceStatus.CONNECTED:
             raise ServiceError("Service not connected")
         if session_id not in self._sessions:
@@ -305,7 +305,7 @@ class MockRemoteOptimizationService(RemoteOptimizationService):
         session.trials_completed += 1
 
     async def should_stop_optimization(
-        self, session_id: str, trial_history: List[TrialResult]
+        self, session_id: str, trial_history: list[TrialResult]
     ) -> bool:
         if session_id not in self._sessions:
             raise ServiceError(f"Session {session_id} not found")

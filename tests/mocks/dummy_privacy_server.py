@@ -10,7 +10,7 @@ service behavior for privacy-first optimization mode, ensuring that:
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -35,16 +35,16 @@ class MockSession:
 
     session_id: str
     function_name: str
-    configuration_space: Dict[str, Any]
-    objectives: List[str]
-    dataset_metadata: Dict[str, Any]
+    configuration_space: dict[str, Any]
+    objectives: list[str]
+    dataset_metadata: dict[str, Any]
     max_trials: int
-    optimization_strategy: Dict[str, Any]
+    optimization_strategy: dict[str, Any]
     created_at: datetime = field(default_factory=datetime.now)
-    trials: List[Dict[str, Any]] = field(default_factory=list)
-    suggestions: List[Dict[str, Any]] = field(default_factory=list)
-    best_config: Optional[Dict[str, Any]] = None
-    best_metrics: Optional[Dict[str, float]] = None
+    trials: list[dict[str, Any]] = field(default_factory=list)
+    suggestions: list[dict[str, Any]] = field(default_factory=list)
+    best_config: dict[str, Any] | None = None
+    best_metrics: dict[str, float] | None = None
     status: OptimizationSessionStatus = OptimizationSessionStatus.ACTIVE
 
 
@@ -52,13 +52,13 @@ class DummyPrivacyServer:
     """Mock server that simulates TraiGent Cloud for privacy-first mode testing."""
 
     def __init__(self):
-        self.sessions: Dict[str, MockSession] = {}
+        self.sessions: dict[str, MockSession] = {}
         self.trial_counter = 0
         self.session_counter = 0
 
         # Privacy verification tracking
-        self.privacy_violations: List[str] = []
-        self.received_data: List[Dict[str, Any]] = []
+        self.privacy_violations: list[str] = []
+        self.received_data: list[dict[str, Any]] = []
 
     async def create_session(
         self, request: SessionCreationRequest
@@ -255,7 +255,7 @@ class DummyPrivacyServer:
 
     def _generate_smart_config(
         self, session: MockSession, trial_number: int
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate configuration based on optimization phase and history."""
         config = {}
 
@@ -378,9 +378,9 @@ class DummyPrivacyServer:
 
     def _is_better_metrics(
         self,
-        new_metrics: Dict[str, float],
-        best_metrics: Optional[Dict[str, float]],
-        objectives: List[str],
+        new_metrics: dict[str, float],
+        best_metrics: dict[str, float] | None,
+        objectives: list[str],
     ) -> bool:
         """Check if new metrics are better than current best."""
         if not best_metrics:
@@ -392,7 +392,7 @@ class DummyPrivacyServer:
 
         return new_score > best_score
 
-    def _infer_config_from_trial_id(self, trial_id: str) -> Dict[str, Any]:
+    def _infer_config_from_trial_id(self, trial_id: str) -> dict[str, Any]:
         """Infer configuration from trial ID (mock implementation)."""
         # In real implementation, we'd track trial_id -> config mapping
         # For testing, return a mock config
@@ -441,7 +441,7 @@ class DummyPrivacyServer:
                         f"Non-numeric metric found: {key} = {type(value)}"
                     )
 
-    def get_privacy_report(self) -> Dict[str, Any]:
+    def get_privacy_report(self) -> dict[str, Any]:
         """Get privacy compliance report."""
         return {
             "violations": self.privacy_violations,

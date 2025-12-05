@@ -550,9 +550,7 @@ class CostOptimizationAI:
             daily_cost = current_daily_cost * (growth_factor ** (day / 30))
             daily_predictions.append(
                 {
-                    "date": (
-                        datetime.now(UTC) + timedelta(days=day)
-                    ).isoformat(),
+                    "date": (datetime.now(UTC) + timedelta(days=day)).isoformat(),
                     "predicted_cost": daily_cost,
                 }
             )

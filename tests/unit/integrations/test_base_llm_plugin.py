@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from traigent.integrations.base_plugin import (
     IntegrationPriority,
     PluginMetadata,
