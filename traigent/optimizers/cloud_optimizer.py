@@ -622,9 +622,7 @@ class CloudOptimizer(BaseOptimizer):
         if strategy.max_time_budget and self.session:
             from datetime import datetime
 
-            elapsed = (
-                datetime.now(UTC) - self.session.created_at
-            ).total_seconds()
+            elapsed = (datetime.now(UTC) - self.session.created_at).total_seconds()
             if elapsed >= strategy.max_time_budget:
                 logger.info(f"Stopping: reached time budget ({elapsed}s)")
                 return True

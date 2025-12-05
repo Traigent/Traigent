@@ -1,7 +1,7 @@
 """Comprehensive unit tests for secure credential management."""
 
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -78,7 +78,7 @@ class TestSecureCredential:
 
     def test_secure_credential_creation(self):
         """Test creating a secure credential."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cred = SecureCredential(
             name="test-api-key",
             type=CredentialType.API_KEY,
@@ -95,7 +95,7 @@ class TestSecureCredential:
 
     def test_secure_credential_repr(self):
         """Test credential representation doesn't expose encrypted value."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         cred = SecureCredential(
             name="secret-key",
             type=CredentialType.SECRET,
@@ -199,7 +199,7 @@ class TestEnhancedCredentialStore:
 
     def test_credential_with_expiration(self, store):
         """Test storing credential with expiration."""
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
         store.set(
             name="expiring-key",
             value="temporary",

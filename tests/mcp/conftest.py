@@ -8,7 +8,7 @@ import json
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -37,10 +37,10 @@ logger = get_logger(__name__)
 class MCPTestContext:
     """Context for MCP tests with cleanup tracking."""
 
-    created_agents: List[str]
-    created_sessions: List[str]
-    temp_files: List[Path]
-    active_resources: Dict[str, Any]
+    created_agents: list[str]
+    created_sessions: list[str]
+    temp_files: list[Path]
+    active_resources: dict[str, Any]
 
     def __post_init__(self):
         self.created_agents = []
@@ -115,7 +115,7 @@ def mock_mcp_service():
             self.trial_counter = 0
             self.call_history = []
 
-        async def create_agent(self, spec: AgentSpecification) -> Dict[str, Any]:
+        async def create_agent(self, spec: AgentSpecification) -> dict[str, Any]:
             """Mock agent creation."""
             self.call_history.append(("create_agent", spec))
             agent_id = f"agent-{len(self.agents) + 1}"
@@ -240,7 +240,7 @@ def mock_mcp_service():
                 ],
             )
 
-        def get_call_history(self) -> List[tuple]:
+        def get_call_history(self) -> list[tuple]:
             """Get history of all calls made."""
             return self.call_history
 
@@ -419,7 +419,7 @@ def mock_llm_interpreter():
                 "if.*accuracy.*below.*optimize": {"action": "optimize_agent"},
             }
 
-        async def interpret_task(self, description: str) -> Dict[str, Any]:
+        async def interpret_task(self, description: str) -> dict[str, Any]:
             """Interpret natural language task description."""
             description_lower = description.lower()
 

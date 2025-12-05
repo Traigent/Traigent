@@ -1,6 +1,6 @@
 """Comprehensive tests for optimizer registry."""
 
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import Mock, patch
 
 import pytest
@@ -23,15 +23,15 @@ from traigent.utils.exceptions import OptimizationError, PluginError
 class MockOptimizer(BaseOptimizer):
     """Mock optimizer for testing."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self.test_param = kwargs.get("test_param", "default")
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Mock implementation."""
         return {"x": 1}
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Mock implementation."""
         return False
 
@@ -39,10 +39,10 @@ class MockOptimizer(BaseOptimizer):
 class AnotherMockOptimizer(BaseOptimizer):
     """Another mock optimizer for testing."""
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         return {"y": 2}
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         return len(history) >= 10
 
 

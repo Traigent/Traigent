@@ -12,14 +12,9 @@ Tests verify:
 
 from __future__ import annotations
 
-import importlib
 import sys
-import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any
-
-import pytest
 
 
 class TestNoCircularImports:
@@ -55,7 +50,6 @@ class TestNoCircularImports:
     def test_import_wrappers_standalone(self):
         """Test wrappers module can be imported standalone."""
         from traigent.integrations.wrappers import (
-            OverrideContext,
             apply_parameter_overrides,
             create_method_wrapper,
             create_resilient_wrapper,
@@ -115,7 +109,6 @@ class TestBackwardCompatibility:
             override_all_platforms,
             override_anthropic,
             override_cohere,
-            override_context,
             override_huggingface,
             override_langchain,
             override_openai_sdk,
@@ -194,8 +187,6 @@ class TestNewAPIExports:
     def test_mappings_exports(self):
         """Test mappings module exports are available from main __init__."""
         from traigent.integrations import (
-            METHOD_MAPPINGS,
-            PARAMETER_MAPPINGS,
             get_method_mapping,
             get_parameter_mapping,
             get_supported_frameworks,
@@ -214,11 +205,7 @@ class TestNewAPIExports:
     def test_wrappers_exports(self):
         """Test wrappers module exports are available from main __init__."""
         from traigent.integrations import (
-            OverrideContext,
             apply_parameter_overrides,
-            create_method_wrapper,
-            create_resilient_wrapper,
-            create_wrapper,
         )
 
         # Test apply_parameter_overrides
@@ -329,7 +316,6 @@ class TestProtocolCompliance:
     def test_base_manager_implements_override_context_interface(self):
         """Test BaseOverrideManager can be used where OverrideContext is expected."""
         from traigent.integrations.base import BaseOverrideManager
-        from traigent.integrations.wrappers import OverrideContext
 
         manager = BaseOverrideManager()
 

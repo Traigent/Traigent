@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -16,8 +16,8 @@ class MockOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: Dict[str, Any],
-        objectives: List[str],
+        config_space: dict[str, Any],
+        objectives: list[str],
         context=None,
         **kwargs,
     ):
@@ -25,7 +25,7 @@ class MockOptimizer(BaseOptimizer):
         self._suggested_configs = []
         self._trial_count_internal = 0
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Test implementation that returns predefined configurations."""
         if self._trial_count_internal >= 3:
             raise Exception("Max trials reached")
@@ -38,7 +38,7 @@ class MockOptimizer(BaseOptimizer):
         self._trial_count_internal += 1
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Stop after 3 trials."""
         return len(history) >= 3
 
@@ -48,8 +48,8 @@ class AsyncMockOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: Dict[str, Any],
-        objectives: List[str],
+        config_space: dict[str, Any],
+        objectives: list[str],
         context=None,
         **kwargs,
     ):
@@ -57,13 +57,13 @@ class AsyncMockOptimizer(BaseOptimizer):
         self._async_call_count = 0
         self._generated_count = 0
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Sync fallback."""
         return {"sync": True, "param": "value"}
 
     async def suggest_next_trial_async(
-        self, history: List[TrialResult], remote_context: Dict[str, Any] = None
-    ) -> Dict[str, Any]:
+        self, history: list[TrialResult], remote_context: dict[str, Any] = None
+    ) -> dict[str, Any]:
         """Async implementation with remote context support."""
         self._async_call_count += 1
         self._generated_count += 1
@@ -76,11 +76,11 @@ class AsyncMockOptimizer(BaseOptimizer):
 
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         return len(history) >= 2
 
     async def should_stop_async(
-        self, history: List[TrialResult], remote_context: Dict[str, Any] = None
+        self, history: list[TrialResult], remote_context: dict[str, Any] = None
     ) -> bool:
         """Async version with remote context."""
         await asyncio.sleep(0.01)  # Simulate async operation

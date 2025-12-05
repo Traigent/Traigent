@@ -4,9 +4,10 @@ import csv
 import itertools
 import json
 import os
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -42,7 +43,7 @@ class ParameterSpec:
     """Simple container for parameter metadata."""
 
     name: str
-    values: List[Any]
+    values: list[Any]
     type: str
 
 
@@ -51,21 +52,21 @@ class ScenarioSpec:
     """Scenario definition loaded from the CSV specification."""
 
     scenario_id: str
-    parameters: List[ParameterSpec]
-    constraints: List[str]
+    parameters: list[ParameterSpec]
+    constraints: list[str]
     coverage_level: int
     function_id: str
     optimizer: str
     max_trials: int
     expected_trials: int
     expected_best_score: float
-    expected_best_config: Dict[str, Any]
-    objectives: List[str]
-    search_space: Dict[str, List[Any]]
+    expected_best_config: dict[str, Any]
+    objectives: list[str]
+    search_space: dict[str, list[Any]]
 
 
-def _parse_parameters(raw: Dict[str, Dict[str, Any]]) -> List[ParameterSpec]:
-    parameters: List[ParameterSpec] = []
+def _parse_parameters(raw: dict[str, dict[str, Any]]) -> list[ParameterSpec]:
+    parameters: list[ParameterSpec] = []
     for name, body in raw.items():
         values = body.get("values", [])
         parameters.append(
@@ -78,8 +79,8 @@ def _parse_parameters(raw: Dict[str, Dict[str, Any]]) -> List[ParameterSpec]:
     return parameters
 
 
-def _load_scenarios(spec_path: Path) -> List[ScenarioSpec]:
-    scenarios: List[ScenarioSpec] = []
+def _load_scenarios(spec_path: Path) -> list[ScenarioSpec]:
+    scenarios: list[ScenarioSpec] = []
     with spec_path.open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
@@ -130,11 +131,11 @@ def _load_scenarios(spec_path: Path) -> List[ScenarioSpec]:
     return scenarios
 
 
-def _constraint_mutex(combo: Dict[str, Any], names: Iterable[str]) -> bool:
+def _constraint_mutex(combo: dict[str, Any], names: Iterable[str]) -> bool:
     return sum(bool(combo.get(name)) for name in names) <= 1
 
 
-def _constraint_requires(combo: Dict[str, Any], requirement: str) -> bool:
+def _constraint_requires(combo: dict[str, Any], requirement: str) -> bool:
     requirement = requirement.strip()
     if requirement.startswith("not "):
         target = requirement[4:].strip()
@@ -142,7 +143,7 @@ def _constraint_requires(combo: Dict[str, Any], requirement: str) -> bool:
     return bool(combo.get(requirement))
 
 
-def _respects_constraints(combo: Dict[str, Any], constraints: List[str]) -> bool:
+def _respects_constraints(combo: dict[str, Any], constraints: list[str]) -> bool:
     for rule in constraints:
         rule = rule.strip()
         if not rule:
@@ -164,12 +165,12 @@ def _respects_constraints(combo: Dict[str, Any], constraints: List[str]) -> bool
 
 
 def _generate_covering_combos(
-    parameters: List[ParameterSpec], constraints: List[str], strength: int
-) -> List[Dict[str, Any]]:
+    parameters: list[ParameterSpec], constraints: list[str], strength: int
+) -> list[dict[str, Any]]:
     names = [param.name for param in parameters]
     value_spaces = [param.values for param in parameters]
 
-    all_combos: List[Dict[str, Any]] = []
+    all_combos: list[dict[str, Any]] = []
     for values in itertools.product(*value_spaces):
         candidate = dict(zip(names, values))
         if _respects_constraints(candidate, constraints):
@@ -183,7 +184,7 @@ def _generate_covering_combos(
         for subset in itertools.combinations(names, strength):
             target_pairs.add(tuple((name, combo[name]) for name in subset))
 
-    selected: List[Dict[str, Any]] = []
+    selected: list[dict[str, Any]] = []
     covered: set = set()
 
     for combo in all_combos:
@@ -202,7 +203,7 @@ def _generate_covering_combos(
     return all_combos
 
 
-def _expected_mode(combo: Dict[str, Any]) -> ExecutionMode:
+def _expected_mode(combo: dict[str, Any]) -> ExecutionMode:
     if combo.get("force_local"):
         return ExecutionMode.EDGE_ANALYTICS
     if combo.get("force_hybrid"):
@@ -216,14 +217,14 @@ def _expected_mode(combo: Dict[str, Any]) -> ExecutionMode:
     return ExecutionMode.EDGE_ANALYTICS
 
 
-def _grid_configurations(config_space: Dict[str, List[Any]]):
+def _grid_configurations(config_space: dict[str, list[Any]]):
     keys = list(config_space.keys())
     values = [config_space[key] for key in keys]
     for combination in itertools.product(*values):
         yield dict(zip(keys, combination))
 
 
-def _grid_score(config: Dict[str, Any]) -> float:
+def _grid_score(config: dict[str, Any]) -> float:
     threshold = float(config.get("threshold", 0.0))
     weight = float(config.get("weight", 1.0))
     base = 1.0 - abs(threshold - 0.5) * 0.8
@@ -242,8 +243,8 @@ _SIMPLE_DATASET = Dataset(
 
 
 async def _simple_agent_function(
-    input_data: Dict[str, Any], **config
-) -> Dict[str, Any]:
+    input_data: dict[str, Any], **config
+) -> dict[str, Any]:
     return {"input": input_data, "config": config}
 
 
@@ -252,23 +253,23 @@ class SimpleGridOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: Dict[str, Any],
-        objectives: List[str],
-        max_trials: Optional[int] = None,
+        config_space: dict[str, Any],
+        objectives: list[str],
+        max_trials: int | None = None,
     ) -> None:
         super().__init__(config_space, objectives)
         self._combos = list(_grid_configurations(config_space))
         self._index = 0
         self._limit = min(max_trials or len(self._combos), len(self._combos))
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         if self.should_stop(history):
             raise OptimizationError("Grid search exhausted search space")
         config = dict(self._combos[self._index])
         self._index += 1
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         return self._index >= self._limit
 
 
@@ -276,13 +277,13 @@ class DeterministicEvaluator(BaseEvaluator):
     """Evaluator that returns deterministic metrics from a scoring function."""
 
     def __init__(
-        self, score_fn: Callable[[Dict[str, Any]], float], objectives: List[str]
+        self, score_fn: Callable[[dict[str, Any]], float], objectives: list[str]
     ):
         super().__init__(metrics=objectives)
         self._score_fn = score_fn
 
     async def evaluate(
-        self, func: Callable[..., Any], config: Dict[str, Any], dataset: Dataset
+        self, func: Callable[..., Any], config: dict[str, Any], dataset: Dataset
     ) -> EvaluationResult:
         score = float(self._score_fn(config))
         metrics = {self.metrics[0]: score}
@@ -298,7 +299,7 @@ class DeterministicEvaluator(BaseEvaluator):
         )
 
 
-def _assert_best_config(actual: Dict[str, Any], expected: Dict[str, Any]) -> None:
+def _assert_best_config(actual: dict[str, Any], expected: dict[str, Any]) -> None:
     if not expected:
         return
     for key, expected_value in expected.items():
@@ -311,7 +312,7 @@ def _assert_best_config(actual: Dict[str, Any], expected: Dict[str, Any]) -> Non
 
 
 async def _run_behavior_validation(
-    case: Dict[str, Any], execution_mode: ExecutionMode
+    case: dict[str, Any], execution_mode: ExecutionMode
 ) -> OptimizationResult:
     scenario: ScenarioSpec = case["scenario"]
 
@@ -347,7 +348,7 @@ async def _run_behavior_validation(
 
 
 SCENARIOS = _load_scenarios(SPEC_PATH)
-CTD_CASES: List[Dict[str, Any]] = []
+CTD_CASES: list[dict[str, Any]] = []
 for scenario in SCENARIOS:
     combos = _generate_covering_combos(
         scenario.parameters, scenario.constraints, scenario.coverage_level

@@ -11,7 +11,7 @@ Tests cover:
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -461,7 +461,7 @@ class MockEvaluator(BaseEvaluator):
         self.result_to_return = None
 
     async def evaluate(
-        self, func: Any, config: Dict[str, Any], dataset: Dataset
+        self, func: Any, config: dict[str, Any], dataset: Dataset
     ) -> EvaluationResult:
         """Mock evaluate method."""
         self.evaluate_call_count += 1

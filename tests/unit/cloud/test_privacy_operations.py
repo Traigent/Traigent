@@ -1,7 +1,7 @@
 """Concurrency safeguards for PrivacyOperations."""
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -97,8 +97,8 @@ async def test_get_next_privacy_trial_updates_session_with_lock(monkeypatch):
         objectives=["accuracy"],
         max_trials=5,
         status=OptimizationSessionStatus.ACTIVE,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
     )
 
     suggestion = await ops.get_next_privacy_trial("session-1", None)

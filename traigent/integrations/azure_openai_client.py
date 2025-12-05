@@ -56,6 +56,7 @@ class AzureOpenAIChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> AzureOpenAIChatResponse:
         """Perform a non-streaming chat invocation using an Azure OpenAI deployment."""
@@ -93,6 +94,8 @@ class AzureOpenAIChatClient:
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
         }
+        if top_p is not None:
+            payload["top_p"] = float(top_p)
         if extra_params:
             payload.update(dict(extra_params))
 
@@ -112,6 +115,7 @@ class AzureOpenAIChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> AzureOpenAIChatResponse:
         """Perform an async non-streaming chat invocation using Azure OpenAI."""
@@ -149,6 +153,8 @@ class AzureOpenAIChatClient:
             "temperature": float(temperature),
             "max_tokens": int(max_tokens),
         }
+        if top_p is not None:
+            payload["top_p"] = float(top_p)
         if extra_params:
             payload.update(dict(extra_params))
 
@@ -168,8 +174,9 @@ class AzureOpenAIChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
-    ) -> Generator[str, None, None]:
+    ) -> Generator[str, None, AzureOpenAIChatResponse]:
         """Perform a sync streaming chat invocation; yields text chunks."""
 
         if os.getenv("AZURE_OPENAI_MOCK", "").strip().lower() == "true":
@@ -180,9 +187,18 @@ class AzureOpenAIChatClient:
                 last[: len(last) // 2],
                 last[len(last) // 2 :],
             ]
+            full_text = "".join(chunks)
             for chunk in chunks:
                 yield chunk
-            return
+
+            data: dict[str, Any] = {
+                "mock": True,
+                "choices": [{"message": {"content": full_text}}],
+                "usage": {"prompt_tokens": 0, "completion_tokens": min(max_tokens, 32)},
+            }
+            return AzureOpenAIChatResponse(
+                text=full_text, raw=data, usage=data.get("usage")
+            )
 
         try:
             from openai import OpenAI
@@ -204,17 +220,27 @@ class AzureOpenAIChatClient:
             "max_tokens": int(max_tokens),
             "stream": True,
         }
+        if top_p is not None:
+            payload["top_p"] = float(top_p)
         if extra_params:
             payload.update(dict(extra_params))
 
         response = client.chat.completions.create(**payload)
+        full_text_parts = []
         for chunk in response:
             if (
                 chunk.choices
                 and chunk.choices[0].delta
                 and chunk.choices[0].delta.content
             ):
-                yield chunk.choices[0].delta.content
+                text_chunk = chunk.choices[0].delta.content
+                full_text_parts.append(text_chunk)
+                yield text_chunk
+
+        full_text = "".join(full_text_parts)
+        return AzureOpenAIChatResponse(
+            text=full_text, raw={"streamed": True}, usage=None
+        )
 
     async def ainvoke_stream(
         self,
@@ -223,6 +249,7 @@ class AzureOpenAIChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Perform an async streaming chat invocation; yields text chunks."""
@@ -259,6 +286,8 @@ class AzureOpenAIChatClient:
             "max_tokens": int(max_tokens),
             "stream": True,
         }
+        if top_p is not None:
+            payload["top_p"] = float(top_p)
         if extra_params:
             payload.update(dict(extra_params))
 

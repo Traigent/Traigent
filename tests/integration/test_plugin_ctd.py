@@ -16,7 +16,7 @@ Features:
 import itertools
 import sys
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -42,8 +42,8 @@ class FunctionTestCase:
 
     class_name: str
     method_name: str
-    parameters: Dict[str, List[ParameterTestCase]]
-    required_params: Set[str]  # Parameters that must be present
+    parameters: dict[str, list[ParameterTestCase]]
+    required_params: set[str]  # Parameters that must be present
 
 
 class CTDTestGenerator:
@@ -160,8 +160,8 @@ class CTDTestGenerator:
         self.test_results = []
 
     def generate_test_combinations(
-        self, parameters: Dict[str, List[ParameterTestCase]]
-    ) -> List[Dict[str, ParameterTestCase]]:
+        self, parameters: dict[str, list[ParameterTestCase]]
+    ) -> list[dict[str, ParameterTestCase]]:
         """Generate test combinations based on k value.
 
         Args:
@@ -216,8 +216,8 @@ class CTDTestGenerator:
             return all_combos
 
     def _generate_pairwise(
-        self, parameters: Dict[str, List[ParameterTestCase]]
-    ) -> List[Dict[str, ParameterTestCase]]:
+        self, parameters: dict[str, list[ParameterTestCase]]
+    ) -> list[dict[str, ParameterTestCase]]:
         """Generate pairwise test combinations.
 
         This is a simplified pairwise algorithm. For production use,
@@ -284,8 +284,8 @@ class CTDTestGenerator:
         return combinations
 
     def _generate_n_wise(
-        self, parameters: Dict[str, List[ParameterTestCase]], n: int
-    ) -> List[Dict[str, ParameterTestCase]]:
+        self, parameters: dict[str, list[ParameterTestCase]], n: int
+    ) -> list[dict[str, ParameterTestCase]]:
         """Generate n-wise test combinations (simplified)."""
         param_names = list(parameters.keys())
         if len(param_names) < n:
@@ -390,7 +390,7 @@ class CTDTestGenerator:
 
     def _get_method_parameters(
         self, plugin: IntegrationPlugin, method_name: str
-    ) -> List[str]:
+    ) -> list[str]:
         """Get parameters that a method accepts based on plugin mappings.
 
         Args:
@@ -408,7 +408,7 @@ class CTDTestGenerator:
         return list(param_mappings.keys())
 
     def print_progress(
-        self, message: str, current: Optional[int] = None, total: Optional[int] = None
+        self, message: str, current: int | None = None, total: int | None = None
     ):
         """Print progress information if verbose mode is enabled.
 
@@ -429,7 +429,7 @@ class CTDTestGenerator:
         plugin: IntegrationPlugin,
         class_name: str,
         method_name: str,
-        test_combination: Dict[str, ParameterTestCase],
+        test_combination: dict[str, ParameterTestCase],
         mock_class: Any,
     ) -> bool:
         """Run a single test case.

@@ -4,7 +4,7 @@ import logging
 import os
 import stat
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -182,7 +182,7 @@ class TestCredentialStoreMaximumSecurityMode:
         # Check that expiration was set automatically
         cred = store._credentials["AUTO_EXPIRE"]
         assert cred.expires_at is not None
-        remaining_days = (cred.expires_at - datetime.now(timezone.utc)).days
+        remaining_days = (cred.expires_at - datetime.now(UTC)).days
         assert remaining_days <= store.MAX_CREDENTIAL_AGE_DAYS
 
     def test_hsm_integration_attempt(self, temp_credentials_path, clean_environment):
@@ -213,7 +213,7 @@ class TestCredentialStoreMaximumSecurityMode:
         from traigent.security.credentials import SecureCredential
 
         ciphertext, nonce, associated_data = store._encrypt_value("expired-value")
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         expired_cred = SecureCredential(
             name="EXPIRED",
             type=CredentialType.SECRET,
@@ -398,7 +398,7 @@ class TestCredentialStoreHealthCheck:
         from traigent.security.credentials import SecureCredential
 
         ciphertext, nonce, associated_data = store._encrypt_value("old-secret-value")
-        now_utc = datetime.now(timezone.utc)
+        now_utc = datetime.now(UTC)
         old_cred = SecureCredential(
             name="OLD",
             type=CredentialType.SECRET,

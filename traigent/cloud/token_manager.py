@@ -508,9 +508,7 @@ class TokenManager:
             metadata["user"] = token_data.get("user", {})
 
         api_key = token_data.get("api_key") or token_data.get("apiKey")
-        expires_at_dt = (
-            datetime.fromtimestamp(expires_at, UTC) if expires_at else None
-        )
+        expires_at_dt = datetime.fromtimestamp(expires_at, UTC) if expires_at else None
 
         if api_key and self._validate_key_format and self._validate_key_format(api_key):
             if self._set_api_key_token:

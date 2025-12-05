@@ -76,9 +76,7 @@ class ParameterValidator:
 
         return params
 
-    def _validate_execution_mode(
-        self, execution_mode: str | ExecutionMode
-    ) -> None:
+    def _validate_execution_mode(self, execution_mode: str | ExecutionMode) -> None:
         """Validate execution mode parameter."""
         try:
             normalized = resolve_execution_mode(execution_mode)
@@ -93,15 +91,11 @@ class ParameterValidator:
                 f"Must be one of: {', '.join(self.VALID_EXECUTION_MODES)}"
             )
 
-    def _normalize_execution_mode(
-        self, execution_mode: str | ExecutionMode
-    ) -> str:
+    def _normalize_execution_mode(self, execution_mode: str | ExecutionMode) -> str:
         """Normalize execution mode string for internal consistency."""
         return resolve_execution_mode(execution_mode).value
 
-    def _validate_injection_mode(
-        self, injection_mode: str | InjectionMode
-    ) -> None:
+    def _validate_injection_mode(self, injection_mode: str | InjectionMode) -> None:
         """Validate injection mode parameter."""
         if isinstance(injection_mode, str):
             try:
@@ -118,9 +112,7 @@ class ParameterValidator:
                 f"Must be one of: {[mode.value for mode in self.VALID_INJECTION_MODES]}"
             )
 
-    def _validate_dataset(
-        self, eval_dataset: str | list[str | Dataset] | None
-    ) -> None:
+    def _validate_dataset(self, eval_dataset: str | list[str | Dataset] | None) -> None:
         """Validate evaluation dataset parameter."""
         if eval_dataset is None:
             return

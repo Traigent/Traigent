@@ -10,7 +10,7 @@ This test suite covers:
 """
 
 import inspect
-from typing import Dict, List, Optional, Union
+from typing import Optional, Union
 from unittest.mock import patch
 
 import pytest
@@ -31,7 +31,7 @@ class MockFrameworkClass:
         temperature: float = 0.7,
         max_tokens: int = 1000,
         stream: bool = False,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
         **kwargs,
     ):
         self.model = model
@@ -44,8 +44,8 @@ class MockFrameworkClass:
     def create(
         self,
         prompt: str,
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         **kwargs,
     ):
         """Mock create method."""
@@ -64,9 +64,9 @@ class MockComplexFramework:
     def __init__(
         self,
         api_key: str,
-        base_url: Optional[str] = None,
-        timeout: Union[int, float] = 30,
-        retry_config: Dict = None,
+        base_url: str | None = None,
+        timeout: int | float = 30,
+        retry_config: dict = None,
     ):
         self.api_key = api_key
         self.base_url = base_url
@@ -88,15 +88,15 @@ class MockCompletionsInterface:
 
     def create(
         self,
-        messages: List[Dict],
+        messages: list[dict],
         model: str = "gpt-3.5-turbo",
         temperature: float = 1.0,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         top_p: float = 1.0,
         frequency_penalty: float = 0.0,
         presence_penalty: float = 0.0,
         stream: bool = False,
-        tools: Optional[List[Dict]] = None,
+        tools: list[dict] | None = None,
         **kwargs,
     ):
         """Mock completions create method."""
@@ -311,7 +311,7 @@ class TestMethodParameterDiscovery:
 
         # Check List type annotation
         messages_param = params["messages"]
-        assert messages_param.annotation == List[Dict]
+        assert messages_param.annotation == list[dict]
 
         # Check Optional type handling
         max_tokens_param = params["max_tokens"]
@@ -662,7 +662,8 @@ class TestErrorHandling:
 
     def test_discover_with_very_complex_types(self, discovery):
         """Test discovery with very complex type annotations."""
-        from typing import Callable, Generic, TypeVar
+        from collections.abc import Callable
+        from typing import Generic, TypeVar
 
         T = TypeVar("T")
 
@@ -670,7 +671,7 @@ class TestErrorHandling:
             def __init__(
                 self,
                 callback: Callable[[str, int], bool],
-                data: Dict[str, Union[List[int], Callable]],
+                data: dict[str, list[int] | Callable],
                 generic_param: T,
             ):
                 pass

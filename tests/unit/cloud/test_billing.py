@@ -2,7 +2,7 @@
 
 import asyncio
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -20,7 +20,7 @@ class TestUsageRecord:
 
     def test_usage_record_creation(self):
         """Test UsageRecord creation."""
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
 
         record = UsageRecord(
             timestamp=timestamp,
@@ -42,7 +42,7 @@ class TestUsageRecord:
 
     def test_usage_record_to_dict(self):
         """Test UsageRecord serialization to dictionary."""
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
 
         record = UsageRecord(
             timestamp=timestamp,
@@ -65,7 +65,7 @@ class TestUsageRecord:
 
     def test_usage_record_from_dict(self):
         """Test UsageRecord deserialization from dictionary."""
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
 
         record_dict = {
             "timestamp": timestamp.isoformat(),
@@ -89,7 +89,7 @@ class TestUsageRecord:
 
     def test_usage_record_from_dict_default_tier(self):
         """Test UsageRecord deserialization with default billing tier."""
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
 
         record_dict = {
             "timestamp": timestamp.isoformat(),
@@ -323,7 +323,7 @@ class TestUsageTracker:
                 tracker = UsageTracker(storage_path=f.name)
 
                 # Create records with specific timestamps
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 yesterday = now - timedelta(days=1)
 
                 # Add record from yesterday

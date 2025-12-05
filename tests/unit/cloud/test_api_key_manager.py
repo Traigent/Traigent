@@ -7,14 +7,13 @@ Tests for API key lifecycle management, validation, and rotation.
 
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.cloud.api_key_manager import API_KEY_TOKEN_TTL, APIKeyManager
-from traigent.cloud.auth import APIKey, AuthCredentials, SecureToken, UnifiedAuthConfig
+from traigent.cloud.api_key_manager import APIKeyManager
+from traigent.cloud.auth import APIKey, AuthCredentials, UnifiedAuthConfig
 
 
 @pytest.fixture
@@ -94,7 +93,7 @@ class TestSetToken:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test setting token with custom expiry."""
-        expires_at = datetime.now(timezone.utc) + timedelta(days=60)
+        expires_at = datetime.now(UTC) + timedelta(days=60)
         manager.set_token(valid_api_key, source="test", expires_at=expires_at)
 
         assert manager.api_key_expiry is not None
@@ -240,7 +239,7 @@ class TestGetStatus:
 
     def test_get_status_ok(self, manager: APIKeyManager, valid_api_key: str) -> None:
         """Test status when key is healthy."""
-        expires = datetime.now(timezone.utc) + timedelta(days=30)
+        expires = datetime.now(UTC) + timedelta(days=30)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         status = manager.get_status()
@@ -252,7 +251,7 @@ class TestGetStatus:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test status when key is approaching expiry."""
-        expires = datetime.now(timezone.utc) + timedelta(days=10)
+        expires = datetime.now(UTC) + timedelta(days=10)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         status = manager.get_status()
@@ -263,7 +262,7 @@ class TestGetStatus:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test status when key is critically close to expiry."""
-        expires = datetime.now(timezone.utc) + timedelta(days=3)
+        expires = datetime.now(UTC) + timedelta(days=3)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         status = manager.get_status()
@@ -274,7 +273,7 @@ class TestGetStatus:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test status when key has expired."""
-        expires = datetime.now(timezone.utc) - timedelta(days=1)
+        expires = datetime.now(UTC) - timedelta(days=1)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         status = manager.get_status()
@@ -289,7 +288,7 @@ class TestCheckRotation:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test rotation check when key is healthy."""
-        expires = datetime.now(timezone.utc) + timedelta(days=30)
+        expires = datetime.now(UTC) + timedelta(days=30)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         assert manager.check_rotation() is True
@@ -298,7 +297,7 @@ class TestCheckRotation:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test rotation check when key needs attention."""
-        expires = datetime.now(timezone.utc) + timedelta(days=10)
+        expires = datetime.now(UTC) + timedelta(days=10)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         assert manager.check_rotation() is False
@@ -307,7 +306,7 @@ class TestCheckRotation:
         self, manager: APIKeyManager, valid_api_key: str
     ) -> None:
         """Test rotation check when key is critical."""
-        expires = datetime.now(timezone.utc) + timedelta(days=3)
+        expires = datetime.now(UTC) + timedelta(days=3)
         manager.set_token(valid_api_key, source="test", expires_at=expires)
 
         assert manager.check_rotation() is False
@@ -419,7 +418,7 @@ class TestApiKeyObject:
         api_key = APIKey(
             key=valid_api_key,
             name="test-key",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             permissions={"read": True},
         )
 
@@ -435,7 +434,7 @@ class TestApiKeyObject:
         api_key = APIKey(
             key=valid_api_key,
             name="test-key",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         manager.set_api_key_object(api_key)
 
