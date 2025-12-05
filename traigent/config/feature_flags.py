@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import os
 import threading
+from collections.abc import Generator, Iterable, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Generator, Iterable, Mapping
+from typing import Any
 
 from traigent.utils.logging import get_logger
 

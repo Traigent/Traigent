@@ -8,6 +8,7 @@ Inspired by DeepEval's approach to local command interface.
 import json
 import os
 import sys
+from datetime import UTC
 from pathlib import Path
 
 import click
@@ -309,16 +310,16 @@ def cleanup_sessions(days: int, dry_run: bool) -> None:
 
         if dry_run:
             # Show what would be deleted
-            from datetime import datetime, timedelta, timezone
+            from datetime import datetime, timedelta
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days)
 
             old_sessions = []
             for session in storage.list_sessions():
                 session_date = datetime.fromisoformat(session.created_at)
                 # Normalize to timezone-aware for safe comparison
                 if session_date.tzinfo is None:
-                    session_date = session_date.replace(tzinfo=timezone.utc)
+                    session_date = session_date.replace(tzinfo=UTC)
                 if session_date < cutoff_date:
                     old_sessions.append(session)
 

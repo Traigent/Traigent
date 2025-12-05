@@ -7,9 +7,9 @@ Traceability: CONC-Layer-API CONC-Quality-Reliability CONC-Quality-Usability CON
 """
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import MISSING, dataclass, field, fields
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
 from traigent.evaluators.base import Dataset
@@ -22,19 +22,19 @@ logger = logging.getLogger(__name__)
 class OptimizeParameters:
     """Structured representation of optimize decorator parameters."""
 
-    eval_dataset: Optional[Union[str, list[Union[str, Dataset]]]] = None
-    objectives: Optional[list[str]] = None
-    configuration_space: Optional[dict[str, Any]] = None
-    default_config: Optional[dict[str, Any]] = None
-    constraints: Optional[list[Callable[..., Any]]] = None
-    injection_mode: Union[str, InjectionMode] = InjectionMode.CONTEXT
-    config_param: Optional[str] = None
+    eval_dataset: str | list[str | Dataset] | None = None
+    objectives: list[str] | None = None
+    configuration_space: dict[str, Any] | None = None
+    default_config: dict[str, Any] | None = None
+    constraints: list[Callable[..., Any]] | None = None
+    injection_mode: str | InjectionMode = InjectionMode.CONTEXT
+    config_param: str | None = None
     auto_override_frameworks: bool = True
-    framework_targets: Optional[list[str]] = None
-    execution_mode: Union[str, ExecutionMode] = ExecutionMode.EDGE_ANALYTICS
-    local_storage_path: Optional[str] = None
+    framework_targets: list[str] | None = None
+    execution_mode: str | ExecutionMode = ExecutionMode.EDGE_ANALYTICS
+    local_storage_path: str | None = None
     minimal_logging: bool = True
-    privacy_enabled: Optional[bool] = None
+    privacy_enabled: bool | None = None
     kwargs: dict[str, Any] = field(default_factory=dict)
 
 
@@ -77,7 +77,7 @@ class ParameterValidator:
         return params
 
     def _validate_execution_mode(
-        self, execution_mode: Union[str, ExecutionMode]
+        self, execution_mode: str | ExecutionMode
     ) -> None:
         """Validate execution mode parameter."""
         try:
@@ -94,13 +94,13 @@ class ParameterValidator:
             )
 
     def _normalize_execution_mode(
-        self, execution_mode: Union[str, ExecutionMode]
+        self, execution_mode: str | ExecutionMode
     ) -> str:
         """Normalize execution mode string for internal consistency."""
         return resolve_execution_mode(execution_mode).value
 
     def _validate_injection_mode(
-        self, injection_mode: Union[str, InjectionMode]
+        self, injection_mode: str | InjectionMode
     ) -> None:
         """Validate injection mode parameter."""
         if isinstance(injection_mode, str):
@@ -119,7 +119,7 @@ class ParameterValidator:
             )
 
     def _validate_dataset(
-        self, eval_dataset: Optional[Union[str, list[Union[str, Dataset]]]]
+        self, eval_dataset: str | list[str | Dataset] | None
     ) -> None:
         """Validate evaluation dataset parameter."""
         if eval_dataset is None:
@@ -148,7 +148,7 @@ class ParameterValidator:
             "eval_dataset must be a string path, list of paths, or Dataset object"
         )
 
-    def _validate_objectives(self, objectives: Optional[list[str]]) -> None:
+    def _validate_objectives(self, objectives: list[str] | None) -> None:
         """Validate objectives parameter."""
         if objectives is None:
             return
@@ -187,7 +187,7 @@ class ParameterValidator:
                 )
 
     def _validate_configuration_space(
-        self, config_space: Optional[dict[str, Any]]
+        self, config_space: dict[str, Any] | None
     ) -> None:
         """Validate configuration space parameter."""
         if config_space is None:
@@ -221,7 +221,7 @@ class ParameterValidator:
             return False
 
     def _validate_constraints(
-        self, constraints: Optional[list[Callable[..., Any]]]
+        self, constraints: list[Callable[..., Any]] | None
     ) -> None:
         """Validate constraints parameter."""
         if constraints is None:
@@ -235,7 +235,7 @@ class ParameterValidator:
                 raise ValidationError(f"constraint at index {i} is not callable")
 
     def _normalize_injection_mode(
-        self, injection_mode: Union[str, InjectionMode]
+        self, injection_mode: str | InjectionMode
     ) -> InjectionMode:
         """Normalize injection mode to enum."""
         if isinstance(injection_mode, str):

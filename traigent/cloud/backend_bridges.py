@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from traigent.evaluators.base import Dataset
@@ -77,7 +77,7 @@ class SessionExperimentMapping:
     trial_mappings: dict[str, str] = field(
         default_factory=dict
     )  # trial_id -> config_run_id
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class SDKBackendBridge:
@@ -266,7 +266,7 @@ class SDKBackendBridge:
                     if trial.config
                     else {}
                 ),
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             },
         }
 
@@ -279,7 +279,7 @@ class SDKBackendBridge:
                 "trial_number": trial.trial_number,
                 "config": trial.config,
                 "dataset_subset": experiment_parameters["dataset_subset"],
-                "mapping_created_at": datetime.now(timezone.utc).isoformat(),
+                "mapping_created_at": datetime.now(UTC).isoformat(),
                 "optimization_session": "traigent_edge_analytics",
                 "privacy_mode": True,
             }

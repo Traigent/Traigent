@@ -6,8 +6,9 @@ import os
 import statistics
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence, cast
+from typing import Any, Optional, cast
 
 from traigent._version import get_version
 from traigent.utils.cost_calculator import calculate_llm_cost

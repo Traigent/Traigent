@@ -32,7 +32,6 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TrialPrunedError, TVLConstraintError
 
-
 # =============================================================================
 # Mock Classes
 # =============================================================================

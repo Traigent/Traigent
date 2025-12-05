@@ -195,7 +195,10 @@ class AgentValidator:
                 )
 
             # Check allowed models (if whitelist is specified)
-            if model_constraints.allowed_models and model not in model_constraints.allowed_models:
+            if (
+                model_constraints.allowed_models
+                and model not in model_constraints.allowed_models
+            ):
                 issues.append(
                     ValidationIssue(
                         severity="error",
@@ -240,7 +243,8 @@ class AgentValidator:
                 )
             elif (
                 estimated_cost
-                > cost_constraints.max_cost_per_query * cost_constraints.warn_threshold_pct
+                > cost_constraints.max_cost_per_query
+                * cost_constraints.warn_threshold_pct
             ):
                 warnings.append(
                     ValidationIssue(

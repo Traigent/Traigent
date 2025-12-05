@@ -521,11 +521,14 @@ class TestIntegrationManager:
         request = deepcopy(sample_optimization_request)
         request.metadata["privacy_mode"] = True
 
-        with patch(
-            "traigent.cloud.integration_manager.get_production_mcp_client"
-        ) as mock_mcp_client, patch(
-            "traigent.cloud.integration_manager.get_backend_client"
-        ) as mock_backend_client:
+        with (
+            patch(
+                "traigent.cloud.integration_manager.get_production_mcp_client"
+            ) as mock_mcp_client,
+            patch(
+                "traigent.cloud.integration_manager.get_backend_client"
+            ) as mock_backend_client,
+        ):
             mock_mcp_client.return_value = Mock()
             mock_backend_client.return_value = Mock()
 
@@ -541,15 +544,18 @@ class TestIntegrationManager:
                 metadata={"mode": "privacy"},
             )
 
-            with patch.object(
-                manager,
-                "_start_privacy_integration",
-                AsyncMock(return_value=privacy_result),
-            ) as mock_privacy, patch.object(
-                manager,
-                "_start_cloud_integration",
-                AsyncMock(),
-            ) as mock_cloud:
+            with (
+                patch.object(
+                    manager,
+                    "_start_privacy_integration",
+                    AsyncMock(return_value=privacy_result),
+                ) as mock_privacy,
+                patch.object(
+                    manager,
+                    "_start_cloud_integration",
+                    AsyncMock(),
+                ) as mock_cloud,
+            ):
                 result = await manager.start_optimization_integration(
                     request, IntegrationMode.STANDARD
                 )

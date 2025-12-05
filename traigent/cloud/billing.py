@@ -14,7 +14,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -141,7 +141,7 @@ class UsageRecord:
         timestamp = datetime.fromisoformat(data["timestamp"])
         # Ensure timezone-aware datetime
         if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
 
         return cls(
             timestamp=timestamp,
@@ -252,7 +252,7 @@ class UsageTracker:
         )
 
         usage_record = UsageRecord(
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             function_name=function_name,
             trials_count=trials_count,
             dataset_size=dataset_size,
@@ -314,11 +314,11 @@ class UsageTracker:
             Dict with usage statistics
         """
         if start_date is None:
-            start_date = datetime.now(timezone.utc).replace(
+            start_date = datetime.now(UTC).replace(
                 day=1, hour=0, minute=0, second=0, microsecond=0
             )
         if end_date is None:
-            end_date = datetime.now(timezone.utc)
+            end_date = datetime.now(UTC)
 
         # Filter records by date range
         filtered_records = [
@@ -463,7 +463,7 @@ class UsageTracker:
         try:
             data = {
                 "usage_records": [record.to_dict() for record in self._usage_records],
-                "last_updated": datetime.now(timezone.utc).isoformat(),
+                "last_updated": datetime.now(UTC).isoformat(),
             }
             with open(self.storage_path, "w") as f:
                 json.dump(data, f, indent=2)

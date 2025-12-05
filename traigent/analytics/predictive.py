@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import statistics
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Sequence
+from typing import Any
 
 from ..core.constants import (
     HISTORY_PRUNE_RATIO,
@@ -512,7 +513,7 @@ class PerformanceForecaster:
             "algorithm": algorithm,
             "score": score,
             "duration": duration,
-            "timestamp": timestamp or datetime.now(timezone.utc),
+            "timestamp": timestamp or datetime.now(UTC),
         }
 
         self.performance_history.append(data_point)
@@ -562,7 +563,7 @@ class PerformanceForecaster:
     ) -> dict[str, Any]:
         """Detect performance degradation patterns."""
 
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=lookback_days)
         recent_data = [
             d for d in self.performance_history if d["timestamp"] >= cutoff_date
         ]
@@ -795,13 +796,13 @@ class TrendAnalyzer:
         """Add a metric value."""
         if metric_name not in self.metrics_history:
             self.metrics_history[metric_name] = []
-        timestamp = timestamp or datetime.now(timezone.utc)
+        timestamp = timestamp or datetime.now(UTC)
         # Coerce naive timestamps to UTC-aware for consistent comparisons
         if timestamp.tzinfo is None or (
             hasattr(timestamp.tzinfo, "utcoffset")
             and timestamp.tzinfo.utcoffset(timestamp) is None
         ):
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
+            timestamp = timestamp.replace(tzinfo=UTC)
         self.metrics_history[metric_name].append((timestamp, value))
 
         # Keep sorted by timestamp
@@ -809,8 +810,12 @@ class TrendAnalyzer:
 
         # Enforce memory limits per metric
         if len(self.metrics_history[metric_name]) > self._max_history_per_metric:
-            items_to_keep = int(self._max_history_per_metric * (1 - HISTORY_PRUNE_RATIO))
-            self.metrics_history[metric_name] = self.metrics_history[metric_name][-items_to_keep:]
+            items_to_keep = int(
+                self._max_history_per_metric * (1 - HISTORY_PRUNE_RATIO)
+            )
+            self.metrics_history[metric_name] = self.metrics_history[metric_name][
+                -items_to_keep:
+            ]
 
     def analyze_trends(
         self,
@@ -880,7 +885,7 @@ class TrendAnalyzer:
             if metric_name not in self.metrics_history:
                 return {"error": f"No data available for metric: {metric_name}"}
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=period_days)
+            cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
             recent_data = [
                 (timestamp, value)
                 for timestamp, value in self.metrics_history[metric_name]
@@ -906,7 +911,7 @@ class TrendAnalyzer:
         timestamped_values: list[tuple[datetime, float]] = []
         for point in data_points:
             if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(timezone.utc))
+                timestamp = point.get("timestamp", datetime.now(UTC))
                 if metric_name in point:
                     value = point[metric_name]
                 elif "value" in point:
@@ -915,7 +920,7 @@ class TrendAnalyzer:
                     value = 0
                 timestamped_values.append((timestamp, float(value)))
             else:
-                timestamped_values.append((datetime.now(timezone.utc), float(point)))
+                timestamped_values.append((datetime.now(UTC), float(point)))
 
         timestamped_values.sort(key=lambda item: item[0])
         values = [value for _, value in timestamped_values]
@@ -1183,7 +1188,7 @@ class TrendAnalyzer:
         timestamped_values = []
         for point in data_points:
             if isinstance(point, dict):
-                timestamp = point.get("timestamp", datetime.now(timezone.utc))
+                timestamp = point.get("timestamp", datetime.now(UTC))
                 if metric_name in point:
                     value = point[metric_name]
                 elif "value" in point:
@@ -1269,7 +1274,7 @@ class TrendAnalyzer:
                     anomalies.append(
                         {
                             "timestamp": point.get(
-                                "timestamp", datetime.now(timezone.utc)
+                                "timestamp", datetime.now(UTC)
                             ),
                             "value": value,
                             "z_score": z_score,
@@ -1281,7 +1286,7 @@ class TrendAnalyzer:
                     anomalies.append(
                         {
                             "timestamp": point.get(
-                                "timestamp", datetime.now(timezone.utc)
+                                "timestamp", datetime.now(UTC)
                             ),
                             "value": value,
                             "z_score": z_score,
@@ -1479,7 +1484,7 @@ class PredictiveAnalytics:
             "cost_forecasts": cost_forecasts,
             "performance_forecasts": performance_forecasts,
             "trend_analysis": trend_analysis,
-            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
             "recommendations": self._generate_comprehensive_recommendations(
                 cost_forecasts, performance_forecasts, trend_analysis
             ),

@@ -9,7 +9,8 @@ both the Inference API (cloud) and Edge Analytics model execution via transforme
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncIterator, cast
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 try:
     from huggingface_hub import AsyncInferenceClient

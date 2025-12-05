@@ -7,7 +7,7 @@ remains local and only metrics are transmitted to the cloud.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.cloud.client import CloudServiceError
@@ -139,7 +139,7 @@ class PrivacyOperations:
                 max_trials=max_trials,
                 status=OptimizationSessionStatus.ACTIVE,
                 created_at=session_response.metadata.get("created_at", time.time()),
-                updated_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(UTC),
                 optimization_strategy=session_response.optimization_strategy,
             )
 
@@ -226,7 +226,7 @@ class PrivacyOperations:
                     session = self.client._active_sessions.get(session_id)
                     if session:
                         session.completed_trials += 1
-                        session.updated_at = datetime.now(timezone.utc)
+                        session.updated_at = datetime.now(UTC)
 
             return response.suggestion
 

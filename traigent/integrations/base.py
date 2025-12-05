@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import functools
 import inspect
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 from ..config.context import get_config
 from ..config.types import TraigentConfig

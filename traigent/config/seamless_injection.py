@@ -5,9 +5,10 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from threading import Lock
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 from traigent.config.runtime_injector import create_runtime_shim
 from traigent.utils.logging import get_logger
