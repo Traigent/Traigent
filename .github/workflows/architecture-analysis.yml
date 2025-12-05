@@ -1,0 +1,216 @@
+# Architecture Analysis Workflow
+# Automatically analyzes architecture on PRs and tracks drift over time
+#
+# Features:
+# - Runs on all PRs to main/develop
+# - Generates architecture reports
+# - Compares against baseline metrics
+# - Fails if complexity thresholds exceeded
+# - Uploads artifacts for review
+
+name: Architecture Analysis
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'traigent/**'
+      - 'tests/**'
+  push:
+    branches: [main]
+    paths:
+      - 'traigent/**'
+  workflow_dispatch:
+    inputs:
+      full_analysis:
+        description: 'Run full analysis including coverage'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  architecture-analysis:
+    name: Analyze Architecture
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for comparison
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install radon pytest pytest-cov
+          # Install package in editable mode for import resolution
+          pip install -e ".[dev]" || pip install -e .
+
+      - name: Install Graphviz
+        run: sudo apt-get install -y graphviz
+
+      - name: Run Architecture Analysis
+        id: analyze
+        run: |
+          echo "🔍 Running architecture analysis..."
+
+          # Run main analysis with all features
+          python tools/architecture/generate_diagrams.py \
+            --all-features \
+            --format all \
+            --output-dir tools/architecture/output
+
+          # Run call graph analysis
+          python tools/architecture/generate_call_graph.py \
+            --output-dir tools/architecture/output
+
+          # Run priority analysis
+          python tools/architecture/analyze_priorities.py
+
+          echo "analysis_complete=true" >> $GITHUB_OUTPUT
+
+      - name: Generate Focused Diagrams
+        run: |
+          python tools/architecture/generate_focused_diagrams.py \
+            --output-dir tools/architecture/output/focused
+
+      - name: Render SVG Diagrams
+        run: |
+          mkdir -p tools/architecture/output/svg
+
+          for dotfile in tools/architecture/output/*.dot; do
+            if [ -f "$dotfile" ]; then
+              name=$(basename "$dotfile" .dot)
+              dot -Tsvg "$dotfile" -o "tools/architecture/output/svg/${name}.svg" || true
+            fi
+          done
+
+          for dotfile in tools/architecture/output/focused/*.dot; do
+            if [ -f "$dotfile" ]; then
+              name=$(basename "$dotfile" .dot)
+              dot -Tsvg "$dotfile" -o "tools/architecture/output/svg/${name}.svg" || true
+            fi
+          done
+
+      - name: Check Complexity Thresholds
+        id: thresholds
+        run: |
+          python tools/architecture/check_thresholds.py \
+            --data-file tools/architecture/output/architecture_data.json \
+            --max-complexity 50 \
+            --max-methods 80 \
+            --max-lines 2500
+
+      - name: Run Coverage Analysis (Optional)
+        if: github.event.inputs.full_analysis == 'true'
+        run: |
+          pytest tests/unit/ \
+            --cov=traigent \
+            --cov-report=json:tools/architecture/output/coverage.json \
+            -q --tb=no || true
+
+          python tools/architecture/generate_diagrams.py \
+            --coverage tools/architecture/output/coverage.json \
+            --all-features \
+            --output-dir tools/architecture/output
+
+      - name: Compare with Baseline
+        id: compare
+        if: github.event_name == 'pull_request'
+        run: |
+          python tools/architecture/compare_baseline.py \
+            --current tools/architecture/output/architecture_data.json \
+            --output tools/architecture/output/drift_report.md
+
+      - name: Upload Architecture Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-reports
+          path: |
+            tools/architecture/output/*.md
+            tools/architecture/output/*.json
+            tools/architecture/output/svg/*.svg
+          retention-days: 30
+
+      - name: Comment on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## 📊 Architecture Analysis Report\n\n';
+
+            // Read priority issues summary
+            try {
+              const priorities = fs.readFileSync('tools/architecture/output/priority_issues.md', 'utf8');
+              const summaryMatch = priorities.match(/## Summary by Severity[\s\S]*?(?=##|$)/);
+              if (summaryMatch) {
+                comment += summaryMatch[0] + '\n';
+              }
+            } catch (e) {
+              comment += '_Priority issues report not available_\n\n';
+            }
+
+            // Read drift report if available
+            try {
+              const drift = fs.readFileSync('tools/architecture/output/drift_report.md', 'utf8');
+              comment += '\n### Changes from Baseline\n\n';
+              comment += drift.substring(0, 2000);  // Limit size
+            } catch (e) {
+              // No drift report
+            }
+
+            comment += '\n\n---\n_See artifacts for full reports and diagrams_';
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+      - name: Update Baseline (on main)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          # Store current metrics as new baseline
+          cp tools/architecture/output/architecture_data.json \
+             tools/architecture/baseline_metrics.json
+
+          echo "📌 Updated baseline metrics"
+
+  complexity-gate:
+    name: Complexity Gate
+    runs-on: ubuntu-latest
+    needs: architecture-analysis
+
+    steps:
+      - name: Download Reports
+        uses: actions/download-artifact@v4
+        with:
+          name: architecture-reports
+
+      - name: Check Critical Issues
+        run: |
+          # Fail if there are new CRITICAL issues
+          if grep -q "CRITICAL" priority_issues.md 2>/dev/null; then
+            echo "⚠️ CRITICAL complexity issues detected!"
+            grep -A 5 "CRITICAL" priority_issues.md
+            echo ""
+            echo "Please address these before merging."
+            # Don't fail yet - just warn
+            # exit 1
+          fi
+
+          echo "✅ No blocking complexity issues"

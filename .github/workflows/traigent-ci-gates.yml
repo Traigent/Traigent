@@ -1,0 +1,174 @@
+name: TraiGent CI Gates
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'examples/integrations/ci-cd/**'
+      - 'traigent/**'
+      - '.github/workflows/traigent-ci-gates.yml'
+
+env:
+  TRAIGENT_MOCK_MODE: "true"
+  CI: "true"
+  REGRESSION_THRESHOLD: "-0.01"  # 1% regression blocks
+  IMPROVEMENT_MIN_PCT: "0.03"    # 3% improvement triggers warning
+
+jobs:
+  optimization-gates:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout base branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: baseline
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies (baseline)
+        working-directory: baseline
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Install dependencies (PR)
+        working-directory: work
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Evaluate baseline configuration
+        working-directory: baseline/examples/integrations/ci-cd/math-qa
+        run: |
+          MODE=eval python run.py
+          echo "Baseline evaluation complete"
+
+      - name: Copy baseline results
+        run: |
+          mkdir -p work/results-ci/baseline
+          cp -r baseline/examples/integrations/ci-cd/math-qa/results-ci/math/* work/results-ci/baseline/
+
+      - name: Evaluate PR configuration
+        working-directory: work/examples/integrations/ci-cd/math-qa
+        run: |
+          MODE=eval python run.py
+          echo "PR evaluation complete"
+
+      - name: Run optimization on PR
+        working-directory: work/examples/integrations/ci-cd/math-qa
+        run: |
+          MODE=tune MAX_TRIALS=10 python run.py
+          echo "Optimization complete"
+
+      - name: Compare metrics
+        working-directory: work/examples/integrations/ci-cd
+        run: |
+          python - << 'EOF'
+          import json
+          import sys
+
+          # Load results
+          with open('math-qa/results-ci/baseline/current.json') as f:
+              baseline = json.load(f)
+          with open('math-qa/results-ci/math/current.json') as f:
+              current = json.load(f)
+          with open('math-qa/results-ci/math/tuned.json') as f:
+              tuned = json.load(f)
+
+          # Metric orientations
+          orientations = {
+              'accuracy': 'maximize',
+              'cost': 'minimize',
+              'response_time': 'minimize'
+          }
+
+          # Gate parameters
+          REGRESSION_THRESHOLD = -0.01
+          IMPROVEMENT_MIN_PCT = 0.03
+
+          # Check for regression
+          regression_found = False
+          for metric, orientation in orientations.items():
+              baseline_val = baseline['metrics'].get(metric, 0)
+              current_val = current['metrics'].get(metric, 0)
+
+              if orientation == 'maximize':
+                  improvement = (current_val - baseline_val) / max(baseline_val, 0.001)
+              else:  # minimize
+                  improvement = (baseline_val - current_val) / max(baseline_val, 0.001)
+
+              if improvement < REGRESSION_THRESHOLD:
+                  print(f"❌ REGRESSION: {metric} degraded by {abs(improvement)*100:.1f}%")
+                  print(f"   Baseline: {baseline_val:.3f}, Current: {current_val:.3f}")
+                  regression_found = True
+              else:
+                  print(f"✅ {metric}: {'improved' if improvement > 0 else 'unchanged'} by {improvement*100:.1f}%")
+
+          # Check for missed improvements
+          improvement_found = False
+          for metric, orientation in orientations.items():
+              current_val = current['metrics'].get(metric, 0)
+              tuned_val = tuned['metrics'].get(metric, 0)
+
+              if orientation == 'maximize':
+                  improvement = (tuned_val - current_val) / max(current_val, 0.001)
+              else:  # minimize
+                  improvement = (current_val - tuned_val) / max(tuned_val, 0.001)
+
+              if improvement >= IMPROVEMENT_MIN_PCT:
+                  print(f"⚠️  IMPROVEMENT AVAILABLE: {metric} could improve by {improvement*100:.1f}%")
+                  improvement_found = True
+
+          # Check if configs differ
+          if improvement_found and tuned.get('improvement_potential', {}).get('config_differs'):
+              print("\n📝 Action required: Update saved_config.json with:")
+              print(json.dumps(tuned['best_config'], indent=2))
+              sys.exit(1)  # Fail the CI
+
+          if regression_found:
+              sys.exit(1)  # Fail the CI
+
+          print("\n✅ All CI gates passed!")
+          EOF
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-results
+          path: |
+            work/results-ci/
+            work/examples/integrations/ci-cd/math-qa/saved_config.json
+
+      - name: Comment on PR
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read comparison output
+            const comment = `
+            ## TraiGent CI Gates Results
+
+            ❌ **CI gates failed.** Please review the metrics comparison above.
+
+            If improvements are available, update \`saved_config.json\` with the optimized configuration.
+
+            [View full CI results](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            `;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });

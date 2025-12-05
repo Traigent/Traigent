@@ -1,0 +1,50 @@
+id: SYNC-OptimizationFlow
+name: "Optimization flow (local/edge)"
+functionalities: [FUNC-API-ENTRY, FUNC-ORCH-LIFECYCLE, FUNC-EVAL-METRICS, FUNC-OPT-ALGORITHMS, FUNC-INVOKERS, FUNC-TVLSPEC, FUNC-AGENTS]
+when:
+  - concept: CONC-PublicAPI
+    action: register_optimize
+    match:
+      bind:
+        function: "?function"
+        options: "?options"
+where:
+  - bind:
+      dataset: "?options.eval_dataset"
+      config_space: "?options.configuration_space"
+      objectives: "?options.objectives"
+then:
+  - concept: CONC-TVLSpec
+    action: load_spec
+    args:
+      path: "?options.tvl_spec"
+      environment: "?options.tvl_environment"
+  - concept: CONC-ConfigInjection
+    action: resolve_provider
+    args:
+      mode: "?options.injection_mode"
+      options: "?options"
+  - concept: CONC-Orchestration
+    action: initialize_session
+    args:
+      optimizer: "?options.optimizer"
+      evaluator: "?options.evaluator"
+      config: "?options"
+  - concept: CONC-Orchestration
+    action: run_trial
+    args:
+      function: "?function"
+      dataset: "?dataset"
+      trial_index: "?trial"
+  - concept: CONC-Evaluation
+    action: compute_metrics
+    args:
+      results: "?trial_results"
+      metrics: "?options.metrics"
+  - concept: CONC-Orchestration
+    action: select_best
+    args:
+      trials: "?trials"
+      objectives: "?options.objectives"
+version: 1
+status: active

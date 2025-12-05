@@ -1,0 +1,107 @@
+# docs/traceability/taxonomy.yaml
+# Single source of truth for traceability tagging system
+# Version 1.0 - Formalized from taxonomy_reference.md
+version: "1.0"
+
+dimensions:
+  Layer:
+    required: true
+    cardinality: exactly_one
+    allowed:
+      - CONC-Layer-API        # Public entrypoints: decorators, CLI, SDK surfaces
+      - CONC-Layer-Core       # Domain logic, orchestration, optimization algorithms
+      - CONC-Layer-Integration # External adapters, provider clients, framework hooks
+      - CONC-Layer-Infra      # Storage backends, cloud clients, networking, security plumbing
+      - CONC-Layer-Data       # Schemas, DTOs, TVL specs, dataset definitions
+      - CONC-Layer-Tooling    # Dev tools, analyzers, scripts not shipped to users
+    decision_tree: |
+      1. Does this code define public API surface (decorators, CLI commands, SDK functions)?
+         → Layer-API
+      2. Does this code implement domain/business logic (optimization, orchestration, evaluation)?
+         → Layer-Core
+      3. Does this code adapt to external systems (LLM providers, frameworks, third-party APIs)?
+         → Layer-Integration
+      4. Does this code provide low-level infrastructure (storage, auth, networking, retries)?
+         → Layer-Infra
+      5. Does this code define data structures, schemas, or specs without behavior?
+         → Layer-Data
+      6. Is this development tooling not shipped to end users?
+         → Layer-Tooling
+
+  Quality:
+    required: false
+    cardinality: 0-2  # Reduced from 3 to force prioritization
+    allowed:
+      - CONC-Quality-Performance    # Optimizes time/resource behavior
+      - CONC-Quality-Reliability    # Fault tolerance, error handling, recovery
+      - CONC-Quality-Security       # Authentication, authorization, secrets, audit
+      - CONC-Quality-Observability  # Logging, metrics, tracing instrumentation
+      - CONC-Quality-Maintainability # Modularity, testability, documentation
+      - CONC-Quality-Compatibility  # Cross-platform, version compatibility, interop
+    decision_tree: |
+      Apply a quality tag ONLY if this code's PRIMARY PURPOSE includes mechanisms for that quality.
+      Ask: "If I removed all code related to <quality>, would the file lose significant functionality?"
+      If yes → tag it. If no → don't.
+      
+      Maximum 2 tags. If you think 3+ apply, pick the 2 most essential.
+
+  Compliance:
+    required: false
+    cardinality: 0-2
+    allowed:
+      - CONC-Compliance-SOC2-Audit
+      - CONC-Compliance-GDPR-Retention
+      - CONC-Compliance-NIST-AI-RMF
+    notes: |
+      Use sparingly. Only for code that directly implements compliance controls.
+      Do NOT use CONC-Quality-Compliance (removed from taxonomy).
+
+# Migration rules for deprecated tags
+migrations:
+  # CrossCutting is eliminated - files must be reclassified
+  CONC-Layer-CrossCutting:
+    status: deprecated
+    action: reclassify
+    guidance: |
+      Analyze each file and assign proper layer:
+      - retry/backoff/networking → Layer-Infra
+      - logging infrastructure → Layer-Infra
+      - environment/config plumbing → Layer-Infra
+      - domain-specific logging (optimization_logger) → Layer-Core + Quality-Observability
+      - framework adapters (langchain_interceptor) → Layer-Integration
+      - configuration schemas → Layer-Data
+      - version info → Layer-Data
+
+  # Experimental code should use proper layers
+  CONC-Layer-Experimental:
+    status: deprecated
+    action: reclassify
+    guidance: |
+      Experimental code is still code. Classify by architectural role:
+      - Platform executors → Layer-Integration
+      - Simulators → Layer-Core or Layer-Infra depending on purpose
+      Alternatively, exclude experimental/ from tagging via ignore list.
+
+  # Util is not a valid layer
+  CONC-Layer-Util:
+    status: deprecated
+    action: reclassify
+    guidance: Same as CrossCutting - classify by actual purpose.
+
+  # Quality-Compliance was conflating quality with governance
+  CONC-Quality-Compliance:
+    status: deprecated
+    action: replace
+    guidance: |
+      Replace with appropriate combination:
+      - Audit logging → CONC-Quality-Observability + CONC-Compliance-SOC2-Audit
+      - Data retention → CONC-Compliance-GDPR-Retention
+      - General security → CONC-Quality-Security
+
+# Explicitly excluded from v1.0 (defer to future)
+deferred:
+  - CONC-View-*        # Architecture views
+  - CONC-Lifecycle-*   # Lifecycle phases
+  - CONC-Domain-*      # Business domains
+  - CONC-ML-*          # ML pipeline phases (revisit when ML lineage is priority)
+  - CONC-Layer-Test    # Tests not tagged in v1.0

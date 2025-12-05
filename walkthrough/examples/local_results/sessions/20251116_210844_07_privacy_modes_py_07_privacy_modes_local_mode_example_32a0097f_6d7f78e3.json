@@ -1,0 +1,338 @@
+{
+  "session_id": "20251116_210844_07_privacy_modes_py_07_privacy_modes_local_mode_example_32a0097f_6d7f78e3",
+  "function_name": "07_privacy_modes_py_07_privacy_modes_local_mode_example_32a0097f",
+  "created_at": "2025-11-16T21:08:44.141565+00:00",
+  "updated_at": "2025-11-16T21:08:44.163899+00:00",
+  "status": "pending",
+  "total_trials": 0,
+  "completed_trials": 2,
+  "best_config": {
+    "temperature": 0.1,
+    "model": "gpt-3.5-turbo"
+  },
+  "best_score": 0.0,
+  "baseline_score": null,
+  "trials": [
+    {
+      "trial_id": 1,
+      "config": {
+        "temperature": 0.1,
+        "model": "gpt-3.5-turbo"
+      },
+      "score": 0.0,
+      "timestamp": "2025-11-16T21:08:44.159308+00:00",
+      "metadata": {
+        "duration": 0.0,
+        "trial_id": "trial_730e625ffc62",
+        "execution_mode": "edge_analytics",
+        "summary_stats": {
+          "metrics": {
+            "accuracy": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "input_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "output_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "total_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "response_time_ms": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "total_cost": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            }
+          },
+          "execution_time": 0.0,
+          "total_examples": 0,
+          "metadata": {
+            "sdk_version": "2.0.0",
+            "aggregation_method": "pandas.describe",
+            "timestamp": "2025-11-16T21:08:44Z",
+            "sample_budget_exhausted": false,
+            "examples_consumed": 3,
+            "aggregation_level": "trial",
+            "aggregation_summary": {
+              "primary_objective": "accuracy",
+              "metrics": {
+                "accuracy": 0.0,
+                "score": 0.0,
+                "duration": 0.0,
+                "input_tokens": 0.0,
+                "output_tokens": 0.0,
+                "total_tokens": 0.0,
+                "response_time_ms": 0.0,
+                "cost": 0.0,
+                "total_examples": 0,
+                "successful_examples": 0,
+                "examples_attempted": 3,
+                "total_cost": 0.0
+              },
+              "sanitized": true
+            }
+          }
+        },
+        "measures": [
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0006866455078125
+          },
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0005090236663818359
+          },
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0003943443298339844
+          }
+        ],
+        "score": 0.0,
+        "input_tokens": 0.0,
+        "output_tokens": 0.0,
+        "total_tokens": 0.0,
+        "response_time_ms": 0.0,
+        "cost": 0.0,
+        "total_examples": 0,
+        "successful_examples": 0,
+        "examples_attempted": 3,
+        "total_cost": 0.0
+      },
+      "error": null
+    },
+    {
+      "trial_id": 2,
+      "config": {
+        "temperature": 0.1,
+        "model": "gpt-4o-mini"
+      },
+      "score": 0.0,
+      "timestamp": "2025-11-16T21:08:44.163893+00:00",
+      "metadata": {
+        "duration": 0.0,
+        "trial_id": "trial_d9b3b964b298",
+        "execution_mode": "edge_analytics",
+        "summary_stats": {
+          "metrics": {
+            "accuracy": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "input_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "output_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "total_tokens": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "response_time_ms": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            },
+            "total_cost": {
+              "count": 0,
+              "mean": 0.0,
+              "std": 0.0,
+              "min": 0.0,
+              "25%": 0.0,
+              "50%": 0.0,
+              "75%": 0.0,
+              "max": 0.0
+            }
+          },
+          "execution_time": 0.0,
+          "total_examples": 0,
+          "metadata": {
+            "sdk_version": "2.0.0",
+            "aggregation_method": "pandas.describe",
+            "timestamp": "2025-11-16T21:08:44Z",
+            "sample_budget_exhausted": false,
+            "examples_consumed": 3,
+            "aggregation_level": "trial",
+            "aggregation_summary": {
+              "primary_objective": "accuracy",
+              "metrics": {
+                "accuracy": 0.0,
+                "score": 0.0,
+                "duration": 0.0,
+                "input_tokens": 0.0,
+                "output_tokens": 0.0,
+                "total_tokens": 0.0,
+                "response_time_ms": 0.0,
+                "cost": 0.0,
+                "total_examples": 0,
+                "successful_examples": 0,
+                "examples_attempted": 3,
+                "total_cost": 0.0
+              },
+              "sanitized": true
+            }
+          }
+        },
+        "measures": [
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0004494190216064453
+          },
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0019474029541015625
+          },
+          {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "input_cost": 0.0,
+            "output_cost": 0.0,
+            "total_cost": 0.0,
+            "response_time": 0.0004937648773193359
+          }
+        ],
+        "score": 0.0,
+        "input_tokens": 0.0,
+        "output_tokens": 0.0,
+        "total_tokens": 0.0,
+        "response_time_ms": 0.0,
+        "cost": 0.0,
+        "total_examples": 0,
+        "successful_examples": 0,
+        "examples_attempted": 3,
+        "total_cost": 0.0
+      },
+      "error": null
+    }
+  ],
+  "optimization_config": {
+    "search_space": {
+      "model": [
+        "gpt-3.5-turbo",
+        "gpt-4o-mini"
+      ],
+      "temperature": [
+        0.1,
+        0.5
+      ]
+    },
+    "optimization_goal": "maximize",
+    "baseline_config": null
+  },
+  "metadata": {
+    "optimization_id": "0ade3f2a-e23d-4d62-8402-1c49bd684223",
+    "max_trials": 2,
+    "max_total_examples": null,
+    "dataset_size": 3,
+    "function_name": "07_privacy_modes.py_07_privacy_modes_local_mode_example",
+    "function_display_name": "local_mode_example",
+    "function_module": "07_privacy_modes",
+    "function_relative_path": "07_privacy_modes.py",
+    "function_slug": "07_privacy_modes_py_07_privacy_modes_local_mode_example_32a0097f",
+    "evaluation_set": "simple_questions",
+    "execution_mode": "local_fallback",
+    "backend_fallback": true,
+    "created_with_version": "traigent-local-fallback-1.0.0"
+  }
+}

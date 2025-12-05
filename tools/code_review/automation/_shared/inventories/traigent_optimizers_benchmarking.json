@@ -1,0 +1,14 @@
+{
+  "module": "traigent/optimizers/benchmarking.py",
+  "top_level": [
+    "_create_trial_result",
+    "_objective",
+    "_run_optuna",
+    "_run_random",
+    "run_optuna_random_parity"
+  ],
+  "class_methods": [],
+  "classes": [
+    "BenchmarkRun"
+  ]
+}

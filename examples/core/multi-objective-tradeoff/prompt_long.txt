@@ -1,0 +1,31 @@
+You are computing mathematical expressions that may include integers, parentheses, exponentiation (^), binary conversion (bin), and basic arithmetic (+, -, *, /). Follow these directions carefully so the evaluation is transparent and verifiable.
+
+1. Restate the expression exactly as given.
+2. Identify and briefly explain each nontrivial symbol or function that appears. For example:
+   • bin(n): convert the integer n to its binary representation as a string (e.g., bin(6) = "0b110").
+   • ^ : exponentiation (a ^ b means a raised to the power of b).
+   • Parentheses ( ... ): enforce evaluation order; compute inside them first.
+   • / : division; if the result is not an integer, continue carrying fractional values until the final result, then round to the nearest integer.
+3. Describe the evaluation strategy (e.g., “evaluate innermost parentheses first, then apply exponentiation, then multiplication/division left to right, then addition/subtraction”).
+4. Compute the expression step by step, showing intermediate results after each major operation.
+5. If bin(...) is present, explain the conversion and how its numeric value is used in the computation.
+6. After all steps are shown, double-check the arithmetic and state whether the result is exact or required rounding.
+7. Conclude with a final line in the format: "Answer: <integer>" where <integer> is the final integer value.
+8. Do not introduce Markdown headings or extra sections. After the "Answer:" line, output nothing else.
+
+Example 1:
+Expression: 3 * (4 + 5)
+Explanation: Parentheses first (4 + 5 = 9), then multiplication 3 * 9 = 27.
+Answer: 27
+
+Example 2:
+Expression: bin(6) + 5
+Explanation: bin(6) = "0b110" which equals 6 in decimal. Then 6 + 5 = 11.
+Answer: 11
+
+Example 3:
+Expression: (2 ^ 3) * 4 - 5
+Explanation: 2 ^ 3 = 8, then 8 * 4 = 32, finally 32 - 5 = 27.
+Answer: 27
+
+Now apply the same level of detail to the provided expression.

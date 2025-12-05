@@ -1,0 +1,23 @@
+digraph PackageSummary {
+    rankdir=TB;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=10];
+    label="TraiGent Package Summary\n(Files / Lines / Classes)";
+    labelloc=t;
+    fontsize=16;
+
+    cloud [label="cloud\n29 files | 19,110L | 128C" fillcolor="#ef9a9a"];
+    core [label="core\n34 files | 11,897L | 72C" fillcolor="#ef9a9a"];
+    utils [label="utils\n27 files | 11,409L | 98C" fillcolor="#ef9a9a"];
+    security [label="security\n22 files | 9,367L | 88C" fillcolor="#ffcc80"];
+    integrations [label="integrations\n26 files | 8,241L | 35C" fillcolor="#ffcc80"];
+    optimizers [label="optimizers\n20 files | 7,740L | 46C" fillcolor="#ffcc80"];
+    analytics [label="analytics\n7 files | 7,153L | 45C" fillcolor="#ffcc80"];
+    evaluators [label="evaluators\n6 files | 4,766L | 25C" fillcolor="#fff9c4"];
+    config [label="config\n12 files | 3,418L | 25C" fillcolor="#fff9c4"];
+    cli [label="cli\n7 files | 3,240L | 4C" fillcolor="#fff9c4"];
+    api [label="api\n6 files | 3,201L | 21C" fillcolor="#fff9c4"];
+    agents [label="agents\n5 files | 2,679L | 14C" fillcolor="#fff9c4"];
+    invokers [label="invokers\n4 files | 826L | 4C" fillcolor="#c8e6c9"];
+    storage [label="storage\n2 files | 748L | 3C" fillcolor="#c8e6c9"];
+    tvl [label="tvl\n3 files | 703L | 5C" fillcolor="#c8e6c9"];
+}

@@ -1,0 +1,188 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Load secrets from AWS
+      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' }}
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}
+        AWS_SESSION_TOKEN: ${{ secrets.CI_AWS_SESSION_TOKEN }}
+        AWS_REGION: ${{ secrets.CI_AWS_REGION }}
+        TRAIGENT_SECRET_ID: ${{ secrets.TRAIGENT_ENV_SECRET_ID }}
+      shell: bash
+      run: |
+        scripts/secrets/pull_secret.sh ci.env
+        while IFS= read -r line; do
+          [[ -z "$line" || "$line" == \#* ]] && continue
+          echo "$line" >> "$GITHUB_ENV"
+        done < ci.env
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install build wheel
+        python -m pip install -e ".[dev,all]"
+
+    - name: Lint with ruff
+      run: |
+        ruff check traigent/ --output-format=github
+
+    - name: Type check with mypy
+      run: |
+        mypy traigent/
+
+    - name: Test with pytest
+      env:
+        TRAIGENT_MOCK_MODE: true
+        PYTHONPATH: .
+      run: |
+        pytest tests/ -v --cov=traigent --cov-report=xml --cov-report=term-missing --tb=short
+
+    - name: Upload coverage to Codecov
+      if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Load secrets from AWS
+      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' }}
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}
+        AWS_SESSION_TOKEN: ${{ secrets.CI_AWS_SESSION_TOKEN }}
+        AWS_REGION: ${{ secrets.CI_AWS_REGION }}
+        TRAIGENT_SECRET_ID: ${{ secrets.TRAIGENT_ENV_SECRET_ID }}
+      shell: bash
+      run: |
+        scripts/secrets/pull_secret.sh ci.env
+        while IFS= read -r line; do
+          [[ -z "$line" || "$line" == \#* ]] && continue
+          echo "$line" >> "$GITHUB_ENV"
+        done < ci.env
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[all]"
+
+    - name: Run integration tests
+      env:
+        TRAIGENT_MOCK_MODE: true
+        PYTHONPATH: .
+      run: |
+        pytest tests/integration/ -v --tb=short
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install safety bandit[toml]
+        python -m pip install -e .
+
+    - name: Run safety check
+      run: |
+        safety check --json --output safety-report.json || true
+
+    - name: Run bandit security scan
+      run: |
+        bandit -r traigent/ -f json -o bandit-report.json || true
+
+    - name: Upload security scan results
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: security-reports
+        path: |
+          safety-report.json
+          bandit-report.json
+
+  build-test:
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install build dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install build twine
+
+    - name: Build package
+      run: |
+        python -m build
+
+    - name: Check package with twine
+      run: |
+        twine check dist/*
+
+    - name: Test installation from built package
+      run: |
+        pip install dist/*.whl
+        python -c "import traigent; print(f'Successfully imported traigent v{traigent.__version__}')"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dist-packages
+        path: dist/

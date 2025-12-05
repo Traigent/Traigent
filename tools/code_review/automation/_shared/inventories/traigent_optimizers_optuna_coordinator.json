@@ -1,0 +1,50 @@
+{
+  "module": "traigent/optimizers/optuna_coordinator.py",
+  "top_level": [
+    "_require_optuna"
+  ],
+  "class_methods": [
+    "BatchOptimizer.__init__",
+    "BatchOptimizer._handle_worker_result",
+    "BatchOptimizer._resolve_worker_result",
+    "BatchOptimizer.dispatch_to_worker",
+    "BatchOptimizer.optimize_batch",
+    "EdgeExecutor.__init__",
+    "EdgeExecutor._queue_payload",
+    "EdgeExecutor.execute_trial",
+    "EdgeExecutor.is_online",
+    "EdgeExecutor.report_final",
+    "EdgeExecutor.report_to_coordinator",
+    "EdgeExecutor.sync_offline_results",
+    "OptunaCoordinator.__init__",
+    "OptunaCoordinator._pop_trial",
+    "OptunaCoordinator._trial_to_config",
+    "OptunaCoordinator.ask_batch",
+    "OptunaCoordinator.pending_configs",
+    "OptunaCoordinator.pending_trials",
+    "OptunaCoordinator.report_intermediate",
+    "OptunaCoordinator.study",
+    "OptunaCoordinator.tell_failure",
+    "OptunaCoordinator.tell_pruned",
+    "OptunaCoordinator.tell_result",
+    "RateLimitedOptimizer.__init__",
+    "RateLimitedOptimizer.queue",
+    "RateLimitedOptimizer.suggest_next",
+    "RateLimiter.__init__",
+    "RateLimiter.allow",
+    "ResilientCoordinator.__init__",
+    "ResilientCoordinator._default_retry_policy",
+    "ResilientCoordinator.flush_offline_queue",
+    "ResilientCoordinator.is_online",
+    "ResilientCoordinator.report_with_retry",
+    "ResilientCoordinator.send_result"
+  ],
+  "classes": [
+    "BatchOptimizer",
+    "EdgeExecutor",
+    "OptunaCoordinator",
+    "RateLimitedOptimizer",
+    "RateLimiter",
+    "ResilientCoordinator"
+  ]
+}

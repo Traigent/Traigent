@@ -1,0 +1,9 @@
+# TraiGent SDK Bayesian Optimization Dependencies
+# Required for Sprint 4 Bayesian optimization features
+
+-r requirements.txt
+
+# Bayesian optimization
+scikit-learn>=1.0.0
+scipy>=1.7.0
+optuna>=4.5.0

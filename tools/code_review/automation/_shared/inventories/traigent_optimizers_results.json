@@ -1,0 +1,14 @@
+{
+  "module": "traigent/optimizers/results.py",
+  "top_level": [],
+  "class_methods": [
+    "OptimizationResult.success_rate",
+    "OptimizationResult.successful_trials",
+    "OptimizationResult.total_trials",
+    "Trial.is_successful"
+  ],
+  "classes": [
+    "OptimizationResult",
+    "Trial"
+  ]
+}

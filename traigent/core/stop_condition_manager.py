@@ -1,0 +1,137 @@
+"""Utilities for constructing and maintaining optimization stop conditions."""
+
+# Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
+
+from __future__ import annotations
+
+from typing import Iterable
+
+from traigent.api.types import TrialResult
+from traigent.core.objectives import ObjectiveSchema
+from traigent.core.stop_conditions import (
+    BudgetStopCondition,
+    MaxSamplesStopCondition,
+    MaxTrialsStopCondition,
+    PlateauAfterNStopCondition,
+    StopCondition,
+)
+
+__all__ = ["StopConditionManager"]
+
+
+class StopConditionManager:
+    """Owns construction and evaluation of reusable stop conditions."""
+
+    def __init__(
+        self,
+        *,
+        max_trials: int | None,
+        max_samples: int | None,
+        samples_include_pruned: bool,
+        plateau_window: int | None,
+        plateau_epsilon: float | None,
+        objective_schema: ObjectiveSchema | None,
+        budget_limit: float | None,
+        budget_metric: str,
+        include_pruned: bool,
+    ) -> None:
+        self._conditions: list[StopCondition] = []
+
+        self._samples_include_pruned = samples_include_pruned
+
+        if max_trials and max_trials > 0:
+            self._conditions.append(MaxTrialsStopCondition(max_trials))
+
+        if max_samples and max_samples > 0:
+            self._conditions.append(
+                MaxSamplesStopCondition(
+                    max_samples=max_samples,
+                    include_pruned=self._samples_include_pruned,
+                )
+            )
+
+        if plateau_window and plateau_window > 0:
+            if objective_schema is None:
+                raise ValueError(
+                    "plateau_window configured but no objective schema available"
+                )
+            epsilon = plateau_epsilon if plateau_epsilon is not None else 1e-6
+            self._conditions.append(
+                PlateauAfterNStopCondition(
+                    window_size=plateau_window,
+                    epsilon=epsilon,
+                    objective_schema=objective_schema,
+                )
+            )
+
+        if budget_limit is not None:
+            self._conditions.append(
+                BudgetStopCondition(
+                    budget=budget_limit,
+                    metric_name=budget_metric,
+                    include_pruned=include_pruned,
+                )
+            )
+
+    @property
+    def conditions(self) -> tuple[StopCondition, ...]:
+        return tuple(self._conditions)
+
+    def reset(self) -> None:
+        for condition in self._conditions:
+            condition.reset()
+
+    def update_max_trials(self, value: int | None) -> None:
+        max_idx = None
+        for idx, condition in enumerate(self._conditions):
+            if isinstance(condition, MaxTrialsStopCondition):
+                max_idx = idx
+                break
+
+        if value and value > 0:
+            if max_idx is not None:
+                self._conditions[max_idx] = MaxTrialsStopCondition(value)
+            else:
+                self._conditions.append(MaxTrialsStopCondition(value))
+        elif max_idx is not None:
+            self._conditions.pop(max_idx)
+
+    def update_max_samples(self, value: int | None) -> None:
+        sample_idx = None
+        for idx, condition in enumerate(self._conditions):
+            if isinstance(condition, MaxSamplesStopCondition):
+                sample_idx = idx
+                break
+
+        if value and value > 0:
+            if sample_idx is not None:
+                existing = self._conditions[sample_idx]
+                if isinstance(existing, MaxSamplesStopCondition):
+                    existing.update_limit(value)
+                else:  # defensive
+                    self._conditions[sample_idx] = MaxSamplesStopCondition(
+                        max_samples=value,
+                        include_pruned=self._samples_include_pruned,
+                    )
+            else:
+                self._conditions.append(
+                    MaxSamplesStopCondition(
+                        max_samples=value,
+                        include_pruned=self._samples_include_pruned,
+                    )
+                )
+        elif sample_idx is not None:
+            self._conditions.pop(sample_idx)
+
+    def update_samples_include_pruned(self, include_pruned: bool) -> None:
+        self._samples_include_pruned = include_pruned
+        for condition in self._conditions:
+            if isinstance(condition, MaxSamplesStopCondition):
+                condition.set_include_pruned(include_pruned)
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> tuple[bool, str | None]:
+        for condition in self._conditions:
+            if condition.should_stop(trials):
+                reason = getattr(condition, "reason", condition.__class__.__name__)
+                return True, reason
+        return False, None

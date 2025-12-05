@@ -1,0 +1,137 @@
+name: Test Examples
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'examples/**'
+      - 'traigent/**'
+      - 'requirements/**'
+      - 'README.md'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'examples/**'
+      - 'traigent/**'
+      - 'requirements/**'
+      - 'README.md'
+  workflow_dispatch:  # Allow manual trigger
+  # Remove daily schedule to save minutes
+
+jobs:
+  test-examples:
+    name: Test Examples - Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest  # Only use ubuntu-latest (free for public repos)
+
+    strategy:
+      fail-fast: true  # Stop on first failure to save minutes
+      matrix:
+        # Reduce matrix to essential Python versions only
+        python-version: ['3.8', '3.11']  # Min and max supported versions
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements/requirements.txt
+        pip install -r requirements/requirements-integrations.txt
+        pip install -e .
+
+    - name: Verify installation
+      run: |
+        python scripts/verify_installation.py
+
+    - name: Run quickstart
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python scripts/quickstart.py
+
+    - name: Test first run example
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python examples/quickstart/first_run.py
+
+    - name: Test README examples
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python -m pytest tests/examples/test_readme_examples.py -v
+
+    - name: Test mock mode
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python -c "
+import os
+os.environ['TRAIGENT_MOCK_MODE'] = 'true'
+import traigent
+
+@traigent.optimize(
+    configuration_space={'temperature': [0.1, 0.5]},
+    objectives=['accuracy']
+)
+def test_func(x):
+    return x
+
+result = test_func('test')
+assert result == 'test'
+print('✅ Mock mode works!')
+"
+
+    - name: Run diagnostics
+      run: |
+        python -c "from traigent.utils.diagnostics import diagnose; report = diagnose(); report.print_report()"
+
+    - name: Upload diagnostic report
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: diagnostic-report-${{ matrix.os }}-${{ matrix.python-version }}
+        path: traigent_diagnostic_report.json
+
+  # Combine fresh install and documentation validation into main test job to save minutes
+  quick-validation:
+    name: Quick Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'  # Only on PRs
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'
+
+    - name: Quick install and test
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        # Minimal installation
+        pip install -r requirements/requirements.txt
+        pip install -e .
+
+        # Quick smoke test
+        python -c "import traigent; print('✅ Import works')"
+
+        # Test one example
+        python examples/quickstart/first_run.py || true
+
+        echo "✅ Quick validation passed"

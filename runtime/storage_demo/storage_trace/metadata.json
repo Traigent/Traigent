@@ -1,0 +1,19 @@
+{
+  "function_identifier": "storage_demo",
+  "function_name": "storage_demo",
+  "algorithm": "dummy",
+  "objectives": [
+    "accuracy"
+  ],
+  "configuration_space": {},
+  "best_score": 1.0,
+  "best_config": {
+    "candidate": 1
+  },
+  "success_rate": 1.0,
+  "duration": 0.1,
+  "convergence_info": {},
+  "created_at": "2025-11-23T09:08:23.660938+00:00",
+  "total_trials": 1,
+  "successful_trials": 1
+}

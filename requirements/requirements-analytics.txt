@@ -1,0 +1,9 @@
+# TraiGent SDK Analytics Dependencies
+# Required for Sprint 8 analytics and intelligence features
+
+-r requirements.txt
+
+# Analytics and intelligence features
+numpy>=1.21.0
+pandas>=1.3.0
+matplotlib>=3.5.0

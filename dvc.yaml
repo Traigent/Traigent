@@ -1,0 +1,58 @@
+stages:
+  prepare_dataset:
+    cmd: python scripts/auto_tune/prepare_dataset.py
+    deps:
+      - scripts/auto_tune/prepare_dataset.py
+      - data/raw
+    params:
+      - prepare.split_ratio
+      - prepare.seed
+    outs:
+      - data/prepared
+
+  optimize:
+    cmd: >-
+      python -m traigent.cli optimize
+      --config configs/auto_tune_config.yaml
+      --output optimization_results/latest.json
+    deps:
+      - traigent/
+      - data/prepared
+      - configs/auto_tune_config.yaml
+    params:
+      - optimize.max_trials
+      - optimize.strategy
+      - optimize.budget
+    outs:
+      - optimization_results/latest.json
+    metrics:
+      - optimization_results/metrics.json:
+          cache: false
+
+  evaluate:
+    cmd: python scripts/auto_tune/evaluate_performance.py
+    deps:
+      - scripts/auto_tune/evaluate_performance.py
+      - optimization_results/latest.json
+    params:
+      - evaluate.baseline_path
+      - evaluate.threshold
+    metrics:
+      - performance_report.json:
+          cache: false
+    plots:
+      - performance_plots:
+          x: trial
+          y: score
+
+  report:
+    cmd: python scripts/auto_tune/generate_report.py
+    deps:
+      - scripts/auto_tune/generate_report.py
+      - performance_report.json
+      - optimization_results/latest.json
+    outs:
+      - reports/performance_report.md:
+          cache: false
+      - reports/performance_report.html:
+          cache: false

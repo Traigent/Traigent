@@ -1,0 +1,28 @@
+#!/bin/bash
+# Git pre-commit hook for TraiGent CI/CD
+# Install: cp examples/ci-cd-integration/hooks/pre-commit .git/hooks/
+
+# Check if we're modifying CI example files
+if git diff --cached --name-only | grep -q "examples/ci-cd-integration/"; then
+    echo "🔍 TraiGent: Validating CI example configuration..."
+
+    cd examples/ci-cd-integration/math-qa || exit 0
+
+    # Quick evaluation in mock mode
+    export TRAIGENT_MOCK_MODE=true
+    export MODE=eval
+
+    # Run evaluation
+    if python run.py > /tmp/traigent-precommit.log 2>&1; then
+        echo "✅ TraiGent: Configuration validation passed"
+
+        # Extract metrics from log
+        grep -E "(Accuracy|Cost|Response time)" /tmp/traigent-precommit.log
+    else
+        echo "❌ TraiGent: Configuration validation failed"
+        cat /tmp/traigent-precommit.log
+        exit 1
+    fi
+fi
+
+exit 0

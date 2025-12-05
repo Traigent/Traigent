@@ -1,0 +1,38 @@
+digraph ComplexityTop20 {
+    rankdir=LR;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=11];
+    label="Top 20 High-Complexity Modules\n(Max Cyclomatic Complexity)";
+    labelloc=t;
+    fontsize=16;
+
+    mod0 [label="evaluators/metrics_tracker\nMax CC: 29\nAvg CC: 5.8" fillcolor="#ffcc80"];
+    mod1 [label="integrations/wandb\nMax CC: 29\nAvg CC: 4.5" fillcolor="#ffcc80"];
+    mod2 [label="optimizers/optuna_utils\nMax CC: 29\nAvg CC: 11.6" fillcolor="#ffcc80"];
+    mod3 [label="cloud/billing\nMax CC: 28\nAvg CC: 3.1" fillcolor="#ffcc80"];
+    mod4 [label="core/optimized_function\nMax CC: 28\nAvg CC: 5.3" fillcolor="#ffcc80"];
+    mod5 [label="evaluators/local\nMax CC: 28\nAvg CC: 7.3" fillcolor="#ffcc80"];
+    mod6 [label="evaluators/metrics\nMax CC: 28\nAvg CC: 8.0" fillcolor="#ffcc80"];
+    mod7 [label="optigen_integration.py/optigen_integration\nMax CC: 27\nAvg CC: 8.1" fillcolor="#ffcc80"];
+    mod8 [label="core/backend_session_manager\nMax CC: 27\nAvg CC: 9.8" fillcolor="#ffcc80"];
+    mod9 [label="utils/optimization_analyzer\nMax CC: 27\nAvg CC: 7.6" fillcolor="#ffcc80"];
+    mod10 [label="api/decorators\nMax CC: 26\nAvg CC: 5.5" fillcolor="#ffcc80"];
+    mod11 [label="integrations/anthropic_plugin\nMax CC: 26\nAvg CC: 5.3" fillcolor="#ffcc80"];
+    mod12 [label="cli/local_commands\nMax CC: 25\nAvg CC: 8.8" fillcolor="#ffcc80"];
+    mod13 [label="cloud/backend_synchronizer\nMax CC: 25\nAvg CC: 5.2" fillcolor="#ffcc80"];
+    mod14 [label="evaluators/base\nMax CC: 25\nAvg CC: 5.8" fillcolor="#ffcc80"];
+    mod15 [label="evaluators/dataset_registry\nMax CC: 25\nAvg CC: 6.0" fillcolor="#ffcc80"];
+    mod16 [label="cli/function_discovery\nMax CC: 24\nAvg CC: 9.4" fillcolor="#ffcc80"];
+    mod17 [label="analytics/scheduling\nMax CC: 23\nAvg CC: 5.8" fillcolor="#ffcc80"];
+    mod18 [label="cloud/validators\nMax CC: 23\nAvg CC: 10.2" fillcolor="#ffcc80"];
+    mod19 [label="core/result_selection\nMax CC: 23\nAvg CC: 8.7" fillcolor="#ffcc80"];
+
+    subgraph cluster_legend {
+        label="Complexity Scale";
+        style=dashed;
+        rankdir=TB;
+        leg1 [label="Critical (50+)" fillcolor="#d32f2f"];
+        leg2 [label="Very High (30-50)" fillcolor="#ef5350"];
+        leg3 [label="High (20-30)" fillcolor="#ffcc80"];
+        leg4 [label="Moderate (15-20)" fillcolor="#fff9c4"];
+    }
+}

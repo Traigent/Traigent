@@ -1,0 +1,69 @@
+id: CONC-Security
+name: Security
+purpose: "Provide credential protection, token validation, rate limiting, and audit/tenant controls for enterprise scenarios."
+state:
+  - name: credential_store
+    type: "SecureCredential | EnhancedCredentialStore | None"
+    description: "Handle encrypted storage and retrieval of API keys and tokens."
+  - name: rate_limiters
+    type: "dict[str, Any]"
+    description: "Configured rate limiters per endpoint or authentication flow."
+  - name: tenant_context
+    type: "dict[str, Any]"
+    description: "Tenant identifiers and quotas for multi-tenant isolation."
+actions:
+  - name: validate_jwt
+    inputs:
+      - name: token
+        type: "str"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: valid
+        fields:
+          - name: claims
+            type: "dict[str, Any]"
+      - case: invalid
+        fields:
+          - name: error
+            type: "JWTValidationError"
+    description: "Validate JWTs (issuer, audience, expiry) using derived JWKS URL and security headers."
+  - name: protect_credentials
+    inputs:
+      - name: credentials
+        type: "dict[str, str]"
+    outputs:
+      - case: stored
+        fields:
+          - name: location
+            type: "str"
+    description: "Encrypt and store credentials in keyring or secure files; mask values in logs."
+  - name: enforce_rate_limit
+    inputs:
+      - name: identity
+        type: "str"
+    outputs:
+      - case: allowed
+        fields:
+          - name: token_bucket
+            type: "SecureTokenBucket | None"
+      - case: throttled
+        fields:
+          - name: retry_after_seconds
+            type: "float"
+    description: "Apply rate limiting strategies for authentication and API usage."
+  - name: audit_event
+    inputs:
+      - name: event
+        type: "dict[str, Any]"
+    outputs:
+      - case: logged
+        fields:
+          - name: audit_record_id
+            type: "str"
+    description: "Emit audit/compliance logs and optionally report to external systems."
+operational_principle:
+  - "Security-sensitive data is masked in all logs and string representations."
+  - "Tenant/role context must propagate to rate limiting and audit decisions."
+version: 1
+status: active

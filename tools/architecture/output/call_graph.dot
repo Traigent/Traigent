@@ -1,0 +1,454 @@
+digraph CallGraph {
+    rankdir=LR;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=9];
+    edge [fontsize=8];
+
+    // Color scheme:
+    // Blue: Entry points (not called by others)
+    // Green: Regular functions
+    // Orange: Hot functions (called frequently)
+    // Red: Very hot functions (>10 calls)
+    // Gray: External/stdlib functions
+
+    subgraph cluster_click_echo {
+        label="click.echo";
+        style=rounded;
+        color=gray;
+        click_echo [label="echo" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_click_option {
+        label="click.option";
+        style=rounded;
+        color=gray;
+        click_option [label="option\n(10 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_config_get {
+        label="config.get";
+        style=rounded;
+        color=gray;
+        config_get [label="get\n(3 calls)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_console_print {
+        label="console.print";
+        style=rounded;
+        color=gray;
+        console_print [label="print\n(18 calls)" fillcolor="#ef9a9a"];
+    }
+
+    subgraph cluster_data_get {
+        label="data.get";
+        style=rounded;
+        color=gray;
+        data_get [label="get\n(6 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_errors_append {
+        label="errors.append";
+        style=rounded;
+        color=gray;
+        errors_append [label="append\n(4 calls)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_item_get {
+        label="item.get";
+        style=rounded;
+        color=gray;
+        item_get [label="get\n(6 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_lines_append {
+        label="lines.append";
+        style=rounded;
+        color=gray;
+        lines_append [label="append\n(9 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_logger_debug {
+        label="logger.debug";
+        style=rounded;
+        color=gray;
+        logger_debug [label="debug\n(21 calls)" fillcolor="#ef9a9a"];
+    }
+
+    subgraph cluster_logger_error {
+        label="logger.error";
+        style=rounded;
+        color=gray;
+        logger_error [label="error\n(6 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_logger_info {
+        label="logger.info";
+        style=rounded;
+        color=gray;
+        logger_info [label="info\n(32 calls)" fillcolor="#ef9a9a"];
+    }
+
+    subgraph cluster_logger_warning {
+        label="logger.warning";
+        style=rounded;
+        color=gray;
+        logger_warning [label="warning\n(37 calls)" fillcolor="#ef9a9a"];
+    }
+
+    subgraph cluster_metadata_get {
+        label="metadata.get";
+        style=rounded;
+        color=gray;
+        metadata_get [label="get\n(2 calls)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_recommendations_append {
+        label="recommendations.append";
+        style=rounded;
+        color=gray;
+        recommendations_append [label="append" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_response_text {
+        label="response.text";
+        style=rounded;
+        color=gray;
+        response_text [label="text" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_result_add_error {
+        label="result.add_error";
+        style=rounded;
+        color=gray;
+        result_add_error [label="add_error" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_self__update_metrics {
+        label="self._update_metrics";
+        style=rounded;
+        color=gray;
+        self__update_metrics [label="_update_metrics" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_statistics_mean {
+        label="statistics.mean";
+        style=rounded;
+        color=gray;
+        statistics_mean [label="mean\n(6 calls)" fillcolor="#ffcc80"];
+    }
+
+    subgraph cluster_traigent_agents {
+        label="traigent.agents";
+        style=rounded;
+        color=gray;
+        traigent_agents_platforms_OpenAIAgentExecutor__execute_agent [label="async OpenAIAgentExecutor._execute_agent" fillcolor="#c8e6c9"];
+        traigent_agents_platforms_OpenAIAgentExecutor__get_platform_api_key [label="async OpenAIAgentExecutor._get_platform_api_key" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_analytics {
+        label="traigent.analytics";
+        style=rounded;
+        color=gray;
+        traigent_analytics_scheduling_SmartScheduler_schedule_optimization [label="SmartScheduler.schedule_optimization" fillcolor="#bbdefb"];
+        traigent_analytics_anomaly_StatisticalDetector_detect_anomalies [label="StatisticalDetector.detect_anomalies" fillcolor="#bbdefb"];
+        traigent_analytics_anomaly_ThresholdDetector_detect_anomalies [label="ThresholdDetector.detect_anomalies" fillcolor="#bbdefb"];
+        traigent_analytics_predictive_CostForecaster__forecast_metric [label="CostForecaster._forecast_metric" fillcolor="#c8e6c9"];
+        traigent_analytics_anomaly_RegressionDetector__analyze_metric_regression [label="RegressionDetector._analyze_metric_regression" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_api {
+        label="traigent.api";
+        style=rounded;
+        color=gray;
+        traigent_api_decorators_optimize [label="optimize" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_cli {
+        label="traigent.cli";
+        style=rounded;
+        color=gray;
+        traigent_cli_main_optimize [label="optimize" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_cloud {
+        label="traigent.cloud";
+        style=rounded;
+        color=gray;
+        traigent_cloud_session_operations_SessionOperations__create_session_async [label="async SessionOperations._create_session_async" fillcolor="#c8e6c9"];
+        traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue [label="async BackendSynchronizer._process_sync_queue" fillcolor="#c8e6c9"];
+        traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata [label="DatasetConverter.create_privacy_metadata" fillcolor="#bbdefb"];
+        traigent_cloud_subset_selection_DiverseSampling__cluster_based_selection [label="async DiverseSampling._cluster_based_selection" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_config {
+        label="traigent.config";
+        style=rounded;
+        color=gray;
+        traigent_config_providers_SeamlessParameterProvider_seamless_wrapper [label="SeamlessParameterProvider.seamless_wrapper" fillcolor="#c8e6c9"];
+        traigent_config_ast_transformer_ConfigTransformer__create_value_node [label="ConfigTransformer._create_value_node" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_core {
+        label="traigent.core";
+        style=rounded;
+        color=gray;
+        traigent_core_evaluator_wrapper_CustomEvaluatorWrapper_evaluate [label="async CustomEvaluatorWrapper.evaluate" fillcolor="#bbdefb"];
+        traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores [label="async BackendSessionManager.update_weighted_scores" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_evaluators {
+        label="traigent.evaluators";
+        style=rounded;
+        color=gray;
+        traigent_evaluators_base_SimpleScoringEvaluator_evaluate [label="async SimpleScoringEvaluator.evaluate" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_integrations {
+        label="traigent.integrations";
+        style=rounded;
+        color=gray;
+        traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 [label="BedrockChatClient._invoke_ai21" fillcolor="#c8e6c9"];
+        traigent_integrations_plugin_registry_PluginRegistry__validate_plugin_metadata [label="PluginRegistry._validate_plugin_metadata" fillcolor="#c8e6c9"];
+        traigent_integrations_framework_override__BaseOverrideManagerFallback_wrapper [label="_BaseOverrideManagerFallback.wrapper" fillcolor="#bbdefb"];
+        traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial [label="TraigentWandBTracker.log_trial" fillcolor="#bbdefb"];
+        traigent_integrations_llms_anthropic_plugin_AnthropicPlugin_apply_overrides [label="AnthropicPlugin.apply_overrides" fillcolor="#c8e6c9"];
+        traigent_integrations_base_BaseOverrideManager_wrapper [label="BaseOverrideManager.wrapper" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_invokers {
+        label="traigent.invokers";
+        style=rounded;
+        color=gray;
+        traigent_invokers_batch_BatchInvoker_invoke_batch [label="async BatchInvoker.invoke_batch" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_metrics {
+        label="traigent.metrics";
+        style=rounded;
+        color=gray;
+        traigent_metrics_ragas_metrics__prepare_samples [label="_prepare_samples" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optigen_integration {
+        label="traigent.optigen_integration";
+        style=rounded;
+        color=gray;
+        traigent_optigen_integration_OptiGenClient__optimize_local [label="async OptiGenClient._optimize_local" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers {
+        label="traigent.optimizers";
+        style=rounded;
+        color=gray;
+        traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer_report_trial_result [label="OptunaBaseOptimizer.report_trial_result" fillcolor="#bbdefb"];
+        traigent_optimizers_optuna_utils_suggest_from_definition [label="suggest_from_definition" fillcolor="#c8e6c9"];
+        traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial [label="BayesianOptimizer.suggest_next_trial" fillcolor="#bbdefb"];
+        traigent_optimizers_optuna_utils_config_space_to_distributions [label="config_space_to_distributions" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_security {
+        label="traigent.security";
+        style=rounded;
+        color=gray;
+        traigent_security_credentials_EnhancedCredentialStore_set [label="EnhancedCredentialStore.set" fillcolor="#c8e6c9"];
+        traigent_security_encryption_PIIDetector_detect_pii [label="PIIDetector.detect_pii" fillcolor="#bbdefb"];
+        traigent_security_auth_sms_SMSAuthProvider_send_verification_code [label="SMSAuthProvider.send_verification_code" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_utils {
+        label="traigent.utils";
+        style=rounded;
+        color=gray;
+        traigent_utils_file_versioning_migrate_legacy_files [label="migrate_legacy_files" fillcolor="#bbdefb"];
+        traigent_utils_reproducibility_ReproducibilityMetadata_validate_environment [label="ReproducibilityMetadata.validate_environment" fillcolor="#bbdefb"];
+        traigent_utils_optimization_analyzer_OptimizationAnalyzer_plot_pareto_front [label="OptimizationAnalyzer.plot_pareto_front" fillcolor="#bbdefb"];
+        traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture [label="patch_langchain_for_metadata_capture" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_visualization {
+        label="traigent.visualization";
+        style=rounded;
+        color=gray;
+        traigent_visualization_plots_PlotGenerator__plot_pareto_ascii [label="PlotGenerator._plot_pareto_ascii" fillcolor="#c8e6c9"];
+    }
+
+    // External functions
+    get [label="get" fillcolor="#e0e0e0" style="filled,dashed"];
+    int [label="int" fillcolor="#e0e0e0" style="filled,dashed"];
+    setattr [label="setattr" fillcolor="#e0e0e0" style="filled,dashed"];
+    isinstance [label="isinstance" fillcolor="#e0e0e0" style="filled,dashed"];
+    range [label="range" fillcolor="#e0e0e0" style="filled,dashed"];
+    logger_debug [label="debug" fillcolor="#e0e0e0" style="filled,dashed"];
+    set [label="set" fillcolor="#e0e0e0" style="filled,dashed"];
+    lines_append [label="append" fillcolor="#e0e0e0" style="filled,dashed"];
+    OptimizationError [label="OptimizationError" fillcolor="#e0e0e0" style="filled,dashed"];
+    data_get [label="get" fillcolor="#e0e0e0" style="filled,dashed"];
+    dict [label="dict" fillcolor="#e0e0e0" style="filled,dashed"];
+    getattr [label="getattr" fillcolor="#e0e0e0" style="filled,dashed"];
+    items [label="items" fillcolor="#e0e0e0" style="filled,dashed"];
+    TypeError [label="TypeError" fillcolor="#e0e0e0" style="filled,dashed"];
+    click_option [label="option" fillcolor="#e0e0e0" style="filled,dashed"];
+    append [label="append" fillcolor="#e0e0e0" style="filled,dashed"];
+    type [label="type" fillcolor="#e0e0e0" style="filled,dashed"];
+    min [label="min" fillcolor="#e0e0e0" style="filled,dashed"];
+    len [label="len" fillcolor="#e0e0e0" style="filled,dashed"];
+    CloudServiceError [label="CloudServiceError" fillcolor="#e0e0e0" style="filled,dashed"];
+
+    // Call edges
+    traigent_agents_platforms_OpenAIAgentExecutor__get_platform_api_key -> validate_or_raise [label="2"];
+    traigent_agents_platforms_OpenAIAgentExecutor__get_platform_api_key -> cast [label="2"];
+    traigent_agents_platforms_OpenAIAgentExecutor__get_platform_api_key -> logger_warning [label="2"];
+    traigent_agents_platforms_OpenAIAgentExecutor__execute_agent -> str [label="3"];
+    traigent_agents_platforms_OpenAIAgentExecutor__execute_agent -> config_get [label="3"];
+    traigent_agents_platforms_OpenAIAgentExecutor__execute_agent -> getattr [label="3"];
+    traigent_agents_platforms_OpenAIAgentExecutor__execute_agent -> cast [label="4"];
+    traigent_agents_platforms_OpenAIAgentExecutor__execute_agent -> lower [label="2"];
+    traigent_analytics_anomaly_StatisticalDetector_detect_anomalies -> int [label="3"];
+    traigent_analytics_anomaly_StatisticalDetector_detect_anomalies -> float [label="2"];
+    traigent_analytics_anomaly_StatisticalDetector_detect_anomalies -> max [label="2"];
+    traigent_analytics_anomaly_ThresholdDetector_detect_anomalies -> int [label="2"];
+    traigent_analytics_anomaly_RegressionDetector__analyze_metric_regression -> float [label="2"];
+    traigent_analytics_anomaly_RegressionDetector__analyze_metric_regression -> isinstance [label="2"];
+    traigent_analytics_anomaly_RegressionDetector__analyze_metric_regression -> len [label="6"];
+    traigent_analytics_anomaly_RegressionDetector__analyze_metric_regression -> statistics_mean [label="2"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> len [label="2"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> statistics_mean [label="4"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> range [label="6"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> sum [label="4"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> max [label="4"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> abs [label="5"];
+    traigent_analytics_predictive_CostForecaster__forecast_metric -> min [label="2"];
+    traigent_analytics_scheduling_SmartScheduler_schedule_optimization -> get [label="2"];
+    traigent_analytics_scheduling_SmartScheduler_schedule_optimization -> len [label="6"];
+    traigent_analytics_scheduling_SmartScheduler_schedule_optimization -> max [label="2"];
+    traigent_api_decorators_optimize -> isinstance [label="5"];
+    traigent_api_decorators_optimize -> TypeError [label="3"];
+    traigent_api_decorators_optimize -> dict [label="2"];
+    traigent_api_decorators_optimize -> ValidationError [label="4"];
+    traigent_cli_main_optimize -> console_print [label="18"];
+    traigent_cli_main_optimize -> Path [label="2"];
+    traigent_cli_main_optimize -> str [label="6"];
+    traigent_cli_main_optimize -> len [label="4"];
+    traigent_cli_main_optimize -> click_option [label="10"];
+    traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue -> item_get [label="4"];
+    traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue -> logger_warning [label="3"];
+    traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue -> logger_debug [label="2"];
+    traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue -> data_get [label="2"];
+    traigent_cloud_backend_synchronizer_BackendSynchronizer__process_sync_queue -> isinstance [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> len [label="5"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> hasattr [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> type [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> str [label="4"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> sum [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> min [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> max [label="2"];
+    traigent_cloud_dataset_converter_DatasetConverter_create_privacy_metadata -> getattr [label="2"];
+    traigent_cloud_session_operations_SessionOperations__create_session_async -> metadata_get [label="2"];
+    traigent_cloud_session_operations_SessionOperations__create_session_async -> logger_warning [label="3"];
+    traigent_cloud_session_operations_SessionOperations__create_session_async -> int [label="2"];
+    traigent_cloud_session_operations_SessionOperations__create_session_async -> logger_info [label="4"];
+    traigent_cloud_session_operations_SessionOperations__create_session_async -> get [label="2"];
+    traigent_cloud_subset_selection_DiverseSampling__cluster_based_selection -> logger_warning [label="2"];
+    traigent_cloud_subset_selection_DiverseSampling__cluster_based_selection -> range [label="4"];
+    traigent_cloud_subset_selection_DiverseSampling__cluster_based_selection -> len [label="6"];
+    traigent_cloud_subset_selection_DiverseSampling__cluster_based_selection -> set [label="2"];
+    traigent_config_ast_transformer_ConfigTransformer__create_value_node -> logger_warning [label="5"];
+    traigent_config_ast_transformer_ConfigTransformer__create_value_node -> isinstance [label="7"];
+    traigent_config_ast_transformer_ConfigTransformer__create_value_node -> len [label="6"];
+    traigent_config_providers_SeamlessParameterProvider_seamless_wrapper -> isinstance [label="2"];
+    traigent_config_providers_SeamlessParameterProvider_seamless_wrapper -> logger_debug [label="8"];
+    traigent_config_providers_SeamlessParameterProvider_seamless_wrapper -> func [label="2"];
+    traigent_config_providers_SeamlessParameterProvider_seamless_wrapper -> ConfigurationError [label="2"];
+    traigent_config_providers_SeamlessParameterProvider_seamless_wrapper -> append [label="2"];
+    traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores -> len [label="5"];
+    traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores -> logger_info [label="3"];
+    traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores -> getattr [label="3"];
+    traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores -> hasattr [label="3"];
+    traigent_core_backend_session_manager_BackendSessionManager_update_weighted_scores -> logger_warning [label="2"];
+    traigent_core_evaluator_wrapper_CustomEvaluatorWrapper_evaluate -> logger_info [label="2"];
+    traigent_core_evaluator_wrapper_CustomEvaluatorWrapper_evaluate -> len [label="3"];
+    traigent_core_evaluator_wrapper_CustomEvaluatorWrapper_evaluate -> errors_append [label="2"];
+    traigent_core_evaluator_wrapper_CustomEvaluatorWrapper_evaluate -> str [label="2"];
+    traigent_evaluators_base_SimpleScoringEvaluator_evaluate -> logger_info [label="4"];
+    traigent_evaluators_base_SimpleScoringEvaluator_evaluate -> len [label="8"];
+    traigent_evaluators_base_SimpleScoringEvaluator_evaluate -> func [label="2"];
+    traigent_evaluators_base_SimpleScoringEvaluator_evaluate -> errors_append [label="2"];
+    traigent_evaluators_base_SimpleScoringEvaluator_evaluate -> str [label="2"];
+    traigent_integrations_base_BaseOverrideManager_wrapper -> original_method [label="3"];
+    traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 -> isinstance [label="6"];
+    traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 -> str [label="6"];
+    traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 -> item_get [label="2"];
+    traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 -> join [label="2"];
+    traigent_integrations_bedrock_client_BedrockChatClient__invoke_ai21 -> data_get [label="4"];
+    traigent_integrations_framework_override__BaseOverrideManagerFallback_wrapper -> original_method [label="3"];
+    traigent_integrations_llms_anthropic_plugin_AnthropicPlugin_apply_overrides -> isinstance [label="8"];
+    traigent_integrations_llms_anthropic_plugin_AnthropicPlugin_apply_overrides -> dict [label="3"];
+    traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial -> logger_warning [label="10"];
+    traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial -> getattr [label="7"];
+    traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial -> isinstance [label="8"];
+    traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial -> str [label="4"];
+    traigent_integrations_observability_wandb_TraigentWandBTracker_log_trial -> dict [label="2"];
+    traigent_integrations_plugin_registry_PluginRegistry__validate_plugin_metadata -> getattr [label="4"];
+    traigent_integrations_plugin_registry_PluginRegistry__validate_plugin_metadata -> isinstance [label="5"];
+    traigent_invokers_batch_BatchInvoker_invoke_batch -> len [label="4"];
+    traigent_invokers_batch_BatchInvoker_invoke_batch -> logger_info [label="2"];
+    traigent_invokers_batch_BatchInvoker_invoke_batch -> sum [label="2"];
+    traigent_invokers_batch_BatchInvoker_invoke_batch -> logger_error [label="2"];
+    traigent_invokers_batch_BatchInvoker_invoke_batch -> range [label="2"];
+    traigent_metrics_ragas_metrics__prepare_samples -> len [label="3"];
+    traigent_metrics_ragas_metrics__prepare_samples -> getattr [label="2"];
+    traigent_metrics_ragas_metrics__prepare_samples -> isinstance [label="2"];
+    traigent_metrics_ragas_metrics__prepare_samples -> str [label="4"];
+    traigent_optigen_integration_OptiGenClient__optimize_local -> logger_info [label="4"];
+    traigent_optigen_integration_OptiGenClient__optimize_local -> ValueError [label="2"];
+    traigent_optigen_integration_OptiGenClient__optimize_local -> isinstance [label="2"];
+    traigent_optigen_integration_OptiGenClient__optimize_local -> len [label="4"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> len [label="10"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> logger_debug [label="9"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> logger_info [label="7"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> logger_warning [label="5"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> float [label="4"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> dict [label="2"];
+    traigent_optimizers_bayesian_BayesianOptimizer_suggest_next_trial -> max [label="2"];
+    traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer_report_trial_result -> OptimizationError [label="2"];
+    traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer_report_trial_result -> str [label="4"];
+    traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer_report_trial_result -> isinstance [label="3"];
+    traigent_optimizers_optuna_utils_config_space_to_distributions -> isinstance [label="6"];
+    traigent_optimizers_optuna_utils_config_space_to_distributions -> OptimizationError [label="3"];
+    traigent_optimizers_optuna_utils_config_space_to_distributions -> bool [label="2"];
+    traigent_optimizers_optuna_utils_config_space_to_distributions -> int [label="5"];
+    traigent_optimizers_optuna_utils_config_space_to_distributions -> float [label="7"];
+    traigent_optimizers_optuna_utils_suggest_from_definition -> isinstance [label="6"];
+    traigent_optimizers_optuna_utils_suggest_from_definition -> OptimizationError [label="5"];
+    traigent_optimizers_optuna_utils_suggest_from_definition -> bool [label="2"];
+    traigent_optimizers_optuna_utils_suggest_from_definition -> int [label="5"];
+    traigent_optimizers_optuna_utils_suggest_from_definition -> float [label="7"];
+    traigent_security_auth_sms_SMSAuthProvider_send_verification_code -> ValueError [label="2"];
+    traigent_security_auth_sms_SMSAuthProvider_send_verification_code -> len [label="2"];
+    traigent_security_auth_sms_SMSAuthProvider_send_verification_code -> logger_warning [label="2"];
+    traigent_security_auth_sms_SMSAuthProvider_send_verification_code -> str [label="2"];
+    traigent_security_credentials_EnhancedCredentialStore_set -> ValueError [label="3"];
+    traigent_security_credentials_EnhancedCredentialStore_set -> len [label="4"];
+    traigent_security_encryption_PIIDetector_detect_pii -> max [label="2"];
+    traigent_utils_file_versioning_migrate_legacy_files -> str [label="6"];
+    traigent_utils_file_versioning_migrate_legacy_files -> append [label="6"];
+    traigent_utils_file_versioning_migrate_legacy_files -> logger_info [label="2"];
+    traigent_utils_file_versioning_migrate_legacy_files -> logger_error [label="2"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> getattr [label="6"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> logger_info [label="4"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> hasattr [label="2"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> setattr [label="6"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> logger_debug [label="2"];
+    traigent_utils_langchain_interceptor_patch_langchain_for_metadata_capture -> logger_error [label="2"];
+    traigent_utils_optimization_analyzer_OptimizationAnalyzer_plot_pareto_front -> logger_warning [label="3"];
+    traigent_utils_optimization_analyzer_OptimizationAnalyzer_plot_pareto_front -> len [label="3"];
+    traigent_utils_optimization_analyzer_OptimizationAnalyzer_plot_pareto_front -> isinstance [label="4"];
+    traigent_utils_optimization_analyzer_OptimizationAnalyzer_plot_pareto_front -> enumerate [label="2"];
+    traigent_utils_reproducibility_ReproducibilityMetadata_validate_environment -> append [label="5"];
+    traigent_utils_reproducibility_ReproducibilityMetadata_validate_environment -> len [label="2"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> min [label="2"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> max [label="2"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> lines_append [label="9"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> range [label="3"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> int [label="4"];
+    traigent_visualization_plots_PlotGenerator__plot_pareto_ascii -> join [label="3"];
+}

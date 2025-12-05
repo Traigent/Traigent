@@ -1,0 +1,18 @@
+# Requirements for TraiGent Playground Streamlit App
+# Install with: pip install -r playground/requirements_streamlit.txt
+
+# Core Streamlit and visualization
+streamlit>=1.28.0
+plotly>=5.17.0
+pandas>=1.5.0
+
+# Existing TraiGent requirements
+langchain>=0.1.0
+langchain-openai>=0.0.5
+openai>=1.0.0
+python-dotenv>=1.0.0
+tokencost>=0.1.0
+
+# Additional utilities
+aiofiles>=23.0.0
+asyncio>=3.4.3

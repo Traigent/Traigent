@@ -1,0 +1,26 @@
+{
+  "module": "path/to/module.py",
+  "category": "code_quality",
+  "summary": "Short bullets of key findings and actions",
+  "classes": ["ClassA", "ClassB"],
+  "functions": [
+    { "name": "foo", "status": "ok", "notes": "docstring + type hints present" },
+    { "name": "ClassA.method", "status": "issue", "notes": "missing return type" }
+  ],
+  "checks": [
+    { "name": "docstrings_present", "result": "pass", "evidence": "All public functions have docstrings" },
+    { "name": "type_hints_coverage", "result": "fail", "evidence": "2/10 functions missing return types" },
+    { "name": "line_length_compliance", "result": "pass", "evidence": "< 120 everywhere" },
+    { "name": "complexity_hotspots", "result": "pass", "evidence": "no function exceeds threshold" },
+    { "name": "naming_conventions", "result": "pass", "evidence": "identifiers PEP8-compliant" },
+    { "name": "imports_hygiene", "result": "pass", "evidence": "no unused imports detected" },
+    { "name": "logging_practices", "result": "pass", "evidence": "informative, no secrets" },
+    { "name": "dead_code_smells", "result": "pass", "evidence": "none detected" }
+  ],
+  "issues": [
+    { "id": "CQ-1", "title": "Add return types", "severity": "medium", "scope": ["ClassA.method"] }
+  ],
+  "recommendations": [
+    "Enable pre-commit hooks to enforce format and import hygiene"
+  ]
+}

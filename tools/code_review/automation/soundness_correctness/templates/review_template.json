@@ -1,0 +1,19 @@
+{
+  "module": "path/to/module.py",
+  "category": "soundness_correctness",
+  "summary": "Key risks, invariants, and testability recommendations",
+  "classes": [],
+  "functions": [
+    { "name": "foo", "status": "ok", "notes": "validates inputs, clear exceptions" }
+  ],
+  "checks": [
+    { "name": "input_validation_coverage", "result": "pass", "evidence": "type checks present" },
+    { "name": "error_handling_paths", "result": "pass", "evidence": "try/except around I/O" },
+    { "name": "invariants_contracts", "result": "fail", "evidence": "missing postconditions" },
+    { "name": "edge_cases_listed", "result": "pass", "evidence": "empty configs, None, wrong types" },
+    { "name": "state_mutation_safety", "result": "pass", "evidence": "no shared mutable state" },
+    { "name": "testability_plan", "result": "pass", "evidence": "unit tests enumerated" }
+  ],
+  "issues": [],
+  "recommendations": []
+}

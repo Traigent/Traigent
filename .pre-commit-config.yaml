@@ -1,0 +1,64 @@
+# Pre-commit hooks for TraiGent SDK
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # Python code formatting
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        language_version: python3.12
+        files: ^traigent/
+
+  # Python linting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.2.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^traigent/
+
+  # Secret detection
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: .*\.lock$|package-lock\.json$|.*\.example$
+
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        args: ["-ll", "-r", "traigent/"]
+        pass_filenames: false
+        exclude: ^tests/
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        args:
+          - --ignore-missing-imports
+          - traigent/
+        pass_filenames: false
+
+# Configuration for detect-secrets
+# Run: detect-secrets scan > .secrets.baseline
+# to create initial baseline

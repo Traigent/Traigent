@@ -1,0 +1,23 @@
+{
+  "module": "traigent/optimizers/interactive_optimizer.py",
+  "top_level": [],
+  "class_methods": [
+    "InteractiveOptimizer.__init__",
+    "InteractiveOptimizer._is_better_result",
+    "InteractiveOptimizer.finalize_optimization",
+    "InteractiveOptimizer.get_next_suggestion",
+    "InteractiveOptimizer.get_optimization_status",
+    "InteractiveOptimizer.initialize_session",
+    "InteractiveOptimizer.report_results",
+    "InteractiveOptimizer.should_stop",
+    "InteractiveOptimizer.suggest_next_trial",
+    "RemoteGuidanceService.create_session",
+    "RemoteGuidanceService.finalize_session",
+    "RemoteGuidanceService.get_next_trial",
+    "RemoteGuidanceService.submit_result"
+  ],
+  "classes": [
+    "InteractiveOptimizer",
+    "RemoteGuidanceService"
+  ]
+}

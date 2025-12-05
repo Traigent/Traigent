@@ -1,0 +1,67 @@
+id: CONC-Orchestration
+name: Optimization Orchestration
+purpose: "Coordinate trial lifecycle, constraints, budgets, and callbacks across optimizers and evaluators."
+state:
+  - name: session_state
+    type: "dict[str, Any]"
+    description: "Current session metadata, stop reasons, and trial counters."
+  - name: constraints
+    type: "list[Callable]"
+    description: "Pre/post evaluation constraints applied to candidate configs and metrics."
+  - name: stop_conditions
+    type: "list[Any]"
+    description: "Stop condition objects enforcing budgets, max trials, plateau detection."
+actions:
+  - name: initialize_session
+    inputs:
+      - name: optimizer
+        type: "BaseOptimizer"
+      - name: evaluator
+        type: "BaseEvaluator"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: ready
+        fields:
+          - name: session_id
+            type: "str"
+    description: "Validate components and prepare session context, callbacks, and metrics registries."
+  - name: run_trial
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: dataset
+        type: "Dataset"
+      - name: trial_index
+        type: "int"
+    outputs:
+      - case: completed
+        fields:
+          - name: trial_result
+            type: "TrialResult"
+      - case: pruned
+        fields:
+          - name: reason
+            type: "str"
+      - case: failed
+        fields:
+          - name: error
+            type: "Exception"
+    description: "Request suggestion from optimizer, enforce constraints, invoke evaluator, and capture result."
+  - name: select_best
+    inputs:
+      - name: trials
+        type: "list[TrialResult]"
+      - name: objectives
+        type: "ObjectiveSchema"
+    outputs:
+      - case: best
+        fields:
+          - name: selection
+            type: "SelectionResult"
+    description: "Aggregate metrics and choose the best configuration per objectives and constraints."
+operational_principle:
+  - "Constraints are evaluated before and after evaluation depending on metric dependency."
+  - "Stop conditions and budgets must short-circuit safely without corrupting state."
+version: 1
+status: active

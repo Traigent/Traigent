@@ -1,0 +1,4 @@
+{"input": {"text": "Not bad at all."}, "output": "positive"}
+{"input": {"text": "Could be better."}, "output": "neutral"}
+{"input": {"text": "Absolutely loved it!"}, "output": "positive"}
+{"input": {"text": "This is the worst."}, "output": "negative"}

@@ -1,0 +1,70 @@
+{
+  "categories": [
+    "course_content",
+    "assessment",
+    "student_support",
+    "curriculum_design",
+    "learning_outcome",
+    "feedback"
+  ],
+  "input_patterns": {
+    "content": "Educational content or material",
+    "student_level": "Academic level of students",
+    "subject": "Subject or topic area"
+  },
+  "output_patterns": {
+    "learning_objective": "Educational learning objectives",
+    "assessment_method": "Recommended assessment approach",
+    "difficulty_level": "Content difficulty rating"
+  },
+  "complexity_indicators": {
+    "easy": [
+      "basic concepts",
+      "introductory level",
+      "clear objectives"
+    ],
+    "medium": [
+      "intermediate concepts",
+      "some prerequisites",
+      "moderate depth"
+    ],
+    "hard": [
+      "advanced concepts",
+      "complex relationships",
+      "synthesis required"
+    ],
+    "very_hard": [
+      "expert level",
+      "research-based",
+      "critical analysis"
+    ],
+    "expert": [
+      "cutting-edge research",
+      "theoretical complexity",
+      "novel approaches"
+    ]
+  },
+  "common_terms": [
+    "learning",
+    "student",
+    "curriculum",
+    "assessment",
+    "objective",
+    "course",
+    "lesson",
+    "assignment",
+    "feedback",
+    "evaluation"
+  ],
+  "subject_areas": [
+    "mathematics",
+    "science",
+    "literature",
+    "history",
+    "language",
+    "arts",
+    "technology",
+    "social_studies",
+    "philosophy"
+  ]
+}

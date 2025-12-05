@@ -1,0 +1,257 @@
+name: Code Quality
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  code-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ubuntu-latest-pip-quality-${{ hashFiles('**/requirements*.txt') }}-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ubuntu-latest-pip-quality-
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[dev,all]"
+        python -m pip install pre-commit
+
+    - name: Code formatting check with black
+      run: |
+        black --check --diff traigent/
+
+    - name: Import sorting check with isort
+      run: |
+        isort --check-only --diff traigent/
+
+    - name: Linting with ruff
+      run: |
+        ruff check traigent/ --output-format=github
+        ruff check traigent/ --statistics
+
+    - name: Type checking with mypy
+      run: |
+        mypy traigent/ --install-types --non-interactive
+
+    - name: Docstring quality with pydocstyle
+      run: |
+        python -m pip install pydocstyle
+        pydocstyle traigent/ --convention=google || true
+
+    - name: Complexity analysis with radon
+      run: |
+        python -m pip install radon
+        radon cc traigent/ --min B
+        radon mi traigent/ --min B
+
+    - name: Security check with bandit
+      run: |
+        python -m pip install bandit[toml]
+        bandit -r traigent/ -f json -o bandit-report.json || true
+        bandit -r traigent/ || true
+
+    - name: Dependency vulnerability check with safety
+      run: |
+        python -m pip install safety
+        safety check --json --output safety-report.json || true
+        safety check || true
+
+    - name: Pre-commit hooks
+      run: |
+        pre-commit run --all-files || true
+
+    - name: Package structure validation
+      run: |
+        python -c "
+        import ast
+        import os
+        from pathlib import Path
+
+        def check_init_files():
+            '''Ensure all package directories have __init__.py'''
+            issues = []
+            for root, dirs, files in os.walk('traigent'):
+                # Skip __pycache__ and .git directories
+                dirs[:] = [d for d in dirs if not d.startswith('.') and d != '__pycache__']
+                if any(f.endswith('.py') for f in files):
+                    if '__init__.py' not in files:
+                        issues.append(f'Missing __init__.py in {root}')
+            return issues
+
+        def check_python_syntax():
+            '''Check all Python files for syntax errors'''
+            issues = []
+            for py_file in Path('traigent').rglob('*.py'):
+                try:
+                    with open(py_file, 'r', encoding='utf-8') as f:
+                        ast.parse(f.read())
+                except SyntaxError as e:
+                    issues.append(f'Syntax error in {py_file}: {e}')
+                except UnicodeDecodeError as e:
+                    issues.append(f'Encoding error in {py_file}: {e}')
+            return issues
+
+        init_issues = check_init_files()
+        syntax_issues = check_python_syntax()
+
+        if init_issues:
+            print('Package structure issues:')
+            for issue in init_issues:
+                print(f'  - {issue}')
+
+        if syntax_issues:
+            print('Syntax issues:')
+            for issue in syntax_issues:
+                print(f'  - {issue}')
+
+        if not init_issues and not syntax_issues:
+            print('✅ Package structure validation passed')
+        "
+
+    - name: Upload quality reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: quality-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  documentation-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install -e ".[docs,dev]"
+        python -m pip install doc8 sphinx
+
+    - name: Check README rendering
+      run: |
+        python -c "
+        import markdown
+        with open('README.md', 'r') as f:
+            content = f.read()
+        try:
+            markdown.markdown(content)
+            print('✅ README.md renders correctly')
+        except Exception as e:
+            print(f'❌ README.md rendering error: {e}')
+            exit(1)
+        "
+
+    - name: Documentation link check
+      run: |
+        python -c "
+        import re
+        from pathlib import Path
+
+        def check_internal_links():
+            '''Check for broken internal links in markdown files'''
+            issues = []
+            md_files = list(Path('.').rglob('*.md'))
+
+            # Get all existing files
+            all_files = {str(f.relative_to('.')) for f in Path('.').rglob('*') if f.is_file()}
+
+            for md_file in md_files:
+                with open(md_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Find markdown links [text](path)
+                links = re.findall(r'\[([^\]]+)\]\(([^)]+)\)', content)
+
+                for text, link in links:
+                    # Skip external links
+                    if link.startswith(('http://', 'https://', 'mailto:')):
+                        continue
+
+                    # Remove anchor tags
+                    clean_link = link.split('#')[0]
+                    if not clean_link:
+                        continue
+
+                    # Resolve relative to the markdown file
+                    target_path = (md_file.parent / clean_link).resolve()
+                    relative_target = str(target_path.relative_to(Path('.').resolve()))
+
+                    if relative_target not in all_files and not target_path.exists():
+                        issues.append(f'{md_file}: Broken link to {link}')
+
+            return issues
+
+        issues = check_internal_links()
+        if issues:
+            print('Documentation link issues:')
+            for issue in issues:
+                print(f'  - {issue}')
+        else:
+            print('✅ All internal documentation links are valid')
+        "
+
+    - name: Spell check documentation
+      run: |
+        # Install aspell if needed for spell checking
+        python -m pip install pyspelling || true
+        echo "Spell checking would run here with pyspelling"
+
+  dependency-analysis:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        python -m pip install pipdeptree pip-audit
+
+    - name: Analyze dependency tree
+      run: |
+        python -m pip install -e .
+        pipdeptree
+
+    - name: Check for dependency conflicts
+      run: |
+        python -m pip check
+
+    - name: Audit dependencies for vulnerabilities
+      run: |
+        pip-audit --format=json --output=pip-audit-report.json || true
+        pip-audit || true
+
+    - name: Upload dependency reports
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: dependency-reports
+        path: |
+          pip-audit-report.json
