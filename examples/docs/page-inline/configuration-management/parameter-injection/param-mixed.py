@@ -45,7 +45,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     }
 )
 def smart_document_processor(document: str) -> str:
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
     if not isinstance(config, dict):
         config = {}
 

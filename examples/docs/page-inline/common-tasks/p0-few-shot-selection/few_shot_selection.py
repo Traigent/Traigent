@@ -102,7 +102,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
     max_trials=10,
 )
 def classify_sentiment(text: str) -> str:
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     examples = []
     if cfg.get("shots", 0) >= 1:
         examples.append("Example: 'I love it' -> positive")

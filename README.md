@@ -4,7 +4,7 @@
 
 Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
 
-> ⚠️ The hosted Playground UI is temporarily offline. Use the examples directory for end-to-end flows until we relaunch the playground.
+> 💡 **Local Playground**: Run the interactive Streamlit control center locally with `streamlit run playground/traigent_control_center.py`. Also explore the `examples/` directory for end-to-end flows.
 
 > **Note**: Research papers and experimental code have been moved to a separate repository:
 > [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments)
@@ -305,18 +305,12 @@ uv pip install -e ".[all]"  # Or install everything
 
 ## 🎮 Interactive UI - Get Started in Minutes
 
-> ⚠️ **Playground maintenance**: The interactive UI is temporarily offline. Use the CLI and examples until the next release.
+> 💡 **Local Playground**: Launch the interactive Streamlit control center locally:
+> ```bash
+> streamlit run playground/traigent_control_center.py
+> ```
 
-<!--
-Once the Playground is back online, launch with:
-```bash
-python scripts/examples/launch_control_center.py
-# Or use the shell script:
-./scripts/examples/launch_control_center.sh
-```
--->
-
-Once the service is back online, the TraiGent Playground will provide a user-friendly interface to:
+The TraiGent Control Center provides a user-friendly interface to:
 
 - Define problems using natural language
 - Test and compare different AI agents
@@ -665,15 +659,11 @@ print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 
 ### 🎮 Using the Interactive UI
 
-> ⚠️ The Playground is temporarily offline. See [Interactive UI section](#-interactive-ui---get-started-in-minutes) for status.
-
-<!--
-1. **Launch the Playground:**
+1. **Launch the Control Center:**
 
    ```bash
-   python scripts/examples/launch_control_center.py
+   streamlit run playground/traigent_control_center.py
    ```
--->
 
 2. **Define Your Problem:**
 
@@ -934,7 +924,7 @@ python function.py
 
 ## 📚 Documentation
 
-- **[Quick Start Guide](docs/guides/quickstart.md)**: Get started in 5 minutes
+- **[Quick Start Guide](docs/getting-started/GETTING_STARTED.md)**: Get started in 5 minutes
 - **[Playground UI Guide](playground/README.md)**: Interactive Playground
 - **[API Reference](docs/api-reference/)**: Complete API documentation
 - **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
@@ -1155,4 +1145,4 @@ load_dotenv()
 
 ---
 
-**[Get Started](docs/guides/quickstart.md)** | **[Examples](examples/)** | **[API Docs](docs/api-reference/)** | **[Contributing](docs/guides/CONTRIBUTING.md)**
+**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[API Docs](docs/api-reference/)** | **[Contributing](docs/guides/CONTRIBUTING.md)**
