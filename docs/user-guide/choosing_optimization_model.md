@@ -280,7 +280,7 @@ Use both models in sequence:
 
 ### Model 2 Performance:
 
-- Choose appropriate `parallel_trials` setting
+- Choose appropriate `parallel_config` settings (e.g., `parallel_config={"trial_concurrency": 4}`)
 - Use early stopping to save costs
 - Start with smaller datasets
 - Enable smart subset selection

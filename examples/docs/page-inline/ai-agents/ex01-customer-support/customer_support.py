@@ -99,7 +99,7 @@ def classify_support_intent(message: str) -> str:
         Intent category: billing, account, technical, general, or cancellation
     """
     # Get optimized configuration
-    current = traigent.get_current_config()
+    current = traigent.get_trial_config()
     config = current if isinstance(current, dict) else {}
 
     # Build prompt based on style

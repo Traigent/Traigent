@@ -238,7 +238,7 @@ from langchain_chroma import Chroma
 )
 def customer_support(query: str, knowledge_base: list) -> str:
     # Get optimized configuration
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
 
     # Use optimized parameters
     llm = ChatOpenAI(
@@ -300,8 +300,7 @@ Speed up optimization with parallelization:
 
 ```python
 await my_agent.optimize(
-    batch_size=8,       # Process 8 examples in parallel
-    parallel_trials=4   # Test 4 configurations simultaneously
+    parallel_config={"trial_concurrency": 4}  # Test 4 configurations simultaneously
 )
 ```
 
@@ -371,7 +370,7 @@ def production_agent(
     """Production-ready agent with full optimization."""
 
     # Get optimized configuration
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
 
     # Log configuration for monitoring
     logger.info(f"Using config: {config}")
@@ -434,8 +433,7 @@ async def deploy_optimized_agent():
     results = await production_agent.optimize(
         algorithm="bayesian",
         max_trials=100,
-        parallel_trials=4,
-        batch_size=8
+        parallel_config={"trial_concurrency": 4},
     )
 
     # Apply best configuration

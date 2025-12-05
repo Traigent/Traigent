@@ -55,7 +55,7 @@ def sentiment_analysis(text: str) -> str:
 
     Returns one of: positive | negative | neutral
     """
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
 
     instructions = "Classify the sentiment of the following text."
     guard = (

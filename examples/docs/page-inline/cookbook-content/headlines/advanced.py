@@ -50,7 +50,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "headlines_eval.jsonl")
     max_trials=10,
 )
 def generate_headline(topic: str) -> str:
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     style_hint = {
         "neutral": "neutral journalistic tone",
         "punchy": "bold, energetic wording",

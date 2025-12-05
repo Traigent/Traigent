@@ -118,8 +118,8 @@ async with client:
         max_trials=30,
         optimization_strategy={
             "exploration_ratio": 0.3,
-            "parallel_trials": 5
-        }
+        },
+        parallel_config={"trial_concurrency": 5}
     )
 
     optimization_id = response.optimization_id
@@ -424,12 +424,14 @@ optimization_strategy = {
 
     # Resource management
     "max_cost_budget": 10.0,  # Maximum $10 for optimization
-    "parallel_trials": 3,      # Run 3 trials concurrently
 
     # Smart features
     "adaptive_sample_size": True,  # Increase sample size for promising configs
     "use_prior_knowledge": True    # Use meta-learning from similar tasks
 }
+
+# Parallel execution is configured separately:
+# parallel_config={"trial_concurrency": 3}  # Run 3 trials concurrently
 ```
 
 ### 4. Error Handling

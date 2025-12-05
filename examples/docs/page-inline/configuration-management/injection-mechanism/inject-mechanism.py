@@ -48,7 +48,7 @@ def my_function():
     # 3. Overrides your parameters with optimal ones
     # 4. Creates LLM instance with optimal parameters
 
-    optimal_config = traigent.get_current_config()
+    optimal_config = traigent.get_trial_config()
     if not isinstance(optimal_config, dict):
         optimal_config = {"model": "gpt-4o-mini", "temperature": 0.3}
 

@@ -74,7 +74,7 @@ if MOCK:
         "temperature": [0.0, 0.7],
         "prompt_style": ["concise", "detailed"],
     },
-    # 4. How parameters are injected (seamless = auto-injected into traigent.get_current_config())
+    # 4. How parameters are injected (seamless = auto-injected into traigent.get_trial_config())
     injection_mode="seamless",
     # 5. Execution mode (edge_analytics = local execution + analytics)
     execution_mode="edge_analytics",
@@ -89,7 +89,7 @@ def summarize_text(text: str) -> str:
         A summary of the input text.
     """
     # Get the current configuration chosen by the optimizer
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
 
     model = str(config.get("model", "claude-3-haiku-20240307"))
     temperature = float(config.get("temperature", 0.0))

@@ -68,7 +68,7 @@ _RESPONSES: dict[str, dict[str, str]] = {
 )
 def answer_prompt(prompt: str) -> str:
     """Simple rule-based function whose behaviour depends on the strategy."""
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     strategy = str(cfg.get("strategy", "baseline"))
     lookup = _RESPONSES.get(strategy, _RESPONSES["baseline"])
     return lookup.get(prompt.lower(), "i do not know")

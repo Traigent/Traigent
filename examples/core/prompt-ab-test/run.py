@@ -250,7 +250,7 @@ def qa_with_variant(question: str) -> str:
             return "Uses data and algorithms"
         return "Artificial Intelligence"
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     variant = cfg.get("prompt_variant", "a")
     prompt = f"Question: {question}\n\n{_prompt(variant)}"
     response = ChatAnthropic(
