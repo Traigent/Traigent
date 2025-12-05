@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # =============================================================================
 # Bedrock Async Tests
 # =============================================================================
@@ -200,8 +199,8 @@ async def test_concurrent_async_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "test-key")
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
 
-    from traigent.integrations.bedrock_client import BedrockChatClient
     from traigent.integrations.azure_openai_client import AzureOpenAIChatClient
+    from traigent.integrations.bedrock_client import BedrockChatClient
     from traigent.integrations.google_gemini_client import GeminiChatClient
 
     bedrock = BedrockChatClient()

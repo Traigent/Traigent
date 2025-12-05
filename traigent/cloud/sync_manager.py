@@ -6,7 +6,7 @@ Handles migration of local data to OptiGen backend when users upgrade.
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import requests  # Always needed for synchronous operations
@@ -215,7 +215,7 @@ class SyncManager:
             "source": "local_import",
             "metadata": {
                 "original_session_id": session.session_id,
-                "import_timestamp": datetime.now(timezone.utc).isoformat(),
+                "import_timestamp": datetime.now(UTC).isoformat(),
                 "edge_analytics_version": "1.0.0",
             },
         }
@@ -563,7 +563,7 @@ class SyncManager:
             backup_dir = (
                 self.storage.storage_path
                 / "backups"
-                / f"sync_backup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
+                / f"sync_backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
             )
             backup_dir.mkdir(parents=True, exist_ok=True)
 

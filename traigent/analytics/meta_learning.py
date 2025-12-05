@@ -155,7 +155,9 @@ class OptimizationHistory:
             self.records.append(record)
             # Enforce memory limits
             if len(self.records) > MAX_OPTIMIZATION_HISTORY_SIZE:
-                items_to_keep = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
+                items_to_keep = int(
+                    MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+                )
                 self.records = self.records[-items_to_keep:]
                 logger.debug(
                     f"Pruned optimization history to stay within {MAX_OPTIMIZATION_HISTORY_SIZE} limit"

@@ -9,8 +9,9 @@ Provides a tiny surface with optional mock mode for CI: set AZURE_OPENAI_MOCK=tr
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Generator, Iterable, Mapping
+from typing import Any
 
 
 def _coerce_messages(prompt_or_messages: str | Iterable[str] | list[Mapping[str, Any]]):

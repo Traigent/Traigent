@@ -57,22 +57,14 @@ from traigent.api.types import (
     TrialResult,
 )
 
+# Thread context helpers
+from traigent.config.context import copy_context_to_thread
+
 # Configuration types
 from traigent.config.types import TraigentConfig
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
-
-# Thread context helpers
-from traigent.config.context import copy_context_to_thread
-
-# Exceptions and warnings
-from traigent.utils.exceptions import (
-    ConfigAccessWarning,
-    OptimizationStateError,
-    TraigentDeprecationWarning,
-    TraigentWarning,
-)
 from traigent.utils.callbacks import (
     LoggingCallback,
     ProgressBarCallback,
@@ -85,6 +77,14 @@ from traigent.utils.constraints import (
     max_tokens_constraint,
     model_cost_constraint,
     temperature_constraint,
+)
+
+# Exceptions and warnings
+from traigent.utils.exceptions import (
+    ConfigAccessWarning,
+    OptimizationStateError,
+    TraigentDeprecationWarning,
+    TraigentWarning,
 )
 from traigent.utils.importance import ParameterImportanceAnalyzer
 from traigent.utils.multi_objective import MultiObjectiveMetrics, ParetoFrontCalculator

@@ -9,9 +9,10 @@ original optimizers remain available and unchanged.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Iterable, cast
+from datetime import UTC, datetime
+from typing import Any, cast
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.optimizers.base import BaseOptimizer
@@ -268,7 +269,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
             metrics=metrics,
             status=TrialStatus.COMPLETED,
             duration=0.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata=metadata or {},
         )
         self.update_best(trial_result)

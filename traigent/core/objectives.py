@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 
 class AggregationMode(Enum):

@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Union, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 import pandas as pd
@@ -1076,6 +1076,6 @@ class OptimizationJob:
 
 
 # Type aliases for convenience
-ConfigSpace = dict[str, Union[list[Any], tuple[Any, Any], Any]]
+ConfigSpace = dict[str, list[Any] | tuple[Any, Any] | Any]
 Metrics = dict[str, float]
 Objectives = list[str]

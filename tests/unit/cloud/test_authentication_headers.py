@@ -754,12 +754,16 @@ class TestEdgeCasesAndErrorHandling:
     @pytest.mark.asyncio
     async def test_missing_api_key_error(self):
         """Test that missing API key raises appropriate error."""
-        with patch.dict("os.environ", {}, clear=True), patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
-            return_value={},
-        ), patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_api_key",
-            return_value=None,
+        with (
+            patch.dict("os.environ", {}, clear=True),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+                return_value={},
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+                return_value=None,
+            ),
         ):
             client = TraiGentCloudClient()  # No API key
 

@@ -13,7 +13,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 
@@ -226,7 +226,7 @@ class RemoteOptimizationService(ABC):
             success_rate=1.0,
             total_requests=0,
             failed_requests=0,
-            last_request_time=datetime.now(timezone.utc),
+            last_request_time=datetime.now(UTC),
         )
 
     # Core Service Management
@@ -598,7 +598,7 @@ class RemoteOptimizationService(ABC):
         self._metrics.success_rate = (
             self._metrics.total_requests - self._metrics.failed_requests
         ) / max(1, self._metrics.total_requests)
-        self._metrics.last_request_time = datetime.now(timezone.utc)
+        self._metrics.last_request_time = datetime.now(UTC)
         self._metrics.active_sessions = len(self._active_sessions)
 
     def _create_session_id(self) -> str:
@@ -764,7 +764,7 @@ class MockRemoteService(RemoteOptimizationService):
                 objectives=objectives,
                 algorithm=algorithm,
                 status=OptimizationSessionStatus.ACTIVE,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 max_trials=max_trials,
                 timeout=timeout,
                 optimization_strategy=optimization_strategy,

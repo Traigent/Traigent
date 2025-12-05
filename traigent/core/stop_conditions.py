@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.objectives import ObjectiveSchema

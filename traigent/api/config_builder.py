@@ -7,7 +7,7 @@ Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Usability
 """
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from traigent.api.decorators import get_optimize_default
 from traigent.api.parameter_validator import OptimizeParameters
@@ -25,7 +25,7 @@ _GLOBAL_CONFIG: dict[str, Any] = {}
 class ConfigurationBuilder:
     """Builds configuration for OptimizedFunction from validated parameters."""
 
-    def __init__(self, global_config: Optional[dict[str, Any]] = None) -> None:
+    def __init__(self, global_config: dict[str, Any] | None = None) -> None:
         """Initialize with optional global configuration."""
         self.global_config = global_config or _GLOBAL_CONFIG
 
@@ -124,7 +124,7 @@ class ConfigurationBuilder:
         return param_mode.value
 
     def _resolve_injection_mode(
-        self, injection_mode: InjectionMode, config_param: Optional[str]
+        self, injection_mode: InjectionMode, config_param: str | None
     ) -> InjectionMode:
         """
         Resolve and validate injection mode configuration.
@@ -154,9 +154,9 @@ class ConfigurationBuilder:
 
     def _resolve_privacy_settings(
         self,
-        privacy_enabled: Optional[bool],
+        privacy_enabled: bool | None,
         execution_mode: ExecutionMode | str,
-    ) -> Optional[bool]:
+    ) -> bool | None:
         """
         Resolve privacy settings based on execution mode.
 

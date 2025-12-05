@@ -18,7 +18,7 @@ import os
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, cast
@@ -194,9 +194,9 @@ class APIKey:
             expires_at = (
                 expires_at_dt
                 if expires_at_dt.tzinfo is not None
-                else expires_at_dt.replace(tzinfo=timezone.utc)
+                else expires_at_dt.replace(tzinfo=UTC)
             )
-            if datetime.now(timezone.utc) > expires_at:
+            if datetime.now(UTC) > expires_at:
                 return False
         return bool(self.key)
 
@@ -219,7 +219,7 @@ class APIKey:
         if isinstance(value, datetime):
             dt = value
         elif isinstance(value, (int, float)):
-            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+            dt = datetime.fromtimestamp(float(value), tz=UTC)
         elif isinstance(value, str):
             raw = value.strip()
             if raw.endswith("Z"):
@@ -236,7 +236,7 @@ class APIKey:
             )
 
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
 
         return dt
 
@@ -1050,7 +1050,7 @@ class AuthManager:
         if isinstance(expires_at, datetime):
             expires_dt = expires_at
         elif isinstance(expires_at, (int, float)):
-            expires_dt = datetime.fromtimestamp(expires_at, tz=timezone.utc)
+            expires_dt = datetime.fromtimestamp(expires_at, tz=UTC)
         else:
             expires_dt = None
 
@@ -1494,7 +1494,7 @@ class AuthManager:
             self._api_key = APIKey(
                 key=api_key,
                 name="cli",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 permissions={"optimize": True, "analytics": True, "billing": True},
             )
 
@@ -1602,7 +1602,7 @@ def log_auth_event(
     """
     # Create audit log entry
     audit_entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "event_type": event_type,
         "success": success,
         "metadata": metadata or {},

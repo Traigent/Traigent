@@ -11,7 +11,7 @@ import os
 import secrets
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import TYPE_CHECKING, Any, cast
@@ -734,7 +734,7 @@ class BackendIntegratedClient:
         session = self._active_sessions.get(session_id)
         if session:
             session.completed_trials += 1
-            session.updated_at = datetime.now(timezone.utc)
+            session.updated_at = datetime.now(UTC)
 
         if self.enable_fallback and self.local_storage:
             try:

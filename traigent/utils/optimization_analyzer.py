@@ -9,7 +9,7 @@ including data loading, comparison, visualization, and export functionality.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -685,7 +685,7 @@ class OptimizationAnalyzer:
         df = pd.DataFrame(all_trials)
 
         # Export based on format
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         filename = f"{experiment_name}_{timestamp}"
 
         if format == "csv":

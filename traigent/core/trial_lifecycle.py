@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
+from traigent.config.context import TrialContext
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -31,7 +33,6 @@ from traigent.core.trial_result_factory import (
 )
 from traigent.core.types import TrialResult
 from traigent.evaluators.base import Dataset
-from traigent.config.context import TrialContext
 from traigent.utils.exceptions import (
     OptimizationError,
     TrialPrunedError,
@@ -223,7 +224,10 @@ class TrialLifecycle:
 
             async with TrialContext(
                 trial_id=trial_id,
-                metadata={"config": evaluation_config, "optuna_trial_id": optuna_trial_id},
+                metadata={
+                    "config": evaluation_config,
+                    "optuna_trial_id": optuna_trial_id,
+                },
             ):
                 eval_result = await orchestrator.evaluator.evaluate(
                     func, evaluation_config, dataset, **evaluate_kwargs

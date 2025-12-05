@@ -10,12 +10,13 @@ import json
 import math
 import os
 import time
-from contextlib import contextmanager
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable, Mapping
 from collections.abc import Mapping as CollectionsMapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -867,7 +868,7 @@ class BaseEvaluator(ABC):
             # Configuration-related issues should surface so the orchestrator can
             # mark the trial as failed rather than silently falling back.
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_msg = f"Function call timed out after {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg

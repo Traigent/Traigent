@@ -7,10 +7,11 @@ from __future__ import annotations
 import statistics
 import threading
 from collections import defaultdict, deque
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
 
 from ..core.constants import (
     HISTORY_PRUNE_RATIO,
@@ -25,7 +26,7 @@ logger = get_logger(__name__)
 
 def _utc_now() -> datetime:
     """Return the current UTC time as a timezone-aware datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _ensure_utc(timestamp: datetime | None) -> datetime:
@@ -33,8 +34,8 @@ def _ensure_utc(timestamp: datetime | None) -> datetime:
     if timestamp is None:
         return _utc_now()
     if timestamp.tzinfo is None:
-        return timestamp.replace(tzinfo=timezone.utc)
-    return timestamp.astimezone(timezone.utc)
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp.astimezone(UTC)
 
 
 class AnomalyType(Enum):
@@ -144,14 +145,14 @@ class StatisticalDetector:
                 severity = self._calculate_severity(z_score)
 
                 anomaly = AnomalyEvent(
-                    anomaly_id=f"stat_{metric_name}_{int(datetime.now(timezone.utc).timestamp())}",
+                    anomaly_id=f"stat_{metric_name}_{int(datetime.now(UTC).timestamp())}",
                     anomaly_type=AnomalyType.PATTERN_DEVIATION,
                     severity=severity,
                     metric_name=metric_name,
                     actual_value=value,
                     expected_value=baseline.mean_value,
                     deviation_score=z_score,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     description=(
                         f"Statistical anomaly: {metric_name} value {value:.3f} deviates "
                         f"{z_score:.2f} standard deviations from baseline {baseline.mean_value:.3f}"
@@ -170,14 +171,14 @@ class StatisticalDetector:
 
             if value > p99:
                 anomaly = AnomalyEvent(
-                    anomaly_id=f"perc_{metric_name}_{int(datetime.now(timezone.utc).timestamp())}",
+                    anomaly_id=f"perc_{metric_name}_{int(datetime.now(UTC).timestamp())}",
                     anomaly_type=AnomalyType.THRESHOLD_VIOLATION,
                     severity=AlertSeverity.HIGH,
                     metric_name=metric_name,
                     actual_value=value,
                     expected_value=baseline.percentiles.get("p50", baseline.mean_value),
                     deviation_score=(value - p99) / max(baseline.std_deviation, 1),
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     description=f"Value {value:.3f} exceeds 99th percentile ({p99:.3f}) for {metric_name}",
                     recommendations=self._get_percentile_recommendations(
                         metric_name, "high"
@@ -187,14 +188,14 @@ class StatisticalDetector:
 
             elif value < p1:
                 anomaly = AnomalyEvent(
-                    anomaly_id=f"perc_{metric_name}_{int(datetime.now(timezone.utc).timestamp())}",
+                    anomaly_id=f"perc_{metric_name}_{int(datetime.now(UTC).timestamp())}",
                     anomaly_type=AnomalyType.THRESHOLD_VIOLATION,
                     severity=AlertSeverity.MEDIUM,
                     metric_name=metric_name,
                     actual_value=value,
                     expected_value=baseline.percentiles.get("p50", baseline.mean_value),
                     deviation_score=(p1 - value) / max(baseline.std_deviation, 1),
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     description=f"Value {value:.3f} below 1st percentile ({p1:.3f}) for {metric_name}",
                     recommendations=self._get_percentile_recommendations(
                         metric_name, "low"
@@ -232,7 +233,7 @@ class StatisticalDetector:
             min_value=min_val,
             max_value=max_val,
             sample_count=len(data_points),
-            last_updated=datetime.now(timezone.utc),
+            last_updated=datetime.now(UTC),
             percentiles=percentiles,
         )
 
@@ -466,7 +467,7 @@ class PerformanceMonitor:
         if len(history) < 10:
             return anomalies  # Not enough data
 
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        cutoff_time = datetime.now(UTC) - timedelta(hours=lookback_hours)
         recent_data = [(t, v) for t, v in history if t >= cutoff_time]
 
         if len(recent_data) < 5:
@@ -512,14 +513,14 @@ class PerformanceMonitor:
             )
 
             anomaly = AnomalyEvent(
-                anomaly_id=f"regression_{metric_key}_{int(datetime.now(timezone.utc).timestamp())}",
+                anomaly_id=f"regression_{metric_key}_{int(datetime.now(UTC).timestamp())}",
                 anomaly_type=AnomalyType.PERFORMANCE_DEGRADATION,
                 severity=severity,
                 metric_name=metric_key,
                 actual_value=recent_avg,
                 expected_value=baseline_avg,
                 deviation_score=abs(change_ratio),
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 description=f"Performance regression detected: {metric_type} changed by {change_ratio:.1%} from baseline",
                 recommendations=self._get_regression_recommendations(
                     metric_type, change_ratio

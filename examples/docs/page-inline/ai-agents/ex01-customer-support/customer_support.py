@@ -25,6 +25,7 @@ try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
     import importlib
+
     traigent = importlib.import_module("traigent")
 
 # Create dataset file path
