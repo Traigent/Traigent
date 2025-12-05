@@ -1290,9 +1290,7 @@ class TestCTDScenarios:
         elif budget_type == "time":
             # Create session with time offset
             session = MagicMock()
-            session.created_at = datetime.now(UTC) - timedelta(
-                seconds=time_offset
-            )
+            session.created_at = datetime.now(UTC) - timedelta(seconds=time_offset)
             optimizer.session = session
 
         should_stop = await optimizer.should_stop_async([])

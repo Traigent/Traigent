@@ -189,9 +189,7 @@ class TestCostOptimizationAI:
 
         for month in range(12, 0, -1):
             for day in range(30):
-                timestamp = datetime.now(UTC) - timedelta(
-                    days=month * 30 + day
-                )
+                timestamp = datetime.now(UTC) - timedelta(days=month * 30 + day)
                 cost = base_cost * (1 + growth_rate) ** (12 - month)
                 historical_data.append(
                     {

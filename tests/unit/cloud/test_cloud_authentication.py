@@ -44,9 +44,7 @@ class TestAPIKey:
 
     def test_api_key_default_permissions(self):
         """Test APIKey with default permissions."""
-        api_key = APIKey(
-            key="test_key", name="test", created_at=datetime.now(UTC)
-        )
+        api_key = APIKey(key="test_key", name="test", created_at=datetime.now(UTC))
 
         expected_permissions = {"optimize": True, "analytics": True, "billing": False}
         assert api_key.permissions == expected_permissions
