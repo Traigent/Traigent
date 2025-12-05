@@ -152,7 +152,9 @@ def cloud_session_cleanup(monkeypatch):
                 register_session(self, session_id)
                 return session_id
 
-            monkeypatch.setattr(BackendIntegratedClient, "create_session", wrapped_create_session)
+            monkeypatch.setattr(
+                BackendIntegratedClient, "create_session", wrapped_create_session
+            )
 
         if hasattr(BackendIntegratedClient, "create_hybrid_session"):
             original_create_hybrid = BackendIntegratedClient.create_hybrid_session
@@ -171,7 +173,9 @@ def cloud_session_cleanup(monkeypatch):
             )
 
         if hasattr(BackendIntegratedClient, "_create_traigent_session_via_api"):
-            original_create_via_api = BackendIntegratedClient._create_traigent_session_via_api
+            original_create_via_api = (
+                BackendIntegratedClient._create_traigent_session_via_api
+            )
 
             @functools.wraps(original_create_via_api)
             async def wrapped_create_via_api(self, *args, **kwargs):
@@ -242,9 +246,13 @@ def cloud_session_cleanup(monkeypatch):
                         if deleted:
                             break
                     except Exception as exc:
-                        logger.warning("Cleanup call failed for session %s: %s", session_id, exc)
+                        logger.warning(
+                            "Cleanup call failed for session %s: %s", session_id, exc
+                        )
                 except Exception as exc:
-                    logger.warning("Cleanup call failed for session %s: %s", session_id, exc)
+                    logger.warning(
+                        "Cleanup call failed for session %s: %s", session_id, exc
+                    )
 
             if not deleted:
                 logger.warning(
@@ -333,7 +341,9 @@ class MockCachedResponse(MockLLMResponse):
 class MockErrorResponse:
     """Mock response that simulates LLM errors."""
 
-    def __init__(self, error_message: str = "Mock LLM error", error_type: str = "APIError"):
+    def __init__(
+        self, error_message: str = "Mock LLM error", error_type: str = "APIError"
+    ):
         self.error_message = error_message
         self.error_type = error_type
         self.success = False
@@ -401,20 +411,28 @@ def sentiment_dataset():
             expected_output="positive",
         ),
         EvaluationExample(
-            input_data={"text": "Amazing quality and excellent customer service experience!"},
+            input_data={
+                "text": "Amazing quality and excellent customer service experience!"
+            },
             expected_output="positive",
         ),
         EvaluationExample(
-            input_data={"text": "Outstanding performance and remarkable build quality!"},
+            input_data={
+                "text": "Outstanding performance and remarkable build quality!"
+            },
             expected_output="positive",
         ),
         # Strong negative
         EvaluationExample(
-            input_data={"text": "Terrible quality, completely broken and unusable product."},
+            input_data={
+                "text": "Terrible quality, completely broken and unusable product."
+            },
             expected_output="negative",
         ),
         EvaluationExample(
-            input_data={"text": "Poor design and very disappointing overall experience."},
+            input_data={
+                "text": "Poor design and very disappointing overall experience."
+            },
             expected_output="negative",
         ),
         EvaluationExample(
@@ -423,11 +441,15 @@ def sentiment_dataset():
         ),
         # Neutral
         EvaluationExample(
-            input_data={"text": "It's an okay product, nothing special but works as expected."},
+            input_data={
+                "text": "It's an okay product, nothing special but works as expected."
+            },
             expected_output="neutral",
         ),
         EvaluationExample(
-            input_data={"text": "Average product with standard features and decent quality."},
+            input_data={
+                "text": "Average product with standard features and decent quality."
+            },
             expected_output="neutral",
         ),
     ]
@@ -464,9 +486,15 @@ def simple_sentiment_function():
 
     def sentiment_analysis(text: str, **kwargs) -> str:
         text_lower = text.lower()
-        if any(word in text_lower for word in ["excellent", "fantastic", "amazing", "outstanding"]):
+        if any(
+            word in text_lower
+            for word in ["excellent", "fantastic", "amazing", "outstanding"]
+        ):
             return "positive"
-        elif any(word in text_lower for word in ["terrible", "awful", "horrible", "disappointing"]):
+        elif any(
+            word in text_lower
+            for word in ["terrible", "awful", "horrible", "disappointing"]
+        ):
             return "negative"
         else:
             return "neutral"
@@ -483,9 +511,15 @@ def async_sentiment_function():
         await asyncio.sleep(0.01)
 
         text_lower = text.lower()
-        if any(word in text_lower for word in ["excellent", "fantastic", "amazing", "outstanding"]):
+        if any(
+            word in text_lower
+            for word in ["excellent", "fantastic", "amazing", "outstanding"]
+        ):
             return "positive"
-        elif any(word in text_lower for word in ["terrible", "awful", "horrible", "disappointing"]):
+        elif any(
+            word in text_lower
+            for word in ["terrible", "awful", "horrible", "disappointing"]
+        ):
             return "negative"
         else:
             return "neutral"
@@ -542,7 +576,9 @@ def llm_response_function():
 @pytest.fixture
 def basic_evaluator():
     """Basic LocalEvaluator for standard testing."""
-    return LocalEvaluator(metrics=["accuracy"], detailed=True, execution_mode="edge_analytics")
+    return LocalEvaluator(
+        metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+    )
 
 
 @pytest.fixture

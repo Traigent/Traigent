@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import Iterable, Mapping
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable, Mapping
+from typing import Any
 
 Call = Callable[..., Any]
 

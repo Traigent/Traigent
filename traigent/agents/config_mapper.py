@@ -10,8 +10,9 @@ specifications during optimization.
 from __future__ import annotations
 
 import copy
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import ConfigurationError

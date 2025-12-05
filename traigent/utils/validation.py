@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger

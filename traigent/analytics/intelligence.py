@@ -620,7 +620,9 @@ class CostOptimizationAI:
         # Store result with bounds checking
         if len(self.optimization_results) >= self._max_optimization_results:
             # Remove oldest results using prune ratio
-            items_to_keep = int(self._max_optimization_results * (1 - HISTORY_PRUNE_RATIO))
+            items_to_keep = int(
+                self._max_optimization_results * (1 - HISTORY_PRUNE_RATIO)
+            )
             items_to_remove = len(self.optimization_results) - items_to_keep
             self.optimization_results = self.optimization_results[-items_to_keep:]
             logger.debug(

@@ -11,7 +11,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import secrets
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 from urllib.parse import urlparse
 
 from traigent.config.backend_config import BackendConfig

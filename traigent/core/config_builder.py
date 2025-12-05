@@ -9,7 +9,8 @@ validating configuration objects for the optimization system.
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 from traigent.config.types import ExecutionMode
 from traigent.core.constants import (

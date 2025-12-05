@@ -203,9 +203,11 @@ class TestOptimizationValidator:
     @pytest.mark.asyncio
     async def test_validate_optimization_superior(self, validator, mock_function_info):
         """Test validation when optimization is superior."""
-        with patch.object(validator, "_run_baseline") as mock_baseline, patch.object(
-            validator, "_run_optimization"
-        ) as mock_opt, patch.object(validator, "_compare_results") as mock_compare:
+        with (
+            patch.object(validator, "_run_baseline") as mock_baseline,
+            patch.object(validator, "_run_optimization") as mock_opt,
+            patch.object(validator, "_compare_results") as mock_compare,
+        ):
 
             # Setup mocks
             mock_baseline.return_value = ({"accuracy": 0.8}, {"model": "default"})
@@ -224,9 +226,11 @@ class TestOptimizationValidator:
     @pytest.mark.asyncio
     async def test_validate_optimization_inferior(self, validator, mock_function_info):
         """Test validation when optimization is inferior."""
-        with patch.object(validator, "_run_baseline") as mock_baseline, patch.object(
-            validator, "_run_optimization"
-        ) as mock_opt, patch.object(validator, "_compare_results") as mock_compare:
+        with (
+            patch.object(validator, "_run_baseline") as mock_baseline,
+            patch.object(validator, "_run_optimization") as mock_opt,
+            patch.object(validator, "_compare_results") as mock_compare,
+        ):
 
             # Setup mocks for inferior performance
             mock_baseline.return_value = ({"accuracy": 0.9}, {"model": "default"})

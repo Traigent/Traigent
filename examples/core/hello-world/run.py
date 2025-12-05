@@ -37,7 +37,9 @@ class RetrieverBase:
 
 
 try:  # pragma: no cover - optional dependency
-    from langchain_community.retrievers import BM25Retriever  # type: ignore[import-not-found]
+    from langchain_community.retrievers import (
+        BM25Retriever,  # type: ignore[import-not-found]
+    )
 
     class _BM25RetrieverWrapper(RetrieverBase):
         def __init__(self, docs: list[Document]) -> None:

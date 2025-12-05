@@ -12,9 +12,10 @@ from __future__ import annotations
 import ast
 import inspect
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 from traigent.cloud.models import AgentSpecification
 from traigent.config.types import TraigentConfig
@@ -293,7 +294,7 @@ class SpecificationGenerator:
                 "function_signature": analysis.signature,
                 "domain": analysis.inferred_domain,
                 "complexity_score": analysis.complexity_score,
-                "generation_timestamp": datetime.now(timezone.utc).isoformat(),
+                "generation_timestamp": datetime.now(UTC).isoformat(),
             },
         )
 
@@ -391,7 +392,7 @@ class SpecificationGenerator:
             {
                 "optimization_results": optimization_results,
                 "optimized": True,
-                "last_optimization": datetime.now(timezone.utc).isoformat(),
+                "last_optimization": datetime.now(UTC).isoformat(),
             }
         )
 

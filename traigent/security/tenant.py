@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import secrets
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Generator, cast
+from typing import Any, cast
 
 from ..utils.logging import get_logger
 

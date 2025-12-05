@@ -11,7 +11,7 @@ import sys
 import tempfile
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -192,7 +192,7 @@ class OptimizationLogger:
         )
         self.buffer_size = buffer_size
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         session_short = session_id[:8] if len(session_id) >= 8 else session_id
         self.run_id = f"{timestamp}_{session_short}"
 
@@ -204,7 +204,7 @@ class OptimizationLogger:
         self._buffer_lock = threading.Lock()
 
         self._ensure_directories()
-        self.start_time = datetime.now(timezone.utc)
+        self.start_time = datetime.now(UTC)
 
         self.file_manager = FileVersionManager(version="2")
         self.version_info = RunVersionInfo(self.run_path)
@@ -323,13 +323,13 @@ class OptimizationLogger:
         if objectives_data is not None and objective_schema is not None:
             objectives_data["metadata"] = {
                 "algorithm": algorithm,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "normalization_strategy": "min_max",
                 "weights_normalized": True,
                 "schema_version": objective_schema.schema_version,
             }
             objectives_data["algorithm"] = algorithm
-            objectives_data["timestamp"] = datetime.now(timezone.utc).isoformat()
+            objectives_data["timestamp"] = datetime.now(UTC).isoformat()
             objectives_data["summary"] = {
                 "names": [obj.name for obj in objective_schema.objectives],
                 "orientations": {
@@ -362,7 +362,7 @@ class OptimizationLogger:
             ),
             "platform": sys.platform,
             "traigent_version": TRAIGENT_VERSION,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         environment_file = (
             self.run_path / "meta" / self.file_manager.get_filename("environment")
@@ -442,7 +442,7 @@ class OptimizationLogger:
         self._trial_buffer.clear()
 
     def log_metrics_update(self, metrics: dict[str, Any]) -> None:
-        timestamp = datetime.now(timezone.utc).isoformat()
+        timestamp = datetime.now(UTC).isoformat()
         for metric_name, metric_value in metrics.items():
             if metric_value is None:
                 continue
@@ -463,7 +463,7 @@ class OptimizationLogger:
         trial_count: int,
     ) -> None:
         checkpoint_data = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "trial_count": trial_count,
             "optimizer_state": optimizer_state,
             "random_state": {
@@ -510,7 +510,7 @@ class OptimizationLogger:
         latest_data = {
             "checkpoint_file": checkpoint_file.name,
             "trial_count": trial_count,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._atomic_write(latest_file, latest_data)
         logger.debug(f"Saved checkpoint at trial {trial_count}")
@@ -553,7 +553,7 @@ class OptimizationLogger:
             "config": config,
             "score": score,
             "metrics": metrics,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "full_results": full_results,
         }
         self._atomic_write(file_path, payload)
@@ -599,7 +599,7 @@ class OptimizationLogger:
                     "configurations": [p.config for p in pareto_front],
                     "objectives": [p.objectives for p in pareto_front],
                     "count": len(pareto_front),
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "timestamp": datetime.now(UTC).isoformat(),
                 }
                 pareto_file = (
                     self.run_path
@@ -623,7 +623,7 @@ class OptimizationLogger:
             "total_tokens": optimization_result.total_tokens,
             "best_metrics": optimization_result.best_metrics,
             "algorithm": optimization_result.algorithm,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._atomic_write(metrics_summary_file, metrics_summary)
 
@@ -638,7 +638,7 @@ class OptimizationLogger:
                 session_data = {}
             session_data.update(
                 {
-                    "end_time": datetime.now(timezone.utc).isoformat(),
+                    "end_time": datetime.now(UTC).isoformat(),
                     "duration": optimization_result.duration,
                     "status": "failed" if error else "completed",
                     "error": error,
@@ -648,7 +648,7 @@ class OptimizationLogger:
 
         final_manifest = self.file_manager.create_manifest(self.run_path)
         final_manifest["finalized"] = True
-        final_manifest["finalized_at"] = datetime.now(timezone.utc).isoformat()
+        final_manifest["finalized_at"] = datetime.now(UTC).isoformat()
         manifest_file = (
             self.run_path / "meta" / self.file_manager.get_filename("manifest")
         )
@@ -663,7 +663,7 @@ class OptimizationLogger:
         status_file = self.run_path / self.file_manager.get_filename("status")
         status_data = {
             "status": status,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         self._atomic_write(status_file, status_data)
 
@@ -678,7 +678,7 @@ class OptimizationLogger:
             experiments = index_data.setdefault("experiments", {})
             experiment_entry = experiments.setdefault(
                 self.experiment_name,
-                {"runs": [], "created": datetime.now(timezone.utc).isoformat()},
+                {"runs": [], "created": datetime.now(UTC).isoformat()},
             )
             run_info = {
                 "run_id": self.run_id,

@@ -13,9 +13,10 @@ import inspect
 import textwrap
 import types
 from collections import defaultdict
+from collections.abc import Callable
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 
 from traigent.config.ast_transformer import ConfigTransformer, SafeASTCompiler
 from traigent.config.context import get_config, merge_with_context

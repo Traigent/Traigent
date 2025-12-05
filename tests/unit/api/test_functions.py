@@ -1,10 +1,9 @@
 """Comprehensive tests for traigent.api.functions module."""
 
+import warnings
 from unittest.mock import Mock, patch
 
 import pytest
-
-import warnings
 
 from traigent.api.functions import (
     _GLOBAL_CONFIG,

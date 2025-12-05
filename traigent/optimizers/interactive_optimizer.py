@@ -10,7 +10,7 @@ dataset subset suggestions from a remote service.
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from traigent.api.types import TrialResult
@@ -152,8 +152,8 @@ class InteractiveOptimizer(BaseOptimizer):
                 objectives=self.objectives,
                 max_trials=max_trials,
                 status=response.status,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
                 optimization_strategy=response.optimization_strategy,
                 metadata=response.metadata,
             )

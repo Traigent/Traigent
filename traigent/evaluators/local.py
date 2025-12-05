@@ -7,8 +7,9 @@ from __future__ import annotations
 import inspect
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult

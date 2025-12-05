@@ -11,7 +11,7 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -53,7 +53,7 @@ class ScheduledJob:
     dependencies: list[str] = field(default_factory=list)
     constraints: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     scheduled_time: datetime | None = None
     completed_at: datetime | None = None
     actual_cost: float | None = None
@@ -240,7 +240,7 @@ class SmartScheduler:
     def _schedule_for_time(self) -> dict[str, ScheduledJob]:
         """Schedule jobs to minimize completion time."""
         scheduled = {}
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
 
         # Sort by priority and duration (shortest job first within same priority)
         sorted_jobs = sorted(
@@ -289,7 +289,7 @@ class SmartScheduler:
         for priority in [JobPriority.CRITICAL, JobPriority.HIGH]:
             if priority in priority_groups:
                 for job in priority_groups[priority]:
-                    job.scheduled_time = datetime.now(timezone.utc)
+                    job.scheduled_time = datetime.now(UTC)
                     scheduled[job.job_id] = job
 
         # Schedule other jobs for cost
@@ -336,7 +336,7 @@ class SmartScheduler:
             return False
 
         job = self.running_jobs.pop(job_id)
-        job.completed_at = datetime.now(timezone.utc)
+        job.completed_at = datetime.now(UTC)
         job.actual_cost = actual_cost
         job.status = "completed" if success else "failed"
 
@@ -345,10 +345,14 @@ class SmartScheduler:
 
         # Enforce memory limits on completed_jobs and cost_history
         if len(self.completed_jobs) > MAX_OPTIMIZATION_HISTORY_SIZE:
-            items_to_keep = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
+            items_to_keep = int(
+                MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+            )
             self.completed_jobs = self.completed_jobs[-items_to_keep:]
         if len(self.cost_history) > MAX_OPTIMIZATION_HISTORY_SIZE:
-            items_to_keep = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
+            items_to_keep = int(
+                MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+            )
             self.cost_history = self.cost_history[-items_to_keep:]
 
         # Log performance

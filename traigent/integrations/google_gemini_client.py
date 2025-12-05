@@ -9,8 +9,9 @@ Set GEMINI_MOCK=true to bypass SDK/network and get deterministic echoes.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Generator, Iterable, Mapping, cast
+from typing import Any, cast
 
 
 def _coerce_messages(prompt_or_messages: str | Iterable[str] | list[Mapping[str, Any]]):

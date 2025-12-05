@@ -44,9 +44,15 @@ class PerformanceConstraints:
 class ModelConstraints:
     """Model-related constraints for agent configurations."""
 
-    allowed_models: list[str] = field(default_factory=list)  # Whitelist of allowed models
-    blocked_models: list[str] = field(default_factory=list)  # Blacklist of blocked models
-    blocked_reasons: dict[str, str] = field(default_factory=dict)  # Reasons for blocking
+    allowed_models: list[str] = field(
+        default_factory=list
+    )  # Whitelist of allowed models
+    blocked_models: list[str] = field(
+        default_factory=list
+    )  # Blacklist of blocked models
+    blocked_reasons: dict[str, str] = field(
+        default_factory=dict
+    )  # Reasons for blocking
 
 
 @dataclass
@@ -134,7 +140,9 @@ class HooksConfig:
             fail_on_warning=validation_data.get("fail_on_warning", False),
             skip_patterns=validation_data.get("skip_patterns", []),
             pre_push_hooks=pre_push if isinstance(pre_push, list) else [pre_push],
-            pre_commit_hooks=pre_commit if isinstance(pre_commit, list) else [pre_commit],
+            pre_commit_hooks=(
+                pre_commit if isinstance(pre_commit, list) else [pre_commit]
+            ),
             constraints=hooks_constraints,
             raw_config=data,
         )

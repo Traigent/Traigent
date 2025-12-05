@@ -436,7 +436,9 @@ class TestPruningBehavior:
     def test_pruning_ratio_calculation(self):
         """Test that pruning ratio is correctly calculated."""
         # When we have MAX items + 1, pruning should keep (1 - ratio) * MAX
-        expected_after_prune = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
+        expected_after_prune = int(
+            MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+        )
 
         # For MAX=1000 and ratio=0.1, should keep 900
         assert expected_after_prune == 900
@@ -504,7 +506,9 @@ class TestThreadSafetyDuringPruning:
         records_per_thread = 50
 
         for t_id in range(num_threads):
-            thread = threading.Thread(target=add_records, args=(t_id, records_per_thread))
+            thread = threading.Thread(
+                target=add_records, args=(t_id, records_per_thread)
+            )
             threads.append(thread)
             thread.start()
 

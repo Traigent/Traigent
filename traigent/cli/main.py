@@ -239,7 +239,10 @@ def optimize(
             is_optimized = False
             if inspect.isfunction(obj) and hasattr(obj, "optimize"):
                 is_optimized = True
-            elif hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
+            elif (
+                hasattr(obj, "__class__")
+                and obj.__class__.__name__ == "OptimizedFunction"
+            ):
                 is_optimized = True
             elif hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
                 # Additional check for objects with optimize method

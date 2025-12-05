@@ -7,8 +7,9 @@ import inspect
 import math
 import time
 import uuid
-from datetime import datetime, timezone
-from typing import Any, Callable, Sequence, cast
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from typing import Any, cast
 
 from traigent.api.types import (
     OptimizationResult,
@@ -803,7 +804,7 @@ class OptimizationOrchestrator:
                     metrics={},
                     status=TrialStatus.FAILED,
                     duration=0.0,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                     error_message=str(result),
                 )
             else:
@@ -1412,7 +1413,7 @@ class OptimizationOrchestrator:
             status=self._status,
             objectives=self.optimizer.objectives,
             algorithm=self.optimizer.__class__.__name__,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             total_cost=total_cost if total_cost > 0 else None,
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
