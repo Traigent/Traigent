@@ -142,4 +142,4 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-copyright: Copyright &copy; 2024 TraiGent Team - MIT License
+copyright: Copyright &copy; 2024 TraiGent Team - Apache License 2.0
