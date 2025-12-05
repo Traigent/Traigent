@@ -4,7 +4,6 @@ This module ensures that Gemini, Bedrock, and Azure OpenAI clients
 have consistent APIs and behavior patterns.
 """
 
-
 import pytest
 
 

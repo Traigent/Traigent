@@ -894,7 +894,13 @@ class TestCTDScenarios:
                     )
                     # Should handle error according to strategy
                     assert isinstance(result, (bool, dict, type(None)))
-                except (TimeoutError, NotImplementedError, aiohttp.ClientError, ConnectionError, RuntimeError):
+                except (
+                    TimeoutError,
+                    NotImplementedError,
+                    aiohttp.ClientError,
+                    ConnectionError,
+                    RuntimeError,
+                ):
                     # Error handling may re-raise or may not be implemented
                     pass
 
