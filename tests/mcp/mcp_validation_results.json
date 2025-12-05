@@ -1,0 +1,163 @@
+[
+  {
+    "task_description": "Create an agent that answers questions about Python programming",
+    "interpretation": {
+      "action": "create_agent",
+      "agent_type": "conversational",
+      "topic": "Python programming"
+    },
+    "mcp_calls": [
+      [
+        "create_agent",
+        "{'agent_id': 'agent-1', 'status': 'created', 'platform': 'openai'}"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "I need a task agent for customer support",
+    "interpretation": {
+      "action": "create_agent",
+      "agent_type": "task"
+    },
+    "mcp_calls": [
+      [
+        "create_agent",
+        "{'agent_id': 'agent-2', 'status': 'created', 'platform': 'openai'}"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Build a conversational AI that helps with documentation",
+    "interpretation": {
+      "action": "create_agent",
+      "agent_type": "conversational"
+    },
+    "mcp_calls": [
+      [
+        "create_agent",
+        "{'agent_id': 'agent-3', 'status': 'created', 'platform': 'openai'}"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Optimize my chatbot to reduce costs while maintaining quality",
+    "interpretation": {
+      "action": "optimize_agent",
+      "optimization_goal": "cost_reduction",
+      "agent_type": "conversational"
+    },
+    "mcp_calls": [
+      [
+        "start_agent_optimization",
+        "AgentOptimizationResponse(session_id='opt-session-1', optimization_id='opt-1', status='started', estimated_cost=5.0, estimated_duration=300.0, next_steps=['Analyzing dataset', 'Generating trial configurations', 'Starting optimization'])"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "I want to improve the accuracy of my Q&A agent",
+    "interpretation": {
+      "action": "optimize_agent",
+      "objectives": [
+        "accuracy"
+      ]
+    },
+    "mcp_calls": [
+      [
+        "start_agent_optimization",
+        "AgentOptimizationResponse(session_id='opt-session-1', optimization_id='opt-1', status='started', estimated_cost=5.0, estimated_duration=300.0, next_steps=['Analyzing dataset', 'Generating trial configurations', 'Starting optimization'])"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Optimize the translation agent for both speed and accuracy",
+    "interpretation": {
+      "action": "optimize_agent",
+      "objectives": [
+        "speed",
+        "accuracy"
+      ]
+    },
+    "mcp_calls": [
+      [
+        "start_agent_optimization",
+        "AgentOptimizationResponse(session_id='opt-session-1', optimization_id='opt-1', status='started', estimated_cost=5.0, estimated_duration=300.0, next_steps=['Analyzing dataset', 'Generating trial configurations', 'Starting optimization'])"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Execute the Python Q&A agent with the question 'How do I read a file?'",
+    "interpretation": {
+      "action": "execute_agent",
+      "topic": "Python programming",
+      "input_text": "How do I read a file?"
+    },
+    "mcp_calls": [
+      [
+        "execute_agent",
+        "AgentExecutionResponse(output='Mock response for: How do I read a file?', duration=0.5, tokens_used=50, cost=0.001, metadata={'mock': True}, error=None)"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Run my customer support agent to answer 'How can I reset my password?'",
+    "interpretation": {
+      "action": "execute_agent"
+    },
+    "mcp_calls": [
+      [
+        "execute_agent",
+        "AgentExecutionResponse(output='Mock response for: Test question', duration=0.5, tokens_used=50, cost=0.001, metadata={'mock': True}, error=None)"
+      ]
+    ],
+    "execution_success": true,
+    "cleanup_success": true,
+    "errors": []
+  },
+  {
+    "task_description": "Do something with my agent",
+    "interpretation": {
+      "action": "unknown",
+      "raw_description": "Do something with my agent"
+    },
+    "mcp_calls": [],
+    "execution_success": false,
+    "cleanup_success": true,
+    "errors": [
+      "Unknown action: unknown"
+    ]
+  },
+  {
+    "task_description": "Create a super intelligent AGI",
+    "interpretation": {
+      "action": "unknown",
+      "raw_description": "Create a super intelligent AGI"
+    },
+    "mcp_calls": [],
+    "execution_success": false,
+    "cleanup_success": true,
+    "errors": [
+      "Unknown action: unknown"
+    ]
+  }
+]

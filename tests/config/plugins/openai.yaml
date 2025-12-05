@@ -1,0 +1,73 @@
+# OpenAI Plugin Configuration Override
+# This file allows customization of the OpenAI plugin without code changes
+
+metadata:
+  description: "OpenAI SDK integration with custom settings"
+  author: "TraiGent Team"
+
+# Parameter mappings can be extended or overridden
+mappings:
+  # Add custom mappings or override defaults
+  custom_temperature: "temperature"
+  api_base: "base_url"
+  organization: "organization"
+
+  # Vision-specific parameters
+  detail: "detail"
+  image_url: "image_url"
+
+# Validation rules for parameters
+validation:
+  model:
+    required: true
+    allowed_values:
+      - "gpt-4"
+      - "gpt-4-0314"
+      - "gpt-4-0613"
+      - "gpt-4-32k"
+      - "gpt-4-turbo-preview"
+      - "gpt-4-1106-preview"
+      - "gpt-4-vision-preview"
+      - "gpt-3.5-turbo"
+      - "gpt-3.5-turbo-0301"
+      - "gpt-3.5-turbo-0613"
+      - "gpt-3.5-turbo-16k"
+      - "gpt-3.5-turbo-1106"
+      - "text-davinci-003"
+      - "text-davinci-002"
+      # Add new models as they are released
+      - "gpt-4-turbo"
+      - "gpt-4o"
+      - "gpt-4o-mini"
+
+  temperature:
+    min_value: 0.0
+    max_value: 2.0
+
+  max_tokens:
+    min_value: 1
+    max_value: 128000
+
+  top_p:
+    min_value: 0.0
+    max_value: 1.0
+
+  frequency_penalty:
+    min_value: -2.0
+    max_value: 2.0
+
+  presence_penalty:
+    min_value: -2.0
+    max_value: 2.0
+
+  n:
+    min_value: 1
+    max_value: 10
+
+  timeout:
+    min_value: 1
+    max_value: 600
+
+  max_retries:
+    min_value: 0
+    max_value: 10

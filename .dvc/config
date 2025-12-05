@@ -1,0 +1,13 @@
+[core]
+    remote = myremote
+    autostage = true
+
+['remote "myremote"']
+    url = /tmp/dvc-storage
+
+[cache]
+    type = symlink
+
+[experiments]
+    auto_push = false
+    git_remote = origin

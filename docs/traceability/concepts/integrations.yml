@@ -1,0 +1,50 @@
+id: CONC-Integrations
+name: Integrations
+purpose: "Bridge TraiGent with LLM providers, frameworks, vector stores, and observability backends via plugins."
+state:
+  - name: plugin_registry
+    type: "PluginRegistry"
+    description: "Registered provider/observability/plugins and metadata."
+  - name: framework_mappings
+    type: "dict[str, Any]"
+    description: "Mappings from configuration keys to framework-specific parameters."
+actions:
+  - name: register_plugin
+    inputs:
+      - name: plugin
+        type: "TraigentPlugin"
+    outputs:
+      - case: registered
+        fields:
+          - name: plugin_count
+            type: "int"
+    description: "Register integration plugins (LLM providers, observability, vector stores)."
+  - name: enable_provider
+    inputs:
+      - name: provider_name
+        type: "str"
+      - name: options
+        type: "dict[str, Any]"
+    outputs:
+      - case: enabled
+        fields:
+          - name: hooks_installed
+            type: "bool"
+    description: "Enable provider-specific overrides or discovery (e.g., OpenAI, Anthropic, LangChain, LlamaIndex)."
+  - name: enable_observability
+    inputs:
+      - name: backend
+        type: "str"
+      - name: run_context
+        type: "dict[str, Any]"
+    outputs:
+      - case: tracking
+        fields:
+          - name: tracker
+            type: "Any"
+    description: "Initialize MLflow/W&B trackers and autolog optimization runs."
+operational_principle:
+  - "Integrations should be optional and degrade gracefully when dependencies are missing."
+  - "Discovery utilities should not mutate user code outside configured overrides."
+version: 1
+status: active

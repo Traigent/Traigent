@@ -1,0 +1,138 @@
+# TraiGent Auto-Tuning Configuration
+# Used by CI/CD pipeline for automated optimization
+
+# Optimization strategy configuration
+optimization:
+  strategy: "bayesian"  # Options: grid, random, bayesian
+  max_trials: 10
+  timeout: 3600  # 1 hour
+  parallel_trials: 3
+  early_stopping:
+    enabled: true
+    patience: 5
+    min_delta: 0.01
+
+# Model configurations to test
+models:
+  # Claude models
+  - provider: "anthropic"
+    model: "claude-3-5-haiku-latest"
+    temperature: [0.3, 0.5, 0.7]
+    max_tokens: [500, 1000]
+
+  - provider: "anthropic"
+    model: "claude-3-5-sonnet-latest"
+    temperature: [0.3, 0.5]
+    max_tokens: [1000]
+
+  # OpenAI models
+  - provider: "openai"
+    model: "gpt-4o-mini"
+    temperature: [0.3, 0.5, 0.7]
+    max_tokens: [500, 1000]
+
+  - provider: "openai"
+    model: "gpt-4o"
+    temperature: [0.3, 0.5]
+    max_tokens: [1000]
+
+  # Claude Code SDK (zero cost for testing)
+  - provider: "claude_code"
+    model: "default"
+    temperature: [0.5]
+    max_tokens: [1000]
+
+# Evaluation configuration
+evaluation:
+  metrics:
+    - name: "accuracy"
+      weight: 0.4
+      direction: "maximize"
+    - name: "latency"
+      weight: 0.3
+      direction: "minimize"
+    - name: "cost"
+      weight: 0.2
+      direction: "minimize"
+    - name: "consistency"
+      weight: 0.1
+      direction: "maximize"
+
+  # Custom evaluator function
+  evaluator_type: "composite"  # Options: simple, detailed, composite
+
+  # Sampling configuration
+  sample_size: 20  # Number of samples to evaluate per trial
+  confidence_level: 0.95
+
+# Cost control
+budget:
+  max_cost: 5.0  # Maximum cost in USD
+  cost_per_trial_limit: 0.5
+  alert_threshold: 0.8  # Alert when 80% of budget is used
+
+# Environment-specific overrides
+environments:
+  development:
+    optimization:
+      max_trials: 5
+      strategy: "random"
+    budget:
+      max_cost: 1.0
+    models:
+      - provider: "claude_code"
+        model: "default"
+
+  staging:
+    optimization:
+      max_trials: 20
+      strategy: "bayesian"
+    budget:
+      max_cost: 10.0
+
+  production:
+    optimization:
+      max_trials: 50
+      strategy: "bayesian"
+      early_stopping:
+        enabled: false  # Complete all trials in production
+    budget:
+      max_cost: 25.0
+    evaluation:
+      sample_size: 100  # More samples for production validation
+
+# Subset selection for cost optimization
+subset_selection:
+  enabled: true
+  strategy: "smart"  # Options: random, stratified, smart
+  target_reduction: 0.7  # Aim for 70% cost reduction
+  min_samples: 10
+  max_samples: 100
+
+# Reporting configuration
+reporting:
+  generate_plots: true
+  include_recommendations: true
+  max_recommendations: 5
+  notification_channels:
+    - type: "github_pr"
+      enabled: true
+    - type: "slack"
+      enabled: false
+      webhook: "${SLACK_WEBHOOK}"
+    - type: "email"
+      enabled: false
+      recipients: ["team@example.com"]
+
+# Advanced features
+advanced:
+  use_caching: true
+  cache_ttl: 86400  # 24 hours
+  enable_multi_objective: true
+  use_transfer_learning: false  # Use results from previous optimizations
+
+# Logging configuration
+logging:
+  level: "INFO"
+  format: "json"
+  output: "optimization_logs/"

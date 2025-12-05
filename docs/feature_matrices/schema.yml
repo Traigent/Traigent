@@ -1,0 +1,122 @@
+# Feature Matrix Schema Definition
+# Traceability: CONC-Layer-Infra CONC-Quality-Maintainability REQ-TRACE-GAP-004
+#
+# This schema defines the structure for machine-readable feature matrices
+# that track implementation completeness across SDK modules.
+
+version: "1.0"
+last_updated: "2025-12-01"
+
+# Schema Definition
+schema:
+  matrix:
+    description: "Top-level feature matrix object"
+    required_fields:
+      - id            # Unique identifier (MATRIX-<MODULE>)
+      - module_type   # Type of module (optimizer, evaluator, invoker, cloud, analytics, security)
+      - requirement   # Primary requirement this matrix traces to
+      - last_updated  # ISO date of last update
+      - capabilities  # List of capability objects
+    optional_fields:
+      - description   # Human-readable description
+      - notes         # Additional notes or caveats
+
+  capability:
+    description: "Individual capability within a matrix"
+    required_fields:
+      - id            # Unique capability ID (CAP-<MODULE>-<NAME>)
+      - name          # Human-readable name
+      - implementations  # List of implementation objects
+    optional_fields:
+      - description   # What this capability provides
+      - base_class    # Base class defining the contract
+      - required_methods   # Methods that MUST be implemented
+      - optional_methods   # Methods that MAY be implemented
+
+  implementation:
+    description: "Specific implementation of a capability"
+    required_fields:
+      - class_name     # Name of implementing class
+      - code_unit      # File path relative to traigent/
+      - status         # complete | partial | missing | deprecated
+    optional_fields:
+      - implemented_methods  # List of methods actually implemented
+      - missing_methods      # List of methods not implemented
+      - completion           # Percentage (0.0 to 1.0)
+      - gaps                 # List of gap objects
+      - notes                # Implementation-specific notes
+
+  gap:
+    description: "Identified gap in implementation"
+    required_fields:
+      - type          # method | parameter | behavior | pattern
+      - name          # Name of missing item
+      - priority      # critical | high | medium | low
+    optional_fields:
+      - description   # Why this is needed
+      - workaround    # Alternative if available
+      - issue_ref     # Reference to tracking issue
+
+# Status Definitions
+status_definitions:
+  complete:
+    description: "All required and expected methods implemented"
+    completion_range: [1.0, 1.0]
+
+  partial:
+    description: "Some but not all expected methods implemented"
+    completion_range: [0.01, 0.99]
+
+  missing:
+    description: "Capability not implemented at all"
+    completion_range: [0.0, 0.0]
+
+  deprecated:
+    description: "Capability exists but is deprecated"
+    completion_range: null
+
+# Priority Definitions
+priority_definitions:
+  critical:
+    description: "Blocking issue, must be fixed immediately"
+    sla_days: 1
+
+  high:
+    description: "Important, should be fixed soon"
+    sla_days: 7
+
+  medium:
+    description: "Should be addressed in next sprint"
+    sla_days: 30
+
+  low:
+    description: "Nice to have, can be deferred"
+    sla_days: 90
+
+# Gap Type Definitions
+gap_types:
+  method:
+    description: "Expected method not implemented"
+    example: "async version of sync method"
+
+  parameter:
+    description: "Expected parameter not supported"
+    example: "streaming parameter not handled"
+
+  behavior:
+    description: "Expected behavior pattern not followed"
+    example: "thread-safety, retry logic"
+
+  pattern:
+    description: "Expected design pattern not applied"
+    example: "async/sync wrapper pattern"
+
+# Module Types
+module_types:
+  - optimizer      # Optimization algorithms
+  - evaluator      # Evaluation strategies
+  - invoker        # Function invocation strategies
+  - cloud          # Cloud integration modules
+  - analytics      # Analytics engines
+  - security       # Security managers
+  - integration    # Framework integrations

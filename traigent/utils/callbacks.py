@@ -1,0 +1,650 @@
+"""Progress tracking and callback system for TraiGent optimization."""
+
+# Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Observability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
+
+from __future__ import annotations
+
+import time
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from ..utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from ..api.types import OptimizationResult, TrialResult
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class ProgressInfo:
+    """Information about optimization progress."""
+
+    current_trial: int
+    total_trials: int
+    completed_trials: int
+    successful_trials: int
+    failed_trials: int
+    best_score: float | None
+    best_config: dict[str, Any] | None
+    elapsed_time: float
+    estimated_remaining: float | None
+    current_algorithm: str
+
+    @property
+    def progress_percent(self) -> float:
+        """Calculate progress percentage."""
+        if self.total_trials == 0:
+            return 0.0
+        return (self.completed_trials / self.total_trials) * 100
+
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate percentage."""
+        if self.completed_trials == 0:
+            return 0.0
+        return (self.successful_trials / self.completed_trials) * 100
+
+
+class OptimizationCallback(ABC):
+    """Abstract base class for optimization callbacks."""
+
+    @abstractmethod
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        raise NotImplementedError
+
+
+class ProgressBarCallback(OptimizationCallback):
+    """Progress bar callback using simple text output."""
+
+    def __init__(self, width: int = 50, update_interval: float = 1.0) -> None:
+        """Initialize progress bar callback.
+
+        Args:
+            width: Width of progress bar in characters
+            update_interval: Minimum seconds between updates
+        """
+        self.width = width
+        self.update_interval = update_interval
+        self.last_update = 0.0
+        self.start_time = 0.0
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        self.start_time = time.time()
+        # Note: ProgressBarCallback uses print for interactive console output
+        # This is intentional for user-facing progress display
+        print(f"🚀 Starting optimization with {algorithm}")
+        print(f"📊 Objectives: {', '.join(objectives)}")
+        print(f"⚙️  Configuration space: {len(config_space)} parameters")
+        print()
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        return None  # Update occurs on completion for cleaner output
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        current_time = time.time()
+
+        # Throttle updates
+        if current_time - self.last_update < self.update_interval:
+            return
+
+        self.last_update = current_time
+
+        # Create progress bar
+        filled_width = int(self.width * progress.progress_percent / 100)
+        bar = "█" * filled_width + "░" * (self.width - filled_width)
+
+        # Format time
+        elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
+
+        # Print progress line - using print for interactive console output
+        print(
+            f"\r[{bar}] {progress.progress_percent:5.1f}% "
+            f"({progress.completed_trials}/{progress.total_trials}) "
+            f"✅ {progress.successful_trials} "
+            f"❌ {progress.failed_trials} "
+            f"⏱️  {elapsed} "
+            f"🏆 {progress.best_score:.3f if progress.best_score else 'N/A'}",
+            end="",
+            flush=True,
+        )
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        # Using print for final progress display output
+        print("\n")
+        print("✅ Optimization complete!")
+        print(f"🏆 Best score: {result.best_score:.3f}")
+        print(f"⏱️  Total time: {result.duration:.1f}s")
+        print(f"📈 Success rate: {result.success_rate:.1%}")
+
+
+class LoggingCallback(OptimizationCallback):
+    """Callback that logs optimization progress."""
+
+    def __init__(self, logger: Any | None = None, log_level: str = "INFO") -> None:
+        """Initialize logging callback.
+
+        Args:
+            logger: Logger instance (uses print if None)
+            log_level: Logging level
+        """
+        self.logger = logger
+        self.log_level = log_level
+
+    def _log(self, message: str) -> None:
+        """Log message."""
+        if self.logger:
+            getattr(self.logger, self.log_level.lower())(message)
+        else:
+            # Fallback to module logger if no logger provided
+            getattr(logger, self.log_level.lower())(message)
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        self._log(
+            f"Starting optimization: algorithm={algorithm}, objectives={objectives}"
+        )
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        self._log(f"Trial {trial_number} started: config={config}")
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        self._log(
+            f"Trial {progress.current_trial} complete: "
+            f"status={trial.status}, "
+            f"metrics={trial.metrics}, "
+            f"progress={progress.progress_percent:.1f}%"
+        )
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        self._log(
+            f"Optimization complete: "
+            f"best_score={result.best_score:.3f}, "
+            f"success_rate={result.success_rate:.1%}, "
+            f"duration={result.duration:.1f}s"
+        )
+
+
+class StatisticsCallback(OptimizationCallback):
+    """Callback that collects optimization statistics."""
+
+    def __init__(self) -> None:
+        """Initialize statistics callback."""
+        self.stats: dict[str, Any] = {
+            "trial_times": [],
+            "scores_by_trial": [],
+            "configs_tried": [],
+            "failure_reasons": [],
+            "parameter_values": {},
+        }
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        self.stats["algorithm"] = algorithm
+        self.stats["objectives"] = objectives
+        self.stats["config_space"] = config_space
+
+        # Initialize parameter tracking
+        for param in config_space.keys():
+            self.stats["parameter_values"][param] = []
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        self.stats["configs_tried"].append(config)
+
+        # Track parameter values
+        for param, value in config.items():
+            if param in self.stats["parameter_values"]:
+                self.stats["parameter_values"][param].append(value)
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        self.stats["trial_times"].append(trial.duration)
+
+        if trial.status == "completed":
+            # Extract primary objective score
+            score = trial.metrics.get("accuracy", 0.0)  # Default to accuracy
+            self.stats["scores_by_trial"].append(score)
+        else:
+            self.stats["scores_by_trial"].append(None)
+            self.stats["failure_reasons"].append(trial.error_message or "Unknown error")
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        self.stats["total_duration"] = result.duration
+        self.stats["best_score"] = result.best_score
+        self.stats["best_config"] = result.best_config
+
+    def get_parameter_importance(self) -> dict[str, float]:
+        """Calculate parameter importance based on score variance.
+
+        Returns:
+            Dictionary mapping parameter names to importance scores
+        """
+        importance = {}
+
+        for param, values in self.stats["parameter_values"].items():
+            if len(values) < 2:
+                importance[param] = 0.0
+                continue
+
+            # Group scores by parameter value
+            value_scores: dict[Any, list[float]] = {}
+            for i, value in enumerate(values):
+                if (
+                    i < len(self.stats["scores_by_trial"])
+                    and self.stats["scores_by_trial"][i] is not None
+                ):
+                    if value not in value_scores:
+                        value_scores[value] = []
+                    value_scores[value].append(self.stats["scores_by_trial"][i])
+
+            if len(value_scores) < 2:
+                importance[param] = 0.0
+                continue
+
+            # Calculate variance between different parameter values
+            group_means = [
+                sum(scores) / len(scores) for scores in value_scores.values() if scores
+            ]
+            if len(group_means) >= 2:
+                overall_mean = sum(group_means) / len(group_means)
+                variance = sum(
+                    (mean - overall_mean) ** 2 for mean in group_means
+                ) / len(group_means)
+                importance[param] = variance
+            else:
+                importance[param] = 0.0
+
+        # Normalize importance scores
+        max_importance = max(importance.values()) if importance.values() else 1.0
+        if max_importance > 0:
+            importance = {k: v / max_importance for k, v in importance.items()}
+
+        return importance
+
+
+class SimpleProgressCallback(OptimizationCallback):
+    """Simple progress callback for basic console output.
+
+    This callback provides simple progress tracking suitable for demos
+    and quick prototyping, with configurable output destinations.
+    """
+
+    def __init__(self, output: str | Any = "print", show_details: bool = True) -> None:
+        """Initialize simple progress callback.
+
+        Args:
+            output: Output destination - "print" for console, "log" for logger,
+                   or a callable that accepts strings
+            show_details: Whether to show detailed progress information
+        """
+        self.output = output
+        self.show_details = show_details
+        self.total_trials = 0
+        self.current_trial = 0
+        self.best_score: float | None = None
+        self._output_handler = self._get_output_handler(output)
+
+    def _get_output_handler(self, output: str | Any) -> Any:
+        """Get the appropriate output handler."""
+        if output == "print":
+            return print
+        elif output == "log":
+            return logger.info
+        elif callable(output):
+            return output
+        else:
+            # Default to print if invalid output specified
+            logger.warning(f"Invalid output type {output}, defaulting to print")
+            return print
+
+    def _output(self, message: str) -> None:
+        """Output a message using the configured handler."""
+        self._output_handler(message)
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        # Calculate total configurations
+        if config_space:
+            total_configs = 1
+            for _, values in config_space.items():
+                if isinstance(values, list):
+                    total_configs *= len(values)
+            self.total_trials = total_configs
+
+        self._output(
+            f"\n🔄 Starting {algorithm} optimization with {self.total_trials} configurations..."
+        )
+        if self.show_details:
+            self._output(f"📊 Objectives: {', '.join(objectives)}")
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        self.current_trial = trial_number + 1
+
+        if self.show_details:
+            # Build a descriptive string of the configuration
+            config_parts = []
+
+            # Prioritize showing model/approach/method first
+            primary_param = (
+                config.get("model") or config.get("approach") or config.get("method")
+            )
+            if primary_param:
+                config_parts.append(str(primary_param))
+
+            # Add other important parameters
+            for key, value in config.items():
+                if key not in ["model", "approach", "method"] and value is not None:
+                    # Format the value nicely
+                    if isinstance(value, float):
+                        config_parts.append(f"{key}={value:.1f}")
+                    else:
+                        config_parts.append(f"{key}={value}")
+
+            config_str = ", ".join(config_parts) if config_parts else "config"
+            self._output(
+                f"[{self.current_trial}/{self.total_trials}] Testing: {config_str}"
+            )
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        if progress.best_score is not None:
+            self.best_score = progress.best_score
+
+        if self.show_details and trial.status == "completed":
+            # Extract primary metric
+            score = None
+            if trial.metrics:
+                score = trial.metrics.get("accuracy") or trial.metrics.get(
+                    "score", None
+                )
+
+            if score is not None:
+                self._output(
+                    f"[{self.current_trial}/{self.total_trials}] "
+                    f"Completed. Score: {score:.1%} | Best so far: {self.best_score:.1%}"
+                )
+            elif self.best_score is not None:
+                self._output(
+                    f"[{self.current_trial}/{self.total_trials}] "
+                    f"Completed. Best score so far: {self.best_score:.1%}"
+                )
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        self._output("\n✨ Optimization complete!")
+        if self.show_details and result.best_score is not None:
+            self._output(f"🏆 Best score: {result.best_score:.3f}")
+            if result.best_config:
+                self._output(f"⚙️  Best config: {result.best_config}")
+
+
+class CallbackManager:
+    """Manages multiple optimization callbacks."""
+
+    def __init__(self, callbacks: list[OptimizationCallback] | None = None) -> None:
+        """Initialize callback manager.
+
+        Args:
+            callbacks: List of callback instances
+        """
+        self.callbacks = callbacks or []
+
+    def add_callback(self, callback: OptimizationCallback) -> None:
+        """Add a callback."""
+        self.callbacks.append(callback)
+
+    def remove_callback(self, callback: OptimizationCallback) -> None:
+        """Remove a callback."""
+        if callback in self.callbacks:
+            self.callbacks.remove(callback)
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Notify all callbacks of optimization start."""
+        logger.debug(
+            f"on_optimization_start called with {len(self.callbacks)} callbacks"
+        )
+        for i, callback in enumerate(self.callbacks):
+            logger.debug(f"Calling callback {i}: {callback.__class__.__name__}")
+            try:
+                callback.on_optimization_start(config_space, objectives, algorithm)
+            except Exception as e:
+                logger.warning(
+                    f"Callback error in on_optimization_start: {e}", exc_info=True
+                )
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Notify all callbacks of trial start."""
+        for callback in self.callbacks:
+            try:
+                callback.on_trial_start(trial_number, config)
+            except Exception as e:
+                logger.warning(f"Callback error in on_trial_start: {e}")
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Notify all callbacks of trial completion."""
+        for callback in self.callbacks:
+            try:
+                callback.on_trial_complete(trial, progress)
+            except Exception as e:
+                logger.warning(f"Callback error in on_trial_complete: {e}")
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Notify all callbacks of optimization completion."""
+        for callback in self.callbacks:
+            try:
+                callback.on_optimization_complete(result)
+            except Exception as e:
+                logger.warning(f"Callback error in on_optimization_complete: {e}")
+
+
+class DetailedProgressCallback(OptimizationCallback):
+    """Detailed progress callback that shows comprehensive optimization information.
+
+    This callback provides detailed progress tracking with:
+    - Configuration space overview
+    - Trial-by-trial configuration details
+    - Metrics for each trial
+    - Visual progress bar
+    - Running best score tracking
+    """
+
+    def __init__(
+        self, show_config_details: bool = True, show_metrics: bool = True
+    ) -> None:
+        """Initialize detailed progress callback.
+
+        Args:
+            show_config_details: Whether to show configuration details for each trial
+            show_metrics: Whether to show metrics after each trial
+        """
+        self.show_config_details = show_config_details
+        self.show_metrics = show_metrics
+        self.trial_count = 0
+        self.total_trials = 0
+        self.configs_tested: list[Any] = []
+
+    def on_optimization_start(
+        self, config_space: dict[str, Any], objectives: list[str], algorithm: str
+    ) -> None:
+        """Called when optimization starts."""
+        # Calculate total number of configurations
+        total = 1
+        for _param, values in config_space.items():
+            if isinstance(values, list):
+                total *= len(values)
+        if total <= 0:
+            logger.warning(
+                "Calculated configuration combinations is zero; detailed progress "
+                "will fall back to runtime counts."
+            )
+            self.total_trials = 0
+        else:
+            self.total_trials = total
+
+        print("\n" + "=" * 60)
+        print("🚀 OPTIMIZATION STARTING")
+        print("=" * 60)
+        print(f"📊 Algorithm: {algorithm}")
+        print(f"🎯 Objectives: {', '.join(objectives)}")
+        print("🔧 Configuration Space:")
+
+        for param, values in config_space.items():
+            if isinstance(values, list):
+                print(f"   • {param}: {values}")
+            else:
+                print(f"   • {param}: {values}")
+
+        if self.total_trials > 0:
+            print(f"\n📈 Total configurations to test: {self.total_trials}")
+        else:
+            print(
+                "\n📈 Total configurations to test: unknown "
+                "(will infer from observed trials)"
+            )
+        print("-" * 60 + "\n")
+
+    def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
+        """Called when a trial starts."""
+        self.trial_count = trial_number + 1
+        self.configs_tested.append(config)
+
+        total_display = self.total_trials if self.total_trials > 0 else "?"
+        print(f"▶️  Trial {self.trial_count}/{total_display} starting...")
+
+        if self.show_config_details:
+            print("   Configuration:")
+            for key, value in config.items():
+                if isinstance(value, float):
+                    print(f"     • {key}: {value:.2f}")
+                else:
+                    print(f"     • {key}: {value}")
+
+    def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
+        """Called when a trial completes."""
+        status_icon = "✅" if trial.status == "completed" else "❌"
+
+        total_display = self.total_trials or progress.total_trials
+        if not total_display or total_display <= 0:
+            total_display_str = "?"
+        else:
+            total_display_str = str(total_display)
+
+        print(f"{status_icon} Trial {self.trial_count}/{total_display_str} completed")
+
+        if self.show_metrics and trial.metrics:
+            print("   Metrics:")
+            for metric, value in trial.metrics.items():
+                if isinstance(value, float):
+                    print(f"     • {metric}: {value:.3f}")
+                else:
+                    print(f"     • {metric}: {value}")
+
+        if progress.best_score is not None:
+            print(f"   🏆 Best score so far: {progress.best_score:.3f}")
+
+        # Progress bar
+        denominator_candidates = [
+            progress.total_trials,
+            self.total_trials,
+        ]
+        denominator = next(
+            (
+                value
+                for value in denominator_candidates
+                if isinstance(value, (int, float)) and value > 0
+            ),
+            None,
+        )
+
+        if denominator is None:
+            denominator = max(progress.completed_trials, self.trial_count, 1)
+
+        completed_count = max(progress.completed_trials, self.trial_count)
+        completed_ratio = min(completed_count / max(denominator, 1), 1.0)
+        percent = completed_ratio * 100
+
+        bar_length = 40
+        filled = int(bar_length * percent / 100)
+        bar = "█" * filled + "░" * (bar_length - filled)
+        print(f"   Progress: [{bar}] {percent:.0f}%")
+        print()
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        print("\n" + "=" * 60)
+        print("✨ OPTIMIZATION COMPLETE!")
+        print("=" * 60)
+
+        if result.best_score is not None:
+            print(f"🏆 Best Score: {result.best_score:.3f}")
+
+        if result.best_config:
+            print("⚙️  Best Configuration:")
+            for key, value in result.best_config.items():
+                if isinstance(value, float):
+                    print(f"   • {key}: {value:.2f}")
+                else:
+                    print(f"   • {key}: {value}")
+
+        if result.duration:
+            print(f"⏱️  Total Time: {result.duration:.1f} seconds")
+
+        if result.success_rate:
+            print(f"📊 Success Rate: {result.success_rate:.1%}")
+
+        print("=" * 60 + "\n")
+
+
+# Convenience functions for common callback combinations
+def get_default_callbacks() -> list[OptimizationCallback]:
+    """Get default callbacks for optimization."""
+    return [ProgressBarCallback(), StatisticsCallback()]
+
+
+def get_verbose_callbacks() -> list[OptimizationCallback]:
+    """Get verbose callbacks for detailed logging."""
+    return [ProgressBarCallback(), LoggingCallback(), StatisticsCallback()]
+
+
+def get_detailed_callbacks() -> list[OptimizationCallback]:
+    """Get detailed callbacks with comprehensive progress tracking."""
+    return [DetailedProgressCallback(), StatisticsCallback()]

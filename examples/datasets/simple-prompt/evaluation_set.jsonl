@@ -1,0 +1,3 @@
+{"input": "The quick brown fox jumps over the lazy dog.", "expected": "fox jumps over dog"}
+{"input": "To be or not to be, that is the question.", "expected": "to be or not to be"}
+{"input": "All that glitters is not gold.", "expected": "glitters not gold"}

@@ -1,0 +1,26 @@
+id: SYNC-Observability
+name: "Telemetry and observability emission"
+functionalities: [FUNC-ANALYTICS, FUNC-INTEGRATIONS]
+when:
+  - concept: CONC-Orchestration
+    action: select_best
+    match:
+      bind:
+        selection: "?selection"
+then:
+  - concept: CONC-AnalyticsTelemetry
+    action: emit_telemetry
+    args:
+      trial: "?selection"
+      context: "?context"
+  - concept: CONC-Integrations
+    action: enable_observability
+    args:
+      backend: "?options.observability_backend"
+      run_context: "?selection"
+  - concept: CONC-AnalyticsTelemetry
+    action: visualize_results
+    args:
+      trials: "?trials"
+version: 1
+status: active

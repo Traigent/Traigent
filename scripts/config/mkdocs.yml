@@ -1,0 +1,145 @@
+site_name: TraiGent SDK Documentation
+site_description: Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights
+site_url: https://docs.traigent.ai
+repo_url: https://github.com/Traigent/Traigent
+repo_name: Traigent/Traigent
+edit_uri: edit/main/docs/
+
+nav:
+  - Home: index.md
+  - Getting Started:
+    - Installation: getting-started/installation.md
+    - Quick Start: getting-started/quick-start.md
+    - First Optimization: getting-started/first-optimization.md
+  - User Guide:
+    - Configuration Spaces: user-guide/configuration-spaces.md
+    - Evaluation Datasets: user-guide/evaluation-datasets.md
+    - Optimization Strategies: user-guide/optimization-strategies.md
+    - Analytics & Insights: user-guide/analytics.md
+    - Cloud Integration: user-guide/cloud-integration.md
+  - API Reference:
+    - Overview: api/index.md
+    - Core API: api/core.md
+    - Analytics: api/analytics.md
+    - Cloud: api/cloud.md
+    - Utilities: api/utilities.md
+    - Types: api/types.md
+  - Examples:
+    - Basic Examples: examples/basic.md
+    - Framework Integrations: examples/integrations.md
+    - Advanced Use Cases: examples/advanced.md
+  - Development:
+    - Contributing: CONTRIBUTING.md
+    - Code of Conduct: CODE_OF_CONDUCT.md
+    - Security: SECURITY.md
+    - Changelog: CHANGELOG.md
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - search.share
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: blue
+      accent: blue
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+    edit: material/pencil
+    view: material/eye
+
+plugins:
+  - search:
+      separator: '[\s\-,:!=\[\]()"`/]+|\.(?!\d)|&[lg]t;|(?!\b)(?=[A-Z][a-z])'
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            docstring_options:
+              ignore_init_summary: true
+            show_submodules: true
+            show_source: false
+            heading_level: 2
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.betterem:
+      smart_enable: all
+  - pymdownx.caret
+  - pymdownx.details
+  - pymdownx.emoji:
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+      emoji_index: !!python/name:materialx.emoji.twemoji
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.magiclink:
+      repo_url_shorthand: true
+      user: Traigent
+      repo: Traigent
+  - pymdownx.mark
+  - pymdownx.smartsymbols
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.tilde
+
+extra:
+  version:
+    provider: mike
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Traigent/Traigent
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/traigent/
+  analytics:
+    provider: google
+    property: G-XXXXXXXXXX  # Replace with actual Google Analytics ID
+
+extra_css:
+  - stylesheets/extra.css
+
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+copyright: Copyright &copy; 2024 TraiGent Team - MIT License

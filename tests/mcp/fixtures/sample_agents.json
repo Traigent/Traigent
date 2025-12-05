@@ -1,0 +1,104 @@
+{
+  "agents": [
+    {
+      "id": "python-qa-expert",
+      "name": "Python Q&A Expert",
+      "agent_type": "conversational",
+      "agent_platform": "openai",
+      "prompt_template": "You are a Python programming expert. Answer the following question clearly and concisely: {query}",
+      "model_parameters": {
+        "model": "o4-mini",
+        "temperature": 0.5,
+        "max_tokens": 200
+      },
+      "persona": "experienced Python developer and educator",
+      "guidelines": [
+        "Provide code examples when relevant",
+        "Explain concepts clearly",
+        "Mention best practices",
+        "Be concise but thorough"
+      ],
+      "response_validation": true
+    },
+    {
+      "id": "customer-support-bot",
+      "name": "Customer Support Assistant",
+      "agent_type": "conversational",
+      "agent_platform": "openai",
+      "prompt_template": "You are a friendly customer support representative. Help the customer with: {query}",
+      "model_parameters": {
+        "model": "o4-mini",
+        "temperature": 0.7,
+        "max_tokens": 150
+      },
+      "persona": "empathetic and professional support representative",
+      "guidelines": [
+        "Be empathetic and understanding",
+        "Provide clear solutions",
+        "Ask for clarification when needed",
+        "Maintain professional tone"
+      ],
+      "response_validation": true
+    },
+    {
+      "id": "code-reviewer",
+      "name": "Code Review Assistant",
+      "agent_type": "task",
+      "agent_platform": "langchain",
+      "prompt_template": "Review the following code and provide constructive feedback: {code}",
+      "model_parameters": {
+        "model": "GPT-4o",
+        "temperature": 0.3,
+        "max_tokens": 500
+      },
+      "custom_tools": [
+        "syntax_check",
+        "best_practices_analyzer",
+        "security_scanner"
+      ],
+      "guidelines": [
+        "Focus on code quality and maintainability",
+        "Suggest improvements",
+        "Identify potential bugs",
+        "Check for security issues"
+      ]
+    },
+    {
+      "id": "data-analyst",
+      "name": "Data Analysis Agent",
+      "agent_type": "task",
+      "agent_platform": "openai",
+      "prompt_template": "Analyze the following data and provide insights: {data_description}",
+      "model_parameters": {
+        "model": "GPT-4o",
+        "temperature": 0.4,
+        "max_tokens": 400
+      },
+      "custom_tools": ["data_visualization", "statistical_analysis"],
+      "guidelines": [
+        "Identify patterns and trends",
+        "Provide statistical insights",
+        "Suggest visualizations",
+        "Make data-driven recommendations"
+      ]
+    },
+    {
+      "id": "translation-bot",
+      "name": "Multilingual Translator",
+      "agent_type": "conversational",
+      "agent_platform": "openai",
+      "prompt_template": "Translate the following text from {source_language} to {target_language}: {text}",
+      "model_parameters": {
+        "model": "o4-mini",
+        "temperature": 0.3,
+        "max_tokens": 300
+      },
+      "guidelines": [
+        "Maintain the original meaning",
+        "Preserve tone and style",
+        "Handle idioms appropriately",
+        "Provide cultural context when needed"
+      ]
+    }
+  ]
+}

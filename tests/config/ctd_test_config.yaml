@@ -1,0 +1,167 @@
+# CTD (Combinatorial Test Design) Test Configuration
+# Configuration for plugin parameter override testing
+
+# Test generation settings
+test_generation:
+  # Combination size: 1=univariate, 2=pairwise, 3=triplets
+  k: 1
+
+  # Progress reporting
+  verbose: true
+  show_detailed_progress: true
+  progress_update_interval: 10  # Show progress every N tests
+
+  # Test timeouts
+  individual_test_timeout: 30.0  # seconds
+  total_test_timeout: 3600.0     # 1 hour max
+
+# Plugin filtering
+plugins:
+  # Test all registered plugins by default
+  test_all: true
+
+  # Specific plugins to test (if test_all is false)
+  include: []
+
+  # Plugins to skip
+  exclude: []
+
+  # Only test plugins with these priorities
+  priority_filter: ['LOW', 'NORMAL', 'HIGH', 'CRITICAL']
+
+# Parameter testing configuration
+parameters:
+  # Standard test values for different parameter types
+  # These can be overridden or extended as needed
+
+  model:
+    - value: 'gpt-4'
+      valid: true
+      description: 'GPT-4 model'
+    - value: 'gpt-3.5-turbo'
+      valid: true
+      description: 'GPT-3.5 Turbo model'
+    - value: 'claude-3-opus-20240229'
+      valid: true
+      description: 'Claude Opus model'
+    - value: 'invalid-model'
+      valid: true  # Framework should handle validation
+      description: 'Invalid model name'
+    - value: ''
+      valid: false
+      description: 'Empty model name'
+    - value: null
+      valid: false
+      description: 'None model'
+
+  temperature:
+    - value: 0.0
+      valid: true
+      description: 'Minimum temperature'
+    - value: 0.7
+      valid: true
+      description: 'Default temperature'
+    - value: 1.0
+      valid: true
+      description: 'Standard temperature'
+    - value: 2.0
+      valid: true
+      description: 'Maximum temperature'
+    - value: -0.1
+      valid: false
+      description: 'Negative temperature'
+    - value: 2.1
+      valid: false
+      description: 'Too high temperature'
+    - value: null
+      valid: false
+      description: 'None temperature'
+
+  max_tokens:
+    - value: 1
+      valid: true
+      description: 'Minimum tokens'
+    - value: 100
+      valid: true
+      description: 'Small token count'
+    - value: 1000
+      valid: true
+      description: 'Standard token count'
+    - value: 4096
+      valid: true
+      description: 'Maximum tokens'
+    - value: 0
+      valid: false
+      description: 'Zero tokens'
+    - value: -1
+      valid: false
+      description: 'Negative tokens'
+    - value: 10000
+      valid: false
+      description: 'Too many tokens'
+    - value: null
+      valid: false
+      description: 'None tokens'
+
+# Validation settings
+validation:
+  # Strict validation mode
+  strict_mode: true
+
+  # Fail fast on first error
+  fail_fast: false
+
+  # Continue testing even if plugin validation fails
+  continue_on_plugin_error: true
+
+# Output settings
+output:
+  # Generate detailed test report
+  generate_report: true
+
+  # Report file path (relative to project root)
+  report_file: 'test_results/ctd_test_report.json'
+
+  # Log level for test execution
+  log_level: 'INFO'
+
+  # Save failed test cases for debugging
+  save_failures: true
+  failure_log: 'test_results/ctd_failures.log'
+
+# Integration settings
+integration:
+  # Mock framework calls (don't make real API calls)
+  use_mocks: true
+
+  # Verify mock calls were made correctly
+  verify_mock_calls: true
+
+  # Test with actual framework classes when available
+  test_real_classes: false
+
+# Performance settings
+performance:
+  # Maximum memory usage for test execution (MB)
+  max_memory_mb: 1024
+
+  # Parallel test execution (experimental)
+  parallel_execution: false
+  max_workers: 4
+
+# Edge case testing
+edge_cases:
+  # Test empty plugins
+  test_empty_plugins: true
+
+  # Test plugins with no parameter mappings
+  test_no_mappings: true
+
+  # Test unknown parameters
+  test_unknown_parameters: true
+
+  # Test conflicting parameters
+  test_parameter_conflicts: true
+
+  # Test disabled plugins
+  test_disabled_plugins: true

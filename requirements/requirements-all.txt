@@ -1,0 +1,16 @@
+# TraiGent SDK Complete Dependencies
+# All features and dependencies for full installation
+
+-r requirements.txt
+-r requirements-analytics.txt
+-r requirements-bayesian.txt
+-r requirements-integrations.txt
+-r requirements-security.txt
+
+# Visualization
+matplotlib>=3.5.0
+plotly>=5.0.0
+
+# Enterprise server features
+uvicorn>=0.18.0
+fastapi>=0.95.0

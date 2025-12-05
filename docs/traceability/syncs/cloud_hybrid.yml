@@ -1,0 +1,36 @@
+id: SYNC-CloudHybrid
+name: "Hybrid/cloud session synchronization"
+functionalities: [FUNC-CLOUD-HYBRID, FUNC-SECURITY, FUNC-ORCH-LIFECYCLE]
+when:
+  - concept: CONC-Orchestration
+    action: initialize_session
+    match:
+      bind:
+        options: "?options"
+where:
+  - bind:
+      execution_mode: "?options.execution_mode"
+then:
+  - concept: CONC-Security
+    action: protect_credentials
+    args:
+      credentials: "?options.credentials"
+  - concept: CONC-CloudService
+    action: authenticate
+    args:
+      credentials: "?options.credentials"
+  - concept: CONC-CloudService
+    action: sync_session
+    args:
+      session_payload: "?options"
+  - concept: CONC-CloudService
+    action: request_trial
+    args:
+      session_remote_id: "?session_remote_id"
+  - concept: CONC-CloudService
+    action: submit_result
+    args:
+      session_remote_id: "?session_remote_id"
+      trial_payload: "?trial_payload"
+version: 1
+status: active

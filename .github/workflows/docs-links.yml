@@ -1,0 +1,173 @@
+name: Documentation Links Check
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'docs/**'
+      - 'examples/**/*.md'
+      - 'README.md'
+      - '*.md'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'docs/**'
+      - 'examples/**/*.md'
+      - 'README.md'
+      - '*.md'
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.9"
+
+    - name: Install link checking tools
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests beautifulsoup4
+
+    - name: Check internal documentation links
+      run: |
+        echo "🔍 Checking internal links in documentation..."
+
+        # Function to check if a file exists
+        check_file_exists() {
+          local file_path="$1"
+          if [ ! -f "$file_path" ]; then
+            echo "❌ Broken link: $file_path (referenced in $2)"
+            return 1
+          fi
+          return 0
+        }
+
+        # Check main README.md
+        echo "Checking README.md..."
+        failures=0
+
+        # Extract and check file references
+        for link in $(grep -o 'examples/core/[a-z0-9\-]*/run.py' README.md 2>/dev/null || true); do
+          if ! check_file_exists "$link" "README.md"; then
+            ((failures++))
+          fi
+        done
+
+        # Check examples README
+        echo "Checking examples/README.md..."
+        for link in $(grep -o 'examples/core/[a-z0-9\-]*/run.py' examples/README.md 2>/dev/null || true); do
+          if ! check_file_exists "$link" "examples/README.md"; then
+            ((failures++))
+          fi
+        done
+
+        # Check that shared utilities are referenced correctly
+        if ! check_file_exists "examples/utils/base_example.py" "examples/README.md"; then
+          ((failures++))
+        fi
+
+        # Check docs directory references
+        echo "Checking documentation cross-references..."
+        for doc_file in $(find docs/ -name "*.md" 2>/dev/null || true); do
+          echo "  Checking $doc_file..."
+          # Check for examples references that should be updated
+          if grep -q "examples/\(learn-traigent\|use-cases\|quickstart\|shared_utils\)" "$doc_file" 2>/dev/null; then
+            echo "⚠️  Found legacy example paths in $doc_file"
+          fi
+        done
+
+        if [ $failures -eq 0 ]; then
+          echo "✅ All internal links validated successfully"
+        else
+          echo "❌ Found $failures broken internal links"
+          exit 1
+        fi
+
+    - name: Validate example structure references
+      run: |
+        echo "🏗️ Validating example structure consistency..."
+
+        missing_examples=0
+
+        # Ensure every core example has a README entry
+        for example_path in $(find examples/core -maxdepth 2 -type f -name run.py); do
+          slug=$(echo "$example_path" | sed -E 's#examples/core/([^/]+)/run.py#\1#')
+          if ! grep -q "\| \\\`$slug\\\`" examples/README.md; then
+            echo "❌ Missing README entry for core example slug: $slug"
+            ((missing_examples++))
+          fi
+        done
+
+        if [ $missing_examples -eq 0 ]; then
+          echo "✅ Example structure is consistent"
+        else
+          echo "❌ Found $missing_examples missing example entries"
+          exit 1
+        fi
+
+    - name: Check archive integrity
+      run: |
+        echo "📚 Checking archive directory integrity..."
+
+        if [ ! -f "examples/archive/README.md" ]; then
+          echo "❌ Archive overview missing"
+          exit 1
+        fi
+
+        # Ensure expected archive subdirectories are documented
+        archive_dirs=("core" "results")
+        missing_mentions=0
+
+        for dir in "${archive_dirs[@]}"; do
+          if [ -d "examples/archive/$dir" ]; then
+            if ! grep -q "$dir" examples/archive/README.md; then
+              echo "⚠️  Archive directory '$dir' not mentioned in README"
+              ((missing_mentions++))
+            fi
+          fi
+        done
+
+        if [ $missing_mentions -eq 0 ]; then
+          echo "✅ Archive overview is complete"
+        else
+          echo "⚠️  Archive overview missing $missing_mentions entries"
+        fi
+
+    - name: Verify no legacy paths in active docs
+      run: |
+        echo "🕵️ Checking for legacy example paths in active documentation..."
+
+        legacy_paths=(
+          "examples/0"
+          "examples/common-ai-engineering-tasks"
+          "examples/x-ragas"
+          "examples/x-metric_registry"
+          "examples/page_inline"
+          "examples/sections"
+          "examples/shared"
+        )
+        violations=0
+
+        # Check main documentation files (excluding archive)
+        for doc in README.md examples/README.md examples/docs/*.md docs/**/*.md; do
+          if [ -f "$doc" ] && [[ "$doc" != *"archive"* ]]; then
+            for legacy_path in "${legacy_paths[@]}"; do
+              if grep -q "$legacy_path" "$doc" 2>/dev/null; then
+                echo "❌ Found legacy path '$legacy_path' in $doc"
+                ((violations++))
+              fi
+            done
+          fi
+        done
+
+        if [ $violations -eq 0 ]; then
+          echo "✅ No legacy paths found in active documentation"
+        else
+          echo "❌ Found $violations legacy path references that need updating"
+          exit 1
+        fi

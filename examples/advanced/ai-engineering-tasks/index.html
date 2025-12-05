@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Engineering Tasks - TraiGent Examples</title>
+    <link rel="stylesheet" href="/docs/sections/shared-styles.css">
+    <style>
+        /* Mobile-first responsive design */
+        * {
+            box-sizing: border-box;
+        }
+
+        /* Success Dashboard Styles */
+        .success-dashboard {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 16px;
+            margin: 20px auto 40px;
+            max-width: 1200px;
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.3);
+        }
+
+        .dashboard-header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .success-rate-display {
+            font-size: 48px;
+            font-weight: 700;
+            margin: 10px 0;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .improvement-badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            margin: 10px 0;
+        }
+
+        .dashboard-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            padding: 15px;
+            border-radius: 12px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 600;
+            display: block;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            opacity: 0.9;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 5px;
+        }
+
+        /* Real-time Status Indicators */
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.8; }
+        }
+
+        .status-working {
+            background: #10b98120;
+            color: #10b981;
+        }
+
+        .status-timeout {
+            background: #f59e0b20;
+            color: #f59e0b;
+        }
+
+        .status-fixed {
+            background: #8b5cf620;
+            color: #8b5cf6;
+        }
+
+        /* Interactive Run Buttons */
+        .run-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 12px;
+        }
+
+        .run-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .run-button:active {
+            transform: translateY(0);
+        }
+
+        .copy-feedback {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: #10b981;
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+
+        .copy-feedback.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* Mobile Optimizations */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -280px;
+                width: 280px;
+                height: 100%;
+                background: var(--card-bg);
+                transition: left 0.3s;
+                z-index: 100;
+                box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            }
+
+            .sidebar.open {
+                left: 0;
+            }
+
+            .mobile-menu-toggle {
+                display: block;
+                position: fixed;
+                top: 20px;
+                left: 20px;
+                z-index: 101;
+                background: var(--text-primary);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px;
+                cursor: pointer;
+            }
+
+            .main-content {
+                margin-left: 0;
+                padding: 60px 15px 20px;
+            }
+
+            .success-dashboard {
+                padding: 20px;
+                margin: 10px 0 30px;
+            }
+
+            .success-rate-display {
+                font-size: 36px;
+            }
+
+            .dashboard-stats {
+                grid-template-columns: 1fr 1fr;
+                gap: 15px;
+            }
+
+            .tasks-grid {
+                grid-template-columns: 1fr;
+                gap: 20px;
+            }
+
+            .task-card {
+                padding: 20px;
+            }
+
+            .nav-buttons {
+                flex-direction: column;
+                gap: 12px;
+            }
+
+            .nav-button {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        @media (min-width: 769px) {
+            .mobile-menu-toggle {
+                display: none;
+            }
+        }
+
+        /* Enhanced Task Cards */
+        .tasks-hero {
+            text-align: center;
+            padding: 40px 20px 30px;
+            border-bottom: 1px solid var(--border-light);
+            margin-bottom: 20px;
+        }
+
+        .tasks-title {
+            font-size: clamp(28px, 5vw, 42px);
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text-primary);
+        }
+
+        .tasks-subtitle {
+            font-size: clamp(16px, 2.5vw, 20px);
+            color: var(--text-secondary);
+            margin-bottom: 24px;
+            max-width: 700px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .priority-section {
+            margin-bottom: 48px;
+            padding: 0 20px;
+        }
+
+        .priority-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--border-light);
+            flex-wrap: wrap;
+        }
+
+        .priority-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .priority-title {
+            font-size: clamp(20px, 3vw, 28px);
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .tasks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        .task-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 12px;
+            padding: 24px;
+            transition: all 0.2s;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+            position: relative;
+        }
+
+        .task-card:hover {
+            border-color: var(--card-hover-border);
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-4px);
+        }
+
+        .task-name {
+            font-size: clamp(18px, 2.5vw, 20px);
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 12px;
+        }
+
+        .task-description {
+            font-size: 15px;
+            color: var(--text-secondary);
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }
+
+        .task-metrics {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+
+        .metric {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+            min-width: 80px;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .task-tech {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .tech-tag {
+            font-size: 12px;
+            padding: 4px 8px;
+            background: var(--hover-bg);
+            border-radius: 4px;
+            color: var(--text-secondary);
+        }
+
+        .nav-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin: 40px 20px;
+            flex-wrap: wrap;
+        }
+
+        .nav-button {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: var(--text-primary);
+            color: white;
+            text-decoration: none;
+            border-radius: 8px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .nav-button:hover {
+            transform: translateY(-1px);
+            box-shadow: var(--shadow-md);
+        }
+
+        .nav-button.secondary {
+            background: transparent;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        /* Overlay for mobile menu */
+        .overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 99;
+        }
+
+        .overlay.show {
+            display: block;
+        }
+    </style>
+    <!-- Results utils for rendering tables -->
+    <script src="/docs/sections/results-utils.js"></script>
+</head>
+<body>
+    <!-- Mobile Menu Toggle -->
+    <button class="mobile-menu-toggle" onclick="toggleMenu()" aria-label="Toggle menu">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="3" y1="6" x2="21" y2="6"/>
+            <line x1="3" y1="12" x2="21" y2="12"/>
+            <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+    </button>
+
+    <!-- Overlay -->
+    <div class="overlay" onclick="closeMenu()"></div>
+
+    <!-- Sidebar Navigation -->
+    <nav class="sidebar" id="sidebar">
+        <div class="logo">
+            <img src="/docs/static/assets/traigent.png" alt="TraiGent" style="width: 24px; height: 24px;">
+            <h1>TraiGent</h1>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Navigation</div>
+            <a href="../index.html" class="nav-item">← Back to Examples</a>
+            <a href="/docs/sections/cookbook.html" class="nav-item">Cookbook</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Early Build Tasks (P0)</div>
+            <a href="#p0-1" class="nav-item" onclick="closeMenu()">Structured Output</a>
+            <a href="#p0-2" class="nav-item" onclick="closeMenu()">Context Engineering</a>
+            <a href="#p0-3" class="nav-item" onclick="closeMenu()">Few-Shot Selection</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Common Evolution Tasks (P1)</div>
+            <a href="#p1-1" class="nav-item" onclick="closeMenu()">Function Calling</a>
+            <a href="#p1-2" class="nav-item" onclick="closeMenu()">Token Budget</a>
+            <a href="#p1-3" class="nav-item" onclick="closeMenu()">Safety Guardrails</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Resources</div>
+            <a href="README.md" class="nav-item">Documentation</a>
+            <a href="https://github.com/traigent/traigent" class="nav-item">GitHub</a>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Hero Section -->
+        <section class="tasks-hero">
+            <h1 class="tasks-title">🔧 AI Engineering Tasks</h1>
+            <p class="tasks-subtitle">
+                Systematic optimization of common AI engineering challenges using TraiGent.
+                Each example addresses universal problems that every AI engineering team faces daily.
+            </p>
+        </section>
+
+        <!-- Performance Impact Dashboard -->
+        <div class="success-dashboard">
+            <div class="dashboard-header">
+                <h2>⚡ Typical Performance Improvements with TraiGent</h2>
+                <div class="success-rate-display">15-60% Better Results</div>
+                <div class="improvement-badge">
+                    🚀 Achieve production-ready AI reliability in minutes
+                </div>
+            </div>
+
+            <div class="dashboard-stats">
+                <div class="stat-card">
+                    <span class="stat-value">99.8%</span>
+                    <span class="stat-label">Parsing Success Rate</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">-60%</span>
+                    <span class="stat-label">Token Cost Reduction</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">+25%</span>
+                    <span class="stat-label">RAG Quality Improvement</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">95%+</span>
+                    <span class="stat-label">Tool Selection Accuracy</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">~30min</span>
+                    <span class="stat-label">Time to Optimize</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-value">99%+</span>
+                    <span class="stat-label">PII Detection Recall</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- P0 Priority Tasks -->
+        <section class="priority-section" id="p0">
+            <div class="priority-header">
+                <span class="priority-badge">P0 - Universal Impact</span>
+                <h2 class="priority-title">Early Build Tasks</h2>
+            </div>
+
+            <div class="tasks-grid">
+                <!-- P0-1: Structured Output Engineering -->
+                <div class="task-card" id="p0-1">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P0-1: Structured Output Engineering</h3>
+                    <p class="task-description">
+                        Optimize structured data extraction with modern strategies (JSON mode, function calling, XML tags)
+                        to achieve 99.9%+ parsing reliability while maintaining extraction quality.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Success Rate</span>
+                            <span class="metric-value">99.8%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">F1 Improvement</span>
+                            <span class="metric-value">+15%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">30 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">JSON Mode</span>
+                        <span class="tech-tag">Function Calling</span>
+                        <span class="tech-tag">XML Tags</span>
+                        <span class="tech-tag">Pydantic</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_MODE=true python examples/docs/page-inline/common-tasks/p0-structured-output/run.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                    <div class="code-tabs" id="p0-1-tabs">
+                        <div class="tab-buttons">
+                            <button class="tab-button active" onclick="switchTab(event, 'p0-1-example')">Example</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-1-eval')">Evaluation Set</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-1-results')">Results</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-1-raw')">Raw Results</button>
+                        </div>
+                        <div class="tab-content code-content active" id="p0-1-example"><pre><code class="language-python"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-1-eval"><pre><code class="language-json"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-1-results"></div>
+                        <div class="tab-content code-content" id="p0-1-raw"><pre><code class="language-json"></code></pre></div>
+                    </div>
+                </div>
+
+                <!-- P0-2: Context Engineering & RAG -->
+                <div class="task-card" id="p0-2">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P0-2: Context Engineering & RAG</h3>
+                    <p class="task-description">
+                        Optimize retrieval strategies, chunk sizes, and budget allocation to improve answer quality
+                        by 15-25% while reducing context costs by 30-50%.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Quality Gain</span>
+                            <span class="metric-value">+25%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Cost Cut</span>
+                            <span class="metric-value">-50%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">45 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">BM25</span>
+                        <span class="tech-tag">Dense Retrieval</span>
+                        <span class="tech-tag">HyDE</span>
+                        <span class="tech-tag">Reranking</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_MODE=true python examples/docs/page-inline/common-tasks/p0-context-engineering/run.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                    <div class="code-tabs" id="p0-2-tabs">
+                        <div class="tab-buttons">
+                            <button class="tab-button active" onclick="switchTab(event, 'p0-2-example')">Example</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-2-eval')">Evaluation Set</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-2-results')">Results</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-2-raw')">Raw Results</button>
+                        </div>
+                        <div class="tab-content code-content active" id="p0-2-example"><pre><code class="language-python"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-2-eval"><pre><code class="language-json"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-2-results"></div>
+                        <div class="tab-content code-content" id="p0-2-raw"><pre><code class="language-json"></code></pre></div>
+                    </div>
+                </div>
+
+                <!-- P0-3: Few-Shot Example Selection -->
+                <div class="task-card" id="p0-3">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P0-3: Few-Shot Example Selection</h3>
+                    <p class="task-description">
+                        Discover optimal example selection strategies to increase accuracy by 5-15% and reduce
+                        variance by 30% through semantic similarity, diversity sampling, and curriculum learning.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Accuracy</span>
+                            <span class="metric-value">+15%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Variance</span>
+                            <span class="metric-value">-30%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">20 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">Semantic KNN</span>
+                        <span class="tech-tag">MMR</span>
+                        <span class="tech-tag">Curriculum</span>
+                        <span class="tech-tag">Contrastive</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('TRAIGENT_MOCK_MODE=true python examples/docs/page-inline/common-tasks/p0-few-shot-selection/run.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                    <div class="code-tabs" id="p0-3-tabs">
+                        <div class="tab-buttons">
+                            <button class="tab-button active" onclick="switchTab(event, 'p0-3-example')">Example</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-3-eval')">Evaluation Set</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-3-results')">Results</button>
+                            <button class="tab-button" onclick="switchTab(event, 'p0-3-raw')">Raw Results</button>
+                        </div>
+                        <div class="tab-content code-content active" id="p0-3-example"><pre><code class="language-python"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-3-eval"><pre><code class="language-json"></code></pre></div>
+                        <div class="tab-content code-content" id="p0-3-results"></div>
+                        <div class="tab-content code-content" id="p0-3-raw"><pre><code class="language-json"></code></pre></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- P1 Priority Tasks -->
+        <section class="priority-section" id="p1">
+            <div class="priority-header">
+                <span class="priority-badge" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">P1 - Common Problems</span>
+                <h2 class="priority-title">Common Evolution Tasks</h2>
+            </div>
+
+            <div class="tasks-grid">
+                <!-- P1-1: Function Calling Reliability -->
+                <div class="task-card" id="p1-1">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P1-1: Function Calling Reliability</h3>
+                    <p class="task-description">
+                        Optimize tool description formats and parameter validation to achieve 95%+ correct tool selection
+                        and 98%+ valid parameter formatting for production agents.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Tool Select</span>
+                            <span class="metric-value">95%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Param Valid</span>
+                            <span class="metric-value">98%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">25 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">OpenAI Functions</span>
+                        <span class="tech-tag">Tool Use</span>
+                        <span class="tech-tag">Schema Validation</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('cd p1_function_calling && TRAIGENT_MOCK_MODE=true python main.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                </div>
+
+                <!-- P1-2: Token Budget Optimization -->
+                <div class="task-card" id="p1-2">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P1-2: Token Budget Optimization</h3>
+                    <p class="task-description">
+                        Reduce token costs by 40-60% through smart allocation and truncation strategies while
+                        maintaining 95%+ of baseline task performance.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">Cost Cut</span>
+                            <span class="metric-value">-60%</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Quality</span>
+                            <span class="metric-value">95%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">15 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">Budget Allocation</span>
+                        <span class="tech-tag">Smart Truncation</span>
+                        <span class="tech-tag">Compression</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('cd p1_token_budget && TRAIGENT_MOCK_MODE=true python main.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                </div>
+
+                <!-- P1-3: Safety Guardrails -->
+                <div class="task-card" id="p1-3">
+                    <div class="status-indicator status-working">
+                        <span>✅</span> Working
+                    </div>
+                    <h3 class="task-name">P1-3: Safety Guardrails</h3>
+                    <p class="task-description">
+                        Implement PII detection and hallucination prevention to achieve 99%+ detection recall
+                        while maintaining 95%+ utility for legitimate queries.
+                    </p>
+                    <div class="task-metrics">
+                        <div class="metric">
+                            <span class="metric-label">PII Recall</span>
+                            <span class="metric-value">99%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Utility</span>
+                            <span class="metric-value">95%+</span>
+                        </div>
+                        <div class="metric">
+                            <span class="metric-label">Time</span>
+                            <span class="metric-value">30 min</span>
+                        </div>
+                    </div>
+                    <div class="task-tech">
+                        <span class="tech-tag">PII Detection</span>
+                        <span class="tech-tag">Hallucination Prevention</span>
+                        <span class="tech-tag">Compliance</span>
+                    </div>
+                    <button class="run-button" onclick="copyCommand('cd p1_safety_guardrails && TRAIGENT_MOCK_MODE=true python main.py')">
+                        <span>▶️</span> Run Example
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Navigation Buttons -->
+        <div class="nav-buttons">
+            <a href="../index.html" class="nav-button secondary">
+                <span>←</span> Back to Examples
+            </a>
+            <a href="README.md" class="nav-button">
+                <span>📚</span> View Documentation
+            </a>
+            <a href="#" class="nav-button" onclick="copyCommand('TRAIGENT_MOCK_MODE=true python test_fixed_examples.py'); return false;">
+                <span>🧪</span> Test All Examples
+            </a>
+        </div>
+    </main>
+
+    <!-- Copy Feedback -->
+    <div class="copy-feedback" id="copyFeedback">
+        ✅ Command copied to clipboard!
+    </div>
+
+    <script>
+        function switchTab(event, tabId) {
+            const container = event.target.closest('.code-tabs');
+            if (!container) return;
+            container.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            container.querySelectorAll('.tab-button').forEach(el => el.classList.remove('active'));
+            const selected = container.querySelector(`#${tabId}`);
+            if (selected) selected.classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        // Mobile menu toggle
+        function toggleMenu() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.querySelector('.overlay');
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('show');
+        }
+
+        function closeMenu() {
+            const sidebar = document.getElementById('sidebar');
+            const overlay = document.querySelector('.overlay');
+            sidebar.classList.remove('open');
+            overlay.classList.remove('show');
+        }
+
+        // Copy command to clipboard
+        function copyCommand(command) {
+            navigator.clipboard.writeText(command).then(() => {
+                // Show feedback
+                const feedback = document.getElementById('copyFeedback');
+                feedback.classList.add('show');
+
+                // Hide after 2 seconds
+                setTimeout(() => {
+                    feedback.classList.remove('show');
+                }, 2000);
+            }).catch(err => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = command;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                // Show feedback
+                const feedback = document.getElementById('copyFeedback');
+                feedback.classList.add('show');
+                setTimeout(() => {
+                    feedback.classList.remove('show');
+                }, 2000);
+            });
+        }
+
+        // Load code/eval/results for P0 tasks
+        document.addEventListener('DOMContentLoaded', function() {
+            const assets = {
+                p01: {
+                    code: '../docs/page-inline/common-tasks/p0-structured-output/structured_output.py',
+                    eval: '../docs/page-inline/common-tasks/p0-structured-output/records.jsonl',
+                    results: '../docs/page-inline/common-tasks/p0-structured-output/results.json'
+                },
+                p02: {
+                    code: '../docs/page-inline/common-tasks/p0-context-engineering/context_engineering.py',
+                    eval: '../docs/page-inline/common-tasks/p0-context-engineering/qa_context.jsonl',
+                    results: '../docs/page-inline/common-tasks/p0-context-engineering/results.json'
+                },
+                p03: {
+                    code: '../docs/page-inline/common-tasks/p0-few-shot-selection/few_shot_selection.py',
+                    eval: '../docs/page-inline/common-tasks/p0-few-shot-selection/few_shot.jsonl',
+                    results: '../docs/page-inline/common-tasks/p0-few-shot-selection/results.json'
+                }
+            };
+
+            function loadGroup(prefix, asset) {
+                const codeEl = document.querySelector(`#${prefix}-example code.language-python`);
+                const evalEl = document.querySelector(`#${prefix}-eval code.language-json`);
+                const rawEl = document.querySelector(`#${prefix}-raw code.language-json`);
+                // Code
+                fetch(asset.code).then(r=>r.text()).then(txt=>{ codeEl.textContent = txt; }).catch(()=>{});
+                // Eval
+                fetch(asset.eval).then(r=>r.text()).then(txt=>{ evalEl.textContent = txt.trim(); }).catch(()=>{});
+                // Table
+                if (window.TGResults && window.TGResults.renderResultsTableFromUrl) {
+                    TGResults.renderResultsTableFromUrl(document.getElementById(`${prefix}-results`), asset.results);
+                }
+                // Raw
+                fetch(asset.results).then(r=>r.text()).then(txt=>{ rawEl.textContent = txt.trim(); }).catch(()=>{});
+            }
+
+            loadGroup('p0-1', assets.p01);
+            loadGroup('p0-2', assets.p02);
+            loadGroup('p0-3', assets.p03);
+        });
+
+        // Close mobile menu when clicking outside
+        document.addEventListener('click', (e) => {
+            const sidebar = document.getElementById('sidebar');
+            const menuToggle = document.querySelector('.mobile-menu-toggle');
+
+            if (!sidebar.contains(e.target) && !menuToggle.contains(e.target) && sidebar.classList.contains('open')) {
+                closeMenu();
+            }
+        });
+
+        // Handle escape key to close menu
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeMenu();
+            }
+        });
+    </script>
+</body>
+</html>

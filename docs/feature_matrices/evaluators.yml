@@ -1,0 +1,183 @@
+# Evaluator Feature Matrix
+# Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-EVAL-METRICS REQ-EVAL-005 REQ-TRACE-GAP-004
+#
+# This matrix tracks implementation completeness for evaluation strategies.
+
+id: MATRIX-EVALUATORS
+module_type: evaluator
+requirement: REQ-EVAL-005
+last_updated: "2025-12-01"
+description: "Evaluation strategy implementations and their feature coverage"
+
+base_contract:
+  class: BaseEvaluator
+  code_unit: traigent/evaluators/base.py
+  line_count: 2072
+  required_methods:
+    - name: evaluate
+      signature: "(self, func, config, dataset, custom_evaluator) -> EvaluationSummary"
+      description: "Evaluate function on dataset"
+      is_async: true
+
+  optional_methods:
+    - name: register_metric
+      signature: "(self, metric_name, aggregator, priority) -> None"
+      description: "Register custom metric aggregation"
+
+    - name: evaluate_sample
+      signature: "(self, func, config, sample) -> ExampleResult"
+      description: "Evaluate single sample"
+      is_async: true
+
+    - name: collect_results
+      signature: "(self, results, sample_budget_lease) -> list[ExampleResult]"
+      description: "Collect results from evaluation"
+
+  class_attributes:
+    - name: RESERVED_METRICS
+      type: set[str]
+      description: "Metrics that cannot be overridden"
+
+    - name: DEFAULT_BATCH_SIZE
+      type: int
+      value: 10
+      description: "Default batch size for evaluation"
+
+capabilities:
+  - id: CAP-EVAL-LOCAL
+    name: "Local Evaluator"
+    description: "Local evaluation with parallel processing and RAGAS support"
+    implementations:
+      - class_name: LocalEvaluator
+        code_unit: traigent/evaluators/local.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - evaluate
+          - evaluate_sample
+          - register_metric
+          - collect_results
+        features:
+          parallel_evaluation: true
+          ragas_integration: true
+          custom_metrics: true
+          progress_tracking: true
+          batch_processing: true
+        notes: "Primary evaluator with full feature support"
+
+  - id: CAP-EVAL-SIMPLE
+    name: "Simple Scoring Evaluator"
+    description: "Lightweight evaluator for simple scoring scenarios"
+    implementations:
+      - class_name: SimpleScoringEvaluator
+        code_unit: traigent/evaluators/base.py
+        status: partial
+        completion: 0.8
+        implemented_methods:
+          - evaluate
+          - evaluate_sample
+        missing_methods: []
+        gaps:
+          - type: pattern
+            name: "Not exported in __init__.py"
+            priority: high
+            description: "Class exists but not exported in package __init__.py"
+        features:
+          parallel_evaluation: false
+          ragas_integration: false
+          custom_metrics: false
+          progress_tracking: false
+          batch_processing: false
+        notes: "Defined but not exported - may be intentionally internal"
+
+# Summary Statistics
+summary:
+  total_implementations: 2
+  complete: 1
+  partial: 1
+  missing: 0
+  exported: 1  # Only LocalEvaluator is exported
+  coverage_percentage: 90.0
+
+# Feature Support Matrix
+feature_support:
+  parallel_evaluation:
+    full_support:
+      - LocalEvaluator
+    not_supported:
+      - SimpleScoringEvaluator
+
+  ragas_integration:
+    full_support:
+      - LocalEvaluator
+    not_supported:
+      - SimpleScoringEvaluator
+    notes: "Requires optional RAGAS dependency"
+
+  custom_metrics:
+    full_support:
+      - LocalEvaluator
+    not_supported:
+      - SimpleScoringEvaluator
+
+  progress_tracking:
+    full_support:
+      - LocalEvaluator
+    not_supported:
+      - SimpleScoringEvaluator
+
+  batch_processing:
+    full_support:
+      - LocalEvaluator
+    not_supported:
+      - SimpleScoringEvaluator
+
+# Identified Gaps
+identified_gaps:
+  - id: GAP-EVAL-001
+    type: pattern
+    name: "SimpleScoringEvaluator not exported"
+    priority: high
+    description: "SimpleScoringEvaluator defined in base.py but not in __init__.py"
+    location: traigent/evaluators/__init__.py
+    recommendation: "Add to __all__ or mark as private with underscore"
+
+  - id: GAP-EVAL-002
+    type: capability
+    name: "No remote evaluator"
+    priority: low
+    description: "No evaluator for remote/distributed evaluation"
+    recommendation: "Consider RemoteEvaluator for cloud execution"
+
+  - id: GAP-EVAL-003
+    type: capability
+    name: "Limited evaluator variety"
+    priority: medium
+    description: "Only 2 evaluators compared to diversity in optimizers"
+    notes: "May need specialized evaluators for different use cases"
+
+# Expected Future Capabilities
+roadmap:
+  - id: CAP-EVAL-REMOTE
+    name: "Remote Evaluator"
+    description: "Distributed evaluation across workers"
+    priority: medium
+    status: proposed
+
+  - id: CAP-EVAL-STREAMING
+    name: "Streaming Evaluator"
+    description: "Evaluate streaming LLM outputs"
+    priority: medium
+    status: proposed
+
+  - id: CAP-EVAL-ASYNC-BATCH
+    name: "Async Batch Evaluator"
+    description: "True async batch evaluation"
+    priority: low
+    status: proposed
+
+# Comparison with Invokers
+cross_reference:
+  invokers_count: 2
+  evaluators_count: 2
+  notes: "Evaluators and invokers have similar variety; both could benefit from expansion"

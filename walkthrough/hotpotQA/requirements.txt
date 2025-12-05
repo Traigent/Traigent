@@ -1,0 +1,4 @@
+# TraiGent HotpotQA walkthrough dependencies
+-r ../../requirements/requirements-integrations.txt
+datasets>=2.18.0
+optuna>=4.5.0

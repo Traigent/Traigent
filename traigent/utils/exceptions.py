@@ -1,0 +1,285 @@
+"""Custom exceptions for TraiGent SDK."""
+
+# Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-ORCH-LIFECYCLE FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-ORCH-003 REQ-CLOUD-009 REQ-SEC-010 SYNC-OptimizationFlow SYNC-CloudHybrid
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class TraigentError(Exception):
+    """Base exception for all TraiGent-related errors."""
+
+    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+
+
+class ConfigurationError(TraigentError):
+    """Error in optimization configuration."""
+
+
+class ValidationError(TraigentError):
+    """Error in input validation."""
+
+
+class TraigentValidationError(ValidationError):
+    """Enhanced validation error with helpful suggestions."""
+
+
+class TVLValidationError(ValidationError):
+    """Raised when a TVL specification or constraint is invalid."""
+
+
+class TVLConstraintError(TVLValidationError):
+    """Raised when a TVL constraint fails at runtime."""
+
+
+class ClientError(TraigentError):
+    """Error in client communication or configuration."""
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.status_code = status_code
+
+
+class StandardizedClientError(ClientError):
+    """Standardized client error with consistent format."""
+
+
+class AuthenticationError(TraigentError):
+    """Error in authentication or authorization."""
+
+
+class JWTValidationError(ValidationError):
+    """Error in JWT token validation."""
+
+
+class ConfigurationSpaceError(ConfigurationError):
+    """Error in configuration space definition."""
+
+
+class DatasetValidationError(ValidationError):
+    """Error in dataset validation."""
+
+
+class ObjectiveValidationError(ValidationError):
+    """Error in objective validation."""
+
+
+class InvocationError(TraigentError):
+    """Error during function invocation."""
+
+    def __init__(
+        self,
+        message: str,
+        config: dict[str, Any] | None = None,
+        input_data: dict[str, Any] | None = None,
+        original_error: Exception | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.config = config
+        self.input_data = input_data
+        self.original_error = original_error
+
+
+class EvaluationError(TraigentError):
+    """Error during function evaluation."""
+
+    def __init__(
+        self,
+        message: str,
+        config: dict[str, Any] | None = None,
+        original_error: Exception | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.config = config
+        self.original_error = original_error
+
+
+class OptimizationError(TraigentError):
+    """Error in optimization process."""
+
+
+class PluginError(TraigentError):
+    """Error in plugin system."""
+
+
+class StorageError(TraigentError):
+    """Error in storage operations."""
+
+
+class TraigentStorageError(StorageError):
+    """Specific storage error for Traigent Edge Analytics mode."""
+
+
+class ServiceError(TraigentError):
+    """Error in remote service operations."""
+
+    def __init__(
+        self,
+        message: str,
+        service_name: str | None = None,
+        endpoint: str | None = None,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.service_name = service_name
+        self.endpoint = endpoint
+        self.status_code = status_code
+
+
+class TraigentConnectionError(ServiceError):
+    """Error connecting to remote service."""
+
+
+class ServiceUnavailableError(ServiceError):
+    """Remote service is temporarily unavailable."""
+
+
+class QuotaExceededError(ServiceError):
+    """Service quota or rate limit exceeded."""
+
+
+class SessionError(TraigentError):
+    """Error in session management."""
+
+
+class AgentExecutionError(TraigentError):
+    """Error during agent execution."""
+
+
+class PlatformCapabilityError(TraigentError):
+    """Raised when a platform doesn't support a requested capability."""
+
+
+class RetryError(TraigentError):
+    """Error in retry operations."""
+
+
+class RetryableError(TraigentError):
+    """Error that should trigger a retry.
+
+    This is the canonical definition - use this instead of local definitions
+    in retry.py or resilient_client.py.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        retry_after: float | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.retry_after = retry_after
+
+
+class NonRetryableError(TraigentError):
+    """Error that should not trigger a retry.
+
+    This is the canonical definition - use this instead of local definitions
+    in retry.py or resilient_client.py.
+    """
+
+
+class RateLimitError(RetryableError):
+    """Rate limit exceeded error."""
+
+    def __init__(
+        self, message: str = "Rate limit exceeded", retry_after: float | None = None
+    ) -> None:
+        super().__init__(message, retry_after=retry_after)
+
+
+class NetworkError(RetryableError):
+    """Network-related error."""
+
+
+class TraigentTimeoutError(TraigentError):
+    """Operation timed out."""
+
+
+class TrialPrunedError(TraigentError):
+    """Signal that a trial has been pruned early."""
+
+    def __init__(self, message: str = "Trial pruned", step: int | None = None) -> None:
+        super().__init__(message)
+        self.step = step
+
+
+# =============================================================================
+# Warnings (for deprecation and discouraged patterns)
+# =============================================================================
+
+
+class TraigentWarning(UserWarning):
+    """Base warning class for all TraiGent-specific warnings.
+
+    Use this as the base for warnings about deprecated features,
+    discouraged patterns, or other non-fatal issues.
+    """
+
+
+class ConfigAccessWarning(TraigentWarning):
+    """Warning for deprecated or discouraged configuration access patterns.
+
+    Raised when using deprecated config access methods like get_current_config()
+    or accessing current_config in inappropriate lifecycle states.
+    """
+
+
+class TraigentDeprecationWarning(TraigentWarning):
+    """Warning for deprecated TraiGent features.
+
+    Named TraigentDeprecationWarning to avoid shadowing Python's built-in
+    DeprecationWarning. This is a TraiGent-specific deprecation warning
+    that won't be filtered by Python's default warning filters.
+    """
+
+
+# =============================================================================
+# Lifecycle and State Errors
+# =============================================================================
+
+
+class OptimizationStateError(TraigentError):
+    """Raised when accessing configuration in an invalid lifecycle state.
+
+    This error is raised when:
+    - Accessing current_config during an active optimization trial
+      (use get_trial_config() instead)
+    - Calling get_trial_config() outside of an active optimization trial
+    - Attempting operations that are invalid for the current state
+
+    Example:
+        @traigent.optimize(configuration_space={"model": ["a", "b"]})
+        def my_func():
+            # During optimization, use get_trial_config()
+            cfg = traigent.get_trial_config()
+            return cfg["model"]
+
+        # After optimization, access via result or current_config
+        result = traigent.optimize(my_func, ...)
+        print(result.best_config)  # Recommended
+        print(my_func.current_config)  # Also valid after optimization
+    """
+
+    def __init__(
+        self,
+        message: str,
+        current_state: str | None = None,
+        expected_states: list[str] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.current_state = current_state
+        self.expected_states = expected_states or []

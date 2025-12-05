@@ -1,0 +1,183 @@
+# Auto-generated metadata for Traigent examples.
+# Update entries as examples evolve; documentation and tooling consume this file.
+- slug: hello-world
+  category: core
+  title: "Hello World"
+  summary: "Optimize a simple sentiment workflow with optional RAG context."
+  run: "core/hello-world/run.py"
+  difficulty: beginner
+  est_time: "5 min"
+  tags: ["sentiment", "RAG", "intro"]
+  datasets:
+    - "datasets/hello-world/evaluation_set.jsonl"
+    - "datasets/hello-world/context_documents.jsonl"
+  docs: "../core/hello-world/index.html"
+  docs_sections:
+    - label: "Getting Started Guide"
+      href: "../../docs/getting-started/GETTING_STARTED.md"
+    - label: "Installation & Setup"
+      href: "../../docs/getting-started/installation.md"
+- slug: few-shot-classification
+  category: core
+  title: "Few-Shot Classification"
+  summary: "Author guidance prompts for label classification with local evaluation."
+  run: "core/few-shot-classification/run.py"
+  difficulty: beginner
+  est_time: "8 min"
+  tags: ["classification", "prompting"]
+  datasets:
+    - "datasets/few-shot-classification/example_set.jsonl"
+    - "datasets/few-shot-classification/evaluation_set.jsonl"
+  docs: "../core/few-shot-classification/index.html"
+  docs_sections:
+    - label: "Testing Toolkit"
+      href: "../../docs/getting-started/testing.md"
+- slug: multi-objective-tradeoff
+  category: core
+  title: "Multi-Objective Trade-off"
+  summary: "Compare accuracy, latency, and cost across providers using Optuna searches."
+  run: "core/multi-objective-tradeoff/run_openai_optuna.py"
+  difficulty: intermediate
+  est_time: "15 min"
+  tags: ["optuna", "multi-objective"]
+  datasets:
+    - "datasets/multi-objective-tradeoff/evaluation_set.jsonl"
+    - "datasets/multi-objective-tradeoff/evaluation_set_100_examples.jsonl"
+  docs: "../core/multi-objective-tradeoff/index.html"
+  docs_sections:
+    - label: "Optuna Integration Plan"
+      href: "../../docs/plans/optuna_integration_plan.md"
+- slug: token-budget-summarization
+  category: core
+  title: "Token Budget Summarization"
+  summary: "Enforce strict context budgets while producing consistent summaries."
+  run: "core/token-budget-summarization/run.py"
+  difficulty: intermediate
+  est_time: "12 min"
+  tags: ["summarization", "cost-control"]
+  datasets:
+    - "datasets/token-budget-summarization/evaluation_set.jsonl"
+  docs: "../core/token-budget-summarization/index.html"
+  docs_sections:
+    - label: "TVL Unification Design"
+      href: "../../docs/planned_features/TVL_UNIFICATION_DESIGN_V2.md"
+- slug: structured-output-json
+  category: core
+  title: "Structured Output JSON"
+  summary: "Generate JSON responses and validate output schemas in evaluation."
+  run: "core/structured-output-json/run.py"
+  difficulty: beginner
+  est_time: "10 min"
+  tags: ["json", "validation"]
+  datasets:
+    - "datasets/structured-output-json/evaluation_set.jsonl"
+  docs: "../core/structured-output-json/index.html"
+  docs_sections:
+    - label: "Code Review Implementation"
+      href: "../../docs/plans/completed/code_review_implementation.md"
+- slug: tool-use-calculator
+  category: core
+  title: "Tool Use Calculator"
+  summary: "Demonstrate LangChain tool calling to perform deterministic calculations."
+  run: "core/tool-use-calculator/run.py"
+  difficulty: beginner
+  est_time: "10 min"
+  tags: ["tool-use", "langchain"]
+  datasets:
+    - "datasets/tool-use-calculator/evaluation_set.jsonl"
+  docs: "../core/tool-use-calculator/index.html"
+  docs_sections:
+    - label: "Architectural Overview"
+      href: "../../docs/architecture/ARCHITECTURE.md"
+- slug: prompt-style-optimization
+  category: core
+  title: "Prompt Style Optimization"
+  summary: "Iteratively tune prompt tone and guidance to meet qualitative targets."
+  run: "core/prompt-style-optimization/run.py"
+  difficulty: intermediate
+  est_time: "12 min"
+  tags: ["prompting", "qualitative"]
+  datasets:
+    - "datasets/prompt-style-optimization/evaluation_set.jsonl"
+  docs: "../core/prompt-style-optimization/index.html"
+  docs_sections:
+    - label: "Design Cleanup Plan"
+      href: "../../reports/3_documentation_cleanup/DOCUMENTATION_CLEANUP_PLAN_V2.md"
+- slug: chunking-long-context
+  category: core
+  title: "Chunking Long Context"
+  summary: "Chunk large knowledge bases and stitch responses for long-form prompts."
+  run: "core/chunking-long-context/run.py"
+  difficulty: intermediate
+  est_time: "15 min"
+  tags: ["RAG", "chunking"]
+  datasets:
+    - "datasets/chunking-long-context/context_documents.jsonl"
+    - "datasets/chunking-long-context/evaluation_set.jsonl"
+  docs: "../core/chunking-long-context/index.html"
+  docs_sections:
+    - label: "Local Mode Safeguards"
+      href: "../../docs/plans/completed/local_mode_safeguards_final.md"
+- slug: safety-guardrails
+  category: core
+  title: "Safety Guardrails"
+  summary: "Configure moderation filters and automated safety scoring."
+  run: "core/safety-guardrails/run.py"
+  difficulty: intermediate
+  est_time: "12 min"
+  tags: ["safety", "moderation"]
+  datasets:
+    - "datasets/safety-guardrails/evaluation_set.jsonl"
+  docs: "../core/safety-guardrails/index.html"
+  docs_sections:
+    - label: "API Key Rotation Assessment"
+      href: "../../reports/3_security/assessments/API_KEY_ROTATION_RECORD.md"
+- slug: prompt-ab-test
+  category: core
+  title: "Prompt A/B Test"
+  summary: "Compare prompt variants with built-in statistical analysis."
+  run: "core/prompt-ab-test/run.py"
+  difficulty: intermediate
+  est_time: "10 min"
+  tags: ["experimentation", "prompting"]
+  datasets:
+    - "datasets/prompt-ab-test/evaluation_set.jsonl"
+    - "datasets/prompt-ab-test/prompt_a.txt"
+    - "datasets/prompt-ab-test/prompt_b.txt"
+  docs: "../core/prompt-ab-test/index.html"
+  docs_sections:
+    - label: "Backend Fixes Summary"
+      href: "../../reports/2_development/current/backend_fixes_summary.md"
+- slug: ai-engineering-tasks
+  category: advanced
+  title: "AI Engineering Task Library"
+  summary: "A curated collection of reusable patterns for context engineering, safety guardrails, structured extraction, and more."
+  docs: "../advanced/ai-engineering-tasks/index.html"
+  difficulty: advanced
+  est_time: "30+ min"
+  tags: ["playbook", "engineering"]
+  docs_sections:
+    - label: "Navigation Analysis"
+      href: "../../reports/2_development/problems/EXAMPLES_NAVIGATION_ANALYSIS.md"
+- slug: ragas-playgrounds
+  category: advanced
+  title: "RAG Evaluation Playgrounds"
+  summary: "Experiment with RAGAS scoring configurations across deterministic, column-mapped, and LLM-backed pipelines."
+  docs: "../advanced/ragas/README.md"
+  difficulty: advanced
+  est_time: "25 min"
+  tags: ["RAG", "evaluation"]
+  docs_sections:
+    - label: "RAG Evaluation Notes"
+      href: "../../reports/1_quality/quality_reports/pylance_issues_analysis.md"
+- slug: ci-cd-quality-gates
+  category: integrations
+  title: "CI/CD Quality Gates"
+  summary: "Run Traigent evaluations in CI pipelines with automatic regression checks and approval workflows."
+  docs: "../integrations/ci-cd/README.md"
+  difficulty: advanced
+  est_time: "20 min"
+  tags: ["CI", "automation"]
+  docs_sections:
+    - label: "Traigent CI Gates"
+      href: "../../.github/workflows/traigent-ci-gates.yml"

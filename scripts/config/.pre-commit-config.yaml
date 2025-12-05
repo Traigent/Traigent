@@ -1,0 +1,80 @@
+# Pre-commit hooks for code quality
+# Install with: pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Format with Black
+  - repo: https://github.com/psf/black
+    rev: 24.3.0
+    hooks:
+      - id: black
+        language_version: python3
+        args: ['--line-length=88']
+
+  # Sort imports with isort
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        args: ['--profile=black', '--line-length=88']
+
+  # Lint with Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.4
+    hooks:
+      - id: ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+      - id: ruff-format
+
+  # Type checking with mypy
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-requests, types-PyYAML]
+        args: ['--ignore-missing-imports', '--no-strict-optional']
+
+  # Security checks with bandit
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: ['-ll', '--skip=B101,B601']  # Skip assert_used and shell_usage tests
+        exclude: ^tests/
+
+  # Check for secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: .*\.lock|package-lock\.json
+
+  # Trailing whitespace and file endings
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # Custom hooks for TraiGent
+  - repo: local
+    hooks:
+      # Performance regression check (runs on push)
+      - id: traigent-performance-check
+        name: Check for performance regression
+        entry: python scripts/hooks/performance_check.py
+        language: python
+        stages: [push]
+        pass_filenames: false
+        always_run: true
+        verbose: true
+        description: "Checks for performance regressions before push"

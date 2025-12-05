@@ -1,0 +1,115 @@
+name: Examples Smoke Test
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'examples/**'
+      - 'traigent/**'
+      - 'scripts/run_examples.py'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'examples/**'
+      - 'traigent/**'
+      - 'scripts/run_examples.py'
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Validate example syntax
+      run: |
+        python -m compileall examples/ -x "examples/archive/"
+
+    - name: Test example imports
+      run: |
+        python -c "import sys; sys.path.insert(0, 'examples'); import utils.base_example"
+
+    - name: Run core examples smoke test
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python scripts/examples/run_examples.py --base examples/core --pattern "run.py" --timeout 45 --verbose
+
+    - name: Test advanced example structure
+      run: |
+        python scripts/examples/run_examples.py --base examples/advanced --pattern "run.py" --timeout 60 --no-structure-validation
+
+    - name: Run structured output example
+      env:
+        TRAIGENT_MOCK_MODE: true
+      run: |
+        python examples/core/structured-output-json/run.py
+
+  lint-check:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.9"
+
+    - name: Install linting dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff black
+
+    - name: Lint examples with ruff
+      run: |
+        ruff check examples/ --exclude examples/archive/
+
+    - name: Check code formatting with black
+      run: |
+        black --check examples/ --exclude examples/archive/
+
+  docs-validation:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate documentation links
+      run: |
+        # Check for broken internal links in examples README
+        if grep -r "examples/archive" examples/README.md; then
+          echo "❌ Found references to archive paths in main README"
+          exit 1
+        fi
+
+        # Check that all referenced examples exist
+        for example in $(grep -o "examples/core/[a-z0-9\\-]*/run.py" examples/README.md | sort -u); do
+          if [ ! -f "$example" ]; then
+            echo "❌ Referenced example does not exist: $example"
+            exit 1
+          fi
+        done
+
+        echo "✅ All documentation links validated"
+
+    - name: Check archive index exists
+      run: |
+        if [ ! -f "examples/archive/README.md" ]; then
+          echo "❌ Archive overview missing"
+          exit 1
+        fi
+        echo "✅ Archive overview exists"

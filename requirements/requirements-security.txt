@@ -1,0 +1,14 @@
+# TraiGent SDK Enterprise Security Dependencies
+# Required for Sprint 7 enterprise security features
+
+-r requirements.txt
+
+# Enterprise security features
+pyjwt>=2.4.0
+cryptography>=3.4.0
+passlib>=1.7.4
+python-multipart>=0.0.5
+psutil>=5.8.0
+fastapi>=0.95.0
+uvicorn>=0.18.0
+redis>=4.0.0

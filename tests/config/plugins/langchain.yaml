@@ -1,0 +1,130 @@
+# LangChain Plugin Configuration Override
+# This file allows customization of the LangChain plugin without code changes
+
+metadata:
+  description: "LangChain framework integration with custom settings"
+  author: "TraiGent Team"
+
+# Parameter mappings for LangChain
+mappings:
+  # Core LLM parameters
+  model: "model_name"
+  temperature: "temperature"
+  max_tokens: "max_tokens"
+  top_p: "top_p"
+  frequency_penalty: "frequency_penalty"
+  presence_penalty: "presence_penalty"
+  stop: "stop"
+  streaming: "streaming"
+
+  # LangChain-specific
+  verbose: "verbose"
+  callbacks: "callbacks"
+  tags: "tags"
+  metadata: "metadata"
+  run_name: "run_name"
+
+  # Memory and context
+  memory: "memory"
+  return_messages: "return_messages"
+  max_tokens_limit: "max_tokens_limit"
+
+  # Agent-specific
+  agent_type: "agent_type"
+  tools: "tools"
+  handle_parsing_errors: "handle_parsing_errors"
+  max_iterations: "max_iterations"
+  max_execution_time: "max_execution_time"
+  early_stopping_method: "early_stopping_method"
+
+  # Chain-specific
+  chain_type: "chain_type"
+  return_intermediate_steps: "return_intermediate_steps"
+  include_run_info: "include_run_info"
+
+  # Retrieval/RAG parameters
+  k: "k"
+  fetch_k: "fetch_k"
+  lambda_mult: "lambda_mult"
+  filter: "filter"
+  search_type: "search_type"
+  score_threshold: "score_threshold"
+
+  # Embedding-specific
+  embedding_model: "model_name"
+  chunk_size: "chunk_size"
+  chunk_overlap: "chunk_overlap"
+
+  # Custom mappings for specific providers
+  azure_endpoint: "azure_endpoint"
+  azure_deployment: "azure_deployment"
+  azure_api_version: "api_version"
+
+# Validation rules
+validation:
+  temperature:
+    min_value: 0.0
+    max_value: 2.0
+
+  max_tokens:
+    min_value: 1
+    max_value: 128000
+
+  top_p:
+    min_value: 0.0
+    max_value: 1.0
+
+  k:
+    min_value: 1
+    max_value: 100
+
+  fetch_k:
+    min_value: 1
+    max_value: 1000
+
+  lambda_mult:
+    min_value: 0.0
+    max_value: 1.0
+
+  score_threshold:
+    min_value: 0.0
+    max_value: 1.0
+
+  search_type:
+    allowed_values:
+      - "similarity"
+      - "mmr"
+      - "similarity_score_threshold"
+
+  chunk_size:
+    min_value: 1
+    max_value: 10000
+
+  chunk_overlap:
+    min_value: 0
+    max_value: 5000
+
+  max_iterations:
+    min_value: 1
+    max_value: 100
+
+  max_execution_time:
+    min_value: 1.0
+    max_value: 3600.0
+
+  agent_type:
+    allowed_values:
+      - "zero-shot-react-description"
+      - "react-docstore"
+      - "self-ask-with-search"
+      - "conversational-react-description"
+      - "structured-chat-zero-shot-react-description"
+      - "openai-functions"
+      - "openai-multi-functions"
+
+  chain_type:
+    allowed_values:
+      - "stuff"
+      - "map_reduce"
+      - "refine"
+      - "map_rerank"

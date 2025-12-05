@@ -1,0 +1,3 @@
+{"input": {"brief": "Thank team and confirm next steps."}, "output": "bulleted,formal"}
+{"input": {"brief": "Invite the group to Friday's demo."}, "output": "paragraph,friendly"}
+{"input": {"brief": "Share project update highlights."}, "output": "bulleted,formal"}

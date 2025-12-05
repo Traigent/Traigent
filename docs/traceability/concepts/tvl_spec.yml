@@ -1,0 +1,49 @@
+id: CONC-TVLSpec
+name: TVL Spec
+purpose: "Ingest Typed Variable Language specs and translate them into configuration spaces, objectives, constraints, and budgets."
+state:
+  - name: loaded_specs
+    type: "dict[str, TVLSpecArtifact]"
+    description: "Cached TVL specs keyed by path/environment."
+actions:
+  - name: load_spec
+    inputs:
+      - name: path
+        type: "str"
+      - name: environment
+        type: "str | None"
+    outputs:
+      - case: spec
+        fields:
+          - name: artifact
+            type: "TVLSpecArtifact"
+      - case: error
+        fields:
+          - name: error
+            type: "TVLValidationError"
+    description: "Read and validate a TVL YAML, applying environment overlays if provided."
+  - name: compile_constraints
+    inputs:
+      - name: artifact
+        type: "TVLSpecArtifact"
+    outputs:
+      - case: compiled
+        fields:
+          - name: constraints
+            type: "list[Callable]"
+    description: "Compile constraint expressions into executable callables for orchestration."
+  - name: build_configuration_space
+    inputs:
+      - name: artifact
+        type: "TVLSpecArtifact"
+    outputs:
+      - case: space
+        fields:
+          - name: configuration_space
+            type: "dict[str, Any]"
+    description: "Translate TVL parameter definitions and budgets into optimizer-ready configuration spaces."
+operational_principle:
+  - "Spec loading must fail fast on invalid expressions or unknown fields."
+  - "Environment overlays merge deterministically without silent drops."
+version: 1
+status: active
