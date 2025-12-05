@@ -9,7 +9,7 @@ These tests verify that:
 
 import asyncio
 import random
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -190,8 +190,8 @@ class TestPrivacyCompliance:
 
         # Mock local evaluation function
         async def evaluate_locally(
-            config: Dict[str, Any], indices: List[int]
-        ) -> Dict[str, float]:
+            config: dict[str, Any], indices: list[int]
+        ) -> dict[str, float]:
             """Simulate local evaluation on sensitive data."""
             # Access sensitive data locally
             [sensitive_dataset.examples[i] for i in indices]

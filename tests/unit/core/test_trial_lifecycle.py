@@ -14,9 +14,7 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
 import time
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,7 +28,7 @@ from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.exceptions import TrialPrunedError, TVLConstraintError
+from traigent.utils.exceptions import TrialPrunedError
 
 # =============================================================================
 # Mock Classes

@@ -1,6 +1,6 @@
 """Validation and locking tests for SessionOperations."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -85,7 +85,7 @@ async def test_create_hybrid_session_validates_problem_statement():
 async def test_finalize_session_uses_lock(monkeypatch):
     lock = TrackingLock()
     client = FakeClient(lock)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     session = OptimizationSession(
         session_id="session-1",
         function_name="demo",

@@ -1,6 +1,6 @@
 """Tests for predictive analytics module."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -33,7 +33,7 @@ class TestPredictiveAnalyzer:
         # Mock historical data
         historical_data = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(days=i),
+                "timestamp": datetime.now(UTC) - timedelta(days=i),
                 "config": {"model": "gpt-3.5", "temperature": 0.7},
                 "metrics": {
                     "accuracy": 0.85 + i * 0.01,
@@ -87,7 +87,7 @@ class TestTrendAnalyzer:
         # Create sample time series data with increasing trend
         data_points = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(hours=i),
+                "timestamp": datetime.now(UTC) - timedelta(hours=i),
                 "value": 10 + (24 - i) * 0.5,
             }
             for i in range(24, 0, -1)
@@ -109,7 +109,7 @@ class TestTrendAnalyzer:
         data_points = []
         for day in range(7):
             for hour in range(24):
-                timestamp = datetime.now(timezone.utc) - timedelta(days=day, hours=hour)
+                timestamp = datetime.now(UTC) - timedelta(days=day, hours=hour)
                 # Peak at noon, low at midnight
                 value = 50 + 30 * abs(12 - hour) / 12
                 data_points.append({"timestamp": timestamp, "value": value})
@@ -127,7 +127,7 @@ class TestTrendAnalyzer:
         # Normal data with one anomaly
         data_points = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(hours=i),
+                "timestamp": datetime.now(UTC) - timedelta(hours=i),
                 "value": 10 + i * 0.1,
             }
             for i in range(20, 0, -1)
@@ -150,7 +150,7 @@ class TestCostForecaster:
 
         historical_costs = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(days=i),
+                "timestamp": datetime.now(UTC) - timedelta(days=i),
                 "cost": 100 + i * 10,
                 "usage": {"requests": 1000 + i * 100},
             }
@@ -228,7 +228,7 @@ class TestResourceUsagePredictor:
 
         historical_usage = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(hours=i),
+                "timestamp": datetime.now(UTC) - timedelta(hours=i),
                 "cpu": 50 + i * 2,
                 "memory": 4000 + i * 100,
                 "requests": 100 + i * 10,
@@ -248,7 +248,7 @@ class TestResourceUsagePredictor:
         # Provide sufficient data for trend analysis
         data = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(hours=i),
+                "timestamp": datetime.now(UTC) - timedelta(hours=i),
                 "value": 50 + i,
             }
             for i in range(5)
@@ -266,7 +266,7 @@ class TestScalingRecommender:
         """Test scaling recommendations."""
         recommender = CostForecaster()
 
-        data = [{"timestamp": datetime.now(timezone.utc), "cost": 100}]
+        data = [{"timestamp": datetime.now(UTC), "cost": 100}]
         recommendations = recommender.forecast_costs(
             data, forecast_period=ForecastPeriod.DAILY
         )
@@ -278,7 +278,7 @@ class TestScalingRecommender:
         """Test auto-scaling policy generation."""
         recommender = CostForecaster()
 
-        data = [{"timestamp": datetime.now(timezone.utc), "cost": 100}]
+        data = [{"timestamp": datetime.now(UTC), "cost": 100}]
         policy = recommender.forecast_costs(data, forecast_period=ForecastPeriod.DAILY)
 
         assert policy is not None
@@ -294,9 +294,9 @@ class TestEdgeCases:
 
         # Only 2 data points
         sparse_data = [
-            {"timestamp": datetime.now(timezone.utc), "metrics": {"accuracy": 0.85}},
+            {"timestamp": datetime.now(UTC), "metrics": {"accuracy": 0.85}},
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(hours=1),
+                "timestamp": datetime.now(UTC) - timedelta(hours=1),
                 "metrics": {"accuracy": 0.84},
             },
         ]
@@ -311,7 +311,7 @@ class TestEdgeCases:
 
         # Data with extreme outliers
         data_points = [
-            {"timestamp": datetime.now(timezone.utc) - timedelta(hours=i), "value": 10}
+            {"timestamp": datetime.now(UTC) - timedelta(hours=i), "value": 10}
             for i in range(10)
         ]
         # Add outliers
@@ -352,7 +352,7 @@ class TestEdgeCases:
 
         historical_costs = [
             {
-                "timestamp": datetime.now(timezone.utc) - timedelta(days=i),
+                "timestamp": datetime.now(UTC) - timedelta(days=i),
                 "cost": 100 + i * 5,
             }
             for i in range(60, 0, -1)
@@ -395,7 +395,7 @@ class TestEdgeCases:
         analyzer = PredictiveAnalytics()
 
         # Populate cost forecaster history
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(5):
             analyzer.cost_forecaster.add_usage_data(
                 UsageMetric(

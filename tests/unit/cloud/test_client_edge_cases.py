@@ -91,7 +91,7 @@ class TestCloudClientEdgeCases:
         # Create a proper async context manager mock that raises timeout on enter
         class TimeoutContextManager:
             async def __aenter__(self):
-                raise asyncio.TimeoutError("Request timeout")
+                raise TimeoutError("Request timeout")
 
             async def __aexit__(self, *args):
                 pass

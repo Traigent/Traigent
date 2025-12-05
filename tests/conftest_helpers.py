@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 
 def create_test_dataset(path: str, examples: list) -> None:
@@ -12,7 +12,7 @@ def create_test_dataset(path: str, examples: list) -> None:
             f.write(json.dumps(example) + "\n")
 
 
-def create_test_config() -> Dict[str, Any]:
+def create_test_config() -> dict[str, Any]:
     """Create a test configuration."""
     return {"model": "gpt-4o-mini", "temperature": 0.7, "max_tokens": 100}
 

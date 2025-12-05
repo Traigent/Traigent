@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -92,7 +92,7 @@ class TestMetaLearningMemoryLimits:
                 total_trials=10,
                 duration_seconds=60.0,
                 status=OptimizationStatus.COMPLETED,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
             history.add_record(record)
 
@@ -123,7 +123,7 @@ class TestMetaLearningMemoryLimits:
                 total_trials=5,
                 duration_seconds=30.0,
                 status=OptimizationStatus.COMPLETED,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
             history.add_record(record)
 
@@ -146,7 +146,7 @@ class TestPredictiveAnalyticsMemoryLimits:
 
         for i in range(num_items):
             metric = UsageMetric(
-                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
+                timestamp=datetime.now(UTC) - timedelta(minutes=i),
                 optimizations_count=5,
                 total_trials=50,
                 total_duration_seconds=300,
@@ -175,7 +175,7 @@ class TestPredictiveAnalyticsMemoryLimits:
                 algorithm="random",
                 score=0.8 + (i % 10) * 0.01,
                 duration=100.0,
-                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
+                timestamp=datetime.now(UTC) - timedelta(minutes=i),
             )
 
         # Should be pruned to within limit
@@ -194,7 +194,7 @@ class TestPredictiveAnalyticsMemoryLimits:
             analyzer.add_metric_value(
                 metric_name="test_metric",
                 value=10.0 + i * 0.1,
-                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
+                timestamp=datetime.now(UTC) - timedelta(minutes=i),
             )
 
         # Should be pruned to within limit
@@ -260,7 +260,7 @@ class TestCostOptimizationMemoryLimits:
                 unit_cost=0.1,
                 total_cost=10.0,
                 utilization_percent=70,
-                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
+                timestamp=datetime.now(UTC) - timedelta(minutes=i),
             )
             optimizer.record_usage(usage)
 
@@ -291,7 +291,7 @@ class TestCostOptimizationMemoryLimits:
                 unit_cost=0.05,
                 total_cost=5.0,
                 utilization_percent=60,
-                timestamp=datetime.now(timezone.utc) - timedelta(minutes=i),
+                timestamp=datetime.now(UTC) - timedelta(minutes=i),
             )
             optimizer.record_usage(usage)
 
@@ -422,7 +422,7 @@ class TestPruningBehavior:
                 total_trials=10,
                 duration_seconds=60.0,
                 status=OptimizationStatus.COMPLETED,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
             history.add_record(record)
 
@@ -494,7 +494,7 @@ class TestThreadSafetyDuringPruning:
                         total_trials=10,
                         duration_seconds=60.0,
                         status=OptimizationStatus.COMPLETED,
-                        timestamp=datetime.now(timezone.utc),
+                        timestamp=datetime.now(UTC),
                     )
                     history.add_record(record)
             except Exception as e:
@@ -528,7 +528,6 @@ class TestConstantsImportedCorrectly:
 
     def test_cost_optimization_imports_constants(self):
         """Test cost_optimization module imports from core.constants."""
-        from traigent.analytics import cost_optimization
         from traigent.analytics.cost_optimization import CostOptimizationAI
 
         # Module should import the constants from core.constants

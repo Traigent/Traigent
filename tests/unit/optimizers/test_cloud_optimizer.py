@@ -11,7 +11,7 @@ This test suite covers:
 """
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -99,7 +99,7 @@ def sample_session():
         objectives=["accuracy"],
         algorithm="bayesian",
         status=OptimizationSessionStatus.ACTIVE,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.now(UTC),
         optimization_strategy=OptimizationStrategy(),
     )
 
@@ -116,7 +116,7 @@ def sample_trial_results():
             metrics={"accuracy": 0.85, "cost": 0.05},
             status=TrialStatus.COMPLETED,
             duration=1.5,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata={},
         ),
         TrialResult(
@@ -125,7 +125,7 @@ def sample_trial_results():
             metrics={"accuracy": 0.88, "cost": 0.07},
             status=TrialStatus.COMPLETED,
             duration=1.8,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata={},
         ),
         TrialResult(
@@ -134,7 +134,7 @@ def sample_trial_results():
             metrics={"accuracy": 0.82, "cost": 0.03},
             status=TrialStatus.COMPLETED,
             duration=1.2,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             metadata={},
         ),
     ]
@@ -843,7 +843,7 @@ class TestStoppingConditions:
 
         # Create session that started 20 seconds ago
         old_session = MagicMock()
-        old_session.created_at = datetime.now(timezone.utc) - timedelta(seconds=20)
+        old_session.created_at = datetime.now(UTC) - timedelta(seconds=20)
         optimizer.session = old_session
 
         should_stop = await optimizer.should_stop_async([])
@@ -876,7 +876,7 @@ class TestStoppingConditions:
                 {"accuracy": 0.9},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # Best overall
             TrialResult(
                 "t2",
@@ -884,7 +884,7 @@ class TestStoppingConditions:
                 {"accuracy": 0.8},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # Recent, worse
             TrialResult(
                 "t3",
@@ -892,7 +892,7 @@ class TestStoppingConditions:
                 {"accuracy": 0.8},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # Recent, worse
             TrialResult(
                 "t4",
@@ -900,7 +900,7 @@ class TestStoppingConditions:
                 {"accuracy": 0.8},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # Recent, worse
         ]
 
@@ -1290,7 +1290,7 @@ class TestCTDScenarios:
         elif budget_type == "time":
             # Create session with time offset
             session = MagicMock()
-            session.created_at = datetime.now(timezone.utc) - timedelta(
+            session.created_at = datetime.now(UTC) - timedelta(
                 seconds=time_offset
             )
             optimizer.session = session
@@ -1411,7 +1411,7 @@ class TestEdgeCases:
                 metrics={"accuracy": 0.8 + i * 0.0001},
                 status=TrialStatus.COMPLETED,
                 duration=1.0,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 metadata={},
             )
             large_history.append(trial)
@@ -1447,7 +1447,7 @@ class TestEdgeCases:
                 {},
                 TrialStatus.FAILED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # No metrics
             TrialResult(
                 "t2",
@@ -1455,7 +1455,7 @@ class TestEdgeCases:
                 {"accuracy": 0.8},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # No config
             TrialResult(
                 "t3",
@@ -1463,7 +1463,7 @@ class TestEdgeCases:
                 {"accuracy": None},
                 TrialStatus.COMPLETED,
                 1.0,
-                datetime.now(timezone.utc),
+                datetime.now(UTC),
             ),  # None metric
         ]
 
@@ -1540,10 +1540,9 @@ class TestEdgeCases:
         self, sample_config_space, sample_objectives, mock_remote_service
     ):
         """Test handling of network timeouts."""
-        import asyncio
 
         # Simulate timeout
-        mock_remote_service.suggest_configuration.side_effect = asyncio.TimeoutError(
+        mock_remote_service.suggest_configuration.side_effect = TimeoutError(
             "Network timeout"
         )
 

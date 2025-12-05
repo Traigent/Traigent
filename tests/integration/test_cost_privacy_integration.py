@@ -1,7 +1,7 @@
 """Integration tests for cost calculation with privacy mode support."""
 
 import os
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -76,7 +76,7 @@ async def test_privacy_mode_with_length_storage():
     )
 
     # Mock function that returns standardized format
-    async def mock_function(**kwargs) -> Dict[str, Any]:
+    async def mock_function(**kwargs) -> dict[str, Any]:
         input_data = kwargs
         if "text" in input_data:
             response = MockAnthropicMessage("Paris is the capital of France")
@@ -257,7 +257,7 @@ async def test_end_to_end_flow_with_mock_mode():
     )
 
     # Mock function simulating SDK response format
-    async def mock_target(**kwargs) -> Dict[str, Any]:
+    async def mock_target(**kwargs) -> dict[str, Any]:
         return {
             "text": "Test answer",
             "raw_response": MockOpenAICompletion("Test answer", 15, 25),

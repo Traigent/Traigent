@@ -1,6 +1,6 @@
 """Tests for batch processing utilities."""
 
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -205,7 +205,7 @@ class TestMemoryEfficientBatchProcessor:
         processor = MemoryEfficientBatchProcessor()
 
         # Mock processor function
-        async def mock_processor(items: List[Any]) -> List[InvocationResult]:
+        async def mock_processor(items: list[Any]) -> list[InvocationResult]:
             return [
                 InvocationResult(result=f"processed_{item}", is_successful=True)
                 for item in items
@@ -246,7 +246,7 @@ class TestMemoryEfficientBatchProcessor:
         processor = MemoryEfficientBatchProcessor()
 
         # Mock processor function that fails on certain items
-        async def mock_processor(items: List[Any]) -> List[InvocationResult]:
+        async def mock_processor(items: list[Any]) -> list[InvocationResult]:
             if 3 in items:  # Fail batch containing item 3
                 raise ValueError("Processing failed")
             return [
@@ -419,7 +419,7 @@ class TestRetryAndRecovery:
         """Test successful processing without retries."""
         items = [1, 2, 3, 4, 5]
 
-        async def mock_processor(batch_items: List[Any]) -> List[InvocationResult]:
+        async def mock_processor(batch_items: list[Any]) -> list[InvocationResult]:
             return [
                 InvocationResult(result=f"processed_{item}", is_successful=True)
                 for item in batch_items
@@ -439,7 +439,7 @@ class TestRetryAndRecovery:
         items = [1, 2, 3, 4, 5]
         failure_count = 0
 
-        async def mock_processor(batch_items: List[Any]) -> List[InvocationResult]:
+        async def mock_processor(batch_items: list[Any]) -> list[InvocationResult]:
             nonlocal failure_count
             results = []
 
@@ -472,7 +472,7 @@ class TestRetryAndRecovery:
         """Test processing when max retries are exceeded."""
         items = [1, 2, 3]
 
-        async def failing_processor(batch_items: List[Any]) -> List[InvocationResult]:
+        async def failing_processor(batch_items: list[Any]) -> list[InvocationResult]:
             # Always fail for item 2
             results = []
             for item in batch_items:

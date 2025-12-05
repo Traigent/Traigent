@@ -9,7 +9,7 @@ This test suite covers:
 - CTD (Combinatorial Test Design) scenarios
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import pytest
 
@@ -75,13 +75,13 @@ class MockConstraint(Constraint):
         self.should_pass = should_pass
         self.message = message
 
-    def validate(self, config: Dict[str, Any]) -> bool:
+    def validate(self, config: dict[str, Any]) -> bool:
         return self.should_pass
 
-    def get_violation_message(self, config: Dict[str, Any]) -> str:
+    def get_violation_message(self, config: dict[str, Any]) -> str:
         return self.message
 
-    def get_suggestion(self, config: Dict[str, Any]) -> Optional[str]:
+    def get_suggestion(self, config: dict[str, Any]) -> str | None:
         return "Mock suggestion" if not self.should_pass else None
 
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from traigent.analytics.anomaly import AnomalyType, PerformanceMonitor
 
@@ -12,7 +12,7 @@ def _record_series(
     value_score: float,
     value_duration: float,
 ) -> None:
-    base_time = datetime.now(timezone.utc) - timedelta(minutes=start_minutes_ago)
+    base_time = datetime.now(UTC) - timedelta(minutes=start_minutes_ago)
     for i in range(count):
         ts = base_time + timedelta(minutes=i)
         monitor.record_performance(

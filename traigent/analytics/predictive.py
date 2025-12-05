@@ -1273,9 +1273,7 @@ class TrendAnalyzer:
                     severity = "high" if z_score > 4 else "medium"
                     anomalies.append(
                         {
-                            "timestamp": point.get(
-                                "timestamp", datetime.now(UTC)
-                            ),
+                            "timestamp": point.get("timestamp", datetime.now(UTC)),
                             "value": value,
                             "z_score": z_score,
                             "severity": severity,
@@ -1285,9 +1283,7 @@ class TrendAnalyzer:
                 elif z_score > 2:  # 2 sigma rule for low severity
                     anomalies.append(
                         {
-                            "timestamp": point.get(
-                                "timestamp", datetime.now(UTC)
-                            ),
+                            "timestamp": point.get("timestamp", datetime.now(UTC)),
                             "value": value,
                             "z_score": z_score,
                             "severity": "low",

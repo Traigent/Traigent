@@ -58,6 +58,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> GeminiChatResponse:
         if os.getenv("GEMINI_MOCK", "").strip().lower() == "true":
@@ -90,6 +91,8 @@ class GeminiChatClient:
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
         kwargs: dict[str, Any] = {"temperature": float(temperature)}
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
         if extra_params:
             kwargs.update(dict(extra_params))
         # Join content for basic chats
@@ -115,6 +118,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> Generator[str, None, GeminiChatResponse]:
         if os.getenv("GEMINI_MOCK", "").strip().lower() == "true":
@@ -153,6 +157,8 @@ class GeminiChatClient:
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
         kwargs: dict[str, Any] = {"temperature": float(temperature), "stream": True}
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
         if extra_params:
             kwargs.update(dict(extra_params))
 
@@ -183,6 +189,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> GeminiChatResponse:
         """Perform an async non-streaming chat invocation using Gemini."""
@@ -217,6 +224,8 @@ class GeminiChatClient:
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
         kwargs: dict[str, Any] = {"temperature": float(temperature)}
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
         if extra_params:
             kwargs.update(dict(extra_params))
 
@@ -242,6 +251,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Perform an async streaming chat invocation; yields text chunks."""
@@ -268,6 +278,8 @@ class GeminiChatClient:
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
         kwargs: dict[str, Any] = {"temperature": float(temperature), "stream": True}
+        if top_p is not None:
+            kwargs["top_p"] = float(top_p)
         if extra_params:
             kwargs.update(dict(extra_params))
 
