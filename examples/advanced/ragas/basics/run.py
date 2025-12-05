@@ -59,7 +59,7 @@ _GENERIC_RESPONSES = {
     execution_mode="edge_analytics",
 )
 def answer_question(question: str) -> str:
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     strategy = cfg.get("strategy", "grounded_lookup")
     tone = cfg.get("tone", "direct")
 

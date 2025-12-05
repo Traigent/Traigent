@@ -184,7 +184,7 @@ def style_accuracy_metric(
 )
 def draft_email(brief: str) -> str:
     if MOCK:
-        cfg = traigent.get_current_config()
+        cfg = traigent.get_trial_config()
         style = cfg.get("style", "paragraph")
         tone = cfg.get("tone", "formal")
         header = "Dear team," if tone == "formal" else "Hi team,"
@@ -194,7 +194,7 @@ def draft_email(brief: str) -> str:
             body = "\nThank you for your work and we confirm next steps. We'll follow up soon."
         return f"{header}{body}"
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     style = cfg.get("style", "paragraph")
     tone = cfg.get("tone", "formal")
     temperature = float(cfg.get("temperature", 0.0))

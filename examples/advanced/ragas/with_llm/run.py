@@ -100,7 +100,7 @@ _HEDGED_RESPONSES = {
     metric_functions=_METRIC_FUNCTIONS,
 )
 def answer_question(question: str) -> str:
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     policy = cfg.get("evidence_policy", "cite_context")
     style = cfg.get("answer_style", "succinct")
 

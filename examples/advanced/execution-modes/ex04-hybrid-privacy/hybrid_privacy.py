@@ -102,7 +102,7 @@ def _style_accuracy(
     max_trials=10,
 )
 def proprietary_assistant(query: str) -> str:
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
 
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),

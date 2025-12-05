@@ -142,7 +142,7 @@ def create_python_dataset() -> Dataset:
 )
 def classifier_with_python_list(text: str) -> str:
     """Classifier using Python list dataset."""
-    current = traigent.get_current_config()
+    current = traigent.get_trial_config()
     config: dict[str, Any] = current if isinstance(current, dict) else {}
 
     prompt_styles = {
@@ -235,7 +235,7 @@ class DynamicDatasetGenerator:
 )
 def math_solver(problem: str) -> str:
     """Math problem solver with dynamic dataset."""
-    current = traigent.get_current_config()
+    current = traigent.get_trial_config()
     config: dict[str, Any] = current if isinstance(current, dict) else {}
 
     if config.get("reasoning_steps", False):

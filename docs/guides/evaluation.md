@@ -409,11 +409,10 @@ Best accuracy: 0.00
 
 **Solutions:**
 
-1. **Reduce Batch Size**
+1. **Use a Smaller Dataset Subset**
    ```python
    @traigent.optimize(
-       batch_size=10,  # Process 10 examples at a time
-       eval_dataset="large_dataset.jsonl"
+       eval_dataset="large_dataset_subset.jsonl"  # Use a representative subset
    )
    ```
 
