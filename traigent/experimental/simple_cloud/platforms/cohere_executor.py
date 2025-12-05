@@ -21,7 +21,6 @@ except ImportError:
 
 from traigent.agents.platforms.base_platform import BasePlatformExecutor
 from traigent.agents.platforms.parameter_mapping import ParameterMapper
-
 from traigent.utils.exceptions import (
     AgentExecutionError,
     ConfigurationError,

@@ -177,7 +177,7 @@ class AzureOpenAIChatClient:
         top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> Generator[str, None, AzureOpenAIChatResponse]:
-        """Perform a sync streaming chat invocation; yields text chunks."""
+        """Perform a sync streaming chat invocation; yields text chunks and returns final response."""
 
         if os.getenv("AZURE_OPENAI_MOCK", "").strip().lower() == "true":
             msgs = _coerce_messages(messages)
