@@ -84,7 +84,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 def content_generator(topic: str, context: str = "") -> str:
     """Content generator using mixed parameter optimization approach."""
     # Get optimized parameters from TraiGent
-    config = traigent.get_current_config()
+    config = traigent.get_trial_config()
     if not isinstance(config, dict):
         config = {}
 

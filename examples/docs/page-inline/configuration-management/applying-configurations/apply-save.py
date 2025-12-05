@@ -82,7 +82,7 @@ def apply_saved_config(path: Path) -> Callable[[F], F]:
 )
 def customer_support_agent(query: str) -> str:
     """Handle a support query using parameters injected by Traigent."""
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     model = (
         cfg.get("model", "gpt-3.5-turbo") if isinstance(cfg, dict) else "gpt-3.5-turbo"
     )
@@ -102,7 +102,7 @@ def customer_support_agent(query: str) -> str:
 @apply_saved_config(CONFIG_PATH)
 def production_support_agent(query: str) -> str:
     """Use the saved optimal configuration without re-running optimization."""
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     model = (
         cfg.get("model", "gpt-3.5-turbo") if isinstance(cfg, dict) else "gpt-3.5-turbo"
     )

@@ -139,7 +139,7 @@ def hotpot_agent(question: str, context: list[str] | None = None) -> str:
     """Simulated HotpotQA agent; context is captured via TraiGent instrumentation."""
 
     context = context or []
-    config: dict[str, Any] = traigent.get_current_config()
+    config: dict[str, Any] = traigent.get_trial_config()
     if USE_MOCK:
         return generate_case_study_answer(question, config)
     return generate_real_answer(question, context, config)
@@ -149,7 +149,7 @@ async def main() -> None:
     result = await hotpot_agent.optimize(
         algorithm="optuna_nsga2",
         max_trials=12,
-        parallel_trials=4,
+        parallel_config={"trial_concurrency": 4},
     )
 
     print("Best configuration:")

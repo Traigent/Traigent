@@ -144,7 +144,7 @@ File: `tests/functional/test_seamless_runtime_shim.py`
 
 ### 6.3 Parallelism / Concurrency
 
-- Integration test with `parallel_trials=3` and `max_trials=6`. Use deterministic mock to detect misapplied configs.
+- Integration test with `parallel_config={"trial_concurrency": 3}` and `max_trials=6`. Use deterministic mock to detect misapplied configs.
 
 ### 6.4 Telemetry
 

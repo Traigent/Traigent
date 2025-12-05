@@ -121,7 +121,7 @@ def _contains_accuracy(
     max_trials=10,
 )
 def answer_with_context(context: str, question: str) -> str:
-    cfg = traigent.get_current_config()
+    cfg = traigent.get_trial_config()
     llm = ChatOpenAI(
         model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)
     )
