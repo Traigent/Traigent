@@ -1,0 +1,70 @@
+{
+  "categories": [
+    "emergency",
+    "routine_checkup",
+    "specialist_referral",
+    "prescription_request",
+    "test_results",
+    "chronic_care"
+  ],
+  "input_patterns": {
+    "symptoms": "Patient symptoms description",
+    "patient_history": "Medical history information",
+    "test_results": "Laboratory or diagnostic results"
+  },
+  "output_patterns": {
+    "diagnosis_category": "Medical diagnosis category",
+    "urgency_level": "Level of medical urgency",
+    "recommendations": "Medical recommendations"
+  },
+  "complexity_indicators": {
+    "easy": [
+      "clear symptoms",
+      "common condition",
+      "straightforward"
+    ],
+    "medium": [
+      "multiple symptoms",
+      "requires history",
+      "differential"
+    ],
+    "hard": [
+      "complex presentation",
+      "multiple conditions",
+      "rare disease"
+    ],
+    "very_hard": [
+      "unusual symptoms",
+      "complex interactions",
+      "diagnostic challenge"
+    ],
+    "expert": [
+      "rare condition",
+      "multiple complications",
+      "research-level complexity"
+    ]
+  },
+  "common_terms": [
+    "symptoms",
+    "diagnosis",
+    "treatment",
+    "medication",
+    "condition",
+    "patient",
+    "doctor",
+    "hospital",
+    "clinic",
+    "emergency"
+  ],
+  "specialties": [
+    "cardiology",
+    "neurology",
+    "orthopedics",
+    "dermatology",
+    "psychiatry",
+    "oncology",
+    "pediatrics",
+    "internal_medicine",
+    "surgery"
+  ]
+}

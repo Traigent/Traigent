@@ -1,0 +1,248 @@
+name: Auto-Tune on Staging
+
+on:
+  push:
+    branches:
+      - staging
+      - 'release/*'
+  pull_request:
+    types: [labeled]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to tune for'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+          - development
+      max_trials:
+        description: 'Maximum number of trials'
+        required: false
+        default: '10'
+      budget:
+        description: 'Maximum budget in USD'
+        required: false
+        default: '5.0'
+
+jobs:
+  auto-tune:
+    # Only run if PR has 'auto-tune' label or on staging/release branches
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && contains(github.event.label.name, 'auto-tune')) ||
+      github.event_name == 'workflow_dispatch'
+
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Needed for DVC
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,integrations,bayesian]"
+          pip install dvc[s3] cml dvclive
+
+      - name: Setup CML
+        uses: iterative/setup-cml@v2
+
+      - name: Setup DVC
+        uses: iterative/setup-dvc@v1
+
+      - name: Configure AWS credentials (for DVC storage)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Pull DVC data
+        run: |
+          # Pull latest model and data from DVC
+          dvc pull || echo "No DVC data to pull (first run)"
+
+      - name: Determine environment
+        id: env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "environment=${{ github.event.inputs.environment }}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/staging" ]]; then
+            echo "environment=staging" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == refs/heads/release/* ]]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+          else
+            echo "environment=development" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set tuning parameters
+        id: params
+        run: |
+          ENV="${{ steps.env.outputs.environment }}"
+
+          # Set defaults based on environment
+          if [[ "$ENV" == "production" ]]; then
+            MAX_TRIALS="${{ github.event.inputs.max_trials || '50' }}"
+            BUDGET="${{ github.event.inputs.budget || '25.0' }}"
+          elif [[ "$ENV" == "staging" ]]; then
+            MAX_TRIALS="${{ github.event.inputs.max_trials || '20' }}"
+            BUDGET="${{ github.event.inputs.budget || '10.0' }}"
+          else
+            MAX_TRIALS="${{ github.event.inputs.max_trials || '10' }}"
+            BUDGET="${{ github.event.inputs.budget || '5.0' }}"
+          fi
+
+          echo "max_trials=$MAX_TRIALS" >> $GITHUB_OUTPUT
+          echo "budget=$BUDGET" >> $GITHUB_OUTPUT
+
+      - name: Run auto-tuning pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          TRAIGENT_MOCK_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+        run: |
+          # Update DVC params with current settings
+          python -c "
+          import yaml
+          with open('params.yaml', 'r') as f:
+              params = yaml.safe_load(f)
+          params['optimize']['max_trials'] = ${{ steps.params.outputs.max_trials }}
+          params['optimize']['budget'] = ${{ steps.params.outputs.budget }}
+          with open('params.yaml', 'w') as f:
+              yaml.dump(params, f)
+          "
+
+          # Run DVC pipeline
+          dvc repro
+
+      - name: Generate CML report
+        if: always()
+        run: |
+          # Create performance report
+          echo "## 🤖 Auto-Tuning Results" > report.md
+          echo "" >> report.md
+          echo "**Environment:** ${{ steps.env.outputs.environment }}" >> report.md
+          echo "**Max Trials:** ${{ steps.params.outputs.max_trials }}" >> report.md
+          echo "**Budget:** \$${{ steps.params.outputs.budget }}" >> report.md
+          echo "" >> report.md
+
+          # Add metrics
+          if [ -f "performance_report.json" ]; then
+            echo "### 📊 Performance Metrics" >> report.md
+            python -c "
+          import json
+          with open('performance_report.json') as f:
+              data = json.load(f)
+          print('| Metric | Baseline | Current | Change |')
+          print('|--------|----------|---------|--------|')
+          for metric, values in data.get('metrics', {}).items():
+              baseline = values.get('baseline', 'N/A')
+              current = values.get('current', 'N/A')
+              change = values.get('change_pct', 0)
+              symbol = '✅' if change >= 0 else '⚠️'
+              print(f'| {metric} | {baseline} | {current} | {symbol} {change:+.1f}% |')
+          " >> report.md
+          fi
+
+          # Add plots if they exist
+          if [ -d "performance_plots" ]; then
+            echo "" >> report.md
+            echo "### 📈 Performance Plots" >> report.md
+            for plot in performance_plots/*.png; do
+              if [ -f "$plot" ]; then
+                cml publish "$plot" --md >> report.md
+              fi
+            done
+          fi
+
+          # Add recommendations
+          if [ -f "reports/performance_report.md" ]; then
+            echo "" >> report.md
+            echo "### 💡 Recommendations" >> report.md
+            tail -n 20 reports/performance_report.md >> report.md
+          fi
+
+          # Send report as PR comment
+          cml comment create report.md
+
+      - name: Push to DVC
+        if: success() && github.event_name == 'push'
+        run: |
+          # Add optimization results to DVC
+          dvc add optimization_results/latest.json
+          dvc push
+
+          # Commit DVC files
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add optimization_results/latest.json.dvc .gitignore
+          git diff --staged --quiet || git commit -m "Update optimization results [skip ci]"
+
+      - name: Create PR with improvements
+        if: success() && steps.env.outputs.environment == 'staging'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "feat: Apply auto-tuning improvements"
+          title: "🚀 Auto-Tuning Results from Staging"
+          body: |
+            ## Auto-Tuning Complete!
+
+            This PR contains the optimized configuration from the auto-tuning pipeline.
+
+            **Environment:** ${{ steps.env.outputs.environment }}
+            **Trials Run:** ${{ steps.params.outputs.max_trials }}
+            **Budget Used:** ${{ steps.params.outputs.budget }}
+
+            Please review the performance metrics in the comment below before merging.
+          branch: auto-tune/staging-${{ github.run_number }}
+          labels: |
+            enhancement
+            auto-tuning
+            performance
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: auto-tuning-results
+          path: |
+            optimization_results/
+            performance_report.json
+            reports/
+            performance_plots/
+          retention-days: 30
+
+  notify:
+    needs: auto-tune
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send notification
+        if: github.event_name == 'push' && contains(github.ref, 'release')
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          text: |
+            Auto-tuning ${{ job.status }} for ${{ github.ref }}
+            View results: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow

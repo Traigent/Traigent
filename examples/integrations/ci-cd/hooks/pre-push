@@ -1,0 +1,52 @@
+#!/bin/bash
+# Git pre-push hook for TraiGent CI/CD
+# Install: cp examples/ci-cd-integration/hooks/pre-push .git/hooks/
+
+echo "🚀 TraiGent: Running pre-push optimization check..."
+
+cd examples/ci-cd-integration/math-qa || exit 0
+
+# Set environment
+export TRAIGENT_MOCK_MODE=true
+
+# First, evaluate current config
+echo "📊 Evaluating current configuration..."
+export MODE=eval
+python run.py > /tmp/traigent-current.log 2>&1
+
+# Extract current metrics
+CURRENT_ACCURACY=$(grep "Accuracy:" /tmp/traigent-current.log | sed 's/.*: //' | sed 's/%//')
+CURRENT_COST=$(grep "Cost:" /tmp/traigent-current.log | sed 's/.*\$//')
+echo "Current accuracy: ${CURRENT_ACCURACY}%"
+echo "Current cost: \$${CURRENT_COST}"
+
+# Run quick optimization (3 trials)
+echo "🔍 Running quick optimization check..."
+export MODE=tune
+export MAX_TRIALS=3
+python run.py > /tmp/traigent-tuned.log 2>&1
+
+# Check for improvements
+if grep -q "Better configuration found" /tmp/traigent-tuned.log; then
+    echo ""
+    echo "⚠️  WARNING: Better configuration available!"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    grep "Changes needed" -A10 /tmp/traigent-tuned.log
+    echo ""
+    echo "Consider updating saved_config.json before pushing."
+    echo "To skip this check, use: git push --no-verify"
+    echo ""
+
+    # Ask for confirmation
+    read -p "Continue with push anyway? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Push cancelled."
+        exit 1
+    fi
+else
+    echo "✅ Configuration is optimal (within tested parameters)"
+fi
+
+echo "✅ Pre-push checks complete"
+exit 0

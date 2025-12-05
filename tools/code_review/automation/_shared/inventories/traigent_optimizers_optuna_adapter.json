@@ -1,0 +1,15 @@
+{
+  "module": "traigent/optimizers/optuna_adapter.py",
+  "top_level": [
+    "_require_optuna"
+  ],
+  "class_methods": [
+    "OptunaAdapter._create_sampler",
+    "OptunaAdapter._extract_objectives",
+    "OptunaAdapter._study_to_result",
+    "OptunaAdapter.optimize"
+  ],
+  "classes": [
+    "OptunaAdapter"
+  ]
+}

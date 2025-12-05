@@ -1,0 +1,69 @@
+id: CONC-CloudService
+name: Cloud Service
+purpose: "Connect to TraiGent/OptiGen backend for hybrid/cloud optimization, session sync, and billing-aware operations."
+state:
+  - name: auth_manager
+    type: "AuthManager"
+    description: "Credential resolution and token handling for backend requests."
+  - name: backend_client
+    type: "BackendIntegratedClient | TraiGentCloudClient | None"
+    description: "Active client used for session/trial operations."
+  - name: session_cache
+    type: "dict[str, Any]"
+    description: "Local cache of remote session and trial identifiers."
+actions:
+  - name: authenticate
+    inputs:
+      - name: credentials
+        type: "dict[str, Any] | None"
+    outputs:
+      - case: authenticated
+        fields:
+          - name: token
+            type: "str | SecureToken"
+      - case: failed
+        fields:
+          - name: error
+            type: "AuthenticationError"
+    description: "Resolve credentials (env/CLI) and produce auth headers for cloud operations."
+  - name: sync_session
+    inputs:
+      - name: session_payload
+        type: "dict[str, Any]"
+    outputs:
+      - case: synced
+        fields:
+          - name: session_remote_id
+            type: "str"
+    description: "Create or update optimization sessions on the backend and track remote IDs."
+  - name: request_trial
+    inputs:
+      - name: session_remote_id
+        type: "str"
+    outputs:
+      - case: suggestion
+        fields:
+          - name: config
+            type: "dict[str, Any]"
+      - case: no_suggestion
+        fields:
+          - name: reason
+            type: "str"
+    description: "Ask backend for next trial suggestion or subset selection guidance."
+  - name: submit_result
+    inputs:
+      - name: session_remote_id
+        type: "str"
+      - name: trial_payload
+        type: "dict[str, Any]"
+    outputs:
+      - case: submitted
+        fields:
+          - name: status
+            type: "bool"
+    description: "Send trial metrics/results back to backend with retry/resilience."
+operational_principle:
+  - "Hybrid/cloud flows should tolerate network errors with retries or fallbacks."
+  - "Privacy flags and billing context must accompany backend interactions when configured."
+version: 1
+status: active

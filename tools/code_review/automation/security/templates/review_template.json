@@ -1,0 +1,17 @@
+{
+  "module": "path/to/module.py",
+  "category": "security",
+  "summary": "Key risks and mitigations",
+  "classes": [],
+  "functions": [],
+  "checks": [
+    { "name": "input_sanitization", "result": "pass", "evidence": "validated/normalized" },
+    { "name": "secret_handling", "result": "pass", "evidence": "no secrets in logs" },
+    { "name": "crypto_hashing", "result": "pass", "evidence": "sha256 or stronger" },
+    { "name": "logging_pii_guardrails", "result": "pass", "evidence": "redaction filters" },
+    { "name": "dependency_risks", "result": "pass", "evidence": "no eval/exec/pickle" },
+    { "name": "network_filesystem_safety", "result": "pass", "evidence": "paths normalized; no SSRF" }
+  ],
+  "issues": [],
+  "recommendations": []
+}

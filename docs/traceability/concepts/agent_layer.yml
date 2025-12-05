@@ -1,0 +1,52 @@
+id: CONC-AgentLayer
+name: Agent Layer
+purpose: "Generate agent specifications from optimized functions and execute them on target platforms."
+state:
+  - name: platform_registry
+    type: "PlatformRegistry"
+    description: "Mapping of supported agent platforms to executors."
+  - name: prompt_builders
+    type: "list[PromptTemplateBuilder]"
+    description: "Strategies for constructing agent prompt templates."
+actions:
+  - name: analyze_function
+    inputs:
+      - name: function
+        type: "Callable[..., Any]"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: analysis
+        fields:
+          - name: function_analysis
+            type: "FunctionAnalysis"
+    description: "Inspect function signature, docstring, imports, and dependencies to infer agent needs."
+  - name: build_specification
+    inputs:
+      - name: function_analysis
+        type: "FunctionAnalysis"
+      - name: config
+        type: "dict[str, Any]"
+    outputs:
+      - case: specification
+        fields:
+          - name: agent_spec
+            type: "AgentSpecification"
+    description: "Construct agent spec including prompt template, platform, and parameters."
+  - name: execute_agent
+    inputs:
+      - name: agent_spec
+        type: "AgentSpecification"
+      - name: input_payload
+        type: "dict[str, Any]"
+    outputs:
+      - case: executed
+        fields:
+          - name: result
+            type: "AgentExecutionResult"
+    description: "Dispatch agent to platform-specific executor and return structured response."
+operational_principle:
+  - "Platform inference should respect configuration hints and defaults."
+  - "Agent execution must return predictable envelopes for downstream analytics."
+version: 1
+status: active

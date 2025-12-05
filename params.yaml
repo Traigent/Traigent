@@ -1,0 +1,53 @@
+# DVC Pipeline Parameters for Auto-Tuning
+
+prepare:
+  split_ratio: 0.8
+  seed: 42
+  test_size: 0.2
+
+optimize:
+  max_trials: 10
+  strategy: "bayesian"  # Options: grid, random, bayesian
+  budget: 5.0  # Maximum cost in USD
+  timeout: 3600  # Maximum time in seconds
+  parallel_trials: 3
+  # Model configurations to test
+  models:
+    - provider: "anthropic"
+      model: "claude-3-5-haiku-latest"
+    - provider: "openai"
+      model: "gpt-4o-mini"
+    - provider: "claude_code"
+      model: "default"  # Zero cost for testing
+
+evaluate:
+  baseline_path: "baselines/current.json"
+  threshold: 0.05  # 5% improvement threshold
+  metrics:
+    - accuracy
+    - latency
+    - cost
+    - token_usage
+  confidence_level: 0.95
+
+report:
+  format: "markdown"
+  include_plots: true
+  include_recommendations: true
+  max_recommendations: 5
+
+# Environment-specific settings
+staging:
+  optimize:
+    max_trials: 20
+    budget: 10.0
+  evaluate:
+    threshold: 0.03  # More strict for staging
+
+production:
+  optimize:
+    max_trials: 50
+    budget: 25.0
+  evaluate:
+    threshold: 0.01  # Very strict for production
+    require_approval: true

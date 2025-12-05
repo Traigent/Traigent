@@ -1,0 +1,336 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traigent"
+version = "1.0.0"
+authors = [
+    {name = "TraiGent Team", email = "opensource@traigent.ai"},
+]
+description = "Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+keywords = [
+    "llm", "optimization", "machine-learning", "ai", "hyperparameter-tuning",
+    "analytics", "meta-learning", "cost-optimization", "anomaly-detection",
+    "predictive-analytics", "enterprise", "bayesian-optimization"
+]
+
+# Core dependencies - minimal for basic functionality
+dependencies = [
+    "click>=8.0.0",
+    "rich>=12.0.0",
+    "aiohttp>=3.8.0",
+    "jsonschema>=4.0.0",
+    "cryptography>=3.4.0",
+    "typing-extensions>=4.0.0; python_version<'3.11'",
+    "claude-code-sdk>=0.0.14",
+    "mcp>=1.23.0",  # CVE-2025-66416 fix (claude-code-sdk dependency)
+    "backoff>=2.2.0",
+    "tokencost>=0.1.0",
+    "rank-bm25",
+    # Required by core optimizer modules
+    "optuna>=4.5.0",
+    "psutil>=5.8.0",
+]
+
+[project.optional-dependencies]
+# Analytics and intelligence features (Sprint 8)
+analytics = [
+    "numpy>=1.21.0",
+    "pandas>=1.3.0",
+    "matplotlib>=3.5.0",
+]
+
+# Bayesian optimization (Sprint 4)
+bayesian = [
+    "scikit-learn>=1.0.0",
+    "scipy>=1.7.0",
+    "optuna>=4.5.0",
+]
+
+# Framework integrations (Sprint 6)
+integrations = [
+    "langchain>=0.0.200",
+    "langchain-core>=1.0.7",  # CVE-2025-65106 fix
+    "langchain-community>=0.3.26",
+    "langchain-anthropic>=0.2.0",
+    "langchain-openai>=0.3.30",
+    "langchain-chroma>=0.2.5",
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "rank_bm25>=0.2.2",
+    "mlflow>=2.0.0",
+    "wandb>=0.15.0",
+    "python-dotenv>=1.0.0",
+    "boto3>=1.28.0",
+    "botocore>=1.31.0",
+]
+
+# Enterprise security features (Sprint 7)
+security = [
+    "pyjwt>=2.4.0",
+    "cryptography>=3.4.0",
+    "passlib>=1.7.4",
+    "python-multipart>=0.0.5",
+    "psutil>=5.8.0",
+    "fastapi>=0.95.0",
+    "starlette>=0.49.1",  # CVE-2025-62727 fix (FastAPI dependency)
+    "uvicorn>=0.18.0",
+    "redis>=4.0.0",
+]
+
+# Visualization features
+visualization = [
+    "matplotlib>=3.5.0",
+    "plotly>=5.0.0",
+]
+
+# Testing dependencies
+test = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "coverage>=7.0.0",
+    "ragas>=0.3.6",
+    "rapidfuzz>=3.14.0",
+]
+
+# Development dependencies
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "pytest-mock>=3.10.0",
+    "black>=22.0.0",
+    "isort>=5.10.0",
+    "flake8>=5.0.0",
+    "mypy>=1.0.0",
+    "pre-commit>=3.0.0",
+    "ruff>=0.1.0",
+    "bandit>=1.7.0",
+]
+
+# Documentation
+docs = [
+    "mkdocs>=1.4.0",
+    "mkdocs-material>=9.0.0",
+    "mkdocstrings[python]>=0.22.0",
+]
+
+# Playground UI dependencies
+playground = [
+    "streamlit>=1.28.0",
+    "plotly>=5.17.0",
+    "pandas>=1.5.0",
+    "langchain>=0.1.0",
+    "langchain-core>=1.0.7",  # CVE-2025-65106 fix
+    "langchain-openai>=0.0.5",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "aiofiles>=23.0.0",
+]
+
+# Examples and documentation dependencies
+examples = [
+    "openai>=1.0.0",
+    "anthropic>=0.18.0",
+    "langchain>=0.0.200",
+    "langchain-core>=1.0.7",  # CVE-2025-65106 fix
+    "langchain-anthropic>=0.2.0",
+    "langchain-openai>=0.3.30",
+    "langchain-community>=0.3.26",
+    "rank_bm25>=0.2.2",
+    "pandas>=1.5.0",
+    "numpy>=1.21.0",
+    "matplotlib>=3.5.0",
+    "plotly>=5.17.0",
+    "python-dotenv>=1.0.0",
+    "aiofiles>=23.0.0",
+    "rich>=12.0.0",
+    "scikit-learn>=1.0.0",
+    "scipy>=1.7.0",
+    "ragas[llm]>=0.3.6",
+]
+
+# All optional features combined
+all = [
+    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]"
+]
+
+# Enterprise bundle with all features
+enterprise = [
+    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]",
+]
+
+[project.urls]
+Homepage = "https://github.com/traigent/traigent-sdk"
+Documentation = "https://docs.traigent.ai"
+Repository = "https://github.com/traigent/traigent-sdk"
+"Bug Tracker" = "https://github.com/traigent/traigent-sdk/issues"
+Changelog = "https://github.com/traigent/traigent-sdk/blob/main/CHANGELOG.md"
+
+[project.scripts]
+traigent = "traigent.cli.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["traigent*"]
+exclude = ["tests*", "demos*", "docs*"]
+
+[tool.setuptools.package-data]
+traigent = ["py.typed"]
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py312", "py313"]
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | _build
+  | buck-out
+  | build
+  | dist
+  | demos
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+known_first_party = ["traigent"]
+known_third_party = [
+    "click", "rich", "aiohttp", "jsonschema", "numpy", "pandas",
+    "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
+    "mlflow", "wandb", "pyjwt", "cryptography"
+]
+
+[tool.mypy]
+python_version = "3.12"
+files = [
+    "traigent/core/samplers/factory.py",
+    "traigent/core/types.py",
+    "traigent/integrations/plugin_registry.py",
+    "traigent/integrations/llms/langchain/discovery.py",
+]
+ignore_missing_imports = true
+follow_imports = "skip"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # temporarily relaxed for automated refactors
+disallow_incomplete_defs = false
+check_untyped_defs = false
+disallow_untyped_decorators = false
+no_implicit_optional = false
+warn_redundant_casts = false
+warn_unused_ignores = false
+warn_no_return = false
+warn_unreachable = false
+strict_equality = false
+
+[[tool.mypy.overrides]]
+module = [
+    "langchain.*",
+    "openai.*",
+    "mlflow.*",
+    "wandb.*",
+    "plotly.*",
+    "sklearn.*",
+    "scipy.*",
+    "jwt.*",
+    "cryptography.*",
+    "passlib.*",
+    "numpy.*",
+    "pandas.*",
+    "matplotlib.*",
+    "tokencost.*",
+    "redis.*"
+]
+ignore_missing_imports = true
+
+# Pytest configuration moved to pytest.ini for VSCode compatibility
+
+[tool.coverage.run]
+source = ["traigent"]
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__init__.py",
+    "*/demos/*",
+    "*/docs/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+    "TYPE_CHECKING",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = [
+    "examples/archive/**",
+    "docs/diagrams/**",
+    "docs/generated/**",
+    "**/__pycache__/**",
+    "**/node_modules/**",
+    "**/.git/**",
+    "**/build/**",
+    "**/dist/**",
+    "**/*.egg-info/**",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/*" = ["B011"]
+"examples/**" = ["E402"]

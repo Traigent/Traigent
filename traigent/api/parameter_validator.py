@@ -1,0 +1,296 @@
+"""
+Parameter validation for the @traigent.optimize decorator.
+
+This module extracts parameter validation logic from the main decorator
+to reduce complexity and improve maintainability.
+Traceability: CONC-Layer-API CONC-Quality-Reliability CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
+"""
+
+import logging
+from collections.abc import Sequence
+from dataclasses import MISSING, dataclass, field, fields
+from typing import Any, Callable, Optional, Union
+
+from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
+from traigent.evaluators.base import Dataset
+from traigent.utils.exceptions import ValidationError
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class OptimizeParameters:
+    """Structured representation of optimize decorator parameters."""
+
+    eval_dataset: Optional[Union[str, list[Union[str, Dataset]]]] = None
+    objectives: Optional[list[str]] = None
+    configuration_space: Optional[dict[str, Any]] = None
+    default_config: Optional[dict[str, Any]] = None
+    constraints: Optional[list[Callable[..., Any]]] = None
+    injection_mode: Union[str, InjectionMode] = InjectionMode.CONTEXT
+    config_param: Optional[str] = None
+    auto_override_frameworks: bool = True
+    framework_targets: Optional[list[str]] = None
+    execution_mode: Union[str, ExecutionMode] = ExecutionMode.EDGE_ANALYTICS
+    local_storage_path: Optional[str] = None
+    minimal_logging: bool = True
+    privacy_enabled: Optional[bool] = None
+    kwargs: dict[str, Any] = field(default_factory=dict)
+
+
+class ParameterValidator:
+    """Validates and normalizes parameters for the optimize decorator."""
+
+    VALID_EXECUTION_MODES = {mode.value for mode in ExecutionMode}
+    VALID_INJECTION_MODES = {
+        InjectionMode.CONTEXT,
+        InjectionMode.PARAMETER,
+        InjectionMode.ATTRIBUTE,
+        InjectionMode.SEAMLESS,
+    }
+
+    def validate_parameters(self, params: OptimizeParameters) -> OptimizeParameters:
+        """
+        Validate and normalize all decorator parameters.
+
+        Args:
+            params: Parameter object to validate
+
+        Returns:
+            Validated and normalized parameters
+
+        Raises:
+            ValidationError: If any parameter is invalid
+        """
+        # Validate individual parameter groups
+        self._validate_execution_mode(params.execution_mode)
+        self._validate_injection_mode(params.injection_mode)
+        self._validate_dataset(params.eval_dataset)
+        self._validate_objectives(params.objectives)
+        self._validate_configuration_space(params.configuration_space)
+        self._validate_constraints(params.constraints)
+
+        # Normalize parameters
+        params.injection_mode = self._normalize_injection_mode(params.injection_mode)
+        params.execution_mode = self._normalize_execution_mode(params.execution_mode)
+
+        return params
+
+    def _validate_execution_mode(
+        self, execution_mode: Union[str, ExecutionMode]
+    ) -> None:
+        """Validate execution mode parameter."""
+        try:
+            normalized = resolve_execution_mode(execution_mode)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                f"Invalid execution_mode '{execution_mode}'. {exc}"
+            ) from exc
+
+        if normalized.value not in self.VALID_EXECUTION_MODES:
+            raise ValidationError(
+                f"Invalid execution_mode '{execution_mode}'. "
+                f"Must be one of: {', '.join(self.VALID_EXECUTION_MODES)}"
+            )
+
+    def _normalize_execution_mode(
+        self, execution_mode: Union[str, ExecutionMode]
+    ) -> str:
+        """Normalize execution mode string for internal consistency."""
+        return resolve_execution_mode(execution_mode).value
+
+    def _validate_injection_mode(
+        self, injection_mode: Union[str, InjectionMode]
+    ) -> None:
+        """Validate injection mode parameter."""
+        if isinstance(injection_mode, str):
+            try:
+                injection_mode = InjectionMode(injection_mode)
+            except ValueError as e:
+                raise ValidationError(
+                    f"Invalid injection_mode '{injection_mode}'. "
+                    f"Must be one of: {[mode.value for mode in InjectionMode]}"
+                ) from e
+
+        if injection_mode not in self.VALID_INJECTION_MODES:
+            raise ValidationError(
+                f"Invalid injection_mode '{injection_mode}'. "
+                f"Must be one of: {[mode.value for mode in self.VALID_INJECTION_MODES]}"
+            )
+
+    def _validate_dataset(
+        self, eval_dataset: Optional[Union[str, list[Union[str, Dataset]]]]
+    ) -> None:
+        """Validate evaluation dataset parameter."""
+        if eval_dataset is None:
+            return
+
+        if isinstance(eval_dataset, (str, Dataset)):
+            return
+
+        if isinstance(eval_dataset, Sequence) and not isinstance(
+            eval_dataset, (str, bytes)
+        ):
+            invalid_entries = [
+                entry for entry in eval_dataset if not isinstance(entry, (str, Dataset))
+            ]
+            if invalid_entries:
+                invalid_types = ", ".join(
+                    sorted({type(entry).__name__ for entry in invalid_entries})
+                )
+                raise ValidationError(
+                    "eval_dataset iterable must contain only string paths or Dataset objects. "
+                    f"Invalid entries of types: {invalid_types}"
+                )
+            return
+
+        raise ValidationError(
+            "eval_dataset must be a string path, list of paths, or Dataset object"
+        )
+
+    def _validate_objectives(self, objectives: Optional[list[str]]) -> None:
+        """Validate objectives parameter."""
+        if objectives is None:
+            return
+
+        if not isinstance(objectives, list):
+            raise ValidationError("objectives must be a list of strings")
+
+        if not all(isinstance(obj, str) for obj in objectives):
+            raise ValidationError("All objectives must be strings")
+
+        # Check for common typos or invalid objective names
+        valid_objectives = {
+            "accuracy",
+            "cost",
+            "latency",
+            "f1_score",
+            "precision",
+            "recall",
+            "bleu",
+            "rouge",
+            "meteor",
+            "bertscore",
+            "semantic_similarity",
+        }
+
+        for obj in objectives:
+            if (
+                obj is not None
+                and obj not in valid_objectives
+                and not obj.startswith("custom_")
+            ):
+                logger.warning(
+                    f"Objective '{obj}' not in common objectives list. "
+                    f"Make sure it's implemented in your evaluator. "
+                    f"Common objectives: {', '.join(sorted(valid_objectives))}"
+                )
+
+    def _validate_configuration_space(
+        self, config_space: Optional[dict[str, Any]]
+    ) -> None:
+        """Validate configuration space parameter."""
+        if config_space is None:
+            return
+
+        if not isinstance(config_space, dict):
+            raise ValidationError("configuration_space must be a dictionary")
+
+        for key, value in config_space.items():
+            if not isinstance(key, str):
+                raise ValidationError(
+                    f"Configuration space keys must be strings, got {type(key)}"
+                )
+
+            # Validate value format
+            if not self._is_valid_config_value(value):
+                raise ValidationError(
+                    f"Invalid configuration space value for '{key}': {value}. "
+                    f"Must be list (discrete), tuple (range), or dict (nested)"
+                )
+
+    def _is_valid_config_value(self, value: Any) -> bool:
+        """Check if a configuration space value is valid."""
+        if isinstance(value, list):
+            return len(value) > 0
+        elif isinstance(value, tuple):
+            return len(value) == 2 and all(isinstance(v, (int, float)) for v in value)
+        elif isinstance(value, dict):
+            return len(value) > 0
+        else:
+            return False
+
+    def _validate_constraints(
+        self, constraints: Optional[list[Callable[..., Any]]]
+    ) -> None:
+        """Validate constraints parameter."""
+        if constraints is None:
+            return
+
+        if not isinstance(constraints, list):
+            raise ValidationError("constraints must be a list of callable functions")
+
+        for i, constraint in enumerate(constraints):
+            if not callable(constraint):
+                raise ValidationError(f"constraint at index {i} is not callable")
+
+    def _normalize_injection_mode(
+        self, injection_mode: Union[str, InjectionMode]
+    ) -> InjectionMode:
+        """Normalize injection mode to enum."""
+        if isinstance(injection_mode, str):
+            return InjectionMode(injection_mode)
+        # injection_mode is already an InjectionMode enum
+        assert isinstance(
+            injection_mode, InjectionMode
+        )  # Help mypy understand the type
+        return injection_mode
+
+
+def validate_optimize_parameters(**kwargs: Any) -> OptimizeParameters:
+    """
+    Convenience function to validate optimize decorator parameters.
+
+    Args:
+        **kwargs: All parameters passed to the optimize decorator
+
+    Returns:
+        Validated OptimizeParameters object
+
+    Raises:
+        ValidationError: If any parameter is invalid
+    """
+    unsupported = {
+        key
+        for key in ("auto_optimize", "trigger", "batch_size", "parallel_trials")
+        if key in kwargs
+    }
+    if unsupported:
+        joined = ", ".join(sorted(unsupported))
+        raise ValidationError(
+            f"The following parameters have been removed from @traigent.optimize: {joined}. "
+            "Use parallel_config or ExecutionOptions instead."
+        )
+
+    param_fields = {f.name: f for f in fields(OptimizeParameters)}
+    init_kwargs: dict[str, Any] = {}
+
+    for field_name, field_info in param_fields.items():
+        if field_name == "kwargs":
+            continue
+
+        if field_info.default is not MISSING:
+            default = field_info.default
+        elif field_info.default_factory is not MISSING:
+            default = field_info.default_factory()
+        else:
+            default = None
+
+        init_kwargs[field_name] = kwargs.pop(field_name, default)
+
+    init_kwargs["kwargs"] = kwargs  # Remaining parameters
+
+    return _PARAMETER_VALIDATOR.validate_parameters(OptimizeParameters(**init_kwargs))
+
+
+_PARAMETER_VALIDATOR = ParameterValidator()

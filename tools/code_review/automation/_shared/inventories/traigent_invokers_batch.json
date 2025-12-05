@@ -1,0 +1,17 @@
+{
+  "module": "traigent/invokers/batch.py",
+  "top_level": [],
+  "class_methods": [
+    "BatchInvoker.__init__",
+    "BatchInvoker._process_batch_concurrent",
+    "BatchInvoker._update_adaptive_batch_size",
+    "BatchInvoker.get_optimal_batch_size",
+    "BatchInvoker.invoke",
+    "BatchInvoker.invoke_batch",
+    "BatchInvoker.supports_batch",
+    "BatchInvoker.supports_streaming"
+  ],
+  "classes": [
+    "BatchInvoker"
+  ]
+}

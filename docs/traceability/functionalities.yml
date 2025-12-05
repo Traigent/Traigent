@@ -1,0 +1,152 @@
+- id: FUNC-API-ENTRY
+  name: "Public optimize entrypoint"
+  description: "Expose @traigent.optimize and helper APIs that validate parameters and prepare evaluation/injection/execution bundles."
+  requirements: [REQ-API-001, REQ-INJ-002]
+  concepts: [CONC-Layer-API, CONC-Layer-Core]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [api, decorator]
+  layer: feature
+  status: active
+
+- id: FUNC-ORCH-LIFECYCLE
+  name: "Optimization lifecycle orchestration"
+  description: "Coordinate optimizers, invokers, budgets, constraints, and stop conditions across trials."
+  requirements: [REQ-ORCH-003, REQ-OPT-ALG-004]
+  concepts: [CONC-Layer-Core]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [orchestration, lifecycle]
+  layer: feature
+  status: active
+
+- id: FUNC-EVAL-METRICS
+  name: "Dataset evaluation and metrics"
+  description: "Load datasets/registries, run local evaluations, and compute metrics including RAG/RAGAS with LLM usage tracking."
+  requirements: [REQ-EVAL-005]
+  concepts: [CONC-Layer-Core]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [evaluation, metrics]
+  layer: subfeature
+  status: active
+
+- id: FUNC-OPT-ALGORITHMS
+  name: "Optimizer portfolio"
+  description: "Provide grid, random, Optuna-based, Bayesian, interactive, and remote-guided optimizers via a registry."
+  requirements: [REQ-OPT-ALG-004]
+  concepts: [CONC-Layer-Core]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [optimizers, registry]
+  layer: subfeature
+  status: active
+
+- id: FUNC-INVOKERS
+  name: "Invocation strategies"
+  description: "Execute optimized functions locally or in batch with config injection and standardized results."
+  requirements: [REQ-INV-006, REQ-INJ-002]
+  concepts: [CONC-Layer-Core]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [execution, invokers]
+  layer: subfeature
+  status: active
+
+- id: FUNC-STORAGE
+  name: "Session and trial persistence"
+  description: "Persist sessions, trials, cache entries, and exports for offline inspection and deduplication."
+  requirements: [REQ-STOR-007]
+  concepts: [CONC-Layer-Infra]
+  syncs: [SYNC-StorageLogging]
+  tags: [storage, caching]
+  layer: infra
+  status: active
+
+- id: FUNC-INTEGRATIONS
+  name: "Provider and observability integrations"
+  description: "Hook into LLM providers/frameworks and observability backends through plugins, discovery, and autologging."
+  requirements: [REQ-INT-008]
+  concepts: [CONC-Layer-Integration]
+  syncs: [SYNC-IntegrationHook, SYNC-Observability]
+  tags: [integrations, plugins]
+  layer: feature
+  status: active
+
+- id: FUNC-CLOUD-HYBRID
+  name: "Cloud and hybrid execution"
+  description: "Connect to backend services for session/trial sync, remote suggestions, billing, and subset selection."
+  requirements: [REQ-CLOUD-009]
+  concepts: [CONC-Layer-Infra]
+  syncs: [SYNC-CloudHybrid]
+  tags: [cloud, backend]
+  layer: feature
+  status: active
+
+- id: FUNC-SECURITY
+  name: "Enterprise security controls"
+  description: "Enforce secure credential handling, JWT validation, rate limiting, audits, and tenant isolation."
+  requirements: [REQ-SEC-010]
+  concepts: [CONC-Layer-Infra]
+  syncs: [SYNC-CloudHybrid]
+  tags: [security, auth]
+  layer: infra
+  status: active
+
+- id: FUNC-SEC-TOKEN-MGMT
+  name: "Token lifecycle management"
+  description: "Manage SecureToken creation, expiration tracking, automatic refresh scheduling, and secure storage with callback-based delegation."
+  requirements: [REQ-SEC-010, REQ-CLOUD-009]
+  concepts: [CONC-Layer-Infra, CONC-Quality-Security]
+  syncs: [SYNC-CloudHybrid]
+  tags: [security, tokens, auth]
+  layer: subfeature
+  status: active
+  parent: FUNC-SECURITY
+
+- id: FUNC-SEC-APIKEY-MGMT
+  name: "API key management"
+  description: "Validate API key format (tg_ prefix, 64 chars), track expiration and rotation, monitor status (ok/warning/critical/expired), and persist keys securely."
+  requirements: [REQ-SEC-010, REQ-CLOUD-009]
+  concepts: [CONC-Layer-Infra, CONC-Quality-Security]
+  syncs: [SYNC-CloudHybrid]
+  tags: [security, apikey, auth]
+  layer: subfeature
+  status: active
+  parent: FUNC-SECURITY
+
+- id: FUNC-SEC-CRED-RESOLVE
+  name: "Credential resolution"
+  description: "Resolve credentials from multiple sources (explicit, cached, environment) with AES-256 encryption/decryption and secure file operations."
+  requirements: [REQ-SEC-010, REQ-CLOUD-009]
+  concepts: [CONC-Layer-Infra, CONC-Quality-Security]
+  syncs: [SYNC-CloudHybrid]
+  tags: [security, credentials, encryption]
+  layer: subfeature
+  status: active
+  parent: FUNC-SECURITY
+
+- id: FUNC-ANALYTICS
+  name: "Analytics, telemetry, and visualization"
+  description: "Provide anomaly detection, cost forecasting, telemetry emission, and plotting of optimization results."
+  requirements: [REQ-ANLY-011, REQ-STOR-007]
+  concepts: [CONC-Layer-Core, CONC-Layer-Integration]
+  syncs: [SYNC-Observability]
+  tags: [analytics, telemetry]
+  layer: feature
+  status: active
+
+- id: FUNC-TVLSPEC
+  name: "TVL-driven configuration"
+  description: "Load TVL specs, apply environment overlays, and translate into configuration space/objectives for optimization."
+  requirements: [REQ-TVLSPEC-012, REQ-API-001]
+  concepts: [CONC-Layer-Core, CONC-Layer-API]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [tvl, configuration]
+  layer: subfeature
+  status: active
+
+- id: FUNC-AGENTS
+  name: "Agent specification and execution"
+  description: "Generate agent specs from optimized functions, map configs to platforms, and execute with platform executors."
+  requirements: [REQ-AGNT-013, REQ-API-001]
+  concepts: [CONC-Layer-Integration]
+  syncs: [SYNC-OptimizationFlow]
+  tags: [agents, platforms]
+  layer: feature
+  status: active

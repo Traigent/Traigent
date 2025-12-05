@@ -1,0 +1,266 @@
+# Exception Hierarchy Consolidation Report
+# Traceability: CONC-Layer-Core CONC-Quality-Maintainability REQ-TRACE-GAP-003
+#
+# This report documents duplicate exception definitions across the codebase
+# and recommends consolidation to traigent/utils/exceptions.py
+
+id: REPORT-EXCEPTIONS-CONSOLIDATION
+type: consolidation_report
+last_updated: "2025-12-01"
+priority: high
+description: "Duplicate exception classes require consolidation for maintainability"
+
+# Canonical Source
+canonical_location:
+  file: traigent/utils/exceptions.py
+  description: "Centralized exception hierarchy - all exceptions should be defined here"
+  root_class: TraigentError
+
+# Duplicates Found
+duplicates:
+  - id: DUP-001
+    exception_name: StandardizedClientError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 51
+        parent: ClientError
+        status: canonical
+
+      - file: traigent/cloud/client.py
+        line: 155
+        parent: Exception
+        status: duplicate
+    recommendation: "Remove from cloud/client.py, import from utils/exceptions"
+    priority: high
+
+  - id: DUP-002
+    exception_name: RetryableError
+    locations:
+      - file: traigent/utils/retry.py
+        line: 57
+        parent: Exception
+        status: duplicate
+
+      - file: traigent/cloud/resilient_client.py
+        line: 21
+        parent: Exception
+        status: duplicate
+    recommendation: "Add to utils/exceptions.py as canonical, remove duplicates"
+    priority: high
+
+  - id: DUP-003
+    exception_name: NonRetryableError
+    locations:
+      - file: traigent/utils/retry.py
+        line: 61
+        parent: Exception
+        status: duplicate
+
+      - file: traigent/cloud/resilient_client.py
+        line: 29
+        parent: Exception
+        status: duplicate
+    recommendation: "Add to utils/exceptions.py as canonical, remove duplicates"
+    priority: high
+
+  - id: DUP-004
+    exception_name: ServiceUnavailableError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 144
+        parent: ServiceError
+        status: canonical
+
+      - file: traigent/utils/retry.py
+        line: 75
+        parent: RetryableError
+        status: duplicate
+    recommendation: "Remove from retry.py, import from exceptions.py"
+    priority: medium
+    notes: "Different inheritance - needs careful migration"
+
+  - id: DUP-005
+    exception_name: JWTValidationError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 59
+        parent: ValidationError
+        status: canonical
+
+      - file: traigent/security/jwt_validator.py
+        line: 27
+        parent: Exception
+        status: duplicate
+    recommendation: "Import from utils/exceptions.py instead"
+    priority: high
+    notes: "Security-critical - test thoroughly after change"
+
+  - id: DUP-006
+    exception_name: TraigentError vs TraiGentError
+    description: "Two root error classes with different capitalization"
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 9
+        class_name: TraigentError
+        parent: Exception
+        status: canonical
+
+      - file: traigent/utils/error_handler.py
+        line: 11
+        class_name: TraiGentError
+        parent: Exception
+        status: duplicate
+    recommendation: "Consolidate to TraigentError (lowercase 'i'), deprecate TraiGentError"
+    priority: critical
+    notes: "Root class - affects entire exception hierarchy"
+
+  - id: DUP-007
+    exception_name: ConfigurationError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 18
+        parent: TraigentError
+        status: canonical
+
+      - file: traigent/utils/error_handler.py
+        line: 57
+        parent: TraiGentError
+        status: duplicate
+    recommendation: "Import from utils/exceptions.py"
+    priority: high
+
+  - id: DUP-008
+    exception_name: EvaluationError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 92
+        parent: TraigentError
+        status: canonical
+
+      - file: traigent/utils/error_handler.py
+        line: 68
+        parent: TraiGentError
+        status: duplicate
+    recommendation: "Import from utils/exceptions.py"
+    priority: high
+
+  - id: DUP-009
+    exception_name: AuthenticationError
+    locations:
+      - file: traigent/utils/exceptions.py
+        line: 55
+        parent: TraigentError
+        status: canonical
+
+      - file: traigent/cloud/auth.py
+        line: 246
+        parent: TraigentAuthenticationError
+        status: extended
+    recommendation: "Keep both - auth.py extends the base"
+    priority: low
+    notes: "This is intentional extension, not duplication"
+
+# Local Exception Classes (Not Duplicates - Acceptable)
+local_exceptions:
+  - file: traigent/security/crypto_utils.py
+    classes:
+      - CredentialEncryptionError (line 32)
+      - CredentialDecryptionError (line 38)
+      - InsecureFilePermissionsError (line 342)
+    status: acceptable
+    notes: "Crypto-specific exceptions, could be moved to utils/exceptions.py"
+
+  - file: traigent/security/jwt_validator.py
+    classes:
+      - JWTSignatureError (line 31)
+      - JWTExpiredError (line 35)
+      - JWTInvalidError (line 39)
+      - JWTSecurityError (line 43)
+    status: review
+    notes: "JWT-specific hierarchy, base should use canonical JWTValidationError"
+
+  - file: traigent/cloud/client.py
+    classes:
+      - CloudServiceError (line 1663)
+    status: acceptable
+    notes: "Cloud-specific extension"
+
+  - file: traigent/metrics/ragas_metrics.py
+    classes:
+      - RagasConfigurationError (line 94)
+    status: acceptable
+    notes: "RAGAS-specific configuration error"
+
+# Consolidation Plan
+consolidation_plan:
+  phase_1:
+    name: "Add missing canonical exceptions"
+    priority: critical
+    status: COMPLETED
+    completed_date: "2025-12-02"
+    actions:
+      - action: "Add RetryableError to utils/exceptions.py"
+        parent: TraigentError
+        status: done
+      - action: "Add NonRetryableError to utils/exceptions.py"
+        parent: TraigentError
+        status: done
+      - action: "Add RateLimitError to utils/exceptions.py"
+        parent: RetryableError
+        status: done
+      - action: "Add NetworkError to utils/exceptions.py"
+        parent: RetryableError
+        status: done
+
+  phase_2:
+    name: "Remove duplicates"
+    priority: high
+    status: PARTIAL
+    completed_date: "2025-12-02"
+    actions:
+      - action: "Update cloud/client.py to import StandardizedClientError"
+        file: traigent/cloud/client.py
+        status: "pending - already uses canonical"
+      - action: "Update cloud/resilient_client.py to import from exceptions"
+        file: traigent/cloud/resilient_client.py
+        status: done
+      - action: "Update utils/retry.py to import from exceptions"
+        file: traigent/utils/retry.py
+        status: done
+        notes: "Kept local ServiceUnavailableError for circuit breaker logic"
+      - action: "Update security/jwt_validator.py to import from exceptions"
+        file: traigent/security/jwt_validator.py
+        status: "pending - has specialized JWT exceptions"
+
+  phase_3:
+    name: "Consolidate root classes"
+    priority: critical
+    status: DEFERRED
+    notes: |
+      TraiGentError in error_handler.py is intentionally different - it provides
+      user-friendly error messages with 'fix' and 'docs_link' parameters.
+      This is a specialized UX class, not a duplicate. Keep as-is.
+    actions:
+      - action: "Document TraiGentError as UX-specialized class"
+        file: traigent/utils/error_handler.py
+        status: documented
+      - action: "Update all imports from error_handler to use exceptions"
+        scope: "All files importing from error_handler"
+        status: "not needed - different use case"
+
+# Impact Assessment
+impact:
+  files_modified: 3
+  tests_updated: 0  # No test changes needed - all passed
+  risk_level: low
+  breaking_changes: []
+  notes: "Consolidation completed without breaking changes"
+
+# Summary
+summary:
+  total_duplicates_identified: 9
+  duplicates_consolidated: 4  # RetryableError, NonRetryableError, RateLimitError, NetworkError
+  intentionally_different: 3  # TraiGentError, ConfigurationError, EvaluationError (UX variants)
+  pending: 2  # ServiceUnavailableError (different inheritance), JWTValidationError
+  action_required: false
+  last_updated: "2025-12-02"

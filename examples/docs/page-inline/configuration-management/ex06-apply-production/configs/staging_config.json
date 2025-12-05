@@ -1,0 +1,7 @@
+{
+  "model": "gpt-4o-mini",
+  "temperature": 0.5,
+  "max_tokens": 250,
+  "response_style": "professional",
+  "creativity_mode": "medium"
+}

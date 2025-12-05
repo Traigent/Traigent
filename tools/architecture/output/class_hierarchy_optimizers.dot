@@ -1,0 +1,183 @@
+digraph ClassHierarchy {
+    rankdir=BT;  // Bottom to top (children point to parents)
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=10];
+    edge [arrowhead=empty];  // UML inheritance arrow
+
+    // Color scheme
+    // Abstract classes: light blue
+    // Concrete classes: light green
+    // External classes: light gray
+
+    subgraph cluster_traigent_optimizers_base {
+        label="traigent.optimizers.base";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_base_BaseOptimizer [label="BaseOptimizer\n(13 methods)" fillcolor="#bbdefb"];
+    }
+
+    subgraph cluster_traigent_optimizers_batch_optimizers {
+        label="traigent.optimizers.batch_optimizers";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_batch_optimizers_AdaptiveBatchOptimizer [label="AdaptiveBatchOptimizer\n(7 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_batch_optimizers_MultiObjectiveBatchOptimizer [label="MultiObjectiveBatchOptimizer\n(8 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_batch_optimizers_ParallelBatchOptimizer [label="ParallelBatchOptimizer\n(7 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_batch_optimizers_BatchOptimizationConfig [label="BatchOptimizationConfig\n(0 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_bayesian {
+        label="traigent.optimizers.bayesian";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_bayesian_BayesianOptimizer [label="BayesianOptimizer\n(10 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_benchmarking {
+        label="traigent.optimizers.benchmarking";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_benchmarking_BenchmarkRun [label="BenchmarkRun\n(0 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_cloud_optimizer {
+        label="traigent.optimizers.cloud_optimizer";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_cloud_optimizer_RemoteOptimizer [label="RemoteOptimizer\n(14 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_grid {
+        label="traigent.optimizers.grid";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_grid_GridSearchOptimizer [label="GridSearchOptimizer\n(13 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_interactive_optimizer {
+        label="traigent.optimizers.interactive_optimizer";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_interactive_optimizer_InteractiveOptimizer [label="InteractiveOptimizer\n(9 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_interactive_optimizer_RemoteGuidanceService [label="RemoteGuidanceService\n(4 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_optuna_adapter {
+        label="traigent.optimizers.optuna_adapter";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_optuna_adapter_OptunaAdapter [label="OptunaAdapter\n(4 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_optuna_checkpoint {
+        label="traigent.optimizers.optuna_checkpoint";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_optuna_checkpoint_OptunaCheckpointManager [label="OptunaCheckpointManager\n(14 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_optuna_coordinator {
+        label="traigent.optimizers.optuna_coordinator";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_optuna_coordinator_RateLimitedOptimizer [label="RateLimitedOptimizer\n(3 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_coordinator_EdgeExecutor [label="EdgeExecutor\n(7 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_coordinator_BatchOptimizer [label="BatchOptimizer\n(5 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_coordinator_OptunaCoordinator [label="OptunaCoordinator\n(11 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_coordinator_ResilientCoordinator [label="ResilientCoordinator\n(6 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_coordinator_RateLimiter [label="RateLimiter\n(2 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_optuna_optimizer {
+        label="traigent.optimizers.optuna_optimizer";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_optuna_optimizer_OptunaNSGAIIOptimizer [label="OptunaNSGAIIOptimizer\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer [label="OptunaBaseOptimizer\n(18 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaTPEOptimizer [label="OptunaTPEOptimizer\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaGridOptimizer [label="OptunaGridOptimizer\n(1 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaCMAESOptimizer [label="OptunaCMAESOptimizer\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaRandomOptimizer [label="OptunaRandomOptimizer\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_optuna_optimizer_OptunaTrialPayload [label="OptunaTrialPayload\n(0 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_pruners {
+        label="traigent.optimizers.pruners";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_pruners_CeilingPruner [label="CeilingPruner\n(2 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_pruners_CeilingPrunerConfig [label="CeilingPrunerConfig\n(0 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_random {
+        label="traigent.optimizers.random";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_random_RandomSearchOptimizer [label="RandomSearchOptimizer\n(8 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_remote {
+        label="traigent.optimizers.remote";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_remote_MockRemoteSuggestionClient [label="MockRemoteSuggestionClient\n(3 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_RemoteOptimizer [label="RemoteOptimizer\n(6 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_remote_services {
+        label="traigent.optimizers.remote_services";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_remote_services_ServiceStatus [label="ServiceStatus\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_DatasetSubset [label="DatasetSubset\n(2 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_OptimizationStrategy [label="OptimizationStrategy\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_OptimizationSessionStatus [label="OptimizationSessionStatus\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_ServiceMetrics [label="ServiceMetrics\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_ServiceInfo [label="ServiceInfo\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_RemoteOptimizationService [label="RemoteOptimizationService\n(23 methods)" fillcolor="#bbdefb"];
+        traigent_optimizers_remote_services_OptimizationSession [label="OptimizationSession\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_SmartTrialSuggestion [label="SmartTrialSuggestion\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_remote_services_MockRemoteService [label="MockRemoteService\n(14 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_results {
+        label="traigent.optimizers.results";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_results_OptimizationResult [label="OptimizationResult\n(3 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_results_Trial [label="Trial\n(1 methods)" fillcolor="#c8e6c9"];
+    }
+
+    subgraph cluster_traigent_optimizers_service_registry {
+        label="traigent.optimizers.service_registry";
+        style=dashed;
+        color=gray;
+        traigent_optimizers_service_registry_ServiceRequirements [label="ServiceRequirements\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_service_registry_ServiceRanking [label="ServiceRanking\n(0 methods)" fillcolor="#c8e6c9"];
+        traigent_optimizers_service_registry_RemoteServiceRegistry [label="RemoteServiceRegistry\n(40 methods)" fillcolor="#c8e6c9"];
+    }
+
+    // External classes
+    optuna_pruners_BasePruner [label="optuna.pruners.BasePruner" fillcolor="#eeeeee" style="filled,dashed"];
+    str [label="str" fillcolor="#eeeeee" style="filled,dashed"];
+
+    // Inheritance edges
+    traigent_optimizers_batch_optimizers_ParallelBatchOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_batch_optimizers_MultiObjectiveBatchOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_batch_optimizers_AdaptiveBatchOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_bayesian_BayesianOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_cloud_optimizer_RemoteOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_grid_GridSearchOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_interactive_optimizer_InteractiveOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaTPEOptimizer -> traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaRandomOptimizer -> traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaCMAESOptimizer -> traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaNSGAIIOptimizer -> traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer;
+    traigent_optimizers_optuna_optimizer_OptunaGridOptimizer -> traigent_optimizers_optuna_optimizer_OptunaBaseOptimizer;
+    traigent_optimizers_pruners_CeilingPruner -> optuna_pruners_BasePruner;
+    traigent_optimizers_random_RandomSearchOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_remote_RemoteOptimizer -> traigent_optimizers_base_BaseOptimizer;
+    traigent_optimizers_remote_services_ServiceStatus -> str;
+    traigent_optimizers_remote_services_OptimizationSessionStatus -> str;
+    traigent_optimizers_remote_services_MockRemoteService -> traigent_optimizers_remote_services_RemoteOptimizationService;
+}

@@ -1,0 +1,72 @@
+(* TVL 0.9 — Abstract syntax oriented EBNF *)
+
+module        = header, environment, workload, tvars, constraints, objectives, promotion_policy, [exploration] ;
+
+header        = "tvl", ":", "{", "module", ":", ident, "}", [ "tvl_version", ":", string ] ;
+environment   = "environment", ":", object ;              (* must include snapshot_id (RFC3339) *)
+workload      = "workload", ":", "{", "dataset", ":", string, [ ",", "seed", ":", integer ], "}" ;
+
+tvars         = "tvars", ":", "[", { tvar_decl { "," } }, "]" ;
+tvar_decl     = "{", "name", ":", ident, ",", "type", ":", type, ",", "domain", ":", domain_spec, "}" ;
+type          = "bool" | "int" | "float" | "enum[str]" | "tuple[" , { type { "," } }, "]" | "callable[" , ProtoId , "]" ;
+domain_spec   = enum_vals | range_spec | set_vals | registry_ref ;
+enum_vals     = "[", value, { ",", value }, "]" ;
+range_spec    = "{", "range", ":", "[", number, ",", number, "]", [ ",", "resolution", ":", number ], "}" ;
+set_vals      = "{", "set", ":", "[", value, { ",", value }, "]", "}" ;
+registry_ref  = "{", "registry", ":", ident, "}" ;
+
+constraints   = "constraints", ":", "{", [ structural ], [ ",", derived ], "}" ;
+structural    = "structural", ":", "[", { struct_clause { "," } }, "]" ;
+struct_clause = "{", ( ("when", ":", formula, ",", "then", ":", formula) | ("expr", ":", formula) ), "}" ;
+derived       = "derived", ":", "[", { "{", "require", ":", lin_arith_expr, "}" { "," } }, "]" ;
+
+objectives    = "objectives", ":", "[", { objective_decl { "," } }, "]" ;
+objective_decl= std_objective | band_objective ;
+std_objective = "{", "name", ":", ident, ",", "direction", ":", ("maximize" | "minimize"), "}" ;
+band_objective= "{", "name", ":", ident, ",", "band", ":", "{",
+                 "target", ":", ( "[" , number, ",", number, "]" | "{", "center", ":", number, ",", "tol", ":", number, "}" ),
+                 [ ",", "test", ":", "TOST" ], [ ",", "alpha", ":", number ], "}", "}" ;
+
+promotion_policy = "promotion_policy", ":", "{",
+                   "dominance", ":", "epsilon_pareto",
+                   [ ",", "alpha", ":", number ],            (* defaults to 0.05 when omitted *)
+                   [ ",", "min_effect", ":", "{", ident, ":", number, { ",", ident, ":", number }, "}" ],
+                   [ ",", "adjust", ":", ("none" | "BH") ],
+                   [ ",", "chance_constraints", ":", "[", { "{", "name", ":", ident, ",", "threshold", ":", number, ",", "confidence", ":", number, "}" { "," } }, "]" ],
+                   [ ",", "tie_breakers", ":", "{", ident, ":", ("min_abs_deviation" | "custom"), { ",", ident, ":", ("min_abs_deviation" | "custom") }, "}" ],
+                   "}" ;
+
+exploration   = "exploration", ":", "{",
+                "strategy", ":", "{", "type", ":", ("random" | "grid" | "tpe" | "cmaes" | "nsga2" | "custom"), { "," key, ":", value }, "}",
+                [ ",", "initial_sampling", ":", value ],
+                [ ",", "parallelism", ":", "{", "max_parallel_trials", ":", integer, { "," key, ":", value }, "}" ],
+                [ ",", "convergence", ":", "{", "metric", ":", ("hypervolume_improvement" | "none"), [ ",", "window", ":", integer ], [ ",", "threshold", ":", number ], "}" ],
+                [ ",", "budgets", ":", "{", [ "max_trials", ":", integer ], [ ",", "max_spend_usd", ":", number ], [ ",", "max_wallclock_s", ":", integer ], "}" ],
+                "}" ;
+
+(* Constraint language: typed DNF; aligns with Appendix X *)
+formula       = disjunction ;
+disjunction   = conjunction , { "or" , conjunction } ;
+conjunction   = unary , { "and" , unary } ;
+unary         = [ "not" ] , ( atom | "(" , formula , ")" | (formula , "=>" , formula) ) ;
+atom          = ( ident , "=" , value )
+              | ( ident , ">=" , scalar )
+              | ( ident , "<=" , scalar )
+              | ( number , "<=" , ident , "<=" , number )
+              | ( ident , "=" , ident )
+              | ( ident , "in" , set_literal ) ;
+
+set_literal   = "{" , value , { "," , value } , "}" ;
+scalar        = number | ident ;
+
+ident         = ? identifier ? ;
+number        = ? number literal ? ;
+string        = ? string literal ? ;
+value         = number | string | boolean ;
+boolean       = "true" | "false" ;
+key           = ident ;
+ProtoId       = ident ;
+lin_arith_expr= affine_term , { ("+" | "-") , affine_term } ;
+affine_term   = [ coefficient , "*" ] , env_ident | coefficient ;
+coefficient   = number ;
+env_ident     = ident ;

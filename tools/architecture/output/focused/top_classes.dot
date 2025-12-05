@@ -1,0 +1,23 @@
+digraph TopClasses {
+    rankdir=LR;
+    node [shape=box, style=filled, fontname="Helvetica", fontsize=11];
+    label="Top 15 Largest Classes\n(by method count)";
+    labelloc=t;
+    fontsize=16;
+
+    cls0 [label="AuthManager\ncloud.auth\n65 methods" fillcolor="#ef9a9a"];
+    cls1 [label="OptimizationOrchestrator\ncore.orchestrator\n61 methods" fillcolor="#ef9a9a"];
+    cls2 [label="BackendIntegratedClient\ncloud.backend_client\n55 methods" fillcolor="#ef9a9a"];
+    cls3 [label="CostOptimizationAI\nanalytics.intelligence\n54 methods" fillcolor="#ef9a9a"];
+    cls4 [label="OptimizedFunction\ncore.optimized_function\n50 methods" fillcolor="#ef9a9a"];
+    cls5 [label="TraiGentCloudClient\ncloud.client\n46 methods" fillcolor="#ffcc80"];
+    cls6 [label="RemoteServiceRegistry\noptimizers.service_registry\n40 methods" fillcolor="#ffcc80"];
+    cls7 [label="OptimizationResult\napi.types\n28 methods" fillcolor="#fff9c4"];
+    cls8 [label="SpecificationGenerator\nagents.specification_generator\n26 methods" fillcolor="#fff9c4"];
+    cls9 [label="SDKBackendBridge\ncloud.backend_bridges\n25 methods" fillcolor="#fff9c4"];
+    cls10 [label="DatasetConverter\ncloud.dataset_converter\n25 methods" fillcolor="#fff9c4"];
+    cls11 [label="ProductionMCPClient\ncloud.production_mcp_client\n25 methods" fillcolor="#fff9c4"];
+    cls12 [label="ApiOperations\ncloud.api_operations\n24 methods" fillcolor="#fff9c4"];
+    cls13 [label="BaseOverrideManager\nintegrations.base\n23 methods" fillcolor="#fff9c4"];
+    cls14 [label="FrameworkOverride\nintegrations.framework_override\n23 methods" fillcolor="#fff9c4"];
+}

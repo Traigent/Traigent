@@ -1,0 +1,26 @@
+# TraiGent Agent Configuration Constraints
+# This file defines validation rules for agent configurations
+
+validation:
+  enabled: true
+  hooks:
+    pre-push:
+      - traigent-validate
+      - traigent-performance
+
+constraints:
+  # Cost constraints
+  max_cost_per_query: 0.05      # $0.05 max per query
+  max_monthly_budget: 1000      # $1000/month limit
+
+  # Performance constraints
+  min_accuracy: 0.85            # 85% minimum accuracy
+  max_latency_ms: 500           # 500ms max response time
+
+  # Model constraints
+  allowed_models:
+    - gpt-4o-mini
+    - gpt-4o
+    - claude-3-haiku
+  blocked_models:
+    - gpt-4-32k                 # Too expensive for production

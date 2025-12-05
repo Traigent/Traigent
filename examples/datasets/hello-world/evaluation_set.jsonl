@@ -1,0 +1,5 @@
+{"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"}
+{"input": {"question": "How does machine learning work?"}, "output": "Uses data and algorithms"}
+{"input": {"question": "What does RAG stand for?"}, "output": "Retrieval Augmented Generation"}
+{"input": {"question": "What is an instruction?"}, "output": "A list of steps"}
+{"input": {"question": "What should never be shared?"}, "output": "A private key"}

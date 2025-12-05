@@ -1,0 +1,20 @@
+{
+  "module": "traigent/optimizers/grid.py",
+  "top_level": [],
+  "class_methods": [
+    "GridSearchOptimizer.__init__",
+    "GridSearchOptimizer._calculate_composite_score",
+    "GridSearchOptimizer._generate_configurations",
+    "GridSearchOptimizer._generate_grid",
+    "GridSearchOptimizer.get_algorithm_info",
+    "GridSearchOptimizer.get_remaining_combinations",
+    "GridSearchOptimizer.progress",
+    "GridSearchOptimizer.reset",
+    "GridSearchOptimizer.should_stop",
+    "GridSearchOptimizer.suggest_next_trial",
+    "GridSearchOptimizer.total_combinations"
+  ],
+  "classes": [
+    "GridSearchOptimizer"
+  ]
+}

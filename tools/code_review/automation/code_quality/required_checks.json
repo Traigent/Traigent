@@ -1,0 +1,13 @@
+{
+  "required_checks": [
+    "docstrings_present",
+    "type_hints_coverage",
+    "line_length_compliance",
+    "complexity_hotspots",
+    "naming_conventions",
+    "imports_hygiene",
+    "logging_practices",
+    "dead_code_smells"
+  ]
+}
+

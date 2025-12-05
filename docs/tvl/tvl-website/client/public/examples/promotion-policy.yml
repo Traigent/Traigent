@@ -1,0 +1,10 @@
+# Example promotion policy
+alpha: 0.05
+paired: true
+multiple_testing: BH
+epsilon:
+  quality: 0.02
+  latency_p95_ms: 50
+bands:
+  response_tokens: { low: 50, high: 200 }
+

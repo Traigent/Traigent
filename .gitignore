@@ -1,0 +1,300 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary and deprecated directories
+temp_testing_tutorial_as_a_user/
+demo_venv/
+traigent_test_env/
+cache/
+sections/
+# But keep example site sections tracked
+!examples/sections/
+!examples/sections/**
+optigen_schema/
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Build artifacts for publication
+*.whl
+*.tar.gz
+.build/
+
+# PyInstaller
+#  Usually these files are written by a python script from a template
+#  before PyInstaller builds the exe, so as to inject date/other infos into it.
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+playground/optimization_logs
+**/cache/**/*.json
+**/demo_results/**/*.json
+**/demo_results/**/*.csv
+
+
+# Translations
+*.mo
+*.pot
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+.pybuilder/
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+#   For a library or package, you might want to ignore these files since the code is
+#   intended to run in multiple environments; otherwise, check them in:
+# .python-version
+
+# pipenv
+#   According to pypa/pipenv#598, it is recommended to include Pipfile.lock in version control.
+#   However, in case of collaboration, if having platform-specific dependencies or dependencies
+#   having no cross-platform support, pipenv may install dependencies that don't work, or not
+#   install all needed dependencies.
+#Pipfile.lock
+
+# poetry
+#   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
+#   This is especially recommended for binary packages to ensure reproducibility, and is more
+#   commonly ignored for libraries.
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+#poetry.lock
+
+# pdm
+#   Similar to Pipfile.lock, it is generally recommended to include pdm.lock in version control.
+#pdm.lock
+#   pdm stores project-wide configurations in .pdm.toml, but it is recommended to not include it
+#   in version control.
+#   https://pdm.fming.dev/#use-with-ide
+.pdm.toml
+
+# PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
+__pypackages__/
+
+# Celery stuff
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.env.*
+!.env.example
+!.env.*.template
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# PyCharm
+#  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
+#  be added to the global gitignore or merged into this project gitignore.  For a PyChell:
+#  https://github.com/github/gitignore/blob/main/Global/JetBrains.gitignore
+.idea/
+
+# VS Code
+# Keep .vscode settings tracked for team consistency
+# .vscode/
+
+# Internal design docs (IP/private during implementation)
+resampling_configs.md
+
+# TraiGent specific
+*.jsonl
+# But keep example datasets tracked for users to run examples
+!examples/datasets/**/*.jsonl
+# Keep the quickstart symlink at repo root for README examples
+!qa_samples.jsonl
+optimization_results/
+data/
+temp/
+.traigent/
+
+# Temporary test scripts (development phase)
+test_phase*.py
+test_multi_objective_implementation.py
+test_weighted_score_updates.py
+test_integration_weighted_scores.py
+analyze_my_logs.py
+
+# Backup files
+*_backup.py
+*_original_backup.py
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
+*.pyc
+*.gz
+__pycache__/
+
+# Additional cache and temp files
+None
+screenshot.png
+optimization_result.json
+
+# IDE specific
+.benchmarks/
+.claude/
+.pylance-settings.json
+.flake8
+.ruff_cache/
+
+# Test/build artifacts
+htmlcov/
+.coveragerc
+
+# Code reviews and internal documentation (user-specific)
+code_reviews/
+CLAUDE.local.md
+
+# Cleanup/fix scripts (temporary)
+fix_*.py
+cleanup_*.py
+validate_*.py
+*_REPORT.md
+*_COMPLETE.md
+*_TRACKER.md
+*_AUTOMATION.md
+*_PROTOCOL.md
+
+# Virtual environments (additional)
+test_env/
+
+# Publication and release artifacts
+.tox/
+pip-audit-report.json
+bandit-report.json
+safety-report.json
+security-reports/
+quality-reports/
+dependency-reports/
+
+# Documentation build artifacts
+docs/_build/
+docs/.doctrees/
+site/
+
+# Release preparation
+release-notes/
+dist-packages/examples/sections/examples/test_results.json
+# Optimization results - temporary files
+results.json
+**/results.json
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
+
+# Local development folders
+.traigent_local/
+.traceability_venv/
+test_concurrent.db
+scripts/secrets/
+.scannerwork/
+
+# Git archive (local backup of original history)
+.git_archive/
+
+# Reports (internal audits archived privately)
+reports/
+
+# IDE settings (may contain local paths)
+.vscode/
+
+# Backup environments
+.venv.bkp/

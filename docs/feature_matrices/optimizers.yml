@@ -1,0 +1,321 @@
+# Optimizer Feature Matrix
+# Traceability: CONC-Layer-Core CONC-Quality-Maintainability FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 REQ-TRACE-GAP-004
+#
+# This matrix tracks implementation completeness for optimization algorithms.
+
+id: MATRIX-OPTIMIZERS
+module_type: optimizer
+requirement: REQ-OPT-ALG-004
+last_updated: "2025-12-01"
+description: "Optimization algorithm implementations and their feature coverage"
+
+base_contract:
+  class: BaseOptimizer
+  code_unit: traigent/optimizers/base.py
+  required_methods:
+    - name: suggest_next_trial
+      signature: "(self, history: list[TrialResult]) -> dict[str, Any]"
+      description: "Suggest next configuration to evaluate"
+
+    - name: should_stop
+      signature: "(self, history: list[TrialResult]) -> bool"
+      description: "Determine if optimization should stop"
+
+  optional_methods:
+    - name: suggest_next_trial_async
+      signature: "(self, history, remote_context) -> dict[str, Any]"
+      description: "Async version for remote service support"
+      default_behavior: "Calls sync version"
+
+    - name: should_stop_async
+      signature: "(self, history, remote_context) -> bool"
+      description: "Async version for remote service support"
+      default_behavior: "Calls sync version"
+
+    - name: generate_candidates
+      signature: "(self, max_candidates: int) -> list[dict]"
+      description: "Generate multiple candidate configurations"
+      default_behavior: "Iterates suggest_next_trial"
+
+    - name: generate_candidates_async
+      signature: "(self, max_candidates, remote_context) -> list[dict]"
+      description: "Async version of generate_candidates"
+      default_behavior: "Iterates suggest_next_trial_async"
+
+    - name: reset
+      signature: "(self) -> None"
+      description: "Reset optimizer state for new run"
+      default_behavior: "Clears trial_count, best_score, best_config"
+
+    - name: get_algorithm_info
+      signature: "(self) -> dict[str, Any]"
+      description: "Get algorithm metadata"
+      default_behavior: "Returns class info dict"
+
+capabilities:
+  # ---------- Standard Optimizers ----------
+  - id: CAP-OPT-RANDOM
+    name: "Random Search Optimizer"
+    description: "Random sampling from configuration space"
+    implementations:
+      - class_name: RandomSearchOptimizer
+        code_unit: traigent/optimizers/random.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - should_stop
+        notes: "Simple random sampling, uses base class defaults for async"
+
+  - id: CAP-OPT-GRID
+    name: "Grid Search Optimizer"
+    description: "Exhaustive grid search over configuration space"
+    implementations:
+      - class_name: GridSearchOptimizer
+        code_unit: traigent/optimizers/grid.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - should_stop
+        notes: "Cartesian product iteration, uses base class defaults for async"
+
+  - id: CAP-OPT-BAYESIAN
+    name: "Bayesian Optimizer"
+    description: "Bayesian optimization with Gaussian Process"
+    implementations:
+      - class_name: BayesianOptimizer
+        code_unit: traigent/optimizers/bayesian.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - should_stop
+        notes: "Uses scikit-optimize, optional dependency"
+
+  # ---------- Optuna-Based Optimizers ----------
+  - id: CAP-OPT-OPTUNA-BASE
+    name: "Optuna Base Optimizer"
+    description: "Base class for Optuna-based optimizers"
+    implementations:
+      - class_name: OptunaBaseOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - should_stop
+          - create_study
+          - save_checkpoint
+          - load_checkpoint
+        notes: "Provides checkpoint support via Optuna study persistence"
+
+  - id: CAP-OPT-OPTUNA-TPE
+    name: "Optuna TPE Optimizer"
+    description: "Tree-structured Parzen Estimator"
+    implementations:
+      - class_name: OptunaTPEOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Extends OptunaBaseOptimizer with TPE sampler"
+
+  - id: CAP-OPT-OPTUNA-RANDOM
+    name: "Optuna Random Optimizer"
+    description: "Optuna-based random sampling"
+    implementations:
+      - class_name: OptunaRandomOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Extends OptunaBaseOptimizer with RandomSampler"
+
+  - id: CAP-OPT-OPTUNA-CMAES
+    name: "Optuna CMA-ES Optimizer"
+    description: "Covariance Matrix Adaptation Evolution Strategy"
+    implementations:
+      - class_name: OptunaCMAESOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Extends OptunaBaseOptimizer with CmaEsSampler"
+
+  - id: CAP-OPT-OPTUNA-NSGAII
+    name: "Optuna NSGA-II Optimizer"
+    description: "Multi-objective NSGA-II algorithm"
+    implementations:
+      - class_name: OptunaNSGAIIOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Multi-objective optimization support"
+
+  - id: CAP-OPT-OPTUNA-GRID
+    name: "Optuna Grid Optimizer"
+    description: "Optuna-based grid search"
+    implementations:
+      - class_name: OptunaGridOptimizer
+        code_unit: traigent/optimizers/optuna_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Extends OptunaBaseOptimizer with GridSampler"
+
+  # ---------- Remote/Cloud Optimizers ----------
+  - id: CAP-OPT-REMOTE
+    name: "Remote Optimizer"
+    description: "Remote optimization service client"
+    implementations:
+      - class_name: RemoteOptimizer
+        code_unit: traigent/optimizers/remote.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - suggest_next_trial_async
+          - should_stop
+          - should_stop_async
+        notes: "Full async support for remote service calls"
+
+      - class_name: RemoteOptimizer
+        code_unit: traigent/optimizers/cloud_optimizer.py
+        status: partial
+        completion: 0.9
+        implemented_methods:
+          - suggest_next_trial
+          - suggest_next_trial_async
+          - should_stop
+        missing_methods:
+          - should_stop_async
+        gaps:
+          - type: method
+            name: should_stop_async
+            priority: low
+            description: "Async version of should_stop not overridden"
+        notes: "Alternative cloud optimizer, missing async should_stop"
+
+  # ---------- Batch/Parallel Optimizers ----------
+  - id: CAP-OPT-PARALLEL-BATCH
+    name: "Parallel Batch Optimizer"
+    description: "Parallel evaluation of configuration batches"
+    implementations:
+      - class_name: ParallelBatchOptimizer
+        code_unit: traigent/optimizers/batch_optimizers.py
+        status: complete
+        completion: 1.0
+        implemented_methods:
+          - suggest_next_trial
+          - should_stop
+          - generate_candidates
+        notes: "Parallel batch processing with worker pool"
+
+  - id: CAP-OPT-MULTI-OBJECTIVE
+    name: "Multi-Objective Batch Optimizer"
+    description: "Pareto-optimal multi-objective optimization"
+    implementations:
+      - class_name: MultiObjectiveBatchOptimizer
+        code_unit: traigent/optimizers/batch_optimizers.py
+        status: complete
+        completion: 1.0
+        notes: "Supports multiple objectives with Pareto front tracking"
+
+  - id: CAP-OPT-ADAPTIVE
+    name: "Adaptive Batch Optimizer"
+    description: "Self-adjusting batch optimization"
+    implementations:
+      - class_name: AdaptiveBatchOptimizer
+        code_unit: traigent/optimizers/batch_optimizers.py
+        status: complete
+        completion: 1.0
+        notes: "Dynamically adjusts batch size based on progress"
+
+  - id: CAP-OPT-INTERACTIVE
+    name: "Interactive Optimizer"
+    description: "Human-in-the-loop optimization"
+    implementations:
+      - class_name: InteractiveOptimizer
+        code_unit: traigent/optimizers/interactive_optimizer.py
+        status: complete
+        completion: 1.0
+        notes: "Supports user feedback during optimization"
+
+# Summary Statistics
+summary:
+  total_implementations: 15
+  complete: 14
+  partial: 1
+  missing: 0
+  coverage_percentage: 96.7
+
+# Feature Support Matrix
+feature_support:
+  async_methods:
+    full_support:
+      - RemoteOptimizer (traigent/optimizers/remote.py)
+    partial_support:
+      - RemoteOptimizer (traigent/optimizers/cloud_optimizer.py)
+    uses_default:
+      - RandomSearchOptimizer
+      - GridSearchOptimizer
+      - BayesianOptimizer
+      - OptunaBaseOptimizer
+      - All Optuna variants
+      - All Batch optimizers
+      - InteractiveOptimizer
+
+  checkpoint_support:
+    full_support:
+      - OptunaBaseOptimizer
+      - All Optuna variants
+    partial_support: []
+    not_supported:
+      - RandomSearchOptimizer
+      - GridSearchOptimizer
+      - BayesianOptimizer
+      - RemoteOptimizer
+      - Batch optimizers
+      - InteractiveOptimizer
+
+  multi_objective:
+    full_support:
+      - OptunaNSGAIIOptimizer
+      - MultiObjectiveBatchOptimizer
+    partial_support:
+      - OptunaTPEOptimizer  # via weighted sum
+    not_supported:
+      - RandomSearchOptimizer
+      - GridSearchOptimizer
+      - BayesianOptimizer
+
+# Identified Gaps
+identified_gaps:
+  - id: GAP-OPT-001
+    type: pattern
+    name: "Inconsistent async support"
+    priority: medium
+    description: "Most optimizers use default base class async methods instead of true async"
+    affected:
+      - RandomSearchOptimizer
+      - GridSearchOptimizer
+      - BayesianOptimizer
+      - All batch optimizers
+
+  - id: GAP-OPT-002
+    type: behavior
+    name: "Missing checkpoint support"
+    priority: low
+    description: "Only Optuna-based optimizers support checkpoint/restore"
+    affected:
+      - RandomSearchOptimizer
+      - GridSearchOptimizer
+      - BayesianOptimizer
+      - RemoteOptimizer
+
+  - id: GAP-OPT-003
+    type: method
+    name: "Duplicate RemoteOptimizer"
+    priority: high
+    description: "Two different RemoteOptimizer implementations exist"
+    affected:
+      - traigent/optimizers/remote.py
+      - traigent/optimizers/cloud_optimizer.py
+    recommendation: "Consolidate into single implementation"

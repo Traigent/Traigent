@@ -1,0 +1,11 @@
+{
+  "required_checks": [
+    "input_validation_coverage",
+    "error_handling_paths",
+    "invariants_contracts",
+    "edge_cases_listed",
+    "state_mutation_safety",
+    "testability_plan"
+  ]
+}
+

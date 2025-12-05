@@ -1,0 +1,416 @@
+"""Unit tests for BackendSessionManager.
+
+Tests the extracted backend session lifecycle manager with stub backend client.
+"""
+
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
+from traigent.config.types import TraigentConfig
+from traigent.core.backend_session_manager import BackendSessionManager
+from traigent.core.objectives import create_default_objectives
+from traigent.evaluators.base import Dataset
+from traigent.utils.function_identity import resolve_function_descriptor
+
+
+@pytest.fixture
+def mock_backend_client():
+    """Create mock backend client."""
+    client = Mock()
+    client.create_session = Mock(return_value="test-session-id")
+    client.submit_result = Mock()
+    client.register_trial_start = AsyncMock()
+    client._submit_trial_result_via_session = AsyncMock(return_value=True)
+    client.update_trial_weighted_scores = AsyncMock(return_value=True)
+    client.finalize_session = Mock(return_value={"status": "completed"})
+    client.finalize_session_sync = Mock(return_value={"status": "completed"})
+
+    # Mock auth manager
+    auth_manager = Mock()
+    auth_manager.has_api_key = Mock(return_value=True)
+    client.auth_manager = auth_manager
+
+    return client
+
+
+@pytest.fixture
+def mock_optimizer():
+    """Create mock optimizer."""
+    optimizer = Mock()
+    optimizer.objectives = ["accuracy", "cost"]
+    optimizer.config_space = {"param1": [1, 2, 3]}
+    return optimizer
+
+
+@pytest.fixture
+def traigent_config():
+    """Create test config."""
+    config = TraigentConfig()
+    config.execution_mode = "edge_analytics"
+    return config
+
+
+@pytest.fixture
+def objective_schema():
+    """Create test objective schema."""
+    return create_default_objectives(
+        objective_names=["accuracy", "cost"],
+        orientations={"accuracy": "maximize", "cost": "minimize"},
+        weights={"accuracy": 0.7, "cost": 0.3},
+    )
+
+
+@pytest.fixture
+def backend_session_manager(
+    mock_backend_client, traigent_config, objective_schema, mock_optimizer
+):
+    """Create BackendSessionManager instance."""
+    return BackendSessionManager(
+        backend_client=mock_backend_client,
+        traigent_config=traigent_config,
+        objectives=["accuracy", "cost"],
+        objective_schema=objective_schema,
+        optimizer=mock_optimizer,
+        optimization_id="test-opt-id",
+        optimization_status=OptimizationStatus.RUNNING,
+    )
+
+
+@pytest.fixture
+def mock_dataset():
+    """Create mock dataset."""
+    dataset = Mock(spec=Dataset)
+    dataset.name = "test_dataset"
+    dataset.__len__ = Mock(return_value=10)
+    return dataset
+
+
+@pytest.fixture
+def mock_trial_result():
+    """Create mock trial result."""
+    trial = Mock(spec=TrialResult)
+    trial.trial_id = "trial-123"
+    trial.config = {"param1": 1}
+    trial.metrics = {"accuracy": 0.9, "cost": 0.5, "total_cost": 0.5}
+    trial.is_successful = True
+    trial.duration = 1.5
+    trial.error_message = None
+    trial.metadata = {}  # Add metadata attribute
+    trial.get_metric = Mock(
+        side_effect=lambda key, default=None: trial.metrics.get(key, default)
+    )
+    trial.evaluation_results = []
+    return trial
+
+
+class TestBackendSessionManagerCreation:
+    """Test session creation."""
+
+    def test_create_session_with_backend(
+        self, backend_session_manager, mock_dataset, mock_backend_client
+    ):
+        """Test session creation when backend client is configured."""
+
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+
+        descriptor = resolve_function_descriptor(func)
+
+        session_ctx = backend_session_manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=10,
+            start_time=1234567890.0,
+        )
+
+        # Verify session_id returned
+        assert session_ctx.session_id == "test-session-id"
+        assert session_ctx.dataset_name == "test_dataset"
+        assert session_ctx.function_name == descriptor.identifier
+
+        # Verify backend client called
+        mock_backend_client.create_session.assert_called_once()
+        call_kwargs = mock_backend_client.create_session.call_args[1]
+        assert call_kwargs["function_name"] == descriptor.slug
+        assert call_kwargs["optimization_goal"] == "maximize"
+        assert (
+            call_kwargs["metadata"]["function_display_name"] == descriptor.display_name
+        )
+        assert call_kwargs["metadata"]["function_name"] == descriptor.identifier
+        assert call_kwargs["metadata"]["function_slug"] == descriptor.slug
+
+    def test_create_session_without_backend(
+        self, traigent_config, objective_schema, mock_optimizer, mock_dataset
+    ):
+        """Test session creation when backend client is None."""
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        def func(x):
+            return x
+
+        func.__name__ = "test_func"
+
+        descriptor = resolve_function_descriptor(func)
+
+        session_ctx = manager.create_session(
+            func=func,
+            dataset=mock_dataset,
+            function_descriptor=descriptor,
+            max_trials=5,
+            start_time=1234567890.0,
+        )
+
+        # Verify no session_id when backend disabled
+        assert session_ctx.session_id is None
+        assert session_ctx.dataset_name == "test_dataset"
+        assert session_ctx.function_name == descriptor.identifier
+
+
+class TestBackendSessionManagerTrialSubmission:
+    """Test trial submission."""
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_success(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Test successful trial submission."""
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert result is True
+
+        # Verify backend calls
+        mock_backend_client.submit_result.assert_called_once()
+        mock_backend_client.register_trial_start.assert_called_once()
+        mock_backend_client._submit_trial_result_via_session.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_without_backend(
+        self, traigent_config, objective_schema, mock_optimizer, mock_trial_result
+    ):
+        """Test trial submission when backend is None."""
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = await manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id="test-session-id",
+        )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_without_session_id(
+        self, backend_session_manager, mock_trial_result
+    ):
+        """Test trial submission when session_id is None."""
+        result = await backend_session_manager.submit_trial(
+            trial_result=mock_trial_result,
+            session_id=None,
+        )
+
+        assert result is False
+
+
+class TestBackendSessionManagerWeightedScores:
+    """Test weighted score updates."""
+
+    @pytest.mark.asyncio
+    async def test_update_weighted_scores_multi_objective(
+        self, backend_session_manager, mock_trial_result, mock_backend_client
+    ):
+        """Test weighted score updates for multi-objective optimization."""
+        # Create mock optimization result
+        result = Mock(spec=OptimizationResult)
+        result.trials = [mock_trial_result]
+        result.successful_trials = [mock_trial_result]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(mock_trial_result, 0.85)],
+                "normalization_ranges": {},
+                "best_weighted_config": {"param1": 1},
+                "best_weighted_score": 0.85,
+            }
+        )
+        result.metadata = {}
+
+        update_count = await backend_session_manager.update_weighted_scores(
+            result=result,
+            session_id="test-session-id",
+        )
+
+        assert update_count == 1
+        mock_backend_client.update_trial_weighted_scores.assert_awaited_once()
+
+        # Verify metadata attached
+        assert "weighted_results" in result.metadata
+
+    @pytest.mark.asyncio
+    async def test_update_weighted_scores_skips_failed_trials(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Ensure weighted score submissions align with successful trials only."""
+        successful_trial = Mock(spec=TrialResult)
+        successful_trial.trial_id = "trial-success"
+        successful_trial.config = {"param": "good"}
+        successful_trial.metrics = {"accuracy": 0.95}
+        successful_trial.is_successful = True
+        failed_trial = Mock(spec=TrialResult)
+        failed_trial.trial_id = "trial-failed"
+        failed_trial.config = {"param": "bad"}
+        failed_trial.metrics = {}
+        failed_trial.is_successful = False
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = [successful_trial, failed_trial]
+        result.successful_trials = [successful_trial]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(successful_trial, 0.92)],
+                "normalization_ranges": {},
+                "best_weighted_config": (
+                    successful_trial.config
+                    if hasattr(successful_trial, "config")
+                    else {}
+                ),
+                "best_weighted_score": 0.92,
+            }
+        )
+        result.metadata = {}
+
+        update_count = await backend_session_manager.update_weighted_scores(
+            result=result,
+            session_id="test-session-id",
+        )
+
+        assert update_count == 1
+        mock_backend_client.update_trial_weighted_scores.assert_awaited_once()
+        awaited = mock_backend_client.update_trial_weighted_scores.await_args
+        assert awaited.kwargs["trial_id"] == "trial-success"
+        assert awaited.kwargs["weighted_score"] == 0.92
+        assert awaited.kwargs["normalization_info"] == {}
+        assert "objective_weights" in awaited.kwargs
+        assert "weighted_results" in result.metadata
+        assert result.metadata["weighted_results"]["trials_updated"] == 1
+
+    @pytest.mark.asyncio
+    async def test_update_weighted_scores_single_objective(
+        self, mock_backend_client, traigent_config, mock_optimizer
+    ):
+        """Test weighted scores skipped for single-objective optimization."""
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],  # Single objective
+            objective_schema=None,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = []
+
+        update_count = await manager.update_weighted_scores(
+            result=result,
+            session_id="test-session-id",
+        )
+
+        assert update_count == 0
+        mock_backend_client.update_trial_weighted_scores.assert_not_called()
+
+
+class TestBackendSessionManagerFinalization:
+    """Test session finalization."""
+
+    def test_finalize_session_success(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Test successful session finalization."""
+        summary = backend_session_manager.finalize_session(
+            session_id="test-session-id",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        assert summary == {"status": "completed"}
+        mock_backend_client.finalize_session_sync.assert_called_once_with(
+            "test-session-id", True
+        )
+
+    def test_finalize_session_without_backend(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test finalization when backend is None."""
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        summary = manager.finalize_session(
+            session_id="test-session-id",
+            optimization_status=OptimizationStatus.COMPLETED,
+        )
+
+        assert summary is None
+
+
+class TestBackendSessionManagerMetadata:
+    """Test metadata attachment."""
+
+    def test_attach_session_metadata(self, backend_session_manager):
+        """Test attaching session metadata to result."""
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {}
+
+        backend_session_manager.attach_session_metadata(
+            result=result,
+            session_id="test-session-id",
+            session_summary={"status": "completed", "trials": 10},
+        )
+
+        assert result.metadata["local_session_id"] == "test-session-id"
+        assert result.metadata["local_session_summary"] == {
+            "status": "completed",
+            "trials": 10,
+        }
+
+    def test_attach_metadata_without_session_id(self, backend_session_manager):
+        """Test metadata attachment when session_id is None."""
+        result = Mock(spec=OptimizationResult)
+        result.metadata = {}
+
+        backend_session_manager.attach_session_metadata(
+            result=result,
+            session_id=None,
+            session_summary=None,
+        )
+
+        # Metadata should remain empty
+        assert result.metadata == {}

@@ -1,0 +1,409 @@
+# Traigent SDK Authentication Guide
+
+## Overview
+
+The Traigent SDK provides a modern, secure authentication system that follows industry best practices from tools like GitHub CLI and AWS CLI. This guide covers how to authenticate and manage your credentials.
+
+## Quick Start
+
+### 1. Interactive Login (Recommended)
+
+The easiest way to authenticate is using the interactive CLI:
+
+```bash
+traigent auth login
+```
+
+This will:
+1. Prompt for your email and password
+2. Authenticate with the Traigent backend
+3. Generate a long-lived API key
+4. Store credentials securely on your system
+
+### 2. Environment Variable
+
+Set your API key as an environment variable:
+
+```bash
+export TRAIGENT_API_KEY=your_api_key_here
+# or (legacy)
+export OPTIGEN_API_KEY=your_api_key_here
+```
+
+> Tip: Credentials saved through `traigent auth login` are resolved by the SDK automatically via the built-in Credential Manager, so you never need to copy keys into code.
+
+### 3. Direct API Key Configuration
+
+If you already have an API key:
+
+```bash
+traigent auth configure
+# Select option 2 and enter your API key
+```
+
+## Authentication Commands
+
+### Login
+
+Authenticate with the Traigent backend:
+
+```bash
+# Interactive login
+traigent auth login
+
+# Login with email
+traigent auth login --email user@example.com
+
+# Non-interactive (for CI/CD)
+export TRAIGENT_PASSWORD=your_password
+traigent auth login --email user@example.com --non-interactive
+```
+
+### Check Status
+
+View your current authentication status:
+
+```bash
+traigent auth status
+```
+
+Output shows:
+- Authentication status
+- User email and ID
+- Backend URL
+- API key (masked for security)
+
+### Logout
+
+Clear stored credentials:
+
+```bash
+traigent auth logout
+```
+
+This removes all locally stored credentials. Your API key remains valid on the backend.
+
+### Refresh Tokens
+
+Refresh expired JWT tokens:
+
+```bash
+traigent auth refresh
+```
+
+Note: API keys don't expire and don't need refresh.
+
+### Configure
+
+Interactive configuration wizard:
+
+```bash
+traigent auth configure
+```
+
+Options:
+- Change backend URL
+- Select authentication method
+- Set up API key
+
+### Who Am I
+
+Check API key validity:
+
+```bash
+traigent auth whoami tg_your_api_key_here
+```
+
+## Automatic Credential Discovery
+
+Unified authentication leverages the shared `CredentialManager` to look for credentials in a secure order. When the CLI stores an API key or refresh token, the SDK reuses it automatically during runtime. This removes the need to duplicate configuration across environments while keeping sensitive material out of source code.
+
+The discovery order is:
+- System environment variables (`TRAIGENT_API_KEY`, legacy `OPTIGEN_API_KEY`, `TRAIGENT_JWT_TOKEN`, etc.)
+- CLI-managed credentials saved via `traigent auth login` (keyring or encrypted file)
+- Development defaults only when explicit test flags are enabled
+
+If nothing is found, authentication gracefully falls back to interactive prompts or explicit configuration.
+
+## Credential Storage
+
+Credentials are stored securely using multiple layers:
+
+### 1. System Keyring (Most Secure)
+- Uses OS-native credential storage
+- macOS: Keychain
+- Windows: Credential Manager
+- Linux: Secret Service/KWallet
+
+### 2. Encrypted File (Fallback)
+- Location: `~/.traigent/credentials.json`
+- Permissions: 0600 (user read/write only)
+- Contents are JSON-encoded
+
+### 3. Environment Variables
+- `TRAIGENT_API_KEY` (or legacy `OPTIGEN_API_KEY`)
+- Useful for CI/CD environments
+
+## Priority Order
+
+The SDK checks for credentials in this order:
+1. Environment variables (highest priority)
+2. CLI stored credentials (from `traigent auth login`)
+3. Default test credentials (development mode only)
+
+## Security Features
+
+### Secure Token Management
+- Tokens are wrapped in in-memory `SecureToken` containers so raw values are never logged or persisted
+- Automatic memory clearing when tokens are no longer needed
+- Token values masked in all string representations
+- Constant-time string comparison to prevent timing attacks
+- Background refresh uses the resilient HTTP client with exponential backoff to renew tokens before expiry
+
+### Rate Limiting Protection
+- Exponential backoff after failed authentication attempts
+- Maximum 3 failures before rate limiting
+- Automatic jitter to prevent thundering herd
+- Rate limit resets after successful authentication
+
+### SOC2 Compliance
+- Comprehensive audit logging for authentication events
+- No sensitive data in logs
+- Secure credential storage
+- Automatic token refresh before expiry
+
+## Integration with SDK
+
+Once authenticated, the SDK automatically uses your credentials:
+
+```python
+import traigent
+
+# The SDK automatically finds credentials from:
+# 1. Environment variables
+# 2. CLI auth (traigent auth login)
+# 3. Development defaults
+
+@traigent.optimize(
+    eval_dataset="data.jsonl",
+    configuration_space={"model": ["gpt-4", "gpt-3.5-turbo"]}
+)
+def my_function(input_text: str, **config):
+    # Your function here
+    return result
+
+# Optimization automatically uses authenticated backend
+results = asyncio.run(my_function.optimize())
+```
+
+## Backend Integration
+
+The authentication system works with the OptiGen backend:
+
+### Supported Authentication Methods
+
+1. **JWT Tokens**
+   - Short-lived (1 hour default)
+   - Automatic refresh support
+   - Used for initial authentication
+
+2. **API Keys**
+   - Long-lived tokens
+   - Generated after JWT authentication
+   - Preferred for SDK usage
+
+### API Endpoints
+
+The SDK interacts with these backend endpoints:
+- `POST /api/v1/auth/login` - Initial authentication
+- `POST /api/v1/auth/refresh` - Token refresh
+- `POST /api/v1/api-keys` - Generate API keys
+- `GET /api/v1/api-keys` - List API keys
+
+## Troubleshooting
+
+### Authentication Failed
+
+1. Check your credentials:
+   ```bash
+   traigent auth status
+   ```
+
+2. Try logging in again:
+   ```bash
+   traigent auth logout
+   traigent auth login
+   ```
+
+3. Verify backend URL:
+   ```bash
+   traigent auth configure
+   ```
+
+### Rate Limited
+
+If you see "Rate limit exceeded":
+- Wait for the specified retry time
+- Check for correct credentials
+- Contact support if the issue persists
+
+### Token Expired
+
+JWT tokens expire after 1 hour:
+```bash
+traigent auth refresh
+```
+
+Or switch to API keys (recommended):
+```bash
+traigent auth login  # Generates API key automatically
+```
+
+### No Keyring Available
+
+If keyring is not available, credentials are stored in:
+- `~/.traigent/credentials.json` (with 0600 permissions)
+
+To install keyring support:
+```bash
+pip install keyring
+```
+
+## CI/CD Integration
+
+For automated environments:
+
+### GitHub Actions
+
+```yaml
+- name: Configure Traigent
+  env:
+    TRAIGENT_API_KEY: ${{ secrets.TRAIGENT_API_KEY }}  # Use OPTIGEN_API_KEY only for legacy jobs
+  run: |
+    # SDK automatically uses environment variable
+    python your_optimization_script.py
+```
+
+### Docker
+
+```dockerfile
+# Set API key at runtime
+ENV TRAIGENT_API_KEY=${TRAIGENT_API_KEY}
+
+# Or mount credentials
+VOLUME /root/.traigent
+```
+
+### Jenkins
+
+```groovy
+withCredentials([string(credentialsId: 'traigent-api-key', variable: 'TRAIGENT_API_KEY')]) {
+    sh 'python your_optimization_script.py'
+}
+```
+
+## Best Practices
+
+1. **Use API Keys for Production**
+   - More stable than JWT tokens
+   - No refresh needed
+   - Better for long-running processes
+
+2. **Rotate Keys Regularly**
+   - Generate new keys periodically
+   - Remove unused keys from backend
+
+3. **Use Environment Variables in CI/CD**
+   - Never commit credentials to code
+   - Use secure secret management
+
+4. **Enable Keyring When Possible**
+   - Provides OS-level security
+   - Better than file storage
+
+5. **Monitor Authentication Events**
+   - Check audit logs for suspicious activity
+   - Review failed authentication attempts
+
+## API Reference
+
+### Python API
+
+```python
+from traigent.cloud.credential_manager import CredentialManager
+
+# Check if authenticated
+is_auth = CredentialManager.is_authenticated()
+
+# Get API key
+api_key = CredentialManager.get_api_key()
+
+# Get auth headers
+headers = CredentialManager.get_auth_headers()
+
+# Get full credentials
+creds = CredentialManager.get_credentials()
+
+# Clear credentials
+CredentialManager.clear_credentials()
+```
+
+### CLI Commands
+
+```bash
+# Main commands
+traigent auth login        # Authenticate
+traigent auth logout       # Clear credentials
+traigent auth status       # Check status
+traigent auth refresh      # Refresh tokens
+traigent auth configure    # Configuration wizard
+traigent auth whoami KEY   # Validate API key
+
+# Options
+--email EMAIL             # Specify email
+--non-interactive         # No prompts (CI/CD)
+--help                   # Show help
+```
+
+## Migration Guide
+
+If you're migrating from the old authentication system:
+
+### Old Method
+```python
+# Manual API key management
+os.environ["TRAIGENT_API_KEY"] = "your_key"
+```
+
+### New Method
+```bash
+# Use CLI for secure storage
+traigent auth login
+
+# Or continue using environment variables
+export TRAIGENT_API_KEY=your_key  # export OPTIGEN_API_KEY=your_key (legacy)
+```
+
+The new system is backward compatible - existing environment variables continue to work.
+
+## Support
+
+For authentication issues:
+
+1. Check the [Troubleshooting](#troubleshooting) section
+2. Run diagnostics:
+   ```bash
+   python examples/test_auth_cli.py
+   ```
+3. Contact support at support@optigen.ai
+
+## Security Disclosure
+
+To report security vulnerabilities in the authentication system:
+- Email: security@optigen.ai
+- Use our bug bounty program
+- Do not disclose publicly until patched
+
+---
+
+*Last updated: January 2025*

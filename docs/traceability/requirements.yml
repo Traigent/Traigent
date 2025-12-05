@@ -1,0 +1,196 @@
+- id: REQ-API-001
+  name: "Optimize decorator"
+  title: "Optimize decorator enables zero/low-code optimization"
+  description: >
+    Provide a public @traigent.optimize entrypoint with grouped options for evaluation,
+    injection, execution, and mock mode so users can wrap existing functions without
+    restructuring their code.
+  acceptance_criteria:
+    - Decorator accepts configuration_space, objectives, evaluation/injection/execution bundles, and validates parameters.
+    - Defaults allow a function to run even when optional settings are omitted.
+    - Global configuration can be inspected and updated via helper APIs.
+  tags: [api, decorator, usability]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-INJ-002
+  name: "Seamless injection"
+  title: "Seamless configuration injection covers signatures and assignments"
+  description: >
+    Apply sampled configs through AST rewriting when possible and fall back to runtime
+    shims when no assignments are modified, ensuring signature defaults and keyword-only
+    parameters receive optimized values safely.
+  acceptance_criteria:
+    - Runtime shim respects caller-provided arguments and handles async functions and methods.
+    - Injection supports both context-based providers and parameter/attribute-based providers.
+    - Framework auto-override toggles safely adapt common LLM SDKs when enabled.
+  tags: [injection, runtime, seamless]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-ORCH-003
+  name: "Orchestration lifecycle"
+  title: "Optimization orchestration manages trials, budgets, and stop conditions"
+  description: >
+    Coordinate optimizers and evaluators through a trial lifecycle with constraints,
+    caching, stop conditions, and callbacks to control run duration and outcome quality.
+  acceptance_criteria:
+    - Supports sample budgets, max trials, pruning, and cache policies to skip duplicates.
+    - Enforces pre/post-evaluation constraints and aggregates metrics for selection.
+    - Selects best configuration per objectives and surfaces trial/session summaries.
+  tags: [orchestration, lifecycle, constraints]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-OPT-ALG-004
+  name: "Optimizer portfolio"
+  title: "Multiple optimization strategies available and discoverable"
+  description: >
+    Offer grid, random, Optuna-based (TPE, CMA-ES, NSGA-II, grid), Bayesian, interactive,
+    and remote-guided optimizers with a registry for lookup and plugin extension.
+  acceptance_criteria:
+    - Optimizers expose suggest/record interfaces compatible with orchestrator.
+    - Registry lists/loads built-in and plugin optimizers by name.
+    - Remote/hybrid optimizers handle checkpointing and rate limiting when available.
+  tags: [optimizers, registry, extensibility]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-EVAL-005
+  name: "Evaluation & metrics"
+  title: "Evaluation pipeline loads datasets and computes metrics"
+  description: >
+    Build datasets from file paths or a registry, run evaluations locally, and produce
+    metrics (including RAG/RAGAS) with tracking of LLM usage, costs, and custom scorers.
+  acceptance_criteria:
+    - Dataset resolution respects a configured root and registry metadata.
+    - Metrics tracker extracts token/cost/latency metrics from provider responses when available.
+    - Custom evaluators, scoring functions, and metric functions can be supplied.
+  tags: [evaluation, datasets, metrics]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-INV-006
+  name: "Invocation strategies"
+  title: "Invocation strategies support local and batch execution"
+  description: >
+    Execute user functions under optimization using local and batch invokers with
+    standardized result objects, error handling, and optional parallelism controls.
+  acceptance_criteria:
+    - Local invoker wraps single-call execution with status and metrics.
+    - Batch invoker parallelizes over examples with progress callbacks.
+    - Invocation honors execution mode and parallel configuration settings.
+  tags: [execution, invokers, parallel]
+  priority: medium
+  type: functional
+  status: active
+
+- id: REQ-STOR-007
+  name: "Session storage"
+  title: "Persistent storage for sessions, trials, and cache data"
+  description: >
+    Persist optimization sessions and trial results locally with locking, hashing, and
+    resumability to support inspection, exporting, and deduplication across runs.
+  acceptance_criteria:
+    - Creates session and cache directories with safe permissions and lock handling.
+    - Stores trial configurations, scores, and metadata; can reload into dataclasses.
+    - Provides utilities for export/cleanup and honoring environment overrides.
+  tags: [storage, persistence, caching]
+  priority: medium
+  type: functional
+  status: active
+
+- id: REQ-INT-008
+  name: "Integrations"
+  title: "Provider and observability integrations via plugins"
+  description: >
+    Integrate with OpenAI, Anthropic, LangChain, LlamaIndex, and observability tools
+    (MLflow, W&B) through plugin registries, discovery utilities, and framework overrides.
+  acceptance_criteria:
+    - Integration registry lists/loads plugins and supported platforms.
+    - Discovery utilities map configuration keys to framework parameters.
+    - Observability trackers log runs/trials and can autolog during optimization flows.
+  tags: [integrations, plugins, observability]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-CLOUD-009
+  name: "Cloud/hybrid sync"
+  title: "Cloud and hybrid execution with backend synchronization"
+  description: >
+    Support authenticated access to TraiGent/OptiGen backend services for session
+    creation, trial suggestion/submission, dataset conversion, subset selection, and billing.
+  acceptance_criteria:
+    - Unified auth manager resolves credentials (env, CLI-stored) and emits secure headers.
+    - Backend clients synchronize sessions/trials and recover from transient errors.
+    - Cloud operations handle privacy settings, hybrid modes, and cost tracking.
+  tags: [cloud, backend, hybrid]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-SEC-010
+  name: "Security & tenancy"
+  title: "Security, compliance, and tenancy safeguards"
+  description: >
+    Provide secure credential storage, encryption utilities, JWT validation, rate limiting,
+    audit logging, tenant isolation, and security headers suitable for enterprise use.
+  acceptance_criteria:
+    - Credentials encrypted or stored in OS keyrings; secure comparison avoids leaks.
+    - JWT validator enforces issuer/audience/expiry and derives defaults safely.
+    - Rate limiters and audit loggers can be configured per deployment mode/tenant.
+  tags: [security, auth, compliance]
+  priority: high
+  type: non-functional
+  status: active
+
+- id: REQ-ANLY-011
+  name: "Analytics & telemetry"
+  title: "Analytics, cost forecasting, and telemetry"
+  description: >
+    Provide analytics engines for anomaly detection, meta-learning, and cost optimization,
+    plus telemetry emitters and visualization helpers for optimization results.
+  acceptance_criteria:
+    - Analytics modules can score runs, forecast costs, and detect regressions.
+    - Telemetry/observability components emit metrics for Optuna and trackers.
+    - Visualization helpers produce plots or analysis summaries from stored results.
+  tags: [analytics, telemetry, visualization]
+  priority: medium
+  type: functional
+  status: active
+
+- id: REQ-TVLSPEC-012
+  name: "TVL ingestion"
+  title: "TVL spec ingestion drives configuration and objectives"
+  description: >
+    Load Typed Variable Language (TVL) specs, normalize configuration spaces,
+    objectives, constraints, and budgets, and apply environment overlays for runs.
+  acceptance_criteria:
+    - Spec loader validates schema and compiles constraints into executable expressions.
+    - TVL options can be passed through decorator or CLI and applied to orchestrator.
+    - Environments/overlays merge deterministically with base specs.
+  tags: [tvl, configuration, spec]
+  priority: medium
+  type: functional
+  status: active
+
+- id: REQ-AGNT-013
+  name: "Agent layer"
+  title: "Agent specification and execution support"
+  description: >
+    Analyze optimized functions to generate agent specifications, map configs to target
+    platforms, and execute agents through platform-specific executors.
+  acceptance_criteria:
+    - Function analysis captures signature, docstring, dependencies, and domain hints.
+    - Config mappers translate optimization settings into agent platform parameters.
+    - Platform executors run agents and return structured execution results.
+  tags: [agents, platforms, generation]
+  priority: medium
+  type: functional
+  status: active

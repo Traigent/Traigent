@@ -1,0 +1,14 @@
+{
+  "module": "traigent/optimizers/pruners.py",
+  "top_level": [
+    "_completed_trials_with_values"
+  ],
+  "class_methods": [
+    "CeilingPruner.__init__",
+    "CeilingPruner.prune"
+  ],
+  "classes": [
+    "CeilingPruner",
+    "CeilingPrunerConfig"
+  ]
+}

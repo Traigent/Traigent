@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Runner for Results & Analysis - Performance Metrics (FAQ)."""
+
+import asyncio
+import json
+import os
+import sys
+from typing import Any, Dict, List
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+
+os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_EDGE_ANALYTICS_MODE", "true")
+os.environ.setdefault("TRAIGENT_RESULTS_FOLDER", os.path.join(HERE, ".traigent"))
+
+from performance_metrics import faq_answer  # noqa: E402
+
+RESULTS_FILE = "results.json"
+DATASET_FILE = "faq_pairs.jsonl"
+
+
+def _serialize_trials(opt_result: Any, limit: int = 10) -> List[Dict[str, Any]]:
+    trials_out: List[Dict[str, Any]] = []
+    trials = getattr(opt_result, "trials", [])
+    for t in trials[:limit]:
+        trials_out.append(
+            {
+                "id": getattr(t, "trial_id", ""),
+                "metrics": getattr(t, "metrics", {}),
+                "status": str(getattr(t, "status", "")),
+                "duration": getattr(t, "duration", 0.0),
+            }
+        )
+    return trials_out
+
+
+def main() -> None:
+    print("Running Results & Analysis - Performance Metrics (FAQ)")
+    print("=" * 60)
+
+    opt_result = asyncio.run(faq_answer.optimize(max_trials=10))
+
+    out: Dict[str, Any] = {
+        "example": "results-analysis__performance-metrics",
+        "dataset": os.path.basename(DATASET_FILE),
+        "best_config": getattr(opt_result, "best_config", {}),
+        "best_score": getattr(opt_result, "best_score", None),
+        "objectives": getattr(opt_result, "objectives", []),
+        "algorithm": getattr(opt_result, "algorithm", ""),
+        "total_cost": getattr(opt_result, "total_cost", None),
+        "total_tokens": getattr(opt_result, "total_tokens", None),
+        "trials": _serialize_trials(opt_result, limit=10),
+    }
+
+    with open(RESULTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(out, f, indent=2)
+
+    print(json.dumps(out, indent=2))
+    print(f"Wrote {os.path.abspath(RESULTS_FILE)}")
+
+
+if __name__ == "__main__":
+    main()

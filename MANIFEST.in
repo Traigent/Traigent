@@ -1,0 +1,73 @@
+# MANIFEST.in - Specify additional files to include in the distribution package
+
+# Core documentation files
+include README.md
+include LICENSE
+include CHANGELOG.md
+include INSTALLATION.md
+include CONTRIBUTING.md
+include CODE_OF_CONDUCT.md
+include SECURITY.md
+
+# Requirements files
+include requirements/*.txt
+
+# Configuration files
+include pyproject.toml
+include tox.ini
+
+# Include package data
+recursive-include traigent *.py
+recursive-include traigent *.json
+recursive-include traigent *.yaml
+recursive-include traigent *.yml
+recursive-include traigent *.txt
+include traigent/py.typed
+
+# Documentation
+recursive-include docs *.md
+recursive-include docs *.rst
+recursive-include docs *.txt
+
+# Exclude development and build artifacts
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.pyo
+recursive-exclude * *.pyd
+recursive-exclude * .DS_Store
+recursive-exclude * .pytest_cache
+recursive-exclude * .coverage
+recursive-exclude * .tox
+recursive-exclude * *.egg-info
+
+# Exclude test files from package
+recursive-exclude tests *
+recursive-exclude test *
+
+# Exclude examples and demos from package distribution
+recursive-exclude examples *
+recursive-exclude demos *
+recursive-exclude playground *
+
+# Exclude CI/CD and development files
+exclude .github
+recursive-exclude .github *
+exclude .gitignore
+exclude .pre-commit-config.yaml
+exclude docker-compose.yml
+exclude Dockerfile*
+
+# Exclude IDE and editor files
+exclude .vscode
+recursive-exclude .vscode *
+exclude .idea
+recursive-exclude .idea *
+exclude *.swp
+exclude *.swo
+exclude *~
+
+# Exclude backup and temporary files
+exclude *.bak
+exclude *.tmp
+exclude .env*
+exclude .local*
