@@ -2,6 +2,23 @@
 
 **Current Version**: 0.8.0 (Beta)
 
+---
+
+## Cost Warning
+
+TraiGent optimizes LLM applications by running multiple trials across configurations.
+**This can result in significant API costs.**
+
+| Recommendation | How |
+|----------------|-----|
+| Development/Testing | Use `TRAIGENT_MOCK_MODE=true` |
+| Control Spending | Set `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2 USD per run) |
+| Before Production | Review the [DISCLAIMER.md](DISCLAIMER.md) |
+
+**Important**: Cost estimates are approximations. Actual billing is determined by your LLM provider.
+
+---
+
 Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
 
 > 💡 **Local Playground**: Run the interactive Streamlit control center locally with `streamlit run playground/traigent_control_center.py`. Also explore the `examples/` directory for end-to-end flows.

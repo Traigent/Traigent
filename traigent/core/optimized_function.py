@@ -33,8 +33,10 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import threading
 import time
+import warnings
 from datetime import datetime, timedelta, timezone
 from enum import Enum, auto
 from pathlib import Path
@@ -80,6 +82,33 @@ from traigent.utils.validation import (
 )
 
 logger = get_logger(__name__)
+
+# Module-level flag to ensure cost warning is emitted only once per process
+_COST_WARNING_EMITTED = False
+
+
+def _emit_cost_warning_once() -> None:
+    """Emit cost warning once per process when optimization starts.
+
+    This warning informs users that optimization will make multiple LLM API calls
+    and that cost estimates are approximations. The warning is suppressed in mock mode.
+    """
+    global _COST_WARNING_EMITTED
+    if _COST_WARNING_EMITTED:
+        return
+    if os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+        return
+
+    _COST_WARNING_EMITTED = True
+    warnings.warn(
+        "TraiGent optimization will make multiple LLM API calls. "
+        "Cost estimates are approximations; actual billing is determined by your LLM provider. "
+        "Set TRAIGENT_MOCK_MODE=true for testing. See DISCLAIMER.md for full details.",
+        UserWarning,
+        stacklevel=4,  # Point to caller of optimize()
+    )
+    # Ensure warning goes to stderr
+    sys.stderr.flush()
 
 
 class OptimizationState(Enum):
@@ -614,6 +643,9 @@ class OptimizedFunction:
         """
 
         logger.info(f"Starting optimization of {self.func.__name__}")
+
+        # Emit cost warning once per process (suppressed in mock mode)
+        _emit_cost_warning_once()
 
         # Merge decorator-provided runtime overrides with call-time overrides
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})

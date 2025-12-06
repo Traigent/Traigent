@@ -112,6 +112,7 @@ test = [
     "coverage>=7.0.0",
     "ragas>=0.3.6",
     "rapidfuzz>=3.14.0",
+    "hypothesis>=6.0.0",  # Property-based stateful testing for cost enforcement
 ]
 
 # Development dependencies
@@ -334,3 +335,4 @@ ignore = [
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
 "examples/**" = ["E402"]
+

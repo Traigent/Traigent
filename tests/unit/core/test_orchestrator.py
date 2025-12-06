@@ -1500,3 +1500,83 @@ def test_allocate_parallel_ceilings_distribution():
     dataset_sizes = [1, 1, 1]
     allocations = allocate_parallel_ceilings(dataset_sizes, 10)
     assert allocations == [1, 1, 1]
+
+
+class TestCostEstimation:
+    """Tests for cost estimation behavior (Issue C fix)."""
+
+    @pytest.fixture
+    def mock_optimizer(self) -> MockOptimizer:
+        return MockOptimizer(
+            config_space={"param": {"min": 0, "max": 1}},
+            objectives=["accuracy"],
+        )
+
+    @pytest.fixture
+    def mock_evaluator(self) -> MockEvaluator:
+        return MockEvaluator()
+
+    @pytest.fixture
+    def small_dataset(self) -> list[EvaluationExample]:
+        """Create a small dataset with 10 examples."""
+        return [
+            EvaluationExample(input_data={"x": i}, expected_output={"y": i * 2})
+            for i in range(10)
+        ]
+
+    def test_cost_estimate_uses_budget_not_dataset_size(
+        self, mock_optimizer: MockOptimizer, mock_evaluator: MockEvaluator,
+        small_dataset: Dataset
+    ) -> None:
+        """Issue C fix: Cost estimate uses configured budget, not clipped to dataset size.
+
+        When max_total_examples (budget) exceeds dataset size, the estimate should
+        use the full budget because:
+        1. Multiple trials can re-evaluate samples with different configs
+        2. The budget represents total API calls, not unique samples
+        3. Clipping would underestimate cost
+        """
+        # Budget (1000) exceeds dataset size (10)
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=mock_evaluator,
+            max_trials=100,
+            max_total_examples=1000,  # Much larger than dataset
+        )
+
+        # Estimate should use the full budget (1000), not clip to dataset size (10)
+        estimate = orchestrator._estimate_optimization_cost(small_dataset)
+
+        # With base_cost_per_example = 0.01, retry_factor = 1.2:
+        # estimate = 1000 * 0.01 * 1.2 = 12.0
+        # If it was clipped to dataset (10), it would be: 10 * 0.01 * 1.2 = 0.12
+        # The estimate should be much higher than 0.12
+        assert estimate > 1.0, (
+            f"Expected estimate > 1.0 (using full budget), got {estimate}. "
+            "Cost estimate may be incorrectly clipping to dataset size."
+        )
+        # More specific check: should be approximately 12.0 (1000 * 0.01 * 1.2)
+        assert estimate == pytest.approx(12.0, rel=0.1), (
+            f"Expected estimate ~12.0, got {estimate}"
+        )
+
+    def test_cost_estimate_without_budget_uses_dataset_size(
+        self, mock_optimizer: MockOptimizer, mock_evaluator: MockEvaluator,
+        small_dataset: Dataset
+    ) -> None:
+        """When no budget is set, estimation uses dataset size as conservative estimate."""
+        orchestrator = OptimizationOrchestrator(
+            optimizer=mock_optimizer,
+            evaluator=mock_evaluator,
+            max_trials=5,
+            # No max_total_examples set
+        )
+
+        estimate = orchestrator._estimate_optimization_cost(small_dataset)
+
+        # Without budget, uses samples_per_trial (dataset_size) * max_trials
+        # = 10 * 5 * 0.01 * 1.2 = 0.60
+        # But may use samples_per_trial estimate
+        assert estimate > 0, "Estimate should be positive"
+        # Should be reasonable for 5 trials of 10 examples each
+        assert estimate < 10.0, f"Estimate {estimate} seems too high"

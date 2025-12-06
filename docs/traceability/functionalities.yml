@@ -10,11 +10,11 @@
 
 - id: FUNC-ORCH-LIFECYCLE
   name: "Optimization lifecycle orchestration"
-  description: "Coordinate optimizers, invokers, budgets, constraints, and stop conditions across trials."
-  requirements: [REQ-ORCH-003, REQ-OPT-ALG-004]
-  concepts: [CONC-Layer-Core]
-  syncs: [SYNC-OptimizationFlow]
-  tags: [orchestration, lifecycle]
+  description: "Coordinate optimizers, invokers, budgets, constraints, and stop conditions across trials with integrated cost enforcement."
+  requirements: [REQ-ORCH-003, REQ-OPT-ALG-004, REQ-COST-014, REQ-COST-015]
+  concepts: [CONC-Layer-Core, CONC-CostEnforcement]
+  syncs: [SYNC-OptimizationFlow, SYNC-CostEnforcement]
+  tags: [orchestration, lifecycle, cost]
   layer: feature
   status: active
 
@@ -148,5 +148,15 @@
   concepts: [CONC-Layer-Integration]
   syncs: [SYNC-OptimizationFlow]
   tags: [agents, platforms]
+  layer: feature
+  status: active
+
+- id: FUNC-COST-CONTROL
+  name: "Cost enforcement and budget control"
+  description: "Prevent uncontrolled LLM API costs through permit-based budget control with parallel execution support and invariant verification."
+  requirements: [REQ-COST-014, REQ-COST-015, REQ-COST-016, REQ-COST-017, REQ-COST-018, REQ-COST-019, REQ-COST-020]
+  concepts: [CONC-CostEnforcement, CONC-Layer-Core]
+  syncs: [SYNC-CostEnforcement, SYNC-OptimizationFlow]
+  tags: [cost, budget, safety, parallel]
   layer: feature
   status: active
