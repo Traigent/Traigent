@@ -1,0 +1,72 @@
+# =============================================================================
+# Gap Report Template
+# =============================================================================
+#
+# Instructions:
+# 1. Copy this file to GAP-XXX.yml (where XXX is the next number)
+# 2. Fill in all fields
+# 3. Reference this gap_id in REVIEW_TRACKING.yml
+#
+# =============================================================================
+
+gap_id: GAP-XXX  # Replace XXX with sequential number (001, 002, etc.)
+
+title: "Brief descriptive title of the gap"
+
+severity: HIGH  # CRITICAL | HIGH | MEDIUM | LOW | INFO
+# CRITICAL: Model and code have different behavior for same input
+# HIGH: Missing check could lead to invariant violation
+# MEDIUM: Discrepancy unlikely to cause violation but reduces confidence
+# LOW: Cosmetic or naming difference
+# INFO: Observation, not a gap
+
+category: C  # A=State Variables, B=Operations, C=Invariants, D=Permit, E=Edge Cases
+
+reporter:
+  agent_id: "agent-example-01"
+  agent_model: "claude-3-opus"
+  reported_at: "2025-12-06T00:00:00Z"
+
+location:
+  alloy_file: "docs/traceability/alloy/cost_enforcement.als"
+  alloy_lines: [91, 92, 93]  # List of relevant line numbers
+  alloy_snippet: |
+    let total = addFloat[e.accumulated_cost[t], e.reserved_cost[t]] |
+        leq[total, e.limit]
+
+  code_file: "traigent/core/cost_enforcement.py"
+  code_lines: [976, 977, 978, 979, 980, 981, 982, 983, 984]
+  code_snippet: |
+    total = self._accumulated_cost + self._reserved_cost
+    epsilon = 0.0001
+    if total > self.config.limit + epsilon:
+        violations.append(...)
+
+description: |
+  Detailed description of the gap or discrepancy.
+
+  What was expected based on the model?
+  What was found in the code?
+  How do they differ?
+
+impact: |
+  What are the potential consequences of this gap?
+  Could it lead to financial harm?
+  Under what circumstances might it manifest?
+
+recommendation: |
+  Suggested resolution or mitigation.
+  Options might include:
+  - Fix the code to match the model
+  - Update the model to reflect intentional code behavior
+  - Document as acceptable deviation with justification
+
+status: open  # open | accepted | fixed | wont_fix
+
+resolution: null  # To be filled when status changes
+
+resolution_notes: null  # Explanation of how/why resolved
+
+reviewed_by: null  # Agent that reviewed the resolution
+
+reviewed_at: null  # When resolution was reviewed

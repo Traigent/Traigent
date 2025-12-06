@@ -198,6 +198,19 @@ optimization_results/
 data/
 temp/
 .traigent/
+# Cost approval tokens (user-specific, should never be committed)
+**/cost_approval.token
+
+# Mutation testing artifacts (mutmut)
+mutants/
+mutation_results.txt
+setup.cfg
+.mutmut-cache/
+tests/mutation/
+
+# Mutation testing scripts (development only)
+scripts/mutmut_runner.sh
+scripts/run_mutmut_with_setup.sh
 
 # Temporary test scripts (development phase)
 test_phase*.py

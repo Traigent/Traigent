@@ -23,6 +23,7 @@ from traigent.cloud.backend_client import (
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
+from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import (
     merge_run_metrics_into_session_summary,
@@ -43,6 +44,7 @@ from traigent.core.orchestrator_helpers import (
 )
 from traigent.core.parallel_execution_manager import (
     ParallelExecutionManager,
+    PermittedTrialResult,
 )
 from traigent.core.progress_manager import (
     ProgressManager,
@@ -192,6 +194,7 @@ class OptimizationOrchestrator:
         Extracts configuration from self.config and initializes:
         - StopConditionManager for trial/sample/budget limits
         - SampleBudgetManager for sample budget tracking
+        - CostEnforcer for cost limit enforcement (default: $2 USD per run)
         """
         plateau_window = int(self.config.get("plateau_window", 0) or 0)
         plateau_epsilon = (
@@ -222,6 +225,24 @@ class OptimizationOrchestrator:
             budget_metric=budget_metric,
             include_pruned=include_pruned,
         )
+
+        # Initialize cost enforcer for cost limit enforcement
+        # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_MODE
+        cost_limit = self.config.get("cost_limit")
+        cost_approved = self.config.get("cost_approved", False)
+        cost_config = None
+        if cost_limit is not None or cost_approved:
+            cost_config = CostEnforcerConfig(
+                limit=float(cost_limit) if cost_limit else 2.0,
+                approved=bool(cost_approved),
+            )
+        self.cost_enforcer = CostEnforcer(config=cost_config)
+
+        # Share cost enforcer with parallel execution manager for permit-based control
+        self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
+
+        # Register cost limit stop condition using the shared enforcer
+        self._stop_condition_manager.register_cost_limit_condition(self.cost_enforcer)
 
         self._samples_include_pruned = samples_include_pruned
         self._sample_budget_manager: SampleBudgetManager | None = (
@@ -535,14 +556,51 @@ class OptimizationOrchestrator:
         optuna_trial_id: int | None,
         *,
         log_on_success: bool,
+        permit: Permit | None = None,
     ) -> int:
-        """Update orchestrator state after a single trial completes."""
+        """Update orchestrator state after a single trial completes.
+
+        Args:
+            permit: The Permit object from permit acquisition.
+                When provided, track_cost_async uses this to release the
+                reservation exactly with single-release semantics, preventing
+                over/under-release when EMA changes between acquisition and tracking.
+        """
 
         # Protect shared state mutations with lock to prevent race conditions
         # during parallel trial execution (P1/P2/P3 fixes)
         async with self._state_lock:
             self._trials.append(trial_result)
             self._log_trial(trial_result)
+
+            # Track cost for cost limit enforcement
+            # Create a default permit if none provided (for sequential trials without permit system)
+            effective_permit = permit or Permit(id=0, amount=0.0, active=True)
+
+            if trial_result.status == TrialStatus.CANCELLED:
+                # For cancelled trials, check if they have cost data
+                # (e.g., partial API calls before cancellation)
+                trial_cost = self._extract_trial_cost(trial_result)
+                if trial_cost is not None:
+                    # Track actual cost incurred before cancellation
+                    await self.cost_enforcer.track_cost_async(
+                        cost=trial_cost,
+                        permit=effective_permit,
+                        trial_failed=True,
+                        trial_id=trial_result.trial_id,
+                    )
+                # Note: For cost-limit cancellations, no permit was acquired so
+                # nothing to release. For other cancellations (exceptions),
+                # the parallel execution manager handles permit release.
+            else:
+                # For success/failed trials, track cost (which releases reservation)
+                trial_cost = self._extract_trial_cost(trial_result)
+                await self.cost_enforcer.track_cost_async(
+                    cost=trial_cost,
+                    permit=effective_permit,
+                    trial_failed=trial_result.status == TrialStatus.FAILED,
+                    trial_id=trial_result.trial_id,
+                )
 
             if trial_result.is_successful:
                 self._successful_trials += 1
@@ -729,7 +787,7 @@ class OptimizationOrchestrator:
         ceilings: list[int | None],
         session_id: str | None,
         trial_count: int,
-    ) -> tuple[list[dict[str, Any]], list[int | None], list[TrialResult]]:
+    ) -> tuple[list[dict[str, Any]], list[int | None], list[PermittedTrialResult]]:
         """Schedule and execute parallel trials.
 
         Returns:
@@ -767,56 +825,113 @@ class OptimizationOrchestrator:
         if not tasks:
             return [], [], []
 
-        # Use return_exceptions=True so one failing trial doesn't cancel others (P4 fix)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Use permit-based execution with cost enforcement
+        # Each trial checks for a cost permit before execution
+        # Trials that exceed the cost limit are cancelled (returned as None)
+        results, cancelled_count = await (
+            self.parallel_execution_manager.run_with_cost_permits(
+                tasks,
+                cancel_sentinel=None,  # None indicates cost limit cancellation
+            )
+        )
+
+        # Track cancelled trials for reporting
+        if cancelled_count > 0:
+            self._trials_prevented += cancelled_count
+            logger.info(
+                "Prevented %d trial(s) due to cost limit during parallel execution",
+                cancelled_count,
+            )
+
         return scheduled_configs, scheduled_optuna_ids, results
 
     async def _process_parallel_results(
         self,
         scheduled_configs: list[dict[str, Any]],
-        results: list[TrialResult | BaseException],
+        results: list[PermittedTrialResult],
         scheduled_optuna_ids: list[int | None],
         session_id: str | None,
         trial_count: int,
     ) -> int:
         """Process results from parallel trial execution.
 
-        Results may include exceptions (due to return_exceptions=True in gather).
-        Exceptions are converted to failed TrialResult objects.
+        Results are wrapped in PermittedTrialResult to carry the Permit object
+        through to track_cost_async for exact budget release with single-release
+        semantics.
+
+        Results may include:
+        - TrialResult objects for successful trials
+        - Exceptions (due to return_exceptions=True in gather)
+        - None for trials cancelled due to cost limit
         """
-        for batch_offset, (config, result, optuna_id) in enumerate(
+        for batch_offset, (config, permitted_result, optuna_id) in enumerate(
             zip(scheduled_configs, results, scheduled_optuna_ids)
         ):
-            # Handle exceptions from gather (P4 fix)
-            if isinstance(result, BaseException):
-                logger.warning(
-                    "Trial failed with exception during parallel execution: %s",
-                    result,
-                    exc_info=result,
-                )
-                # Convert exception to failed TrialResult
-                # Use batch_offset (from enumerate) to ensure unique trial_id even before
-                # _handle_trial_result increments trial_count
-                trial_result = TrialResult(
-                    trial_id=f"trial_{trial_count + batch_offset}",
-                    config=config,
-                    metrics={},
-                    status=TrialStatus.FAILED,
-                    duration=0.0,
-                    timestamp=datetime.now(timezone.utc),
-                    error_message=str(result),
-                )
-            else:
-                trial_result = result
+            # Unwrap PermittedTrialResult to get result and permit
+            result = permitted_result.result
+            permit = permitted_result.permit
 
-            trial_count = await self._handle_trial_result(
-                trial_result=trial_result,
-                optimizer_config=config,
-                current_trial_index=trial_count,
-                session_id=session_id,
-                optuna_trial_id=optuna_id,
-                log_on_success=False,
-            )
+            # Use try/finally to ensure permit is released on any exception
+            # during result processing (Gemini Phase 1.5 fix)
+            try:
+                # Handle cost limit cancellation (None sentinel from permit check)
+                if result is None:
+                    logger.info(
+                        "Trial cancelled due to cost limit (config=%s)",
+                        config,
+                    )
+                    trial_result = TrialResult(
+                        trial_id=f"trial_{trial_count + batch_offset}",
+                        config=config,
+                        metrics={},
+                        status=TrialStatus.CANCELLED,
+                        duration=0.0,
+                        timestamp=datetime.now(timezone.utc),
+                        error_message="Trial cancelled: cost limit reached",
+                    )
+                    # For cancelled trials, permit is denied (no permit acquired)
+                # Handle exceptions from gather (P4 fix)
+                elif isinstance(result, BaseException):
+                    logger.warning(
+                        "Trial failed with exception during parallel execution: %s",
+                        result,
+                        exc_info=result,
+                    )
+                    # Convert exception to failed TrialResult
+                    # Use batch_offset (from enumerate) to ensure unique trial_id even before
+                    # _handle_trial_result increments trial_count
+                    trial_result = TrialResult(
+                        trial_id=f"trial_{trial_count + batch_offset}",
+                        config=config,
+                        metrics={},
+                        status=TrialStatus.FAILED,
+                        duration=0.0,
+                        timestamp=datetime.now(timezone.utc),
+                        error_message=str(result),
+                    )
+                    # For exceptions, permit was already released in parallel_execution_manager
+                else:
+                    trial_result = result
+
+                trial_count = await self._handle_trial_result(
+                    trial_result=trial_result,
+                    optimizer_config=config,
+                    current_trial_index=trial_count,
+                    session_id=session_id,
+                    optuna_trial_id=optuna_id,
+                    log_on_success=False,
+                    permit=permit,
+                )
+            except Exception:
+                # Release permit on any exception to prevent stranding
+                # (only if permit is still active - wasn't already released)
+                if permit.active and self.cost_enforcer is not None:
+                    await self.cost_enforcer.release_permit_async(permit)
+                    logger.debug(
+                        "Released permit %d after exception in _process_parallel_results",
+                        permit.id,
+                    )
+                raise
         return trial_count
 
     async def _run_parallel_batch(
@@ -1088,6 +1203,19 @@ class OptimizationOrchestrator:
             else function_name
         )
 
+        # Pre-optimization cost approval check
+        # Skip if mock mode or already approved
+        if not self.cost_enforcer.is_mock_mode:
+            estimated_cost = self._estimate_optimization_cost(dataset)
+            if not self.cost_enforcer.check_and_approve(estimated_cost):
+                from traigent.core.cost_enforcement import OptimizationAborted
+
+                raise OptimizationAborted(
+                    f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
+                    f"limit: ${self.cost_enforcer.config.limit:.2f}. "
+                    f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+                )
+
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
@@ -1182,9 +1310,12 @@ class OptimizationOrchestrator:
             # Notify callbacks of optimization completion
             self.callback_manager.on_optimization_complete(result)
 
+            # Log final cost status
+            cost_status = self.cost_enforcer.get_status()
             logger.info(
                 f"Optimization {self._optimization_id} completed: "
-                f"{len(self._trials)} trials, best score: {result.best_score:.4f}"
+                f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
+                f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
             )
 
             return result
@@ -1314,6 +1445,96 @@ class OptimizationOrchestrator:
         if self._logger_facade.logger is not self._logger:
             self._logger_facade.attach(self._logger)
         self._logger_facade.log_trial_result(trial_result)
+
+    def _estimate_optimization_cost(self, dataset: Dataset) -> float:
+        """Estimate total optimization cost for pre-approval check.
+
+        Calculation:
+        - Estimates total samples based on configuration and dataset size
+        - Uses max_total_examples if configured (shared budget across trials)
+        - Otherwise estimates samples_per_trial × max_trials
+        - Includes retry factor (1.2x) for potential failures
+        - Uses conservative estimates for unknown models
+
+        Note: This is an ESTIMATE. Actual costs may vary significantly.
+        The estimate is based on typical token usage and current pricing.
+
+        Args:
+            dataset: The evaluation dataset.
+
+        Returns:
+            Estimated cost in USD.
+        """
+        # Base cost per example (conservative estimate for GPT-4 class models)
+        # Assumes ~2000 tokens input, ~500 tokens output per example
+        base_cost_per_example = 0.01  # $0.01 per example (conservative)
+
+        # Get dataset size
+        dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
+
+        # Get max trials (default to 10 if not set)
+        max_trials = self._max_trials or 10
+
+        # Determine total samples based on configuration
+        if self._max_total_examples is not None:
+            # Global sample budget is set - use it directly for cost estimation
+            # Don't clip to dataset_size because:
+            # 1. With multiple trials, samples can be re-evaluated with different configs
+            # 2. The budget represents total API calls, not unique samples
+            # 3. Clipping would underestimate cost when budget > dataset_size
+            total_samples = self._max_total_examples
+            estimation_mode = "total_examples_budget"
+        else:
+            # No global budget - each trial may evaluate the full dataset
+            # This is a worst-case conservative estimate
+            samples_per_trial = dataset_size
+            total_samples = max_trials * samples_per_trial
+            estimation_mode = "per_trial_full_dataset"
+
+        # Total cost with retry factor for failures and potential re-evaluations
+        retry_factor = 1.2
+        estimated_total = total_samples * base_cost_per_example * retry_factor
+
+        logger.debug(
+            f"Cost estimate ({estimation_mode}): {total_samples} total samples "
+            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f}"
+        )
+
+        return estimated_total
+
+    def _extract_trial_cost(self, trial_result: TrialResult) -> float | None:
+        """Extract cost from trial result for cost enforcement tracking.
+
+        Attempts to find cost from multiple sources:
+        1. trial_result.metrics["total_cost"] or ["cost"]
+        2. trial_result.metadata["total_example_cost"]
+        3. Returns None if cost cannot be determined (triggers fallback mode)
+
+        Args:
+            trial_result: The completed trial result.
+
+        Returns:
+            Cost in USD, or None if cost cannot be determined.
+        """
+        # Try metrics first
+        metrics = trial_result.metrics or {}
+        for key in ("total_cost", "cost"):
+            if key in metrics:
+                try:
+                    return float(metrics[key])
+                except (TypeError, ValueError):
+                    pass
+
+        # Try metadata
+        metadata = trial_result.metadata or {}
+        if "total_example_cost" in metadata:
+            try:
+                return float(metadata["total_example_cost"])
+            except (TypeError, ValueError):
+                pass
+
+        # Cost cannot be determined
+        return None
 
     def _log_checkpoint(
         self,
