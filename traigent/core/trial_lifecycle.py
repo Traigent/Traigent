@@ -16,6 +16,7 @@ import math
 import time
 from typing import TYPE_CHECKING, Any, Callable
 
+from traigent.config.context import TrialContext
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -31,7 +32,6 @@ from traigent.core.trial_result_factory import (
 )
 from traigent.core.types import TrialResult
 from traigent.evaluators.base import Dataset
-from traigent.config.context import TrialContext
 from traigent.utils.exceptions import (
     OptimizationError,
     TrialPrunedError,
@@ -41,6 +41,8 @@ from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from traigent.core.orchestrator import OptimizationOrchestrator
+
+from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
 
@@ -136,25 +138,49 @@ class TrialLifecycle:
             stage="pre",
         )
 
+        # Phase 2.1: Acquire cost permit before sequential trial execution
+        # This ensures sequential trials respect cost limits proactively
+        permit: Permit | None = None
+        if orchestrator.cost_enforcer is not None:
+            permit = await orchestrator.cost_enforcer.acquire_permit_async()
+            if not permit.is_granted:
+                logger.info(
+                    "Sequential trial cancelled due to cost limit reached (config=%s)",
+                    config_for_run,
+                )
+                orchestrator._stop_reason = "cost_limit_reached"
+                return trial_count, "break"
+
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)
 
-        trial_result = await self.run_trial(
-            func,
-            config_for_run,
-            dataset,
-            trial_count,
-            session_id,
-            optuna_trial_id=optuna_trial_id,
-        )
+        try:
+            trial_result = await self.run_trial(
+                func,
+                config_for_run,
+                dataset,
+                trial_count,
+                session_id,
+                optuna_trial_id=optuna_trial_id,
+            )
 
-        trial_count = await orchestrator._handle_trial_result(
-            trial_result=trial_result,
-            optimizer_config=config,
-            current_trial_index=trial_count,
-            session_id=session_id,
-            optuna_trial_id=optuna_trial_id,
-            log_on_success=True,
-        )
+            trial_count = await orchestrator._handle_trial_result(
+                trial_result=trial_result,
+                optimizer_config=config,
+                current_trial_index=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                log_on_success=True,
+                permit=permit,
+            )
+        except Exception:
+            # Release permit on exception to prevent stranding
+            if permit is not None and permit.active and orchestrator.cost_enforcer is not None:
+                await orchestrator.cost_enforcer.release_permit_async(permit)
+                logger.debug(
+                    "Released permit %d after exception in run_sequential_trial",
+                    permit.id,
+                )
+            raise
 
         return trial_count, "continue"
 
