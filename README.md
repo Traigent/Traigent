@@ -180,9 +180,9 @@ TraiGent can inject parameters in two ways:
 
 **↗️ Try TraiGent now - see the results above in under 5 minutes!**
 
-### TVL Specs: Declarative Configuration
+### TVL Specs: The Foundation Layer
 
-Use the new TVL bridge when you already maintain typed specs:
+TVL (TraiGent Validation Language) defines the *what*—constraints, objectives, and boundaries—while leaving the *how* to any compatible optimizer. The power is in the specification, not the implementation.
 
 ```python
 @traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
@@ -192,7 +192,9 @@ def rag_agent(query: str) -> str:
 
 TVL sections control the configuration space, objectives, constraints, and budgets—no
 extra arguments required. The CLI also accepts `traigent optimize ... --tvl-spec path`
-and an optional `--tvl-environment staging` flag, mirroring the decorator behavior.
+and an optional `--tvl-environment staging` flag.
+
+> 💡 **Why specifications matter**: A TVL spec can be validated by any conformant tool—TraiGent today, your internal optimizer tomorrow. The foundation is the contract, not the implementation.
 
 ## 📦 Quick Installation
 
