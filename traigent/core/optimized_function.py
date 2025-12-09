@@ -37,10 +37,11 @@ import sys
 import threading
 import time
 import warnings
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence, cast
+from typing import Any, Literal, cast
 
 from traigent.api.functions import _GLOBAL_CONFIG, get_global_parallel_config
 from traigent.api.types import OptimizationResult, OptimizationStatus
@@ -904,8 +905,8 @@ class OptimizedFunction:
         )
 
         # Resolve algorithm (prefer method arg, else decorator-provided)
-        resolved_algorithm: str = algorithm if algorithm else cast(
-            str, getattr(self, "algorithm", "grid")
+        resolved_algorithm: str = (
+            algorithm if algorithm else cast(str, getattr(self, "algorithm", "grid"))
         )
 
         # Resolve max_trials value for this run
@@ -1412,7 +1413,7 @@ class OptimizedFunction:
                 metrics=cloud_result.best_metrics,
                 status=TrialStatus.COMPLETED,
                 duration=cloud_result.optimization_time,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 metadata={},
             )
 
@@ -1432,7 +1433,7 @@ class OptimizedFunction:
                 status=OptimizationStatus.COMPLETED,
                 objectives=self.objectives,
                 algorithm="cloud_service",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 metadata={
                     "cloud_service": True,
                     "cost_reduction": cloud_result.cost_reduction,
@@ -1505,7 +1506,7 @@ class OptimizedFunction:
         best_config = (
             self._current_config.copy() if hasattr(self, "_current_config") else {}
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return OptimizationResult(
             trials=[],
@@ -1574,7 +1575,7 @@ class OptimizedFunction:
                         )
                         now = datetime.now()
                         if expires_at.tzinfo:
-                            now = now.replace(tzinfo=timezone.utc)
+                            now = now.replace(tzinfo=UTC)
                         if expires_at > now:
                             logger.info(
                                 f"CI optimization approved by legacy token: {token_data['approved_by']}"
@@ -1592,11 +1593,7 @@ class OptimizedFunction:
                         expires_at = datetime.fromisoformat(
                             token_data["expires_iso"].replace("Z", "+00:00")
                         )
-                        now = (
-                            datetime.now(timezone.utc)
-                            if expires_at.tzinfo
-                            else datetime.now()
-                        )
+                        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
                         if expires_at > now:
                             logger.warning(
                                 f"Token approved by {token_data['approver']} (signature not verified)"
@@ -1618,7 +1615,7 @@ class OptimizedFunction:
                                 token_data["expires_iso"].replace("Z", "+00:00")
                             )
                             now = (
-                                datetime.now(timezone.utc)
+                                datetime.now(UTC)
                                 if expires_at.tzinfo
                                 else datetime.now()
                             )
@@ -1787,7 +1784,9 @@ To approve, use one of these methods:
             elif self._optimization_results.status == OptimizationStatus.FAILED:
                 self._state = OptimizationState.ERROR
             else:
-                self._state = OptimizationState.OPTIMIZED  # Assume optimized for loaded results
+                self._state = (
+                    OptimizationState.OPTIMIZED
+                )  # Assume optimized for loaded results
 
             logger.info(f"Loaded optimization results from {path}")
 

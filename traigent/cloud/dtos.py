@@ -8,7 +8,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 
 from traigent.utils.logging import get_logger
 
@@ -147,7 +147,7 @@ class ExperimentRunDTO:
     # Optional payloads
     metadata: dict[str, Any] = field(default_factory=dict)
     experiment_data: dict[str, Any] | None = None
-    results: Optional[dict[str, Any | None]] = None
+    results: dict[str, Any | None] | None = None
     error_message: str | None = None
 
     # Audit fields
@@ -306,7 +306,7 @@ def create_local_configuration_run(
     experiment_run_id: str,
     trial_number: int,
     config: dict[str, Any],
-    dataset_subset_info: Optional[dict[str, Any | None]] = None,
+    dataset_subset_info: dict[str, Any | None] | None = None,
 ) -> ConfigurationRunDTO:
     """Create a configuration run DTO for Edge Analytics mode."""
     # Privacy-preserving dataset subset info

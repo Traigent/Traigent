@@ -20,7 +20,8 @@ Functions:
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Sequence, cast
+from collections.abc import Callable, Sequence
+from typing import Any, cast
 
 from traigent.core.objectives import ObjectiveSchema, create_default_objectives
 from traigent.evaluators.base import BaseEvaluator

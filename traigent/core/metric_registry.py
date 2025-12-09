@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
-from typing import Iterable, Literal
+from typing import Literal
 
 AggregatorType = Literal["mean", "sum", "last"]
 

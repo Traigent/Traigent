@@ -12,7 +12,7 @@ import statistics
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from ..core.constants import (
@@ -60,7 +60,7 @@ class CostAnalysisEngine:
             "cost_summary": {},
             "trends": {},
             "anomalies": [],
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         with self._lock:
@@ -156,7 +156,7 @@ class OptimizationPlanManager:
             return []
 
         timeline = []
-        current_date = datetime.utcnow()
+        current_date = datetime.now(UTC)
 
         # Sort actions by priority and timeline
         sorted_actions = sorted(
@@ -577,7 +577,7 @@ class CostOptimizationAI:
             return result
 
         # Log execution start
-        start_time = datetime.utcnow()
+        start_time = datetime.now(UTC)
         logger.info(f"Executing optimization action: {action.action_id}")
 
         try:
@@ -605,7 +605,7 @@ class CostOptimizationAI:
                 )  # 70% of estimate
 
             result["status"] = "completed"
-            result["execution_time"] = (datetime.utcnow() - start_time).total_seconds()
+            result["execution_time"] = (datetime.now(UTC) - start_time).total_seconds()
 
             # Track savings
             self.resource_optimizer.track_savings(
@@ -620,7 +620,9 @@ class CostOptimizationAI:
         # Store result with bounds checking
         if len(self.optimization_results) >= self._max_optimization_results:
             # Remove oldest results using prune ratio
-            items_to_keep = int(self._max_optimization_results * (1 - HISTORY_PRUNE_RATIO))
+            items_to_keep = int(
+                self._max_optimization_results * (1 - HISTORY_PRUNE_RATIO)
+            )
             items_to_remove = len(self.optimization_results) - items_to_keep
             self.optimization_results = self.optimization_results[-items_to_keep:]
             logger.debug(
@@ -682,7 +684,7 @@ class CostOptimizationAI:
 
         report = f"""
 # Cost Optimization Report
-Generated: {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")}
+Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
 
 ## Executive Summary
 - Optimization Strategy: {self.strategy.value}

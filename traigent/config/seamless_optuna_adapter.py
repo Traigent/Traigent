@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 
 from traigent.config.context import TrialContext
 from traigent.config.runtime_injector import create_runtime_shim

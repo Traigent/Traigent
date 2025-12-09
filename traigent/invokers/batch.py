@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 from traigent.invokers.base import InvocationResult
 from traigent.invokers.local import LocalInvoker
@@ -117,7 +118,7 @@ class BatchInvoker(LocalInvoker):
 
             return results
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"Batch processing timed out after {self.batch_timeout}s")
             # Return timeout results for all items
             return [

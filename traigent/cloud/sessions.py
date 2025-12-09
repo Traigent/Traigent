@@ -12,7 +12,7 @@ import asyncio
 import time
 import uuid
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 from traigent.cloud.models import (
@@ -98,7 +98,7 @@ class InMemorySessionStorage:
             if session.session_id not in self._sessions:
                 raise SessionError(f"Session {session.session_id} not found")
 
-            session.updated_at = datetime.now(timezone.utc)
+            session.updated_at = datetime.now(UTC)
             self._sessions[session.session_id] = session
 
     async def delete(self, session_id: str) -> None:
@@ -185,7 +185,7 @@ class SessionState:
 
             old_status = self.session.status
             self.session.status = status
-            self.session.updated_at = datetime.now(timezone.utc)
+            self.session.updated_at = datetime.now(UTC)
             self.last_updated = time.time()
             self._mark_dirty()
 
@@ -228,7 +228,7 @@ class SessionState:
             if self._is_better_result(metrics):
                 self.session.best_config = config.copy()
                 self.session.best_metrics = metrics.copy()
-                self.session.updated_at = datetime.now(timezone.utc)
+                self.session.updated_at = datetime.now(UTC)
                 self.last_updated = time.time()
                 self._mark_dirty()
 
@@ -246,7 +246,7 @@ class SessionState:
     def increment_completed_trials(self) -> None:
         """Increment completed trials counter."""
         self.session.completed_trials += 1
-        self.session.updated_at = datetime.now(timezone.utc)
+        self.session.updated_at = datetime.now(UTC)
         self.last_updated = time.time()
         self._mark_dirty()
 
@@ -588,8 +588,8 @@ class SessionManager:
             objectives=objectives,
             max_trials=max_trials,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
             optimization_strategy=optimization_strategy or self._default_strategy(),
             metadata=metadata or {},
         )
@@ -776,7 +776,7 @@ class SessionManager:
         if session.status != OptimizationSessionStatus.ACTIVE:
             return False
 
-        age = datetime.now(timezone.utc) - session.updated_at
+        age = datetime.now(UTC) - session.updated_at
         return age > self.session_timeout
 
     async def _expire_session(self, session: OptimizationSession) -> None:

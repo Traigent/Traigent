@@ -9,11 +9,11 @@ integration plugins that handle parameter mappings and framework overrides.
 import json
 import logging
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from packaging.specifiers import InvalidSpecifier, SpecifierSet

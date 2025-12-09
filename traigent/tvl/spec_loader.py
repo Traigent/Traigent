@@ -8,9 +8,10 @@ import ast
 import copy
 import math
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, cast
+from typing import Any, Literal, cast
 
 import yaml
 

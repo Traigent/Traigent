@@ -12,7 +12,7 @@ import statistics
 import threading
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -83,7 +83,7 @@ class ResourceUsage:
     unit_cost: float
     total_cost: float
     utilization_percent: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 @dataclass
@@ -182,8 +182,8 @@ class BudgetAllocator:
                 remaining_budget=adjusted_amount,
                 projected_spend=adjusted_amount * 0.9,  # Conservative projection
                 variance_percent=0.0,
-                period_start=datetime.now(timezone.utc),
-                period_end=datetime.now(timezone.utc) + timedelta(days=30),
+                period_start=datetime.now(UTC),
+                period_end=datetime.now(UTC) + timedelta(days=30),
             )
 
         self.allocations = allocations
@@ -214,8 +214,12 @@ class BudgetAllocator:
             # Update historical data with memory limit enforcement
             self.historical_data[resource].append(spent_amount)
             if len(self.historical_data[resource]) > MAX_OPTIMIZATION_HISTORY_SIZE:
-                items_to_keep = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
-                self.historical_data[resource] = self.historical_data[resource][-items_to_keep:]
+                items_to_keep = int(
+                    MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+                )
+                self.historical_data[resource] = self.historical_data[resource][
+                    -items_to_keep:
+                ]
 
             return allocation
 
@@ -339,7 +343,7 @@ class CostOptimizationAI:
                 continue
 
             # Filter recent data
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_back)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days_back)
             recent_usage = [u for u in usage_data if u.timestamp >= cutoff_date]
 
             if not recent_usage:
@@ -546,9 +550,7 @@ class CostOptimizationAI:
             daily_cost = current_daily_cost * (growth_factor ** (day / 30))
             daily_predictions.append(
                 {
-                    "date": (
-                        datetime.now(timezone.utc) + timedelta(days=day)
-                    ).isoformat(),
+                    "date": (datetime.now(UTC) + timedelta(days=day)).isoformat(),
                     "predicted_cost": daily_cost,
                 }
             )
@@ -618,7 +620,7 @@ class CostOptimizationAI:
         optimization_record = {
             "action_id": action_id,
             "optimization_id": optimization_id,
-            "timestamp": datetime.now(timezone.utc),
+            "timestamp": datetime.now(UTC),
             "actual_savings": actual_savings,
             "predicted_savings": 100.0,  # Default predicted value for testing
             "implementation_cost": implementation_cost,
@@ -676,7 +678,9 @@ class CostOptimizationAI:
             self.usage_history[usage.resource_type].append(usage)
             if len(self.usage_history[usage.resource_type]) > MAX_USAGE_HISTORY_SIZE:
                 items_to_keep = int(MAX_USAGE_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
-                self.usage_history[usage.resource_type] = self.usage_history[usage.resource_type][-items_to_keep:]
+                self.usage_history[usage.resource_type] = self.usage_history[
+                    usage.resource_type
+                ][-items_to_keep:]
 
     @staticmethod
     def _get_cost_reduction(record: Any) -> float:
@@ -720,7 +724,9 @@ class ResourceOptimizer:
             self.usage_history[usage.resource_type].append(usage)
             if len(self.usage_history[usage.resource_type]) > MAX_USAGE_HISTORY_SIZE:
                 items_to_keep = int(MAX_USAGE_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
-                self.usage_history[usage.resource_type] = self.usage_history[usage.resource_type][-items_to_keep:]
+                self.usage_history[usage.resource_type] = self.usage_history[
+                    usage.resource_type
+                ][-items_to_keep:]
 
     def analyze_usage_patterns(
         self, resource_type: ResourceType, time_window: timedelta = timedelta(days=7)
@@ -731,7 +737,7 @@ class ResourceOptimizer:
                 return {}
 
             # Filter recent usage
-            cutoff_time = datetime.now(timezone.utc) - time_window
+            cutoff_time = datetime.now(UTC) - time_window
             recent_usage = [
                 usage
                 for usage in self.usage_history[resource_type]

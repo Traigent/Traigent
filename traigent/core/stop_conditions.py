@@ -6,8 +6,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Iterable, Sequence
-
+from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING
 
 from traigent.api.types import TrialResult, TrialStatus
@@ -280,7 +279,7 @@ class CostLimitStopCondition(StopCondition):
 
     reason = "cost_limit"
 
-    def __init__(self, cost_enforcer: "CostEnforcer") -> None:
+    def __init__(self, cost_enforcer: CostEnforcer) -> None:
         """Initialize with shared cost enforcer.
 
         Args:

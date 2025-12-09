@@ -10,12 +10,14 @@ import json
 import math
 import os
 import time
-from contextlib import contextmanager
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
+from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -31,9 +33,11 @@ from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
-    ValidationError,
 )
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
+from traigent.utils.exceptions import (
+    ValidationError,
+)
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -86,12 +90,19 @@ def _get_dataset_root() -> Path:
 def _resolve_dataset_source(
     source: str,
 ) -> tuple[Path, DatasetRegistryEntry | None]:
-    """Resolve a dataset reference to an absolute path within the dataset root."""
+    """Resolve a dataset reference to an absolute path.
+
+    Security: When TRAIGENT_DATASET_ROOT is set, paths must reside under it.
+    When not set (default), absolute paths that exist are allowed to support
+    running examples from any directory.
+    """
 
     dataset_root = _get_dataset_root()
+    dataset_root_explicitly_set = bool(os.getenv(DATASET_ROOT_ENV))
     resolved_reference, registry_entry = resolve_dataset_reference(source)
     path_obj = Path(resolved_reference)
-    candidate = path_obj if path_obj.is_absolute() else dataset_root / path_obj
+    is_absolute_path = path_obj.is_absolute()
+    candidate = path_obj if is_absolute_path else dataset_root / path_obj
 
     try:
         resolved_path = candidate.resolve(strict=True)
@@ -100,12 +111,17 @@ def _resolve_dataset_source(
     except RuntimeError as exc:  # pragma: no cover - symlink loops
         raise ValidationError(f"Invalid dataset path: {source}") from exc
 
-    try:
-        resolved_path.relative_to(dataset_root)
-    except ValueError as exc:
-        raise ValidationError(
-            f"Dataset path must reside under {dataset_root}: {resolved_path}"
-        ) from exc
+    # Enforce dataset root constraint only when explicitly configured,
+    # OR when using relative paths (which are resolved against cwd).
+    # Absolute paths are allowed when no explicit root is set to support
+    # running examples from any working directory.
+    if dataset_root_explicitly_set or not is_absolute_path:
+        try:
+            resolved_path.relative_to(dataset_root)
+        except ValueError as exc:
+            raise ValidationError(
+                f"Dataset path must reside under {dataset_root}: {resolved_path}"
+            ) from exc
 
     if not resolved_path.is_file():
         raise ValidationError(f"Dataset path must be a file: {source}")
@@ -867,7 +883,7 @@ class BaseEvaluator(ABC):
             # Configuration-related issues should surface so the orchestrator can
             # mark the trial as failed rather than silently falling back.
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_msg = f"Function call timed out after {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg

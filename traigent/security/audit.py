@@ -10,7 +10,7 @@ import re
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -92,7 +92,7 @@ class AuditEvent:
     message: str = ""
     severity: AuditSeverity | None = None
     event_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     session_id: str | None = None
     resource_id: str | None = None
     resource_type: str | None = None
@@ -239,7 +239,7 @@ class AuditLogger:
         event = AuditEvent(
             event_id=secrets.token_urlsafe(16),
             event_type=event_type,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             user_id=user_id,
             session_id=session_id,
             tenant_id=tenant_id,
@@ -725,7 +725,7 @@ class ComplianceReporter:
         recent_events = [
             e
             for e in all_events
-            if e.timestamp >= datetime.utcnow() - timedelta(days=30)
+            if e.timestamp >= datetime.now(UTC) - timedelta(days=30)
         ]
 
         critical_events = [
@@ -789,7 +789,7 @@ class SecurityMonitor:
         recent_events = [
             e
             for e in self.audit_logger.events
-            if e.timestamp > datetime.utcnow() - timedelta(hours=1)
+            if e.timestamp > datetime.now(UTC) - timedelta(hours=1)
         ]
 
         # Check for failed login attempts

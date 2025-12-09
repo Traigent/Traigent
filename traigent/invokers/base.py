@@ -5,9 +5,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from traigent.utils.exceptions import InvocationError
 from traigent.utils.logging import get_logger

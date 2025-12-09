@@ -10,7 +10,9 @@ reliability and seamless operation.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Coroutine, TypeVar
+from collections.abc import Coroutine
+from datetime import UTC
+from typing import Any, TypeVar
 
 from traigent.api.types import TrialResult
 from traigent.config.types import TraigentConfig
@@ -162,7 +164,7 @@ class CloudOptimizer(BaseOptimizer):
             self._fallback_reason = f"session_creation: {e}"
 
             # Return a mock session for fallback mode
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             from traigent.optimizers.remote_services import OptimizationSessionStatus
 
@@ -173,7 +175,7 @@ class CloudOptimizer(BaseOptimizer):
                 objectives=self.objectives,
                 algorithm="fallback",
                 status=OptimizationSessionStatus.ACTIVE,
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
                 optimization_strategy=self.optimization_strategy,
             )
 
@@ -618,11 +620,9 @@ class CloudOptimizer(BaseOptimizer):
 
         # Check time budget
         if strategy.max_time_budget and self.session:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
-            elapsed = (
-                datetime.now(timezone.utc) - self.session.created_at
-            ).total_seconds()
+            elapsed = (datetime.now(UTC) - self.session.created_at).total_seconds()
             if elapsed >= strategy.max_time_budget:
                 logger.info(f"Stopping: reached time budget ({elapsed}s)")
                 return True
