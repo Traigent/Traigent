@@ -6,8 +6,9 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.metrics import MetricsEvaluationResult

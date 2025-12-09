@@ -7,8 +7,9 @@ from __future__ import annotations
 import inspect
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
@@ -476,8 +477,8 @@ class LocalEvaluator(BaseEvaluator):
             return example_metric
 
         model_name = config.get("model")
-        logger.info(
-            f"🔍 EVALUATOR DEBUG: i={index}, output type={type(output).__name__}, "
+        logger.debug(
+            f"EVALUATOR DEBUG: i={index}, output type={type(output).__name__}, "
             f"model_name from config='{model_name}'"
         )
 
@@ -513,8 +514,8 @@ class LocalEvaluator(BaseEvaluator):
             response_length=response_length,
         )
 
-        logger.info(
-            f"📊 Extracted metrics for model {model_name}: "
+        logger.debug(
+            f"Extracted metrics for model {model_name}: "
             f"tokens={extracted_metrics.tokens.total_tokens}, "
             f"cost=${extracted_metrics.cost.total_cost:.8f}"
         )
@@ -723,15 +724,15 @@ class LocalEvaluator(BaseEvaluator):
             aggregated_metrics: Target metrics dict (modified in place)
             comprehensive_metrics: Source comprehensive metrics
         """
-        logger.info(
-            f"🔍 LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
+        logger.debug(
+            f"LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
             f"{comprehensive_metrics.get('cost', 'MISSING')}"
         )
 
         # If cost is in objectives but was computed as 0, use comprehensive value
         if "cost" in self.metrics and "cost" in comprehensive_metrics:
-            logger.info(
-                f"🔍 LOCAL EVALUATOR DEBUG: aggregated cost="
+            logger.debug(
+                f"LOCAL EVALUATOR DEBUG: aggregated cost="
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "
                 f"comprehensive cost={comprehensive_metrics['cost']}"
             )
@@ -897,8 +898,8 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get all captured LangChain responses before clearing
         all_captured_responses = get_all_captured_responses()
-        logger.info(
-            f"📦 Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
+        logger.debug(
+            f"Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
         )
 
         # Clear captured responses now that we have them

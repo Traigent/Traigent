@@ -18,7 +18,8 @@ For production use:
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncIterator, cast
+from collections.abc import AsyncIterator
+from typing import Any, cast
 
 try:
     from anthropic import AsyncAnthropic
@@ -29,7 +30,6 @@ except ImportError:
 
 from traigent.agents.platforms.base_platform import BasePlatformExecutor
 from traigent.agents.platforms.parameter_mapping import ParameterMapper
-
 from traigent.utils.exceptions import (
     AgentExecutionError,
     ConfigurationError,

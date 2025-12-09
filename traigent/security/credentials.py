@@ -21,11 +21,12 @@ import stat
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, cast, overload
+from typing import Any, cast, overload
 
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import hashes
@@ -51,7 +52,7 @@ def _ensure_utc(dt: datetime | None) -> datetime | None:
     """Ensure datetime values are timezone-aware UTC."""
     if dt is None:
         return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
 
 class CredentialType(Enum):
@@ -577,7 +578,7 @@ class EnhancedCredentialStore:
 
                 cred = self._credentials[name]
 
-                now_utc = datetime.now(timezone.utc)
+                now_utc = datetime.now(UTC)
 
                 # Check expiration
                 if cred.expires_at and now_utc > cred.expires_at:
@@ -717,7 +718,7 @@ class EnhancedCredentialStore:
         ciphertext, nonce, associated_data = self._encrypt_value(value)
 
         # Create secure credential
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
         explicit_expiration = _ensure_utc(expires_at)
         if explicit_expiration and explicit_expiration < current_time:
             self._security_event(
@@ -785,7 +786,7 @@ class EnhancedCredentialStore:
         if "rotation_history" not in old_cred.metadata:
             old_cred.metadata["rotation_history"] = []
 
-        rotation_time = datetime.now(timezone.utc)
+        rotation_time = datetime.now(UTC)
         old_cred.metadata["rotation_history"].append(
             {
                 "rotated_at": rotation_time.isoformat(),
@@ -861,7 +862,7 @@ class EnhancedCredentialStore:
 
         event = {
             "type": event_type,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "details": details,
             "security_level": self.security_level.value,
         }
@@ -878,7 +879,7 @@ class EnhancedCredentialStore:
             "name": name,
             "result": result,
             "success": success,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         if self.audit_callback:
@@ -889,7 +890,7 @@ class EnhancedCredentialStore:
         audit_entry = {
             "operation": operation,
             "details": details,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         if self.audit_callback:
@@ -913,7 +914,7 @@ class EnhancedCredentialStore:
             "requiring_rotation": 0,
         }
 
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
 
         for _name, cred in credentials_snapshot:
             # Check expiration

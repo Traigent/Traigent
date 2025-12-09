@@ -399,19 +399,19 @@ class TrialOperations:
         if measures is not None:
             logger.info(f"📊 MEASURES DATA for trial {trial_id}:")
             logger.info(f"  Type: {type(measures)}")
-            logger.info(
+            logger.debug(
                 f"  Count: {len(measures) if isinstance(measures, list) else 'N/A'}"
             )
             if isinstance(measures, list) and len(measures) > 0:
                 first_measure = measures[0]
-                logger.info("  🔍 COST DEBUG - First measure costs:")
-                logger.info(
+                logger.debug("  COST DEBUG - First measure costs:")
+                logger.debug(
                     f"    - input_cost: {first_measure.get('input_cost', 'MISSING')}"
                 )
-                logger.info(
+                logger.debug(
                     f"    - output_cost: {first_measure.get('output_cost', 'MISSING')}"
                 )
-                logger.info(
+                logger.debug(
                     f"    - total_cost: {first_measure.get('total_cost', 'MISSING')}"
                 )
                 measure_json = json.dumps(measures[0], indent=2)[:500]
@@ -422,20 +422,20 @@ class TrialOperations:
     def _log_summary_stats_debug(self, trial_id: str, summary_stats: Any) -> None:
         """Log debug information for summary_stats."""
         if summary_stats is not None:
-            logger.info(f"📈 SUMMARY_STATS DATA for trial {trial_id}:")
-            logger.info(f"  Type: {type(summary_stats)}")
-            logger.info(
+            logger.debug(f"SUMMARY_STATS DATA for trial {trial_id}:")
+            logger.debug(f"  Type: {type(summary_stats)}")
+            logger.debug(
                 f"  Keys: {list(summary_stats.keys()) if isinstance(summary_stats, dict) else 'N/A'}"
             )
             if isinstance(summary_stats, dict):
                 stats_metrics = summary_stats.get("metrics", {})
                 if isinstance(stats_metrics, dict):
-                    logger.info("  🔍 COST DEBUG - Summary stats costs:")
+                    logger.debug("  COST DEBUG - Summary stats costs:")
                     for cost_key in ["cost", "input_cost", "output_cost", "total_cost"]:
                         if cost_key in stats_metrics:
-                            logger.info(f"    - {cost_key}: {stats_metrics[cost_key]}")
+                            logger.debug(f"    - {cost_key}: {stats_metrics[cost_key]}")
                         else:
-                            logger.info(f"    - {cost_key}: MISSING")
+                            logger.debug(f"    - {cost_key}: MISSING")
         else:
             logger.warning(f"⚠️ No summary_stats found for trial {trial_id}")
 

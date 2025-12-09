@@ -18,10 +18,11 @@ import math
 import os
 import time
 from collections import defaultdict, deque
+from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from tempfile import TemporaryDirectory
-from typing import Any, AsyncGenerator, Callable, cast
+from typing import Any, cast
 
 try:
     import psutil

@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -170,7 +170,7 @@ class FileVersionManager:
         """
         manifest: dict[str, Any] = {
             "file_naming_version": FILE_NAMING_VERSION,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "files": {},
         }
 
@@ -388,7 +388,7 @@ class RunVersionInfo:
                 "machine": platform.machine(),
                 "python_implementation": platform.python_implementation(),
             },
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "custom_metadata": custom_metadata or {},
         }
 

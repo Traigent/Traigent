@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import threading
-from datetime import datetime, timezone
-from typing import Any, Callable, Iterable
+from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from traigent.security.enterprise import MetricsCollector
 from traigent.utils.logging import get_logger
@@ -56,7 +57,7 @@ class OptunaMetricsEmitter:
             "event": event,
             "trial_id": trial_id,
             "study_name": study_name,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         if payload:
             message["payload"] = payload

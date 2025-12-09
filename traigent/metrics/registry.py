@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Iterable
+from collections.abc import Iterable
 
 from traigent.core.metric_registry import MetricRegistry, MetricSpec
 

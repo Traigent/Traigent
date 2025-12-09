@@ -8,9 +8,7 @@ before pushes.
 
 from __future__ import annotations
 
-import os
 import stat
-import subprocess
 from pathlib import Path
 
 from traigent.utils.logging import get_logger
@@ -18,7 +16,7 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 # Pre-push hook script content
-PRE_PUSH_HOOK_SCRIPT = '''#!/bin/bash
+PRE_PUSH_HOOK_SCRIPT = """#!/bin/bash
 # TraiGent pre-push hook - validates agent configurations
 # Installed by: traigent hooks install
 
@@ -54,10 +52,10 @@ fi
 echo ""
 echo "All TraiGent hooks passed!"
 exit 0
-'''
+"""
 
 # Pre-commit hook script content (lighter validation)
-PRE_COMMIT_HOOK_SCRIPT = '''#!/bin/bash
+PRE_COMMIT_HOOK_SCRIPT = """#!/bin/bash
 # TraiGent pre-commit hook - quick config check
 # Installed by: traigent hooks install
 
@@ -75,7 +73,7 @@ fi
 
 # Quick syntax check only (no full validation)
 $TRAIGENT_CMD hooks check --quick
-'''
+"""
 
 # Hook marker to identify TraiGent-installed hooks
 HOOK_MARKER = "# TraiGent pre-push hook - validates agent configurations"
@@ -212,7 +210,9 @@ class HooksInstaller:
         # Only remove if it's a TraiGent hook
         content = hook_path.read_text()
         if HOOK_MARKER not in content:
-            logger.warning(f"Hook at {hook_path} was not installed by TraiGent - skipping")
+            logger.warning(
+                f"Hook at {hook_path} was not installed by TraiGent - skipping"
+            )
             return False
 
         hook_path.unlink()

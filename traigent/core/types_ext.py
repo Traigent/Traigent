@@ -305,7 +305,7 @@ class StorageConfig(TypedDict):
 # Type aliases for commonly used complex types
 ConfigDict = dict[str, Any]
 MetricsDict = dict[str, float]
-ParameterDict = dict[str, Union[ParameterBounds, CategoricalChoices]]
+ParameterDict = dict[str, ParameterBounds | CategoricalChoices]
 ValidationErrors = list[ValidationError]
 
 # Union types for flexibility
