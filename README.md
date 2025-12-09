@@ -88,10 +88,12 @@ def simple_qa_agent(question: str) -> str:
 ## 📊 Full Customer Support Example with RAG
 
 ```python
+import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from dotenv import load_dotenv
+from traigent.api.decorators import EvaluationOptions
 
 # Load environment variables (API keys, etc.)
 load_dotenv()
@@ -122,7 +124,6 @@ def customer_support_agent(query: str, knowledge_base: list) -> str:
     return response.content
 
 # Step 1: Find optimal configuration
-import asyncio
 results = asyncio.run(customer_support_agent.optimize())
 
 # Step 2: Apply best configuration
@@ -326,6 +327,10 @@ uv pip install -e ".[all]"  # Or install everything
 
 > 💡 **Local Playground**: Launch the interactive Streamlit control center locally:
 > ```bash
+> # Install playground dependencies first (if not already installed)
+> pip install -e ".[playground]"
+>
+> # Then launch the control center
 > streamlit run playground/traigent_control_center.py
 > ```
 
@@ -489,8 +494,6 @@ def my_agent(query: str, config: TraigentConfig) -> str:
 - **Seamless**: Existing codebases, rapid adoption, zero migration
 - **Parameter**: New development, type safety, complex logic
 
-See [examples/docs/injection-modes/](examples/docs/injection-modes/) for detailed comparisons.
-
 ## 🌟 Natural Language Problem Definition
 
 ### Define Problems with AI Understanding
@@ -528,6 +531,10 @@ The CLI provides local optimization, validation, results management, and templat
 # Help and version info
 traigent --help
 traigent info
+
+# Quiet mode (suppress logs) or verbose mode
+traigent --quiet info    # Errors only
+traigent --verbose info  # Full logging
 
 # Algorithms
 traigent algorithms
@@ -875,42 +882,38 @@ def complex_reasoning_task(query: str) -> str:
 
 ## 📚 Pre-built Examples
 
-TraiGent comes with ready-to-use examples for common AI tasks:
+TraiGent comes with ready-to-use examples in `examples/`:
 
-### LangChain Integration Examples
+### Core Examples
 
-Located in `demos/06-framework-integrations/langchain/examples/`:
+Located in `examples/core/`:
 
-- **Emotion Detection**: Analyze emotional content in text
-- **Fact Checking**: Verify factual claims automatically
-- **NER Extraction**: Extract named entities from documents
-- **Sentiment Analysis**: Classify text sentiment
-- **Spam Detection**: Filter unwanted content
-- **Text Summarization**: Condense long documents
-- **Intent Classification**: Understand user intentions
-- **Keyword Extraction**: Find important terms
-- **Email Generation**: Create professional emails
-- **Dialogue Generation**: Build conversational agents
-- **Text-to-SQL**: Convert natural language to SQL queries
+- **simple-prompt**: Basic prompt optimization
+- **hello-world**: Q&A with RAG optimization
+- **few-shot-classification**: Few-shot learning patterns
+- **multi-objective-tradeoff**: Balance accuracy vs cost with weighted objectives
+- **token-budget-summarization**: Optimize within token limits
+- **structured-output-json**: JSON schema validation
+- **tool-use-calculator**: Function calling optimization
+- **prompt-style-optimization**: Tune prompt style and tone
+- **safety-guardrails**: Content moderation patterns
 
 Each example includes:
 
-- Pre-configured optimization settings
-- Sample evaluation datasets
-- Custom evaluators for the specific task
-- Ready-to-run code
+- Complete `run.py` with production-quality code
+- Evaluation datasets in `examples/datasets/`
+- Mock mode support (no API keys needed!)
+- Inline documentation
 
 ### Running Examples
 
 ```bash
-# First, ensure you have the integrations installed
+# First, ensure you have the dependencies installed
 pip install -e ".[integrations]"
 
-# Navigate to any example
-cd demos/06-framework-integrations/langchain/examples/emotion_detection
-
-# Run the optimization
-python function.py
+# Run any example in mock mode
+export TRAIGENT_MOCK_MODE=true
+python examples/core/simple-prompt/run.py
 ```
 
 ## 🤔 Why TraiGent?
@@ -945,11 +948,11 @@ python function.py
 
 - **[Quick Start Guide](docs/getting-started/GETTING_STARTED.md)**: Get started in 5 minutes
 - **[Playground UI Guide](playground/README.md)**: Interactive Playground
-- **[API Reference](docs/api-reference/)**: Complete API documentation
 - **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
 - **[Secrets Management](docs/guides/secrets_management.md)**: Secure AWS-backed workflow
 - **[Examples](examples/)**: Working code examples
-- **[Contributing](docs/guides/CONTRIBUTING.md)**: Join our community
+- **[Evaluation Guide](docs/guides/evaluation.md)**: Dataset formats and custom evaluators
+- **[Execution Modes](docs/guides/execution-modes.md)**: Local, cloud, and hybrid modes
 
 ## 🛠️ Development
 
@@ -1015,7 +1018,7 @@ See `reports/project-status/` for detailed organization documentation.
 
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](docs/guides/CONTRIBUTING.md) for details.
+We welcome contributions! See the guidelines below for how to get started.
 
 ### Testing
 
@@ -1041,7 +1044,7 @@ pytest tests/unit/test_api.py
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🔧 Troubleshooting
 
@@ -1164,4 +1167,4 @@ load_dotenv()
 
 ---
 
-**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[API Docs](docs/api-reference/)** | **[Contributing](docs/guides/CONTRIBUTING.md)**
+**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[Evaluation Guide](docs/guides/evaluation.md)**

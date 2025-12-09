@@ -45,8 +45,13 @@ def solve_arithmetic(expression: str) -> str:
     Returns:
         String representation of the numeric answer
     """
-    # Get current configuration from TraiGent
-    config = traigent.get_config()
+    # Get configuration - works both during optimization and normal calls
+    try:
+        current = traigent.get_trial_config()
+        config = current if isinstance(current, dict) else {}
+    except traigent.utils.exceptions.OptimizationStateError:
+        # Not in an optimization trial - use applied config or defaults
+        config = getattr(solve_arithmetic, "current_config", {}) or {}
 
     # Map prompt styles to system prompts
     prompt_styles = {
