@@ -152,7 +152,7 @@ class TestMetaLearningEngine:
             total_trials=10,
             duration_seconds=120,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         history.add_record(record)
 
@@ -182,7 +182,7 @@ class TestMetaLearningEngine:
             total_trials=20,
             duration_seconds=200,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         history.add_record(record)
 
@@ -213,7 +213,7 @@ class TestMetaLearningEngine:
             total_trials=0,
             duration_seconds=0,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
         )
         history.add_record(record)
 
@@ -263,7 +263,7 @@ class TestPredictiveAnalytics:
         # Add sample usage data
         for i in range(10):
             metric = UsageMetric(
-                timestamp=datetime.utcnow() - timedelta(days=i),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
                 optimizations_count=5 + i,
                 total_trials=50 + i * 5,
                 total_duration_seconds=300 + i * 20,
@@ -317,7 +317,7 @@ class TestPredictiveAnalytics:
             analyzer.add_metric_value(
                 metric_name="optimization_count",
                 value=10 + i * 0.5,
-                timestamp=datetime.utcnow() - timedelta(days=14 - i),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=14 - i),
             )
 
         analysis = analyzer.analyze_trends("optimization_count", period_days=14)
@@ -504,7 +504,7 @@ class TestAnomalyDetector:
             actual_value=100.0,
             expected_value=50.0,
             deviation_score=2.0,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             description="Test cost spike",
         )
 
@@ -596,7 +596,7 @@ class TestCostOptimizationAI:
                 unit_cost=0.1,
                 total_cost=15.0,
                 utilization_percent=40,  # Low utilization for rightsizing opportunity
-                timestamp=datetime.utcnow() - timedelta(days=i),
+                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
             )
             usage_list.append(usage)
 
@@ -641,7 +641,7 @@ class TestCostOptimizationAI:
                 unit_cost=0.1,
                 total_cost=50.0,
                 utilization_percent=60,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
             )
         ]
         self.optimizer.usage_history[ResourceType.COMPUTE] = usage_list

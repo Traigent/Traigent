@@ -12,9 +12,7 @@ sys.path.insert(
     0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 )
 
-from traigent.cloud.auth import (
-    AuthManager as SecureAuthManager,
-)
+from traigent.cloud.auth import AuthManager as SecureAuthManager
 from traigent.cloud.auth import (
     SecureToken,
     constant_time_compare,

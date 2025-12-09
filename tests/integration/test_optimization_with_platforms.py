@@ -133,12 +133,11 @@ class TestOptimizationWithPlatforms:
         """Test auto_override_frameworks with new platforms."""
 
         # Mock framework overrides - patch the correct functions
-        with patch(
-            "traigent.integrations.framework_override.override_openai_sdk"
-        ), patch("traigent.integrations.framework_override.override_anthropic"), patch(
-            "traigent.integrations.framework_override.override_cohere"
-        ), patch(
-            "traigent.integrations.framework_override.override_langchain"
+        with (
+            patch("traigent.integrations.framework_override.override_openai_sdk"),
+            patch("traigent.integrations.framework_override.override_anthropic"),
+            patch("traigent.integrations.framework_override.override_cohere"),
+            patch("traigent.integrations.framework_override.override_langchain"),
         ):
 
             @traigent.optimize(

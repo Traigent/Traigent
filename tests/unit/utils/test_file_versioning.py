@@ -155,7 +155,10 @@ class TestFileVersionManager:
         if not hasattr(os, "symlink"):
             pytest.skip("symlink support not available on this platform")
 
-        with tempfile.TemporaryDirectory() as run_dir, tempfile.TemporaryDirectory() as outside_dir:
+        with (
+            tempfile.TemporaryDirectory() as run_dir,
+            tempfile.TemporaryDirectory() as outside_dir,
+        ):
             manager = FileVersionManager(version="2")
             run_path = Path(run_dir)
             outside_path = Path(outside_dir) / "secret.json"

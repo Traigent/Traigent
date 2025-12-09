@@ -529,9 +529,7 @@ class TestCostEnforcerOrchestratorIntegration:
         assert abs(orchestrator.cost_enforcer.config.limit - 5.0) < FLOAT_TOLERANCE
         assert orchestrator.cost_enforcer.config.approved is True
 
-    def test_cost_enforcer_shared_with_parallel_manager(
-        self, traigent_config
-    ) -> None:
+    def test_cost_enforcer_shared_with_parallel_manager(self, traigent_config) -> None:
         """Verify CostEnforcer is shared with parallel execution manager."""
         optimizer = MockSequentialOptimizer(
             config_space={"param1": (0, 10)},

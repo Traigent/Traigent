@@ -529,13 +529,27 @@ class CTDTestGenerator:
 
                 # If any TraiGent params were set for this framework param
                 if possible_values:
-                    if framework_param not in overridden_kwargs:
-                        print(
-                            f"  ✗ Parameter {framework_param} not in overridden kwargs"
-                        )
-                        return False
+                    # Check top-level kwargs first
+                    if framework_param in overridden_kwargs:
+                        actual_value = overridden_kwargs[framework_param]
+                    else:
+                        # Some plugins nest params in special dicts because their
+                        # client APIs don't accept them as top-level kwargs:
+                        # - Bedrock: extra_params (for stop_sequences, etc.)
+                        # - Gemini: generation_config (for temperature, max_output_tokens, etc.)
+                        nested_dicts = ["extra_params", "generation_config"]
+                        actual_value = None
+                        for nested_key in nested_dicts:
+                            nested = overridden_kwargs.get(nested_key, {})
+                            if isinstance(nested, dict) and framework_param in nested:
+                                actual_value = nested[framework_param]
+                                break
 
-                    actual_value = overridden_kwargs[framework_param]
+                        if actual_value is None:
+                            print(
+                                f"  ✗ Parameter {framework_param} not in overridden kwargs"
+                            )
+                            return False
 
                     # The actual value should be one of the possible values
                     # (when multiple TraiGent params map to same framework param, last one wins)
@@ -549,7 +563,15 @@ class CTDTestGenerator:
                     verified_params.add(framework_param)
 
             # Verify original parameters are preserved
-            if "original_param" not in overridden_kwargs:
+            # Some plugins (e.g., Bedrock, Gemini) move unknown params to nested dicts
+            original_param_preserved = "original_param" in overridden_kwargs
+            if not original_param_preserved:
+                for nested_key in ["extra_params", "generation_config"]:
+                    nested = overridden_kwargs.get(nested_key, {})
+                    if isinstance(nested, dict) and "original_param" in nested:
+                        original_param_preserved = True
+                        break
+            if not original_param_preserved:
                 print("  ✗ Original parameter was removed")
                 return False
 

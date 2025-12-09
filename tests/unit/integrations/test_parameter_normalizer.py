@@ -15,7 +15,6 @@ from traigent.integrations.utils.parameter_normalizer import (
     normalize_params,
 )
 
-
 # =============================================================================
 # Framework Enum Tests
 # =============================================================================

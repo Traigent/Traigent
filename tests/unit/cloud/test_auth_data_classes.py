@@ -13,15 +13,15 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from traigent.cloud.auth import (
-    _AsyncBool,
+    MIN_TOKEN_LENGTH,
+    TOKEN_REFRESH_THRESHOLD,
     AuthCredentials,
     AuthMode,
     AuthResult,
     AuthStatus,
     SecureToken,
     TokenExpiredError,
-    TOKEN_REFRESH_THRESHOLD,
-    MIN_TOKEN_LENGTH,
+    _AsyncBool,
 )
 
 

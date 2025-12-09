@@ -113,11 +113,12 @@ class TestConfigureObjectives:
 
     def test_configure_objectives_schema(self):
         """Test configuring with ObjectiveSchema."""
-        with patch(
-            "traigent.core.objectives.normalize_objectives"
-        ) as mock_normalize, patch(
-            "traigent.core.objectives.schema_to_objective_names"
-        ) as mock_schema_to_names:
+        with (
+            patch("traigent.core.objectives.normalize_objectives") as mock_normalize,
+            patch(
+                "traigent.core.objectives.schema_to_objective_names"
+            ) as mock_schema_to_names,
+        ):
 
             mock_schema = Mock()
             mock_normalize.return_value = mock_schema
