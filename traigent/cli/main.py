@@ -40,6 +40,11 @@ def _resolve_workspace_path(path: Path, description: str) -> Path:
 
 
 @click.group()
+@click.version_option(
+    version=get_version_info()["version"],
+    prog_name="TraiGent",
+    message="%(prog)s %(version)s",
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress all logging (errors only)")

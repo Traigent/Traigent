@@ -284,6 +284,7 @@ export TRAIGENT_MOCK_MODE=true  # Required for offline operation
 > **Restricted environments**: If your home directory isn't writable, also set a writable results folder:
 > ```bash
 > export TRAIGENT_RESULTS_FOLDER=./results
+> export JOBLIB_TEMP_FOLDER=/tmp  # Prevents joblib cache warnings
 > ```
 
 **Local Storage**: Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
@@ -546,7 +547,8 @@ The CLI provides local optimization, validation, results management, and templat
 ```bash
 # Help and version info
 traigent --help
-traigent info
+traigent --version   # Quick version check
+traigent info        # Detailed version, features, and integrations
 
 # Quiet mode (suppress logs) or verbose mode
 traigent --quiet info    # Errors only
