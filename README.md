@@ -275,11 +275,16 @@ uv pip install traigent
 
 ### Environment Configuration
 
-For local development and testing, use mock mode (no backend required):
+For local development and testing, use mock mode (runs fully offline, no backend or API keys required):
 
 ```bash
-export TRAIGENT_MOCK_MODE=true  # Run fully offline with simulated responses
+export TRAIGENT_MOCK_MODE=true  # Required for offline operation
 ```
+
+> **Restricted environments**: If your home directory isn't writable, also set a writable results folder:
+> ```bash
+> export TRAIGENT_RESULTS_FOLDER=./results
+> ```
 
 **Local Storage**: Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
 

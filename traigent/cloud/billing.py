@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -178,14 +179,27 @@ class UsageTracker:
         """Initialize usage tracker.
 
         Args:
-            storage_path: Path to store usage data (defaults to ~/.traigent/usage.json)
+            storage_path: Path to store usage data (defaults to TRAIGENT_RESULTS_FOLDER or ~/.traigent)
         """
         if storage_path:
             self.storage_path = Path(storage_path)
         else:
-            self.storage_path = Path.home() / ".traigent" / "usage.json"
+            # Respect TRAIGENT_RESULTS_FOLDER if set, otherwise fall back to ~/.traigent
+            results_folder = os.environ.get("TRAIGENT_RESULTS_FOLDER")
+            if results_folder:
+                self.storage_path = Path(results_folder) / "usage.json"
+            else:
+                self.storage_path = Path.home() / ".traigent" / "usage.json"
 
-        self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            # Fall back to current working directory if home isn't writable
+            logger.warning(
+                f"Cannot write to {self.storage_path.parent}, using ./.traigent_local/"
+            )
+            self.storage_path = Path.cwd() / ".traigent_local" / "usage.json"
+            self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._usage_records: list[UsageRecord] = []
         self._load_usage_data()
 
