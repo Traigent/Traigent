@@ -300,6 +300,13 @@ test_concurrent.db
 scripts/secrets/
 .scannerwork/
 
+# TraiGent generated results and caches
+**/.traigent_results/
+**/.config/mlflow/
+
+# Generated example/template files
+traigent_example.py
+
 # Git archive (local backup of original history)
 .git_archive/
 
