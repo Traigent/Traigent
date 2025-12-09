@@ -232,6 +232,9 @@ python -c "import traigent; print('✅ TraiGent installed successfully')"
 ```
 
 #### Using uv (Faster - Recommended)
+
+> **First time?** Install uv: `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
 ```bash
 # Clone the repository
 git clone https://github.com/Traigent/Traigent.git
@@ -278,7 +281,7 @@ For local development and testing, use mock mode (no backend required):
 export TRAIGENT_MOCK_MODE=true  # Run fully offline with simulated responses
 ```
 
-Results are stored locally in `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`). Most examples set this automatically to keep logs alongside the example folder.
+**Local Storage**: Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
 
 <!-- Backend configuration (for TraiGent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
@@ -290,24 +293,27 @@ export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
 
 When installing TraiGent, you can choose specific feature sets:
 
-| Feature Set | Description | Includes |
+| Feature Set | Description | Use Case |
 |------------|-------------|----------|
-| `[core]` | Basic functionality (default) | Core dependencies only |
-| `[analytics]` | Analytics and visualization | numpy, pandas, matplotlib |
-| `[bayesian]` | Bayesian optimization | scikit-learn, scipy |
-| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic, MLflow, WandB |
-| `[security]` | Enterprise security | JWT, cryptography, FastAPI |
-| `[visualization]` | Advanced visualizations | matplotlib, plotly |
-| `[playground]` | Interactive UI | streamlit, plotly |
-| `[examples]` | Run all examples | All demo dependencies |
-| `[all]` | Complete installation | Everything above |
-| `[enterprise]` | Enterprise bundle | Same as `[all]` |
+| `[core]` | Basic functionality (default) | Minimal install |
+| `[analytics]` | Analytics and visualization | View optimization results |
+| `[bayesian]` | Bayesian optimization | Advanced optimization algorithms |
+| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic |
+| `[playground]` | Interactive UI | Streamlit control center |
+| `[examples]` | Example dependencies | Run all demo scripts |
 | `[dev]` | Development tools | pytest, black, ruff, mypy |
+| `[all]` | Complete installation | Everything above |
 
+**Recommended installs:**
 ```bash
-# Install with specific features
-pip install -e ".[integrations,analytics]"
-uv pip install -e ".[all]"  # Or install everything
+# For running examples and development
+pip install -e ".[dev,integrations,analytics]"
+
+# For the Streamlit playground UI
+pip install -e ".[playground]"
+
+# For everything (largest install)
+pip install -e ".[all]"
 ```
 
 ### Next Steps
@@ -377,25 +383,23 @@ def my_agent(question: str) -> str:
 
 ## 🎯 Execution Modes
 
-TraiGent offers three execution modes balancing privacy, performance, and features:
+TraiGent supports local execution with cloud modes planned:
 
-| Mode | Privacy | Algorithm | Best For |
-|------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Complete | Random/Grid | Sensitive data, testing |
-| **Cloud** | ⚠️ Metadata | Bayesian | Production, teams |
-| **Hybrid** | ✅ Execution local | Bayesian | Balanced approach |
+| Mode | Status | Privacy | Algorithm | Best For |
+|------|--------|---------|-----------|----------|
+| **Local** (`edge_analytics`) | ✅ Available | ✅ Complete | Random/Grid/Bayesian | All use cases |
+| **Cloud** | 🚧 Coming Soon | ⚠️ Metadata | Bayesian | Production, teams |
+| **Hybrid** | 🚧 Coming Soon | ✅ Execution local | Bayesian | Balanced approach |
 
-**Quick Start - Local Mode:**
+**Quick Start - Local Mode (Recommended):**
 ```python
 @traigent.optimize(
-    execution_mode="edge_analytics",  # Full privacy
+    execution_mode="edge_analytics",  # Full privacy, works today
     local_storage_path="./my_optimizations"
 )
 def my_agent(query: str) -> str:
     return process_query(query)
 ```
-
-> **Note**: Cloud and Hybrid modes coming soon. Use `edge_analytics` for now.
 
 > **Local Storage**: When using `edge_analytics` mode, TraiGent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
 
@@ -547,6 +551,8 @@ traigent --verbose info  # Full logging
 traigent algorithms
 
 # Optimize decorated functions in a Python file
+# Note: The module must have @traigent.optimize decorated functions with
+# configuration_space and eval_dataset defined
 traigent optimize path/to/module.py -a grid -n 10
 
 # Validate dataset and configuration files
