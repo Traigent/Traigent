@@ -33,8 +33,8 @@ class TestNoCircularImports:
             del sys.modules[module_name]
 
         from traigent.integrations.mappings import (
-            PARAMETER_MAPPINGS,
             METHOD_MAPPINGS,
+            PARAMETER_MAPPINGS,
             get_parameter_mapping,
         )
 
@@ -57,9 +57,9 @@ class TestNoCircularImports:
         from traigent.integrations.wrappers import (
             OverrideContext,
             apply_parameter_overrides,
-            create_wrapper,
             create_method_wrapper,
             create_resilient_wrapper,
+            create_wrapper,
         )
 
         # Verify all are importable
@@ -80,11 +80,11 @@ class TestNoCircularImports:
     def test_import_order_independence(self):
         """Test modules can be imported in any order without errors."""
         # Import in reverse order
-        from traigent.integrations.wrappers import apply_parameter_overrides
         from traigent.integrations.activation import ActivationState
-        from traigent.integrations.mappings import PARAMETER_MAPPINGS
         from traigent.integrations.base import BaseOverrideManager
         from traigent.integrations.framework_override import FrameworkOverrideManager
+        from traigent.integrations.mappings import PARAMETER_MAPPINGS
+        from traigent.integrations.wrappers import apply_parameter_overrides
 
         # All should be available
         assert PARAMETER_MAPPINGS is not None
@@ -110,15 +110,15 @@ class TestBackwardCompatibility:
     def test_override_functions_available(self):
         """Test override helper functions are importable."""
         from traigent.integrations import (
-            enable_framework_overrides,
             disable_framework_overrides,
-            override_context,
-            override_openai_sdk,
-            override_langchain,
+            enable_framework_overrides,
+            override_all_platforms,
             override_anthropic,
             override_cohere,
+            override_context,
             override_huggingface,
-            override_all_platforms,
+            override_langchain,
+            override_openai_sdk,
             register_framework_mapping,
         )
 
@@ -194,10 +194,10 @@ class TestNewAPIExports:
     def test_mappings_exports(self):
         """Test mappings module exports are available from main __init__."""
         from traigent.integrations import (
-            PARAMETER_MAPPINGS,
             METHOD_MAPPINGS,
-            get_parameter_mapping,
+            PARAMETER_MAPPINGS,
             get_method_mapping,
+            get_parameter_mapping,
             get_supported_frameworks,
         )
 
@@ -216,9 +216,9 @@ class TestNewAPIExports:
         from traigent.integrations import (
             OverrideContext,
             apply_parameter_overrides,
-            create_wrapper,
             create_method_wrapper,
             create_resilient_wrapper,
+            create_wrapper,
         )
 
         # Test apply_parameter_overrides

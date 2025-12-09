@@ -571,9 +571,12 @@ class TestApplyBestConfigIntegration:
         )
 
         # Mock the optimization process
-        with patch("traigent.optimizers.get_optimizer"), patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer"),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
 
             mock_orchestrator = Mock()
             mock_orchestrator_class.return_value = mock_orchestrator

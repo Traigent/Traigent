@@ -66,10 +66,13 @@ class TestBackendIntegrationMocked:
         """Test creating a hybrid session with mocked responses."""
         mock_session_class, mock_response = mock_aiohttp_session
 
-        with patch(
-            "traigent.cloud.backend_client.aiohttp.ClientSession", mock_session_class
-        ), patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"), patch(
-            "traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True
+        with (
+            patch(
+                "traigent.cloud.backend_client.aiohttp.ClientSession",
+                mock_session_class,
+            ),
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
         ):
             # Set up mock response for session creation endpoint
             mock_response.json.return_value = {
@@ -121,10 +124,13 @@ class TestBackendIntegrationMocked:
         """Test submitting trial results with mocked responses."""
         mock_session_class, mock_response = mock_aiohttp_session
 
-        with patch(
-            "traigent.cloud.backend_client.aiohttp.ClientSession", mock_session_class
-        ), patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"), patch(
-            "traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True
+        with (
+            patch(
+                "traigent.cloud.backend_client.aiohttp.ClientSession",
+                mock_session_class,
+            ),
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
         ):
             # Set up mock response for trial submission
             mock_response.status = 200
@@ -148,10 +154,13 @@ class TestBackendIntegrationMocked:
         """Test error handling with mocked error responses."""
         mock_session_class, mock_response = mock_aiohttp_session
 
-        with patch(
-            "traigent.cloud.backend_client.aiohttp.ClientSession", mock_session_class
-        ), patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"), patch(
-            "traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True
+        with (
+            patch(
+                "traigent.cloud.backend_client.aiohttp.ClientSession",
+                mock_session_class,
+            ),
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
         ):
             # Set up mock error response
             mock_response.status = 500
@@ -183,10 +192,13 @@ class TestBackendIntegrationMocked:
         """Test that session creation request DTO is properly formatted."""
         mock_session_class, mock_response = mock_aiohttp_session
 
-        with patch(
-            "traigent.cloud.backend_client.aiohttp.ClientSession", mock_session_class
-        ), patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"), patch(
-            "traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True
+        with (
+            patch(
+                "traigent.cloud.backend_client.aiohttp.ClientSession",
+                mock_session_class,
+            ),
+            patch("traigent.cloud.backend_client.aiohttp.ClientTimeout"),
+            patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True),
         ):
             # Set up mock response for session endpoint
             mock_response.json.return_value = {

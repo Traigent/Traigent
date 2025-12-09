@@ -181,14 +181,17 @@ class TestOptimizationValidator:
     async def test_validation_successful(self, validator, valid_function_info):
         """Test successful validation with mocked execution."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
-            with patch.object(
-                validator,
-                "_run_baseline",
-                return_value=({"accuracy": 0.8}, {"model": "default"}),
-            ), patch.object(
-                validator,
-                "_run_optimization",
-                return_value=({"accuracy": 0.9}, {"model": "optimized"}),
+            with (
+                patch.object(
+                    validator,
+                    "_run_baseline",
+                    return_value=({"accuracy": 0.8}, {"model": "default"}),
+                ),
+                patch.object(
+                    validator,
+                    "_run_optimization",
+                    return_value=({"accuracy": 0.9}, {"model": "optimized"}),
+                ),
             ):
 
                 result = await validator.validate_optimization(valid_function_info)

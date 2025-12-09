@@ -314,11 +314,14 @@ class TestCredentialSecurity:
         config = UnifiedAuthConfig(cache_credentials=False)
         auth_manager = AuthManager(config)
 
-        with patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_credentials"
-        ) as mock_get_creds, patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_api_key"
-        ) as mock_get_api_key:
+        with (
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_credentials"
+            ) as mock_get_creds,
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_api_key"
+            ) as mock_get_api_key,
+        ):
             mock_get_creds.return_value = {
                 "api_key": "cli_stored_key",
                 "backend_url": "https://cli.backend",
@@ -340,12 +343,15 @@ class TestCredentialSecurity:
         config = UnifiedAuthConfig(cache_credentials=False)
         auth_manager = AuthManager(config)
 
-        with patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_credentials",
-            return_value={},
-        ), patch(
-            "traigent.cloud.credential_manager.CredentialManager.get_api_key",
-            return_value=None,
+        with (
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_credentials",
+                return_value={},
+            ),
+            patch(
+                "traigent.cloud.credential_manager.CredentialManager.get_api_key",
+                return_value=None,
+            ),
         ):
             with patch.dict(
                 os.environ, {"TRAIGENT_API_KEY": "env_key_value"}, clear=True

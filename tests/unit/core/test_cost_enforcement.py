@@ -168,7 +168,9 @@ class TestCostEnforcerMockMode:
         """Mock mode bypasses all tracking."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
             enforcer = CostEnforcer()
-            enforcer.track_cost(100.0, permit=_create_mock_permit())  # Would exceed any limit
+            enforcer.track_cost(
+                100.0, permit=_create_mock_permit()
+            )  # Would exceed any limit
 
             # Should still be 0 because mock mode skips tracking
             assert enforcer.accumulated_cost == 0.0
@@ -918,17 +920,20 @@ class TestCostEnforcerMixing:
             # Switch to sync - should log
             enforcer._check_mixing(is_async=False)
             assert enforcer._sync_used is True
-            mock_logger.info.assert_called_with("CostEnforcer: switching from async to sync methods")
+            mock_logger.info.assert_called_with(
+                "CostEnforcer: switching from async to sync methods"
+            )
 
             # Reset mock
             mock_logger.reset_mock()
 
             # Test sync -> async transition with a FRESH enforcer
             enforcer2 = CostEnforcer()
-            enforcer2._check_mixing(is_async=False) # Start with sync
-            enforcer2._check_mixing(is_async=True) # Switch to async
-            mock_logger.info.assert_called_with("CostEnforcer: switching from sync to async methods")
-
+            enforcer2._check_mixing(is_async=False)  # Start with sync
+            enforcer2._check_mixing(is_async=True)  # Switch to async
+            mock_logger.info.assert_called_with(
+                "CostEnforcer: switching from sync to async methods"
+            )
 
 
 class TestCostEnforcerConfigLoading:

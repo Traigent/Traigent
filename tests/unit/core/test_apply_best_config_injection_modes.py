@@ -68,7 +68,9 @@ def test_apply_best_config_seamless_signature_defaults(
         configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.2]},
         injection_mode="seamless",
     )
-    def fn(question: str, model: str = "gpt-3.5", temperature: float = 0.2) -> tuple[str, float]:
+    def fn(
+        question: str, model: str = "gpt-3.5", temperature: float = 0.2
+    ) -> tuple[str, float]:
         return model, temperature
 
     opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
