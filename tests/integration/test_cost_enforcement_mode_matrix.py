@@ -141,14 +141,14 @@ def verify_invariants(enforcer: CostEnforcer, context: str) -> None:
     """
     with enforcer._lock:
         # I1: in_flight_count >= 0
-        assert enforcer._in_flight_count >= 0, (
-            f"[{context}] I1 violated: in_flight_count={enforcer._in_flight_count}"
-        )
+        assert (
+            enforcer._in_flight_count >= 0
+        ), f"[{context}] I1 violated: in_flight_count={enforcer._in_flight_count}"
 
         # I2: reserved_cost >= 0
-        assert enforcer._reserved_cost >= -EPSILON, (
-            f"[{context}] I2 violated: reserved_cost={enforcer._reserved_cost}"
-        )
+        assert (
+            enforcer._reserved_cost >= -EPSILON
+        ), f"[{context}] I2 violated: reserved_cost={enforcer._reserved_cost}"
 
         # I3: len(active_permits) == in_flight_count
         assert len(enforcer._active_permits) == enforcer._in_flight_count, (
@@ -170,14 +170,14 @@ def verify_invariants(enforcer: CostEnforcer, context: str) -> None:
 
         # I5: All permits in _active_permits have active=True
         for permit in enforcer._active_permits.values():
-            assert permit.active, (
-                f"[{context}] I5 violated: permit {permit.id} in active_permits but active=False"
-            )
+            assert (
+                permit.active
+            ), f"[{context}] I5 violated: permit {permit.id} in active_permits but active=False"
 
         # I6: Permit counter is non-negative (monotonic from 0)
-        assert enforcer._permit_counter >= 0, (
-            f"[{context}] I6 violated: permit_counter={enforcer._permit_counter}"
-        )
+        assert (
+            enforcer._permit_counter >= 0
+        ), f"[{context}] I6 violated: permit_counter={enforcer._permit_counter}"
 
         # I8: Sum of active permit amounts equals reserved_cost
         permit_sum = sum(p.amount for p in enforcer._active_permits.values())
@@ -283,7 +283,9 @@ class TestCostEnforcerModeMatrix:
         # Additional post-optimization checks
         status = orchestrator.cost_enforcer.get_status()
         assert status.in_flight_count == 0, f"[{context}] Stranded permits"
-        assert abs(status.reserved_cost_usd) < EPSILON, f"[{context}] Unreleased reservation"
+        assert (
+            abs(status.reserved_cost_usd) < EPSILON
+        ), f"[{context}] Unreleased reservation"
 
     @pytest.mark.parametrize("injection_mode", INJECTION_MODES)
     @pytest.mark.asyncio
@@ -420,12 +422,14 @@ class TestCostEnforcerWithCostLimit:
 
         # Verify cost limit was respected
         status = orchestrator.cost_enforcer.get_status()
-        assert status.accumulated_cost_usd <= 0.35, (  # Allow small overage
+        assert (
+            status.accumulated_cost_usd <= 0.35
+        ), (  # Allow small overage
             f"[{context}] Cost exceeded: {status.accumulated_cost_usd}"
         )
-        assert orchestrator.trial_count <= 3, (
-            f"[{context}] Too many trials: {orchestrator.trial_count}"
-        )
+        assert (
+            orchestrator.trial_count <= 3
+        ), f"[{context}] Too many trials: {orchestrator.trial_count}"
 
 
 class TestCostEnforcerParallelModes:

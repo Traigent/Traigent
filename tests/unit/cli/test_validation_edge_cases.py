@@ -266,10 +266,11 @@ class TestErrorScenarios:
             objectives=["accuracy"],
         )
 
-        with patch.object(
-            validator, "_check_prerequisites", return_value=[]
-        ), patch.object(
-            validator, "_run_baseline", side_effect=Exception("Baseline failed")
+        with (
+            patch.object(validator, "_check_prerequisites", return_value=[]),
+            patch.object(
+                validator, "_run_baseline", side_effect=Exception("Baseline failed")
+            ),
         ):
             result = await validator.validate_optimization(func_info)
 
@@ -294,14 +295,18 @@ class TestErrorScenarios:
             objectives=["accuracy"],
         )
 
-        with patch.object(
-            validator, "_check_prerequisites", return_value=[]
-        ), patch.object(
-            validator,
-            "_run_baseline",
-            return_value=({"accuracy": 0.8}, {"param": "default"}),
-        ), patch.object(
-            validator, "_run_optimization", side_effect=Exception("Optimization failed")
+        with (
+            patch.object(validator, "_check_prerequisites", return_value=[]),
+            patch.object(
+                validator,
+                "_run_baseline",
+                return_value=({"accuracy": 0.8}, {"param": "default"}),
+            ),
+            patch.object(
+                validator,
+                "_run_optimization",
+                side_effect=Exception("Optimization failed"),
+            ),
         ):
 
             result = await validator.validate_optimization(func_info)
@@ -498,12 +503,10 @@ class TestConcurrencyAndPerformance:
         async def mock_optimization(func_info):
             return {"accuracy": 0.9}, {"param": "optimized"}
 
-        with patch.object(
-            validator, "_check_prerequisites", return_value=[]
-        ), patch.object(
-            validator, "_run_baseline", side_effect=mock_baseline
-        ), patch.object(
-            validator, "_run_optimization", side_effect=mock_optimization
+        with (
+            patch.object(validator, "_check_prerequisites", return_value=[]),
+            patch.object(validator, "_run_baseline", side_effect=mock_baseline),
+            patch.object(validator, "_run_optimization", side_effect=mock_optimization),
         ):
 
             # Run validations concurrently

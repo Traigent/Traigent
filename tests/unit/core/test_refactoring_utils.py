@@ -25,12 +25,11 @@ class TestRefactoringValidator:
         """Test establish_baseline with successful instantiation."""
         validator = RefactoringValidator()
 
-        with patch("traigent.core.refactoring_utils.importlib.import_module"), patch(
-            "traigent.core.refactoring_utils.get_provider"
-        ) as mock_provider, patch(
-            "traigent.core.refactoring_utils.OptimizationOrchestrator"
-        ), patch(
-            "traigent.core.refactoring_utils.TraigentConfig"
+        with (
+            patch("traigent.core.refactoring_utils.importlib.import_module"),
+            patch("traigent.core.refactoring_utils.get_provider") as mock_provider,
+            patch("traigent.core.refactoring_utils.OptimizationOrchestrator"),
+            patch("traigent.core.refactoring_utils.TraigentConfig"),
         ):
 
             # Mock get_provider to return a proper mock with get_config method
@@ -52,9 +51,10 @@ class TestRefactoringValidator:
         """Test establish_baseline when instantiation fails."""
         validator = RefactoringValidator()
 
-        with patch("traigent.core.refactoring_utils.importlib.import_module"), patch(
-            "traigent.core.refactoring_utils.get_provider"
-        ) as mock_provider:
+        with (
+            patch("traigent.core.refactoring_utils.importlib.import_module"),
+            patch("traigent.core.refactoring_utils.get_provider") as mock_provider,
+        ):
 
             mock_provider.side_effect = Exception("Mock error")
 
@@ -151,9 +151,10 @@ class TestRefactoringValidator:
 
         # Parameter and ConfigurationSpace are imported inside validate_functionality
         # We need to patch them at the module level where they're imported from
-        with patch("traigent.core.types.Parameter") as mock_param, patch(
-            "traigent.core.types.ConfigurationSpace"
-        ) as mock_space:
+        with (
+            patch("traigent.core.types.Parameter") as mock_param,
+            patch("traigent.core.types.ConfigurationSpace") as mock_space,
+        ):
 
             mock_param.return_value = Mock()
             mock_space_instance = Mock()
@@ -188,15 +189,12 @@ class TestRefactoringValidator:
         """Test run_comprehensive_validation with all checks passing."""
         validator = RefactoringValidator()
 
-        with patch.object(
-            validator, "establish_baseline"
-        ) as mock_baseline, patch.object(
-            validator, "validate_api_compatibility"
-        ) as mock_api, patch.object(
-            validator, "validate_performance_regression"
-        ) as mock_perf, patch.object(
-            validator, "validate_functionality"
-        ) as mock_func:
+        with (
+            patch.object(validator, "establish_baseline") as mock_baseline,
+            patch.object(validator, "validate_api_compatibility") as mock_api,
+            patch.object(validator, "validate_performance_regression") as mock_perf,
+            patch.object(validator, "validate_functionality") as mock_func,
+        ):
 
             mock_baseline.return_value = {"import_time": 0.1}
             mock_api.return_value = {"compatible": True}
@@ -217,15 +215,12 @@ class TestRefactoringValidator:
         """Test run_comprehensive_validation with performance regression."""
         validator = RefactoringValidator()
 
-        with patch.object(
-            validator, "establish_baseline"
-        ) as mock_baseline, patch.object(
-            validator, "validate_api_compatibility"
-        ) as mock_api, patch.object(
-            validator, "validate_performance_regression"
-        ) as mock_perf, patch.object(
-            validator, "validate_functionality"
-        ) as mock_func:
+        with (
+            patch.object(validator, "establish_baseline") as mock_baseline,
+            patch.object(validator, "validate_api_compatibility") as mock_api,
+            patch.object(validator, "validate_performance_regression") as mock_perf,
+            patch.object(validator, "validate_functionality") as mock_func,
+        ):
 
             mock_baseline.return_value = {"import_time": 0.1}
             mock_api.return_value = {"compatible": True}
@@ -240,15 +235,12 @@ class TestRefactoringValidator:
         """Test run_comprehensive_validation with functionality failure."""
         validator = RefactoringValidator()
 
-        with patch.object(
-            validator, "establish_baseline"
-        ) as mock_baseline, patch.object(
-            validator, "validate_api_compatibility"
-        ) as mock_api, patch.object(
-            validator, "validate_performance_regression"
-        ) as mock_perf, patch.object(
-            validator, "validate_functionality"
-        ) as mock_func:
+        with (
+            patch.object(validator, "establish_baseline") as mock_baseline,
+            patch.object(validator, "validate_api_compatibility") as mock_api,
+            patch.object(validator, "validate_performance_regression") as mock_perf,
+            patch.object(validator, "validate_functionality") as mock_func,
+        ):
 
             mock_baseline.return_value = {"import_time": 0.1}
             mock_api.return_value = {"compatible": True}
@@ -395,15 +387,12 @@ class TestEdgeCases:
         """Test validator can run multiple validations."""
         validator = RefactoringValidator()
 
-        with patch.object(
-            validator, "establish_baseline"
-        ) as mock_baseline, patch.object(
-            validator, "validate_api_compatibility"
-        ) as mock_api, patch.object(
-            validator, "validate_performance_regression"
-        ) as mock_perf, patch.object(
-            validator, "validate_functionality"
-        ) as mock_func:
+        with (
+            patch.object(validator, "establish_baseline") as mock_baseline,
+            patch.object(validator, "validate_api_compatibility") as mock_api,
+            patch.object(validator, "validate_performance_regression") as mock_perf,
+            patch.object(validator, "validate_functionality") as mock_func,
+        ):
 
             mock_baseline.return_value = {"import_time": 0.1}
             mock_api.return_value = {"compatible": True}
@@ -439,12 +428,11 @@ class TestEdgeCases:
         """Test baseline metrics persist across validation calls."""
         validator = RefactoringValidator()
 
-        with patch("traigent.core.refactoring_utils.importlib.import_module"), patch(
-            "traigent.core.refactoring_utils.get_provider"
-        ) as mock_provider, patch(
-            "traigent.core.refactoring_utils.OptimizationOrchestrator"
-        ), patch(
-            "traigent.core.refactoring_utils.TraigentConfig"
+        with (
+            patch("traigent.core.refactoring_utils.importlib.import_module"),
+            patch("traigent.core.refactoring_utils.get_provider") as mock_provider,
+            patch("traigent.core.refactoring_utils.OptimizationOrchestrator"),
+            patch("traigent.core.refactoring_utils.TraigentConfig"),
         ):
 
             mock_provider.return_value.get_config.return_value = {}

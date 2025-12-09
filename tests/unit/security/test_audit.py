@@ -3,7 +3,7 @@ Tests for audit logging and compliance reporting systems
 """
 
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -108,7 +108,7 @@ class TestAuditStorage:
         """Test filtering events by time range"""
         storage = AuditStorage()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         # Create events with different timestamps
         old_event = AuditEvent(
@@ -193,14 +193,14 @@ class TestAuditStorage:
         """Test audit log integrity verification"""
         storage = AuditStorage()
 
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
 
         # Store some events
         for i in range(3):
             event = AuditEvent(event_type=AuditEventType.DATA_READ, user_id=f"user{i}")
             storage.store_event(event)
 
-        end_time = datetime.utcnow()
+        end_time = datetime.now(timezone.utc)
 
         # Verify integrity
         integrity = storage.verify_integrity(start_time, end_time)
@@ -358,8 +358,8 @@ class TestComplianceReporter:
         reporter = ComplianceReporter(audit_logger)
 
         # Create test events with SOC 2 compliance tags
-        start_date = datetime.utcnow() - timedelta(days=30)
-        end_date = datetime.utcnow()
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
+        end_date = datetime.now(timezone.utc)
 
         # Add some events to storage directly for testing
         security_event = AuditEvent(
@@ -388,8 +388,8 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        start_date = datetime.utcnow() - timedelta(days=30)
-        end_date = datetime.utcnow()
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
+        end_date = datetime.now(timezone.utc)
 
         # Add test events
         auth_event = AuditEvent(
@@ -416,8 +416,8 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        start_date = datetime.utcnow() - timedelta(days=30)
-        end_date = datetime.utcnow()
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
+        end_date = datetime.now(timezone.utc)
 
         # Add test events
         data_event = AuditEvent(
@@ -449,8 +449,8 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        start_date = datetime.utcnow() - timedelta(days=30)
-        end_date = datetime.utcnow()
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
+        end_date = datetime.now(timezone.utc)
 
         # This should raise an error for unsupported framework
         with pytest.raises(ValueError):
@@ -509,8 +509,8 @@ class TestComplianceReporter:
         audit_logger = AuditLogger(STRONG_AUDIT_SECRET)
         reporter = ComplianceReporter(audit_logger)
 
-        start_date = datetime.utcnow() - timedelta(days=30)
-        end_date = datetime.utcnow()
+        start_date = datetime.now(timezone.utc) - timedelta(days=30)
+        end_date = datetime.now(timezone.utc)
 
         # Add events for different tenants
         tenant1_event = AuditEvent(

@@ -1525,8 +1525,10 @@ class TestCostEstimation:
         ]
 
     def test_cost_estimate_uses_budget_not_dataset_size(
-        self, mock_optimizer: MockOptimizer, mock_evaluator: MockEvaluator,
-        small_dataset: Dataset
+        self,
+        mock_optimizer: MockOptimizer,
+        mock_evaluator: MockEvaluator,
+        small_dataset: Dataset,
     ) -> None:
         """Issue C fix: Cost estimate uses configured budget, not clipped to dataset size.
 
@@ -1556,13 +1558,15 @@ class TestCostEstimation:
             "Cost estimate may be incorrectly clipping to dataset size."
         )
         # More specific check: should be approximately 12.0 (1000 * 0.01 * 1.2)
-        assert estimate == pytest.approx(12.0, rel=0.1), (
-            f"Expected estimate ~12.0, got {estimate}"
-        )
+        assert estimate == pytest.approx(
+            12.0, rel=0.1
+        ), f"Expected estimate ~12.0, got {estimate}"
 
     def test_cost_estimate_without_budget_uses_dataset_size(
-        self, mock_optimizer: MockOptimizer, mock_evaluator: MockEvaluator,
-        small_dataset: Dataset
+        self,
+        mock_optimizer: MockOptimizer,
+        mock_evaluator: MockEvaluator,
+        small_dataset: Dataset,
     ) -> None:
         """When no budget is set, estimation uses dataset size as conservative estimate."""
         orchestrator = OptimizationOrchestrator(

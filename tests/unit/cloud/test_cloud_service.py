@@ -172,15 +172,20 @@ class TestTraiGentCloudService:
         """Test successful optimization request processing."""
 
         async def run_test():
-            with patch.object(
-                cloud_service.billing_manager, "check_usage_limits"
-            ) as mock_limits, patch.object(
-                cloud_service.subset_selector, "select_optimal_subset"
-            ) as mock_subset, patch.object(
-                cloud_service, "_run_enhanced_optimization"
-            ) as mock_optimize, patch.object(
-                cloud_service.usage_tracker, "record_optimization"
-            ) as mock_record:
+            with (
+                patch.object(
+                    cloud_service.billing_manager, "check_usage_limits"
+                ) as mock_limits,
+                patch.object(
+                    cloud_service.subset_selector, "select_optimal_subset"
+                ) as mock_subset,
+                patch.object(
+                    cloud_service, "_run_enhanced_optimization"
+                ) as mock_optimize,
+                patch.object(
+                    cloud_service.usage_tracker, "record_optimization"
+                ) as mock_record,
+            ):
 
                 # Mock billing limits check (allowed)
                 mock_limits.return_value = {
@@ -252,15 +257,20 @@ class TestTraiGentCloudService:
                 billing_tier="standard",
             )
 
-            with patch.object(
-                cloud_service.billing_manager, "check_usage_limits"
-            ) as mock_limits, patch.object(
-                cloud_service.subset_selector, "select_optimal_subset"
-            ) as mock_subset, patch.object(
-                cloud_service, "_run_enhanced_optimization"
-            ) as mock_optimize, patch.object(
-                cloud_service.usage_tracker, "record_optimization"
-            ) as mock_record:
+            with (
+                patch.object(
+                    cloud_service.billing_manager, "check_usage_limits"
+                ) as mock_limits,
+                patch.object(
+                    cloud_service.subset_selector, "select_optimal_subset"
+                ) as mock_subset,
+                patch.object(
+                    cloud_service, "_run_enhanced_optimization"
+                ) as mock_optimize,
+                patch.object(
+                    cloud_service.usage_tracker, "record_optimization"
+                ) as mock_record,
+            ):
 
                 mock_limits.return_value = {
                     "allowed": True,
@@ -360,11 +370,10 @@ class TestTraiGentCloudService:
         """Test enhanced optimization for professional tier."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 # Mock Bayesian optimizer
                 mock_optimizer = MagicMock()
@@ -415,11 +424,10 @@ class TestTraiGentCloudService:
         """Test enhanced optimization for standard tier."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 # Mock random optimizer
                 mock_optimizer = MagicMock()
@@ -463,11 +471,10 @@ class TestTraiGentCloudService:
         """Test enhanced optimization for enterprise tier."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 mock_optimizer = MagicMock()
                 mock_optimizer.optimize = AsyncMock(
@@ -508,11 +515,10 @@ class TestTraiGentCloudService:
         """Test enhanced optimization for free tier."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 mock_optimizer = MagicMock()
                 mock_optimizer.optimize = AsyncMock(
@@ -555,11 +561,10 @@ class TestTraiGentCloudService:
         """Test fallback to random optimizer when Bayesian fails."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 # First call (Bayesian) raises exception, second call (random) succeeds
                 mock_optimizer = MagicMock()
@@ -797,14 +802,17 @@ class TestServiceStatistics:
         """Test statistics are updated during optimization."""
 
         async def run_test():
-            with patch.object(
-                cloud_service.billing_manager, "check_usage_limits"
-            ) as mock_limits, patch.object(
-                cloud_service.subset_selector, "select_optimal_subset"
-            ) as mock_subset, patch.object(
-                cloud_service, "_run_enhanced_optimization"
-            ) as mock_optimize, patch.object(
-                cloud_service.usage_tracker, "record_optimization"
+            with (
+                patch.object(
+                    cloud_service.billing_manager, "check_usage_limits"
+                ) as mock_limits,
+                patch.object(
+                    cloud_service.subset_selector, "select_optimal_subset"
+                ) as mock_subset,
+                patch.object(
+                    cloud_service, "_run_enhanced_optimization"
+                ) as mock_optimize,
+                patch.object(cloud_service.usage_tracker, "record_optimization"),
             ):
 
                 # Setup mocks
@@ -848,14 +856,17 @@ class TestServiceStatistics:
         """Test statistics accumulation over multiple optimizations."""
 
         async def run_test():
-            with patch.object(
-                cloud_service.billing_manager, "check_usage_limits"
-            ) as mock_limits, patch.object(
-                cloud_service.subset_selector, "select_optimal_subset"
-            ) as mock_subset, patch.object(
-                cloud_service, "_run_enhanced_optimization"
-            ) as mock_optimize, patch.object(
-                cloud_service.usage_tracker, "record_optimization"
+            with (
+                patch.object(
+                    cloud_service.billing_manager, "check_usage_limits"
+                ) as mock_limits,
+                patch.object(
+                    cloud_service.subset_selector, "select_optimal_subset"
+                ) as mock_subset,
+                patch.object(
+                    cloud_service, "_run_enhanced_optimization"
+                ) as mock_optimize,
+                patch.object(cloud_service.usage_tracker, "record_optimization"),
             ):
 
                 # Setup mocks
@@ -927,11 +938,10 @@ class TestEdgeCases:
         """Test optimization with unknown billing tier."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.service.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.cloud.service.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch("traigent.cloud.service.get_optimizer") as mock_get_optimizer,
+                patch("traigent.cloud.service.LocalEvaluator") as mock_evaluator_class,
+            ):
 
                 mock_optimizer = MagicMock()
                 mock_optimizer.optimize = AsyncMock(

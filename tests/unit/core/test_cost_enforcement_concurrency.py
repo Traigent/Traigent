@@ -73,12 +73,12 @@ class TestCostEnforcerConcurrency:
                         _ = enforcer.accumulated_cost
 
                     # Verify invariants after each operation
-                    assert enforcer._in_flight_count >= 0, (
-                        f"in_flight_count negative: {enforcer._in_flight_count}"
-                    )
-                    assert enforcer._reserved_cost >= 0, (
-                        f"reserved_cost negative: {enforcer._reserved_cost}"
-                    )
+                    assert (
+                        enforcer._in_flight_count >= 0
+                    ), f"in_flight_count negative: {enforcer._in_flight_count}"
+                    assert (
+                        enforcer._reserved_cost >= 0
+                    ), f"reserved_cost negative: {enforcer._reserved_cost}"
 
                 except Exception as e:
                     with lock:
@@ -133,9 +133,9 @@ class TestCostEnforcerConcurrency:
             t2.join()
 
             # Exactly one should succeed
-            assert sum(results) == 1, (
-                f"Iteration {iteration}: Expected exactly one True, got {results}"
-            )
+            assert (
+                sum(results) == 1
+            ), f"Iteration {iteration}: Expected exactly one True, got {results}"
 
             # Invariants still hold
             assert enforcer._in_flight_count >= 0
@@ -177,9 +177,9 @@ class TestCostEnforcerConcurrency:
             t.join()
 
         # All acquired permits should be released
-        assert acquired_count == released_count, (
-            f"Mismatch: acquired={acquired_count}, released={released_count}"
-        )
+        assert (
+            acquired_count == released_count
+        ), f"Mismatch: acquired={acquired_count}, released={released_count}"
 
         # Invariants
         assert enforcer._in_flight_count == 0
@@ -274,7 +274,9 @@ class TestCostEnforcerConcurrency:
         # Invariants
         assert enforcer._in_flight_count == 0  # All processed
         # Use approximate comparison for floating point (may have tiny rounding errors)
-        assert abs(enforcer._reserved_cost) < 1e-10, f"reserved_cost not zero: {enforcer._reserved_cost}"
+        assert (
+            abs(enforcer._reserved_cost) < 1e-10
+        ), f"reserved_cost not zero: {enforcer._reserved_cost}"
         assert len(enforcer._active_permits) == 0
         assert enforcer._accumulated_cost <= enforcer.config.limit + 0.01
 

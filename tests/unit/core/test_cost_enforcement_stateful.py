@@ -60,7 +60,9 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
 
         # Shadow model for verification
         self.model_active_permits: set[int] = set()  # permit IDs that are still active
-        self.model_released_permits: set[int] = set()  # permit IDs that have been released
+        self.model_released_permits: set[int] = (
+            set()
+        )  # permit IDs that have been released
         self.model_denied_count: int = 0
         # Start at -1 so first permit (id=1) passes monotonicity check
         self.model_last_permit_id: int = -1
@@ -110,7 +112,9 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         elif was_orphaned:
             # First release of orphaned permit (after reset) should succeed
             # because the Permit object's active flag was not cleared by reset
-            assert result is True, f"First release of orphaned permit {permit.id} should succeed"
+            assert (
+                result is True
+            ), f"First release of orphaned permit {permit.id} should succeed"
             self.model_orphaned_permits.discard(permit.id)
             self.model_released_permits.add(permit.id)
         else:
@@ -165,16 +169,16 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
     @invariant()
     def in_flight_count_never_negative(self) -> None:
         """I1: in_flight_count >= 0"""
-        assert self.enforcer._in_flight_count >= 0, (
-            f"in_flight_count is negative: {self.enforcer._in_flight_count}"
-        )
+        assert (
+            self.enforcer._in_flight_count >= 0
+        ), f"in_flight_count is negative: {self.enforcer._in_flight_count}"
 
     @invariant()
     def reserved_cost_never_negative(self) -> None:
         """I2: reserved_cost >= 0"""
-        assert self.enforcer._reserved_cost >= 0, (
-            f"reserved_cost is negative: {self.enforcer._reserved_cost}"
-        )
+        assert (
+            self.enforcer._reserved_cost >= 0
+        ), f"reserved_cost is negative: {self.enforcer._reserved_cost}"
 
     @invariant()
     def active_permits_equals_in_flight(self) -> None:
@@ -274,7 +278,8 @@ class TestCostEnforcerStateMachineAdditional:
     )
     @settings(max_examples=50, deadline=None)
     def test_random_operation_sequence(
-        self, ops: list[tuple[str, float]],
+        self,
+        ops: list[tuple[str, float]],
     ) -> None:
         """Test random sequences of all operations."""
         os.environ["TRAIGENT_MOCK_MODE"] = "false"
@@ -328,9 +333,9 @@ class TestCostEnforcerStateMachineAdditional:
 
         # All IDs should be strictly increasing
         for i in range(1, len(permit_ids)):
-            assert permit_ids[i] > permit_ids[i - 1], (
-                f"Permit IDs not monotonic: {permit_ids}"
-            )
+            assert (
+                permit_ids[i] > permit_ids[i - 1]
+            ), f"Permit IDs not monotonic: {permit_ids}"
 
     @given(st.integers(min_value=5, max_value=15))
     @settings(max_examples=20, deadline=None)
@@ -368,7 +373,9 @@ class TestDeniedPermitProperties:
         """Verify denied permits have correct properties (I7)."""
         os.environ["TRAIGENT_MOCK_MODE"] = "false"
         # Very low limit to force denial
-        enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1))
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
+        )
 
         permit = enforcer.acquire_permit()
 
@@ -381,7 +388,9 @@ class TestDeniedPermitProperties:
     def test_denied_permit_release_is_safe(self) -> None:
         """Verify releasing a denied permit doesn't affect state."""
         os.environ["TRAIGENT_MOCK_MODE"] = "false"
-        enforcer = CostEnforcer(CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1))
+        enforcer = CostEnforcer(
+            CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
+        )
 
         initial_in_flight = enforcer._in_flight_count
         initial_reserved = enforcer._reserved_cost
