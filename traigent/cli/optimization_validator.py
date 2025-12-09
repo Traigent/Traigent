@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+from datetime import UTC
 from typing import Any
 
 from rich.console import Console
@@ -414,7 +415,7 @@ class OptimizationValidator:
         Returns:
             Mock TrialResult object
         """
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         return TrialResult(
             trial_id=f"mock_{config_type}",
@@ -422,6 +423,6 @@ class OptimizationValidator:
             metrics=metrics,
             status=TrialStatus.COMPLETED,
             duration=0.1,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             error_message=None,
         )

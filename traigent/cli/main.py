@@ -42,7 +42,8 @@ def _resolve_workspace_path(path: Path, description: str) -> Path:
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--debug", is_flag=True, help="Enable debug logging")
-def cli(verbose: bool, debug: bool) -> None:
+@click.option("--quiet", "-q", is_flag=True, help="Suppress all logging (errors only)")
+def cli(verbose: bool, debug: bool, quiet: bool) -> None:
     """TraiGent SDK - Open-source LLM optimization toolkit.
 
     TraiGent makes it effortless to optimize your LLM applications with
@@ -52,8 +53,11 @@ def cli(verbose: bool, debug: bool) -> None:
         traigent info              # Show version information
         traigent algorithms        # List available algorithms
         traigent --verbose info    # Verbose output
+        traigent --quiet info      # Suppress logs
     """
-    if debug:
+    if quiet:
+        setup_logging("ERROR")
+    elif debug:
         setup_logging("DEBUG")
     elif verbose:
         setup_logging("INFO")
@@ -239,7 +243,10 @@ def optimize(
             is_optimized = False
             if inspect.isfunction(obj) and hasattr(obj, "optimize"):
                 is_optimized = True
-            elif hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
+            elif (
+                hasattr(obj, "__class__")
+                and obj.__class__.__name__ == "OptimizedFunction"
+            ):
                 is_optimized = True
             elif hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
                 # Additional check for objects with optimize method
@@ -623,18 +630,32 @@ def examples() -> None:
         },
         {
             "title": "3. OpenAI Integration",
-            "code": """from traigent.integrations import optimize_openai_chat
+            "code": """import traigent
+from traigent.integrations import enable_openai_optimization
 
-        result = optimize_openai_chat(
-            dataset_path="data/qa_dataset.jsonl",
-            system_message="You are a helpful assistant.",
-            objectives=["accuracy", "cost"],
-            max_trials=20
-        )
+# Enable OpenAI SDK optimization
+enable_openai_optimization()
 
-        # Use optimized function
-        optimized_chat = result.create_optimized_function()
-        response = optimized_chat("What is machine learning?")""",
+@traigent.optimize(
+    eval_dataset="data/qa_dataset.jsonl",
+    objectives=["accuracy", "cost"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.5, 1.0]
+    }
+)
+def chat_agent(query: str) -> str:
+    import openai
+    response = openai.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": query}]
+    )
+    return response.choices[0].message.content
+
+# Run optimization
+import asyncio
+results = asyncio.run(chat_agent.optimize())
+print(f"Best config: {results.best_config}")""",
         },
         {
             "title": "4. Production Features",
@@ -670,257 +691,245 @@ def _get_basic_template() -> str:
     """Get basic optimization template."""
     return '''"""Basic TraiGent optimization example."""
 
-    import asyncio
-    import traigent
+import asyncio
+import traigent
 
-    # Create your evaluation dataset (JSONL format)
-    # Each line: {"input": {"text": "..."}, "output": "expected_result"}
+# Create your evaluation dataset (JSONL format)
+# Each line: {"input": {"text": "..."}, "output": "expected_result"}
 
-    @traigent.optimize(
-        eval_dataset="my_dataset.jsonl",
-        objectives=["accuracy"],
-        configuration_space={
-            "model": ["gpt-4o-mini", "GPT-4o"],
-            "temperature": (0.0, 1.0),
-            "max_tokens": [100, 250, 500]
-        }
+
+@traigent.optimize(
+    eval_dataset="my_dataset.jsonl",
+    objectives=["accuracy"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": (0.0, 1.0),
+        "max_tokens": [100, 250, 500]
+    }
+)
+def my_function(input_text: str, **config) -> str:
+    """Your function to optimize."""
+    # Replace with your actual logic
+    model = config.get("model", "gpt-4o-mini")
+    temperature = config.get("temperature", 0.7)
+    max_tokens = config.get("max_tokens", 150)
+
+    # Example: call your LLM here
+    result = f"Processed '{input_text}' with {model} (temp={temperature})"
+    return result
+
+
+async def main():
+    """Run optimization."""
+    print("Starting optimization...")
+
+    # Run optimization
+    result = await my_function.optimize(
+        algorithm="random",
+        max_trials=10
     )
-    def my_function(input_text: str, **config) -> str:
-        """Your function to optimize."""
-        # Replace with your actual logic
-        model = config.get("model", "gpt-4o-mini")
-        temperature = config.get("temperature", 0.7)
-        max_tokens = config.get("max_tokens", 150)
 
-        # Example: call your LLM here
-        result = f"Processed '{input_text}' with {model} (temp={temperature})"
-        return result
+    print(f"Best score: {result.best_score:.3f}")
+    print(f"Best config: {result.best_config}")
 
-    async def main():
-        """Run optimization."""
-        print("Starting optimization...")
+    # Use optimized function
+    optimized_result = my_function("test input")
+    print(f"Optimized result: {optimized_result}")
 
-        # Run optimization
-        result = await my_function.optimize(
-            algorithm="random",
-            max_trials=10
-        )
 
-        print(f"Best score: {result.best_score:.3f}")
-        print(f"Best config: {result.best_config}")
-
-        # Use optimized function
-        optimized_result = my_function("test input")
-        print(f"Optimized result: {optimized_result}")
-
-    if __name__ == "__main__":
-        asyncio.run(main())
-    '''
+if __name__ == "__main__":
+    asyncio.run(main())
+'''
 
 
 def _get_multi_objective_template() -> str:
     """Get multi-objective optimization template."""
     return '''"""Multi-objective optimization with TraiGent."""
 
-    import asyncio
-    import traigent
-    from traigent.utils.multi_objective import ParetoFrontCalculator
+import asyncio
+import traigent
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
-    @traigent.optimize(
-        eval_dataset="my_dataset.jsonl",
-        objectives=["accuracy", "speed", "cost"],
-        configuration_space={
-            "model": ["gpt-4o-mini", "GPT-4o"],
-            "temperature": (0.0, 1.0),
-            "strategy": ["fast", "balanced", "accurate"]
-        }
+# Define custom objectives with weights
+custom_objectives = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
+    ObjectiveDefinition("latency", orientation="minimize", weight=0.3),
+    ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
+])
+
+
+@traigent.optimize(
+    eval_dataset="my_dataset.jsonl",
+    objectives=custom_objectives,
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": (0.0, 1.0),
+        "max_tokens": [100, 250, 500]
+    }
+)
+def multi_objective_function(input_text: str, **config) -> str:
+    """Function with multiple objectives to optimize.
+
+    TraiGent automatically tracks:
+    - accuracy: compared against expected output
+    - latency: response time
+    - cost: token usage costs
+    """
+    # Your LLM call here - TraiGent tracks metrics automatically
+    model = config.get("model", "gpt-4o-mini")
+    return f"Processed '{input_text}' with {model}"
+
+
+async def main():
+    """Run multi-objective optimization."""
+    print("Starting multi-objective optimization...")
+    print("Balancing: accuracy (50%), latency (30%), cost (20%)")
+
+    result = await multi_objective_function.optimize(
+        algorithm="random",
+        max_trials=20
     )
-    def multi_objective_function(input_text: str, **config) -> dict:
-        """Function with multiple objectives to optimize."""
-        import time
-        import random
 
-        model = config.get("model", "gpt-4o-mini")
-        strategy = config.get("strategy", "balanced")
+    print(f"\\nTotal trials: {len(result.trials)}")
+    print(f"Best score: {result.best_score:.3f}")
+    print(f"Best config: {result.best_config}")
 
-        # Simulate processing time based on strategy
-        if strategy == "fast":
-            time.sleep(0.1)
-            accuracy = 0.7 + random.uniform(0, 0.2)
-            cost = 0.001
-        elif strategy == "accurate":
-            time.sleep(0.5)
-            accuracy = 0.9 + random.uniform(0, 0.1)
-            cost = 0.005
-        else:  # balanced
-            time.sleep(0.3)
-            accuracy = 0.8 + random.uniform(0, 0.15)
-            cost = 0.003
+    # Show trade-off analysis
+    if hasattr(result, 'trials') and result.trials:
+        print("\\nTop 3 configurations:")
+        sorted_trials = sorted(result.trials, key=lambda t: t.score, reverse=True)[:3]
+        for i, trial in enumerate(sorted_trials, 1):
+            print(f"  {i}. {trial.config} -> score={trial.score:.3f}")
 
-        # Return metrics for evaluation
-        return {
-            "result": f"Processed with {strategy} strategy",
-            "accuracy": accuracy,
-            "speed": 1.0 / time.time(),  # Simple speed metric
-            "cost": cost
-        }
 
-    async def main():
-        """Run multi-objective optimization."""
-        print("Starting multi-objective optimization...")
-
-        result = await multi_objective_function.optimize(
-            algorithm="random",
-            max_trials=20
-        )
-
-        # Analyze Pareto front
-        pareto_calc = ParetoFrontCalculator(maximize={"accuracy": True, "speed": True, "cost": False})
-        pareto_front = pareto_calc.calculate_pareto_front(
-            result.successful_trials,
-            ["accuracy", "speed", "cost"]
-        )
-
-        print(f"Total trials: {len(result.trials)}")
-        print(f"Pareto-optimal solutions: {len(pareto_front)}")
-
-        print("\\nPareto-optimal configurations:")
-        for i, point in enumerate(pareto_front[:5], 1):
-            print(f"{i}. Config: {point.config}")
-            print(f"   Metrics: {point.objectives}")
-
-    if __name__ == "__main__":
-        asyncio.run(main())
-    '''
+if __name__ == "__main__":
+    asyncio.run(main())
+'''
 
 
 def _get_langchain_template() -> str:
     """Get LangChain integration template."""
     return '''"""LangChain integration with TraiGent."""
 
-    import asyncio
-    from traigent.integrations import TraigentLangChainOptimizer
+import asyncio
+import traigent
 
-    try:
-        from langchain.llms import OpenAI
-        from langchain.prompts import PromptTemplate
-        from langchain.chains import LLMChain
-    except ImportError:
-        print("LangChain not installed. Install with: pip install langchain")
-        exit(1)
+try:
+    from langchain_openai import ChatOpenAI
+except ImportError:
+    print("LangChain not installed. Install with: pip install langchain-openai")
+    exit(1)
 
-    async def main():
-        """Optimize LangChain components."""
-        optimizer = TraigentLangChainOptimizer()
 
-        # 1. Optimize LLM parameters
-        print("Optimizing LLM parameters...")
-        llm_result = optimizer.optimize_llm_parameters(
-            llm_class=OpenAI,
-            dataset_path="data/qa_dataset.jsonl",
-            objectives=["accuracy", "latency"],
-            parameter_ranges={
-                "temperature": (0.0, 1.0),
-                "max_tokens": [100, 250, 500]
-            }
-        )
+@traigent.optimize(
+    eval_dataset="data/qa_dataset.jsonl",
+    objectives=["accuracy", "cost"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.5, 1.0],
+        "max_tokens": [100, 250, 500]
+    }
+)
+def langchain_agent(question: str) -> str:
+    """LangChain-based agent that TraiGent will optimize.
 
-        print(f"Best LLM config: {llm_result.best_config}")
+    TraiGent automatically intercepts ChatOpenAI parameters and
+    injects optimized values during trials.
+    """
+    llm = ChatOpenAI(
+        model="gpt-4o-mini",  # TraiGent will override
+        temperature=0.7,      # TraiGent will override
+        max_tokens=150        # TraiGent will override
+    )
+    response = llm.invoke(f"Question: {question}\\nAnswer:")
+    return response.content
 
-        # 2. Optimize prompt templates
-        print("\\nOptimizing prompt templates...")
-        prompt_result = optimizer.optimize_prompt_template(
-            prompt_variables=["question"],
-            dataset_path="data/qa_dataset.jsonl",
-            llm_class=OpenAI,
-            template_variations=[
-                "Answer this question: {question}",
-                "Please provide a detailed answer to: {question}",
-                "Q: {question}\\nA:",
-                "Question: {question}\\nThought: Let me think about this.\\nAnswer:"
-            ]
-        )
 
-        print(f"Best prompt config: {prompt_result.best_config}")
+async def main():
+    """Run LangChain optimization."""
+    print("Optimizing LangChain agent...")
 
-        # 3. Create optimized chain
-        best_llm = OpenAI(**llm_result.best_config)
-        best_prompt = PromptTemplate(
-            template=prompt_result.best_config["template"],
-            input_variables=["question"]
-        )
+    result = await langchain_agent.optimize(
+        algorithm="random",
+        max_trials=10
+    )
 
-        optimized_chain = LLMChain(llm=best_llm, prompt=best_prompt)
+    print(f"Best score: {result.best_score:.3f}")
+    print(f"Best config: {result.best_config}")
 
-        # Test optimized chain
-        result = optimized_chain.run("What is machine learning?")
-        print(f"\\nOptimized result: {result}")
+    # Apply best config for future calls
+    langchain_agent.apply_best_config(result)
 
-    if __name__ == "__main__":
-        asyncio.run(main())
-    '''
+    # Test with optimized parameters
+    answer = langchain_agent("What is machine learning?")
+    print(f"\\nOptimized answer: {answer}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+'''
 
 
 def _get_openai_template() -> str:
     """Get OpenAI integration template."""
     return '''"""OpenAI SDK integration with TraiGent."""
 
-    import asyncio
-    from traigent.integrations import optimize_openai_chat
+import asyncio
+import traigent
+from traigent.integrations import enable_openai_optimization
 
-    async def main():
-        """Optimize OpenAI API calls."""
+# Enable OpenAI SDK optimization (intercepts openai.chat.completions.create)
+enable_openai_optimization()
 
-        # Optimize chat completion
-        print("Optimizing OpenAI chat completion...")
-        result = optimize_openai_chat(
-            dataset_path="data/chat_dataset.jsonl",
-            system_message="You are a helpful assistant.",
-            objectives=["accuracy", "cost", "latency"],
-            max_trials=15
-        )
 
-        print(f"Best score: {result.best_score:.3f}")
-        print(f"Best config: {result.best_config}")
+@traigent.optimize(
+    eval_dataset="data/chat_dataset.jsonl",
+    objectives=["accuracy", "cost", "latency"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.0, 0.5, 1.0],
+        "max_tokens": [100, 250, 500]
+    },
+    max_trials=15
+)
+def chat_agent(query: str) -> str:
+    """Chat function that TraiGent will optimize."""
+    from openai import OpenAI
+    client = OpenAI()
 
-        # Create optimized function using best config
-        from openai import OpenAI
-        client = OpenAI()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # TraiGent will override this
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {"role": "user", "content": query}
+        ],
+        temperature=0.7,  # TraiGent will override this
+        max_tokens=150    # TraiGent will override this
+    )
+    return response.choices[0].message.content
 
-        def optimized_chat(user_message: str) -> str:
-            """Chat function with optimized parameters."""
-            response = client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": user_message}
-                ],
-                **result.best_config
-            )
-            return response.choices[0].message.content
 
-        # Test optimized function
-        response = optimized_chat("Explain quantum computing in simple terms")
-        print(f"\\nOptimized response: {response}")
+async def main():
+    """Run optimization and use the result."""
+    print("Optimizing OpenAI chat completion...")
 
-        # Cost-efficient optimization
-        print("\\n" + "="*50)
-        print("Running cost-efficient optimization...")
+    # Run optimization
+    result = await chat_agent.optimize()
 
-        from traigent.integrations import create_cost_efficient_chat_optimizer
-        cost_config = create_cost_efficient_chat_optimizer(max_cost_per_call=0.005)
+    print(f"Best score: {result.best_score:.3f}")
+    print(f"Best config: {result.best_config}")
 
-        cost_result = optimize_openai_chat(
-            dataset_path="data/chat_dataset.jsonl",
-            objectives=["accuracy", "cost"],
-            parameter_ranges=cost_config,
-            max_trials=10
-        )
+    # Apply best config for future calls
+    chat_agent.apply_best_config(result)
 
-        print(f"Cost-efficient config: {cost_result.best_config}")
+    # Test with optimized parameters
+    response = chat_agent("Explain quantum computing in simple terms")
+    print(f"\\nOptimized response: {response}")
 
-    if __name__ == "__main__":
-        asyncio.run(main())
-    '''
+
+if __name__ == "__main__":
+    asyncio.run(main())
+'''
 
 
 @cli.command()
