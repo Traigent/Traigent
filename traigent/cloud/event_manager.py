@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger

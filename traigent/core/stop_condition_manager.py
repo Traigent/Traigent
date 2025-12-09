@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from traigent.api.types import TrialResult
 
@@ -141,7 +142,7 @@ class StopConditionManager:
         return False, None
 
     def register_cost_limit_condition(
-        self, cost_enforcer: "CostEnforcer"
+        self, cost_enforcer: CostEnforcer
     ) -> CostLimitStopCondition:
         """Register a cost limit stop condition using the shared CostEnforcer.
 

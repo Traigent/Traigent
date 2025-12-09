@@ -9,7 +9,7 @@ import hashlib
 import json
 import logging
 import pickle
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -43,7 +43,7 @@ class PersistenceManager:
         """
         if name is None:
             # Generate name from metadata or generic name
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             func_slug = result.metadata.get("function_slug") or sanitize_identifier(
                 str(result.metadata.get("function_name", "optimization"))
             )
@@ -68,7 +68,7 @@ class PersistenceManager:
             "success_rate": result.success_rate,
             "duration": result.duration,
             "convergence_info": result.convergence_info,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "total_trials": len(result.trials),
             "successful_trials": len(result.successful_trials),
         }
@@ -168,7 +168,7 @@ class PersistenceManager:
                         timestamp=(
                             datetime.fromisoformat(t["timestamp"])
                             if t.get("timestamp")
-                            else datetime.now(timezone.utc)
+                            else datetime.now(UTC)
                         ),
                         error_message=t.get("error_message"),
                         metadata=t.get("metadata", {}),

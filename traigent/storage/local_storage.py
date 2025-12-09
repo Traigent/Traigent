@@ -10,7 +10,7 @@ import os
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
 from typing import Any
@@ -195,7 +195,7 @@ class LocalStorageManager:
         Returns:
             session_id: Unique identifier for the session
         """
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
         safe_function = sanitize_identifier(function_name)
         session_id = f"{timestamp.strftime('%Y%m%d_%H%M%S')}_{safe_function}"
 
@@ -220,7 +220,7 @@ class LocalStorageManager:
         session = self.load_session(session_id)
         if session:
             session.status = status
-            session.updated_at = datetime.now(timezone.utc).isoformat()
+            session.updated_at = datetime.now(UTC).isoformat()
             self._save_session(session)
             logger.debug(f"Updated session {session_id} status to {status}")
 
@@ -253,14 +253,14 @@ class LocalStorageManager:
             trial_id=len(session.trials) + 1,
             config=config,
             score=score,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             metadata=metadata,
             error=error,
         )
 
         session.trials.append(trial_result)
         session.completed_trials = len(session.trials)
-        session.updated_at = datetime.now(timezone.utc).isoformat()
+        session.updated_at = datetime.now(UTC).isoformat()
 
         # Update best score if this is better
         if session.best_score is None or score > session.best_score:
@@ -289,7 +289,7 @@ class LocalStorageManager:
             return None
 
         session.status = status or OptimizationStatus.COMPLETED.value
-        session.updated_at = datetime.now(timezone.utc).isoformat()
+        session.updated_at = datetime.now(UTC).isoformat()
         self._save_session(session)
 
         logger.info(f"Finalized session {session_id} with status {status}")
@@ -316,7 +316,7 @@ class LocalStorageManager:
             # Handle backward compatibility for missing timestamp fields
             from datetime import datetime
 
-            current_time = datetime.now(timezone.utc).isoformat()
+            current_time = datetime.now(UTC).isoformat()
 
             # Provide default values for missing required fields
             if "created_at" not in data:
@@ -494,7 +494,7 @@ class LocalStorageManager:
         Returns:
             Number of sessions deleted
         """
-        cutoff_date = datetime.now(timezone.utc).timestamp() - (days * 24 * 60 * 60)
+        cutoff_date = datetime.now(UTC).timestamp() - (days * 24 * 60 * 60)
         deleted_count = 0
 
         for session in self.list_sessions():

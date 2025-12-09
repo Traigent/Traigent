@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 import inspect
+from collections.abc import Callable
 from functools import wraps
-from typing import Any, Callable
+from typing import Any
 
 __all__ = ["create_runtime_shim"]
 

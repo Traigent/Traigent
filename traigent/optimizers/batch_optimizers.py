@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from traigent.api.types import TrialResult
 from traigent.evaluators.base import BaseEvaluator, Dataset

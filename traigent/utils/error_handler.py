@@ -6,7 +6,8 @@ Provides helpful error messages with actionable fixes and documentation links.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-ORCH-LIFECYCLE FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-ORCH-003 REQ-CLOUD-009 REQ-SEC-010 SYNC-OptimizationFlow SYNC-CloudHybrid
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 
 class TraiGentError(Exception):
@@ -129,7 +130,7 @@ class ErrorHandler:
             check_func = pattern_info["check"]
             if callable(check_func) and check_func(error):
                 handler_name = str(pattern_info["handler"])
-                handler: Optional[Callable[[Exception], None]] = getattr(
+                handler: Callable[[Exception], None] | None = getattr(
                     cls, handler_name, None
                 )
                 if handler is not None and callable(handler):

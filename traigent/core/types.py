@@ -8,9 +8,10 @@ parameter definition, and trial management.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 from traigent.api.types import OptimizationStatus, Trial, TrialResult, TrialStatus
 from traigent.utils.logging import get_logger

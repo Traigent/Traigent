@@ -79,9 +79,7 @@ class CostLimitExceeded(Exception):
     def __init__(self, accumulated: float, limit: float) -> None:
         self.accumulated = accumulated
         self.limit = limit
-        super().__init__(
-            f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD"
-        )
+        super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
 
 
 class OptimizationAborted(Exception):
@@ -288,7 +286,6 @@ class CostEnforcer:
         """
         return self._mock_mode_cached
 
-
     def check_and_approve(self, estimated_cost: float) -> bool:
         """Pre-optimization handshake. Returns True if approved.
 
@@ -317,8 +314,7 @@ class CostEnforcer:
 
         if self._check_approval_token():
             logger.info(
-                f"Cost approved via token file "
-                f"(limit: ${self.config.limit:.2f})"
+                f"Cost approved via token file " f"(limit: ${self.config.limit:.2f})"
             )
             return True
 
@@ -736,7 +732,10 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true":
+                if (
+                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
+                    == "true"
+                ):
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
                         "TRAIGENT_REQUIRE_COST_TRACKING=true. "
@@ -876,7 +875,10 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true":
+                if (
+                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
+                    == "true"
+                ):
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
                         "TRAIGENT_REQUIRE_COST_TRACKING=true. "

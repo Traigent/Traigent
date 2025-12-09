@@ -8,8 +8,9 @@ import importlib
 import inspect
 import sys
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..utils.logging import get_logger
 

@@ -4,10 +4,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from statistics import mean
-from typing import Any, Iterable
+from typing import Any
 
 import optuna
 
@@ -43,7 +44,7 @@ def _create_trial_result(
         metrics={"score": score},
         status=TrialStatus.COMPLETED,
         duration=0.0,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
 
 

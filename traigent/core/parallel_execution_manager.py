@@ -360,9 +360,7 @@ class ParallelExecutionManager:
         # Create a denied permit for cancelled/failed trials
         denied_permit = Permit(id=-1, amount=0.0, active=False)
 
-        async def execute_with_permit(
-            coro: Any, index: int
-        ) -> tuple[int, Any, Permit]:
+        async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
             """Execute coroutine if permit acquired, return (index, result, permit).
 
             Always returns a tuple (index, result_or_exception, permit)
@@ -406,9 +404,7 @@ class ParallelExecutionManager:
                 return (index, e, denied_permit)
 
         # Create bounded tasks preserving order
-        tasks = [
-            execute_with_permit(coro, idx) for idx, coro in enumerate(coroutines)
-        ]
+        tasks = [execute_with_permit(coro, idx) for idx, coro in enumerate(coroutines)]
 
         # Run all tasks and collect results
         indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -427,7 +423,9 @@ class ParallelExecutionManager:
             elif isinstance(item, tuple) and len(item) == 2:
                 # Legacy format (should not happen, but handle gracefully)
                 _index, result = item
-                results.append(PermittedTrialResult(result=result, permit=denied_permit))
+                results.append(
+                    PermittedTrialResult(result=result, permit=denied_permit)
+                )
             else:
                 # Exception from gather itself - wrap with denied permit
                 results.append(PermittedTrialResult(result=item, permit=denied_permit))

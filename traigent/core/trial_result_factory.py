@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from traigent.api.types import TrialResult, TrialStatus
@@ -56,7 +56,7 @@ def build_success_result(
         metrics=getattr(eval_result, "metrics", {}) or {},
         status=TrialStatus.COMPLETED,
         duration=duration,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         metadata=trial_metadata,
     )
 
@@ -151,7 +151,7 @@ def build_pruned_result(
         metrics=metrics,
         status=TrialStatus.PRUNED,
         duration=duration,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         metadata=metadata,
     )
 
@@ -196,7 +196,7 @@ def build_failed_result(
         metrics=metrics,
         status=TrialStatus.FAILED,
         duration=duration,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         error_message=str(error),
         metadata=metadata,
     )

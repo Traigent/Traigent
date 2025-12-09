@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import math
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
 from traigent.core.orchestrator_helpers import (
@@ -174,7 +175,11 @@ class TrialLifecycle:
             )
         except Exception:
             # Release permit on exception to prevent stranding
-            if permit is not None and permit.active and orchestrator.cost_enforcer is not None:
+            if (
+                permit is not None
+                and permit.active
+                and orchestrator.cost_enforcer is not None
+            ):
                 await orchestrator.cost_enforcer.release_permit_async(permit)
                 logger.debug(
                     "Released permit %d after exception in run_sequential_trial",
@@ -249,7 +254,10 @@ class TrialLifecycle:
 
             async with TrialContext(
                 trial_id=trial_id,
-                metadata={"config": evaluation_config, "optuna_trial_id": optuna_trial_id},
+                metadata={
+                    "config": evaluation_config,
+                    "optuna_trial_id": optuna_trial_id,
+                },
             ):
                 eval_result = await orchestrator.evaluator.evaluate(
                     func, evaluation_config, dataset, **evaluate_kwargs
