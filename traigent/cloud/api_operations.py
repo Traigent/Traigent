@@ -196,6 +196,15 @@ class ApiOperations:
         Returns:
             Tuple of (session_id, experiment_id, experiment_run_id)
         """
+        # Skip cloud session creation in mock mode - run fully offline
+        if is_mock_mode():
+            logger.debug("Mock mode: using local session IDs")
+            return (
+                f"mock_session_{int(time.time())}",
+                f"mock_exp_{int(time.time())}",
+                f"mock_run_{int(time.time())}",
+            )
+
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, using fallback IDs")
             return (
