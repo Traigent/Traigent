@@ -228,6 +228,11 @@ class TrialOperations:
         Returns:
             True if successful, False otherwise
         """
+        # Skip backend calls in mock mode - run fully offline
+        if is_mock_mode():
+            logger.debug(f"Mock mode: skipping trial registration for {trial_id}")
+            return True
+
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping trial registration")
             return False
@@ -528,6 +533,11 @@ class TrialOperations:
         Returns:
             True if successful, False otherwise
         """
+        # Skip backend calls in mock mode - run fully offline
+        if is_mock_mode():
+            logger.debug(f"Mock mode: skipping trial result submission for {trial_id}")
+            return True
+
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping result submission")
             return False
@@ -651,6 +661,11 @@ class TrialOperations:
         Returns:
             True if submission successful, False otherwise
         """
+        # Skip backend calls in mock mode - run fully offline
+        if is_mock_mode():
+            logger.debug(f"Mock mode: skipping summary stats submission for {trial_id}")
+            return True
+
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available, skipping summary stats submission")
             return False
@@ -777,6 +792,13 @@ class TrialOperations:
         Returns:
             bool: True if update successful, False otherwise
         """
+        # Skip backend calls in mock mode - run fully offline
+        if is_mock_mode():
+            logger.debug(
+                f"Mock mode: skipping weighted score update for trial {trial_id}"
+            )
+            return True
+
         if not AIOHTTP_AVAILABLE:
             logger.warning("aiohttp not available")
             return False
