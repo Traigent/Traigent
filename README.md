@@ -98,6 +98,13 @@ from traigent.api.decorators import EvaluationOptions
 # Load environment variables (API keys, etc.)
 load_dotenv()
 
+# Define your knowledge base (used during optimization and inference)
+KNOWLEDGE_BASE = [
+    "Returns accepted within 30 days with original receipt",
+    "Free shipping on orders over $50",
+    "Contact support@example.com for order issues",
+]
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -106,7 +113,7 @@ load_dotenv()
     },
     evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl")  # Provide your dataset
 )
-def customer_support_agent(query: str, knowledge_base: list) -> str:
+def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
 
     # Your existing code - TraiGent optimizes these automatically!
@@ -129,9 +136,8 @@ results = asyncio.run(customer_support_agent.optimize())
 # Step 2: Apply best configuration
 customer_support_agent.apply_best_config(results)
 
-# Step 3: Use optimized agent
-knowledge = ["Returns accepted within 30 days", "Free shipping on orders over $50"]
-answer = customer_support_agent("What's your return policy?", knowledge)
+# Step 3: Use optimized agent (uses default KNOWLEDGE_BASE, or pass custom)
+answer = customer_support_agent("What's your return policy?")
 # 🔧 Using: gpt-4o-mini, temp=0.1, k=3  # ← Shows optimized parameters!
 
 # Step 4: View optimization results
