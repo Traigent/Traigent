@@ -42,7 +42,7 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ## 🚀 Quick Example: See Adaptive Variables in Action
 
-> **Want to run this now?** The code examples below show the pattern but require API keys (e.g., `OPENAI_API_KEY`) when using `ChatOpenAI`. For **no-API-key testing**, use the ready-to-run quickstart examples:
+> **Want to run this now?** First [install TraiGent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
 > ```bash
 > export TRAIGENT_MOCK_MODE=true
 > python examples/quickstart/01_simple_qa.py
@@ -270,20 +270,21 @@ uv pip install traigent
 ```
 -->
 
-### Configure Local & Dev Environment
+### Environment Configuration
 
-Before pointing the SDK at a running backend, export the core environment variables:
+For local development and testing, use mock mode (no backend required):
 
 ```bash
+export TRAIGENT_MOCK_MODE=true  # Run fully offline with simulated responses
+```
+
+Results are stored locally in `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`). Most examples set this automatically to keep logs alongside the example folder.
+
+<!-- Backend configuration (for TraiGent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
 export TRAIGENT_BACKEND_URL=http://localhost:5000
 export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
-export TRAIGENT_MOCK_MODE=false  # set true to stay fully offline
-```
-
-Every scenario in `examples/` calls out these exports (for example, see `examples/docs/EXAMPLES_GUIDE.md` and the README in `examples/core/hello-world/`) so you can copy/paste the exact commands for each experiment.
-
-If you omit the exports, TraiGent automatically falls back to mock/edge mode: API calls are skipped and all optimization logs are written to the path in `TRAIGENT_RESULTS_FOLDER` (defaulting to `~/.traigent`, see `traigent/api/decorators.py:357`). Most examples set `TRAIGENT_RESULTS_FOLDER` with `os.environ.setdefault(...)` so that logs stay alongside the example folder when you run them locally.
+-->
 
 ### Available Feature Sets
 
@@ -325,7 +326,7 @@ uv pip install -e ".[all]"  # Or install everything
 
 4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: TraiGent works in mock mode by default (`TRAIGENT_MOCK_MODE=true`), so you can try all examples without API keys!
+> **Note**: Set `TRAIGENT_MOCK_MODE=true` to run examples without API keys. The quickstart commands above include this export.
 
 ---
 
@@ -748,7 +749,9 @@ def optimized_analyzer(customer_id: str, query: str) -> str:
 | After optimization completes | `result.best_config` | Returned by `func.optimize()`. |
 | When calling the function later | `func.current_config` | Automatically set to the best config. |
 
-### ☁️ Model 2: Cloud-Based Agent Optimization
+### ☁️ Model 2: Cloud-Based Agent Optimization (Coming Soon)
+
+> **Note**: Cloud optimization is under development. The API below shows the planned interface.
 
 ```python
 from traigent.cloud.models import AgentSpecification
@@ -972,14 +975,12 @@ Traigent/
 │   ├── optimizers/    # Optimization algorithms
 │   ├── cloud/         # Cloud integration
 │   └── integrations/  # Framework integrations
-├── playground/        # Interactive UI and experiments
+├── playground/        # Interactive UI (Streamlit control center)
 ├── examples/          # Example scripts and demos
 ├── tests/             # Test suite and configurations
 ├── docs/              # All documentation
-├── reports/           # Analysis and project reports
 ├── scripts/           # Development and automation tools
-├── requirements/      # Dependency specifications
-└── venv/             # Virtual environment (local)
+└── requirements/      # Dependency specifications
 ```
 
 ### Development Setup
@@ -1014,13 +1015,10 @@ pre-commit install
 ### 📂 Clean Project Organization
 
 The project maintains a clean, professional structure:
-- **9 main directories** with clear, single purposes
+- **Core directories** with clear, single purposes
 - **All scripts centralized** in `scripts/` with subdirectory organization
-- **All reports consolidated** in `reports/` with categorization
 - **All documentation unified** in `docs/` with logical grouping
 - **Clean root directory** with only essential files
-
-See `reports/project-status/` for detailed organization documentation.
 
 ## 🤝 Contributing
 
