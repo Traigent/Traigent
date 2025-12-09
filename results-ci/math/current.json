@@ -7,11 +7,11 @@
     "max_tokens": 50
   },
   "metrics": {
-    "accuracy": 0.0,
+    "accuracy": 1.0,
     "cost": 0.0,
     "response_time": 0.0,
     "total_examples": 10,
-    "successful_examples": 0
+    "successful_examples": 10
   },
   "example_results": []
 }
