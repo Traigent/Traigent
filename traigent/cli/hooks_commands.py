@@ -51,7 +51,7 @@ def install(force: bool, path: str | None) -> None:
         console.print("Run this command from within a Git repository")
         raise SystemExit(1)
 
-    console.print(f"\n[bold blue]Installing TraiGent Git hooks[/bold blue]")
+    console.print("\n[bold blue]Installing TraiGent Git hooks[/bold blue]")
     console.print(f"Repository: {repo_path}\n")
 
     installer = HooksInstaller(repo_path)
@@ -64,7 +64,9 @@ def install(force: bool, path: str | None) -> None:
             if success:
                 console.print(f"  [green]Installed[/green]: .git/hooks/{hook_name}")
             else:
-                console.print(f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (exists, use --force)")
+                console.print(
+                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (exists, use --force)"
+                )
 
         if all(results.values()):
             console.print("\n[green]Hooks installed successfully![/green]")
@@ -91,7 +93,7 @@ def uninstall(path: str | None) -> None:
         console.print("[red]Error: Not in a Git repository[/red]")
         raise SystemExit(1)
 
-    console.print(f"\n[bold blue]Uninstalling TraiGent Git hooks[/bold blue]")
+    console.print("\n[bold blue]Uninstalling TraiGent Git hooks[/bold blue]")
 
     installer = HooksInstaller(repo_path)
 
@@ -102,7 +104,9 @@ def uninstall(path: str | None) -> None:
             if success:
                 console.print(f"  [green]Removed[/green]: .git/hooks/{hook_name}")
             else:
-                console.print(f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (not a TraiGent hook)")
+                console.print(
+                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (not a TraiGent hook)"
+                )
 
         console.print("\n[green]Hooks uninstalled![/green]")
 
@@ -120,7 +124,7 @@ def status(path: str | None) -> None:
 
     repo_path = Path(path) if path else find_git_root()
 
-    console.print(f"\n[bold blue]TraiGent Hooks Status[/bold blue]\n")
+    console.print("\n[bold blue]TraiGent Hooks Status[/bold blue]\n")
 
     # Git repository status
     if repo_path is None:
@@ -161,7 +165,9 @@ def status(path: str | None) -> None:
 
 @hooks.command()
 @click.argument("target", default=".", type=click.Path(exists=True))
-@click.option("--config", "-c", type=click.Path(exists=True), help="Path to traigent.yml")
+@click.option(
+    "--config", "-c", type=click.Path(exists=True), help="Path to traigent.yml"
+)
 @click.option("--exit-code", is_flag=True, help="Exit with non-zero code on failure")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
 def validate(target: str, config: str | None, exit_code: bool, verbose: bool) -> None:
@@ -180,14 +186,16 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
 
     target_path = Path(target)
 
-    console.print(f"\n[bold blue]TraiGent Agent Validation[/bold blue]")
+    console.print("\n[bold blue]TraiGent Agent Validation[/bold blue]")
     console.print(f"Target: {target_path}\n")
 
     # Load configuration
     try:
         hooks_config = load_hooks_config(config)
         if verbose:
-            console.print(f"[dim]Configuration loaded from: {config or 'auto-detected'}[/dim]\n")
+            console.print(
+                f"[dim]Configuration loaded from: {config or 'auto-detected'}[/dim]\n"
+            )
     except Exception as e:
         console.print(f"[red]Error loading configuration: {e}[/red]")
         if exit_code:
@@ -209,7 +217,9 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
 
     # No functions found
     if not results:
-        console.print("[yellow]No @traigent.optimize decorated functions found[/yellow]")
+        console.print(
+            "[yellow]No @traigent.optimize decorated functions found[/yellow]"
+        )
         return
 
     # Display results
@@ -291,8 +301,13 @@ def check(quick: bool) -> None:
 
 
 @hooks.command()
-@click.option("--output", "-o", type=click.Path(), default="traigent.yml",
-              help="Output path for configuration file")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    default="traigent.yml",
+    help="Output path for configuration file",
+)
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing file")
 def init(output: str, force: bool) -> None:
     """Create a default traigent.yml configuration file.
@@ -331,13 +346,17 @@ def show(module_path: str, function: str | None) -> None:
     from traigent.cli.function_discovery import discover_optimized_functions
 
     try:
-        functions = discover_optimized_functions(module_path, [function] if function else None)
+        functions = discover_optimized_functions(
+            module_path, [function] if function else None
+        )
     except Exception as e:
         console.print(f"[red]Error loading module: {e}[/red]")
         raise SystemExit(1)
 
     if not functions:
-        console.print("[yellow]No @traigent.optimize decorated functions found[/yellow]")
+        console.print(
+            "[yellow]No @traigent.optimize decorated functions found[/yellow]"
+        )
         return
 
     console.print(f"\n[bold blue]Agent Configurations in {module_path}[/bold blue]\n")
