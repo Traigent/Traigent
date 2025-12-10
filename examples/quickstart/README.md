@@ -13,7 +13,7 @@ pip install -e ".[dev,integrations,analytics]"
 
 ### 1. Simple Q&A Agent (`01_simple_qa.py`)
 
-The basic example from the README showing adaptive variables optimization.
+The basic example from the README showing Tuned Variables optimization.
 
 ```bash
 # Run in mock mode (no API keys needed)
@@ -58,6 +58,7 @@ python examples/quickstart/01_simple_qa.py
 ## Dataset
 
 These examples use `qa_samples.jsonl` located at:
+
 - `examples/datasets/quickstart/qa_samples.jsonl`
 - Also symlinked at repo root as `qa_samples.jsonl`
 
