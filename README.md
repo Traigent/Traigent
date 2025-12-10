@@ -347,6 +347,7 @@ pip install -e ".[all]"
    python examples/quickstart/02_customer_support_rag.py
    python examples/quickstart/03_custom_objectives.py
    ```
+   > 💡 If you see `joblib will operate in serial mode` warnings, that's harmless—see [Restricted Environments](#restricted-environments) to suppress them.
 
 2. **Run the curated walkthroughs**: Explore `examples/core/simple-prompt/run.py` and other examples (each README shows the `export` commands to copy)
 
@@ -354,7 +355,7 @@ pip install -e ".[all]"
 
 4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: Set `TRAIGENT_MOCK_MODE=true` to run examples without API keys. The quickstart commands above include this export.
+> **Note**: `TRAIGENT_MOCK_MODE=true` runs examples without real API calls. The quickstart commands above include this export.
 
 ---
 
