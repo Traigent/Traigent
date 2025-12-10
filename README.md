@@ -133,7 +133,11 @@ def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) ->
     return response.content
 
 # Step 1: Find optimal configuration
-results = asyncio.run(customer_support_agent.optimize())
+# Note: algorithm and max_trials are passed to .optimize(), not the decorator
+results = asyncio.run(customer_support_agent.optimize(
+    algorithm="random",  # Options: "random", "grid", "bayesian"
+    max_trials=20        # Number of configurations to test
+))
 
 # Step 2: Apply best configuration
 customer_support_agent.apply_best_config(results)
@@ -480,6 +484,33 @@ TraiGent works with your existing code through a simple decorator. Here's how th
 - **15% accuracy improvement** (81% → 94%)
 - **20% cost reduction** ($0.15 → $0.12 per 1K queries)
 - **Zero development time** - just add a decorator
+
+**⚙️ Optimization Parameters:**
+
+| Parameter | Where | Description |
+|-----------|-------|-------------|
+| `configuration_space` | `@traigent.optimize()` decorator | Define what parameters to test |
+| `objectives` | `@traigent.optimize()` decorator | Metrics to optimize for |
+| `eval_dataset` | `@traigent.optimize()` decorator | Dataset for evaluation |
+| `algorithm` | `.optimize()` method call | Search algorithm: `"random"`, `"grid"`, `"bayesian"` |
+| `max_trials` | `.optimize()` method call | Number of configurations to test |
+
+```python
+# Decorator defines WHAT to optimize
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data.jsonl"
+)
+def my_agent(query: str) -> str:
+    ...
+
+# Method call defines HOW to optimize
+results = await my_agent.optimize(
+    algorithm="random",  # Search strategy
+    max_trials=20        # Number of trials
+)
+```
 
 ### 🧠 Tuned Variables: The Core Concept
 
