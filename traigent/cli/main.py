@@ -442,11 +442,11 @@ def results(storage_dir: str) -> None:
         console.print(f"Results are stored in: {persistence.base_dir}")
         return
 
-    # Create results table
+    # Create results table with no_wrap to prevent truncation
     table = Table(show_header=True, header_style="bold magenta")
-    table.add_column("Name", style="cyan")
-    table.add_column("Function", style="green")
-    table.add_column("Algorithm")
+    table.add_column("Name", style="cyan", no_wrap=True, min_width=20)
+    table.add_column("Function", style="green", no_wrap=True, min_width=15)
+    table.add_column("Algorithm", no_wrap=True)
     table.add_column("Best Score", justify="right")
     table.add_column("Trials", justify="right")
     table.add_column("Success Rate", justify="right")
