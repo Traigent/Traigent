@@ -11,8 +11,7 @@ import math
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from collections.abc import Mapping as CollectionsMapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,11 +32,9 @@ from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
-)
-from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import (
     ValidationError,
 )
+from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -533,6 +530,7 @@ class BaseEvaluator(ABC):
             "error_rate": self._compute_error_rate,
             "avg_output_length": self._compute_avg_output_length,
             "cost": self._compute_cost,
+            "latency": self._compute_latency,
         }
 
         self._ragas_metric_names: set[str] = set(POPULAR_RAGAS_METRICS)
@@ -809,6 +807,36 @@ class BaseEvaluator(ABC):
             return float(context["cost"])
         if "total_cost" in context:
             return float(context["total_cost"])
+
+        return 0.0
+
+    def _compute_latency(
+        self,
+        outputs: list[Any],
+        expected: list[Any],
+        errors: list[str | None],
+        **context,
+    ) -> float:
+        """Compute average latency (response time) in seconds.
+
+        Returns the average execution time across all successful examples.
+        """
+        if "example_results" in context:
+            example_results = context["example_results"]
+            if example_results:
+                response_times = [
+                    r.execution_time
+                    for r in example_results
+                    if hasattr(r, "execution_time") and r.execution_time > 0
+                ]
+                if response_times:
+                    return sum(response_times) / len(response_times)
+
+        # Fallback: look for latency in context directly
+        if "latency" in context:
+            return float(context["latency"])
+        if "avg_response_time" in context:
+            return float(context["avg_response_time"])
 
         return 0.0
 
