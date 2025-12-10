@@ -194,6 +194,7 @@ resampling_configs.md
 !examples/datasets/**/*.jsonl
 # Keep the quickstart symlink at repo root for README examples
 !qa_samples.jsonl
+!tests/mcp/fixtures/sample_datasets.jsonl
 optimization_results/
 data/
 temp/

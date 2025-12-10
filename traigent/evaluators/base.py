@@ -89,13 +89,12 @@ def _resolve_dataset_source(
 ) -> tuple[Path, DatasetRegistryEntry | None]:
     """Resolve a dataset reference to an absolute path.
 
-    Security: When TRAIGENT_DATASET_ROOT is set, paths must reside under it.
-    When not set (default), absolute paths that exist are allowed to support
-    running examples from any directory.
+    Security: All dataset paths must reside under the configured dataset root.
+    When TRAIGENT_DATASET_ROOT is not set, the current working directory is
+    treated as the trusted root to prevent accidental traversal.
     """
 
     dataset_root = _get_dataset_root()
-    dataset_root_explicitly_set = bool(os.getenv(DATASET_ROOT_ENV))
     resolved_reference, registry_entry = resolve_dataset_reference(source)
     path_obj = Path(resolved_reference)
     is_absolute_path = path_obj.is_absolute()
@@ -108,17 +107,15 @@ def _resolve_dataset_source(
     except RuntimeError as exc:  # pragma: no cover - symlink loops
         raise ValidationError(f"Invalid dataset path: {source}") from exc
 
-    # Enforce dataset root constraint only when explicitly configured,
-    # OR when using relative paths (which are resolved against cwd).
-    # Absolute paths are allowed when no explicit root is set to support
-    # running examples from any working directory.
-    if dataset_root_explicitly_set or not is_absolute_path:
-        try:
-            resolved_path.relative_to(dataset_root)
-        except ValueError as exc:
-            raise ValidationError(
-                f"Dataset path must reside under {dataset_root}: {resolved_path}"
-            ) from exc
+    # Enforce dataset root constraint for both relative and absolute paths.
+    # This prevents accidental access to files outside the intended dataset root
+    # even when TRAIGENT_DATASET_ROOT is not explicitly set.
+    try:
+        resolved_path.relative_to(dataset_root)
+    except ValueError as exc:
+        raise ValidationError(
+            f"Dataset path must reside under {dataset_root}: {resolved_path}"
+        ) from exc
 
     if not resolved_path.is_file():
         raise ValidationError(f"Dataset path must be a file: {source}")
