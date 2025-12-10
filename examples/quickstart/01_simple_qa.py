@@ -41,7 +41,7 @@ DATASET_PATH = (
     max_trials=5,  # Limit trials for quick demo
 )
 def simple_qa_agent(question: str) -> str:
-    """Simple Q&A agent with adaptive variables.
+    """Simple Q&A agent with Tuned Variables.
 
     In mock mode, this returns a simulated response.
     With real API keys, it would call the actual LLM.

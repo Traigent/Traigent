@@ -437,6 +437,58 @@ class EvaluationResult:
         """Check if any evaluations failed."""
         return self.successful_examples < self.total_examples
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        from traigent.utils.persistence import _safe_json_value
+
+        return {
+            "config": _safe_json_value(self.config),
+            "example_results": [
+                r.to_dict() if hasattr(r, "to_dict") else _safe_json_value(r)
+                for r in self.example_results
+            ],
+            "aggregated_metrics": _safe_json_value(self.aggregated_metrics),
+            "total_examples": self.total_examples,
+            "successful_examples": self.successful_examples,
+            "duration": self.duration,
+            "summary_stats": _safe_json_value(self.summary_stats),
+            "sample_budget_exhausted": self.sample_budget_exhausted,
+            "examples_consumed": self.examples_consumed,
+            "metrics": _safe_json_value(self.metrics),
+            "outputs": _safe_json_value(self.outputs),
+            "errors": self.errors,
+            "success_rate": self.success_rate,
+            "has_errors": self.has_errors,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvaluationResult:
+        """Reconstruct EvaluationResult from a dictionary."""
+        from traigent.api.types import ExampleResult
+
+        # Rehydrate example_results if they are dicts
+        example_results = []
+        for r in data.get("example_results", []):
+            if isinstance(r, dict) and "example_id" in r:
+                example_results.append(ExampleResult.from_dict(r))
+            else:
+                example_results.append(r)
+
+        return cls(
+            config=data.get("config", {}),
+            example_results=example_results,
+            aggregated_metrics=data.get("aggregated_metrics", {}),
+            total_examples=data.get("total_examples", 0),
+            successful_examples=data.get("successful_examples", 0),
+            duration=data.get("duration", 0.0),
+            summary_stats=data.get("summary_stats"),
+            sample_budget_exhausted=data.get("sample_budget_exhausted", False),
+            examples_consumed=data.get("examples_consumed", 0),
+            metrics=data.get("metrics"),
+            outputs=data.get("outputs"),
+            errors=data.get("errors"),
+        )
+
 
 class BaseEvaluator(ABC):
     """Base class for all evaluation strategies.

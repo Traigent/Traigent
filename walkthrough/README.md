@@ -7,7 +7,9 @@ I'll walk you through TraiGent SDK step-by-step, as if you're completely new to 
 ## 📖 Chapter 1: Understanding What TraiGent Does
 
 ### The Core Problem TraiGent Solves
+
 When building AI applications, you face countless decisions:
+
 - Which model? (GPT-4, GPT-3.5, Claude, etc.)
 - What temperature? (0.0 for factual, 0.9 for creative)
 - How many retrieval results? (k=3 for speed, k=10 for thoroughness)
@@ -15,14 +17,17 @@ When building AI applications, you face countless decisions:
 
 **TraiGent automatically tests all these combinations** to find what works best for YOUR specific task, without you changing your existing code!
 
-### The Magic: Adaptive Variables
-TraiGent identifies **Adaptive Variables** - parameters that affect your AI's behavior and can be optimized:
+### The Magic: Tuned Variables
+
+TraiGent identifies **Tuned Variables** - parameters that affect your AI's behavior and can be optimized:
+
 - ✅ **Model selection** (`gpt-4` vs `gpt-3.5-turbo`)
 - ✅ **Temperature** (creativity level)
 - ✅ **Token limits** (response length)
 - ✅ **Retrieval depth** (RAG k parameter)
 
 ### 🧪 Try Example 1: See TraiGent in Action
+
 Run the simple optimization example to see how TraiGent tests different configurations.
 
 ---
@@ -30,6 +35,7 @@ Run the simple optimization example to see how TraiGent tests different configur
 ## 📖 Chapter 2: Installation & Setup
 
 ### Step 1: Install TraiGent
+
 ```bash
 # Clone the repository (recommended for examples)
 git clone https://github.com/Traigent/Traigent.git
@@ -46,6 +52,7 @@ pip install -e .
 ```
 
 ### Step 2: Verify Installation
+
 ```bash
 # Quick test with mock mode (no API keys needed!)
 TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py
@@ -60,6 +67,7 @@ You should see optimization results showing different configurations being teste
 ### The Simplest Example - Zero Code Changes!
 
 Here's your existing code:
+
 ```python
 # your_existing_code.py
 from langchain_openai import ChatOpenAI
@@ -71,6 +79,7 @@ def answer_question(question: str) -> str:
 ```
 
 Now add TraiGent optimization - **your code stays exactly the same**:
+
 ```python
 import traigent
 
@@ -90,7 +99,9 @@ def answer_question(question: str) -> str:
 ```
 
 ### Create Your Evaluation Dataset
+
 Create `questions.jsonl`:
+
 ```json
 {"input": {"question": "What is 2+2?"}, "expected_output": "4"}
 {"input": {"question": "Capital of France?"}, "expected_output": "Paris"}
@@ -98,6 +109,7 @@ Create `questions.jsonl`:
 ```
 
 ### Run Optimization
+
 ```python
 import asyncio
 
@@ -115,6 +127,7 @@ asyncio.run(main())
 ```
 
 ### 🧪 Try Example 2: Zero Code Changes Demo
+
 Experience how TraiGent optimizes your existing code without any modifications!
 
 ---
@@ -122,6 +135,7 @@ Experience how TraiGent optimizes your existing code without any modifications!
 ## 📖 Chapter 4: Understanding TraiGent's Two Modes
 
 ### Mode 1: Seamless Mode (Default) - Zero Code Changes
+
 TraiGent **automatically intercepts** your LLM calls and overrides parameters:
 
 ```python
@@ -136,6 +150,7 @@ def my_agent(text):
 ```
 
 ### Mode 2: Parameter Mode - Explicit Control
+
 For new code or when you want full control:
 
 ```python
@@ -153,6 +168,7 @@ def my_agent(text, config):  # Note: config parameter added
 ```
 
 ### 🧪 Try Example 3: Parameter Mode
+
 See how to use explicit configuration control for maximum flexibility.
 
 ---
@@ -176,11 +192,13 @@ def smart_agent(query):
 ```
 
 ### Understanding Trade-offs
+
 - **Accuracy vs Cost**: Better models cost more
 - **Speed vs Quality**: Faster responses may be less accurate
 - **Complexity vs Maintainability**: Simpler configs are easier to manage
 
 ### 🧪 Try Example 4: Multi-Objective Optimization
+
 Learn how TraiGent balances multiple competing objectives.
 
 ---
@@ -188,7 +206,9 @@ Learn how TraiGent balances multiple competing objectives.
 ## 📖 Chapter 6: Privacy & Execution Modes
 
 ### Local Mode - Complete Privacy
+
 Your data never leaves your machine:
+
 ```python
 @traigent.optimize(
     execution_mode="edge_analytics",  # Everything stays on your computer
@@ -197,7 +217,9 @@ Your data never leaves your machine:
 ```
 
 ### Cloud Mode - Advanced Algorithms
+
 Use TraiGent's cloud for smarter optimization:
+
 ```python
 @traigent.optimize(
     execution_mode="cloud"  # Leverages Bayesian optimization
@@ -205,7 +227,9 @@ Use TraiGent's cloud for smarter optimization:
 ```
 
 ### Hybrid Mode - Best of Both
+
 Local execution with cloud intelligence:
+
 ```python
 @traigent.optimize(
     execution_mode="hybrid",
@@ -214,6 +238,7 @@ Local execution with cloud intelligence:
 ```
 
 ### 🧪 Try Example 5: Privacy Modes
+
 Experiment with different execution modes to understand privacy options.
 
 ---
@@ -257,6 +282,7 @@ def customer_support(query: str, knowledge_base: list) -> str:
 ```
 
 ### 🧪 Try Example 6: RAG Optimization
+
 See how TraiGent optimizes both LLM and retrieval parameters together.
 
 ---
@@ -283,12 +309,14 @@ def my_function(input_text):
 ```
 
 ### Common Custom Metrics
+
 - **Semantic Similarity**: Meaning-based comparison
 - **Exact Match**: Precise string matching
 - **Regex Patterns**: Pattern-based validation
 - **Business Logic**: Domain-specific rules
 
 ### 🧪 Try Example 7: Custom Evaluator
+
 Create your own evaluation logic for specialized use cases.
 
 ---
@@ -296,6 +324,7 @@ Create your own evaluation logic for specialized use cases.
 ## 📖 Chapter 9: Performance & Cost Control
 
 ### Parallel Execution
+
 Speed up optimization with parallelization:
 
 ```python
@@ -305,6 +334,7 @@ await my_agent.optimize(
 ```
 
 ### Cost Budgets
+
 Control your spending:
 
 ```python
@@ -318,12 +348,14 @@ Control your spending:
 ```
 
 ### Performance Tips
+
 - Start with small datasets (10-20 examples)
 - Use mock mode for initial testing
 - Enable parallel execution for speed
 - Set cost budgets to control spending
 
 ### 🧪 Try Example 8: Performance Optimization
+
 Learn to optimize faster while controlling costs.
 
 ---
@@ -451,6 +483,7 @@ async def deploy_optimized_agent():
 ```
 
 ### 🧪 Try Example 10: Complete Application
+
 Run a full production-ready example with all TraiGent features combined.
 
 ---
@@ -458,6 +491,7 @@ Run a full production-ready example with all TraiGent features combined.
 ## 🎯 Quick Reference
 
 ### Essential Commands
+
 ```bash
 # Install TraiGent
 pip install -e .
@@ -473,6 +507,7 @@ python scripts/launch_control_center.py
 ```
 
 ### Common Patterns
+
 ```python
 # Basic optimization
 @traigent.optimize(

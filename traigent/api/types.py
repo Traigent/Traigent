@@ -105,6 +105,37 @@ class ExampleResult:
         """Get a specific metric value."""
         return self.metrics.get(name, default)
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        from traigent.utils.persistence import _safe_json_value
+
+        return {
+            "example_id": self.example_id,
+            "input_data": _safe_json_value(self.input_data),
+            "expected_output": _safe_json_value(self.expected_output),
+            "actual_output": _safe_json_value(self.actual_output),
+            "metrics": _safe_json_value(self.metrics),
+            "execution_time": self.execution_time,
+            "success": self.success,
+            "error_message": self.error_message,
+            "metadata": _safe_json_value(self.metadata),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExampleResult:
+        """Reconstruct ExampleResult from a dictionary."""
+        return cls(
+            example_id=data.get("example_id", ""),
+            input_data=data.get("input_data", {}),
+            expected_output=data.get("expected_output"),
+            actual_output=data.get("actual_output"),
+            metrics=data.get("metrics", {}),
+            execution_time=data.get("execution_time", 0.0),
+            success=data.get("success", False),
+            error_message=data.get("error_message"),
+            metadata=data.get("metadata", {}),
+        )
+
 
 @dataclass
 class ExperimentStats:
