@@ -70,7 +70,7 @@ TRIPLE_OBJECTIVE_SCHEMA = ObjectiveSchema.from_objectives(
 def classify_text(text: str) -> str:
     """Text classification with multiple objectives."""
 
-    config = traigent.get_current_config()
+    config = traigent.get_config()
 
     if MOCK:
         # Simulate different performance characteristics

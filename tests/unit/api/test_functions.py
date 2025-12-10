@@ -9,6 +9,7 @@ from traigent.api.functions import (
     _GLOBAL_CONFIG,
     configure,
     get_available_strategies,
+    get_config,
     get_current_config,
     get_global_config,
     get_trial_config,
@@ -183,7 +184,7 @@ class TestGetGlobalConfig:
 class TestGetCurrentConfig:
     """Test the get_current_config function."""
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_from_traigent_config(self, mock_get_config):
         """Test getting config from TraigentConfig object."""
         mock_config = Mock(spec=TraigentConfig)
@@ -195,7 +196,7 @@ class TestGetCurrentConfig:
         assert result == {"model": "gpt-4", "temperature": 0.7}
         mock_config.to_dict.assert_called_once()
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_from_dict(self, mock_get_config):
         """Test getting config from dict."""
         mock_get_config.return_value = {"model": "gpt-3.5", "max_tokens": 100}
@@ -205,7 +206,7 @@ class TestGetCurrentConfig:
         assert result == {"model": "gpt-3.5", "max_tokens": 100}
         assert result is not mock_get_config.return_value  # Should be a copy
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_fallback(self, mock_get_config):
         """Test fallback when config is neither TraigentConfig nor dict."""
         mock_get_config.return_value = "not_a_config"
@@ -214,9 +215,9 @@ class TestGetCurrentConfig:
 
         assert result == {}
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_none(self, mock_get_config):
-        """Test when get_config returns None."""
+        """Test when context config returns None."""
         mock_get_config.return_value = None
 
         result = get_current_config()
@@ -568,8 +569,8 @@ class TestGetTrialConfig:
             exc_info.value
         )
 
-    @patch("traigent.config.context.get_trial_context")
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_trial_config_from_traigent_config(
         self, mock_get_config, mock_get_trial_context
     ):
@@ -586,8 +587,8 @@ class TestGetTrialConfig:
         assert result == {"model": "gpt-4", "temperature": 0.7}
         mock_config.to_dict.assert_called_once()
 
-    @patch("traigent.config.context.get_trial_context")
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_trial_config_from_dict(self, mock_get_config, mock_get_trial_context):
         """Test getting trial config from dict."""
         # Mock that we're in an active trial
@@ -599,8 +600,8 @@ class TestGetTrialConfig:
 
         assert result == {"model": "gpt-3.5", "max_tokens": 100}
 
-    @patch("traigent.config.context.get_trial_context")
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_trial_config_returns_copy(
         self, mock_get_config, mock_get_trial_context
     ):
@@ -619,8 +620,8 @@ class TestGetTrialConfig:
         # Original should be unchanged
         assert original_dict["model"] == "gpt-4"
 
-    @patch("traigent.config.context.get_trial_context")
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_trial_config_raises_on_invalid_config_type(
         self, mock_get_config, mock_get_trial_context
     ):
@@ -641,10 +642,73 @@ class TestGetTrialConfig:
         assert "invalid type: str" in str(exc_info.value)
 
 
+class TestGetConfig:
+    """Tests for the unified get_config helper."""
+
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions._get_context_config")
+    @patch("traigent.api.functions.get_applied_config")
+    def test_get_config_prefers_trial(
+        self, mock_get_applied_config, mock_get_context_config, mock_get_trial_context
+    ):
+        """Trial context should win over applied config."""
+        mock_get_trial_context.return_value = {"trial_id": "trial-1"}
+        mock_get_context_config.return_value = {"model": "gpt-4"}
+        mock_get_applied_config.return_value = {"model": "should_not_use"}
+
+        result = get_config()
+
+        assert result == {"model": "gpt-4"}
+        assert result is not mock_get_context_config.return_value
+        mock_get_applied_config.assert_not_called()
+
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions.get_applied_config")
+    def test_get_config_uses_applied_config(
+        self, mock_get_applied_config, mock_get_trial_context
+    ):
+        """When no trial is active, fall back to applied config."""
+        mock_get_trial_context.return_value = None
+        mock_get_applied_config.return_value = {"temperature": 0.2}
+
+        result = get_config()
+
+        assert result == {"temperature": 0.2}
+        assert result is not mock_get_applied_config.return_value
+
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions.get_applied_config")
+    def test_get_config_raises_without_any_config(
+        self, mock_get_applied_config, mock_get_trial_context
+    ):
+        """No trial and no applied config should raise."""
+        mock_get_trial_context.return_value = None
+        mock_get_applied_config.return_value = None
+
+        with pytest.raises(OptimizationStateError) as exc_info:
+            get_config()
+
+        assert "No config available" in str(exc_info.value)
+
+    @patch("traigent.api.functions.get_trial_context")
+    @patch("traigent.api.functions.get_applied_config")
+    def test_get_config_raises_on_invalid_type(
+        self, mock_get_applied_config, mock_get_trial_context
+    ):
+        """Invalid applied config types should surface as errors."""
+        mock_get_trial_context.return_value = None
+        mock_get_applied_config.return_value = "invalid"
+
+        with pytest.raises(OptimizationStateError) as exc_info:
+            get_config()
+
+        assert "invalid type" in str(exc_info.value)
+
+
 class TestGetCurrentConfigDeprecation:
     """Test that get_current_config shows deprecation warning."""
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_shows_deprecation_warning(self, mock_get_config):
         """Test that get_current_config emits ConfigAccessWarning."""
         mock_get_config.return_value = {"model": "gpt-4"}
@@ -662,6 +726,6 @@ class TestGetCurrentConfigDeprecation:
             ]
             assert len(config_warnings) == 1
             assert "deprecated" in str(config_warnings[0].message).lower()
-            assert "get_trial_config" in str(config_warnings[0].message)
+            assert "get_config" in str(config_warnings[0].message)
 
         assert result == {"model": "gpt-4"}

@@ -122,7 +122,7 @@ class OptimizationState(Enum):
         UNOPTIMIZED: Before any optimization has been run. The function uses
             its default_config when called.
         OPTIMIZING: During an active optimization run. Configuration should
-            be accessed via get_trial_config(), not current_config.
+            be accessed via traigent.get_config() inside the function.
         OPTIMIZED: After optimization has completed successfully. The function
             uses best_config automatically, accessible via current_config.
         ERROR: Optimization failed. The function reverts to default_config.
@@ -1833,7 +1833,7 @@ To approve, use one of these methods:
 
         Raises:
             OptimizationStateError: If accessed during an active optimization.
-                Use traigent.get_trial_config() instead during optimization.
+                Use traigent.get_config() inside your function during optimization.
 
         Returns:
             Copy of the current configuration dict.
@@ -1842,7 +1842,7 @@ To approve, use one of these methods:
             if self._state == OptimizationState.OPTIMIZING:
                 raise OptimizationStateError(
                     "Cannot access current_config during an active optimization. "
-                    "Use traigent.get_trial_config() to access the current trial's "
+                    "Use traigent.get_config() to access the current trial's "
                     "configuration within your optimized function.",
                     current_state=self._state.name,
                     expected_states=["UNOPTIMIZED", "OPTIMIZED", "ERROR"],

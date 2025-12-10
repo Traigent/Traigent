@@ -82,7 +82,7 @@ def _get_vectorstore():
 def rag_qa_system(question: str) -> str:
     """Question answering with RAG optimization."""
 
-    config = traigent.get_current_config()
+    config = traigent.get_config()
 
     # RAG parameters from configuration
     k = config.get("k", 3)

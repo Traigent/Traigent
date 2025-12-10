@@ -37,6 +37,7 @@ from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
     get_available_strategies,
+    get_config,
     get_current_config,
     get_optimization_insights,
     get_trial_config,
@@ -110,6 +111,7 @@ __all__ = [
     "override_config",
     "set_strategy",
     "get_available_strategies",
+    "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
     "get_optimization_insights",

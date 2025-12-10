@@ -821,7 +821,7 @@ def analyze_customer_data(customer_id: str, query: str) -> str:
     execution_mode="interactive"  # Model 1
 )
 def optimized_analyzer(customer_id: str, query: str) -> str:
-    config = traigent.get_trial_config()  # Only valid during optimization
+    config = traigent.get_config()  # Works during optimization and after apply_best_config()
     # Your logic with optimized parameters
     return analyze_customer_data(customer_id, query)
 
@@ -833,11 +833,12 @@ def optimized_analyzer(customer_id: str, query: str) -> str:
 
 **Config access: during vs. after**
 
-| When you're running             | Use this                      | Notes                                               |
-| ------------------------------- | ----------------------------- | --------------------------------------------------- |
-| During optimization             | `traigent.get_trial_config()` | Raises `OptimizationStateError` if no active trial. |
-| After optimization completes    | `result.best_config`          | Returned by `func.optimize()`.                      |
-| When calling the function later | `func.current_config`         | Automatically set to the best config.               |
+| When you're running             | Use this                      | Notes                                                         |
+| ------------------------------- | ----------------------------- | ------------------------------------------------------------- |
+| Inside the optimized function   | `traigent.get_config()`       | Unified access during optimization and after apply_best_config(). |
+| During optimization (strict)    | `traigent.get_trial_config()` | Raises `OptimizationStateError` if no active trial.           |
+| After optimization completes    | `result.best_config`          | Returned by `func.optimize()`.                                |
+| When calling the function later | `func.current_config`         | Automatically set to the best config.                         |
 
 ### ☁️ Model 2: Cloud-Based Agent Optimization (Coming Soon)
 
