@@ -47,7 +47,7 @@ def style_accuracy_metric(output, expected, _llm_metrics):
 ## Key Concepts
 
 - **Bayesian optimization**: Efficient parameter search
-- **Seamless injection**: Auto-applied via `traigent.get_trial_config()`
+- **Seamless injection**: Auto-applied via `traigent.get_config()`
 - **Style validation**: Rule-based output checking
 
 ## Next Steps

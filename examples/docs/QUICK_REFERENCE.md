@@ -27,7 +27,7 @@ import traigent
     objectives=["accuracy"],
 )
 def summarize(text: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     return f"Summary | model={cfg['model']}"  # call your LLM here
 ```
 

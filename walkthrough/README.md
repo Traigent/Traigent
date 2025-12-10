@@ -263,7 +263,7 @@ from langchain_chroma import Chroma
 )
 def customer_support(query: str, knowledge_base: list) -> str:
     # Get optimized configuration
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
 
     # Use optimized parameters
     llm = ChatOpenAI(
@@ -402,7 +402,7 @@ def production_agent(
     """Production-ready agent with full optimization."""
 
     # Get optimized configuration
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
 
     # Log configuration for monitoring
     logger.info(f"Using config: {config}")
