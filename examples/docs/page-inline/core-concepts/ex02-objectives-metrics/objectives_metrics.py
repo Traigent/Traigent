@@ -172,7 +172,7 @@ def cost_optimized_bot(query: str) -> str:
 )
 def balanced_support_bot(query: str) -> str:
     """Bot balancing cost, quality, and response time."""
-    current = traigent.get_trial_config()
+    current = traigent.get_config()
     config = current if isinstance(current, dict) else {}
 
     llm = ChatOpenAI(
@@ -205,7 +205,7 @@ def balanced_support_bot(query: str) -> str:
 )
 def quality_constrained_bot(query: str) -> str:
     """Bot with quality constraints and custom metrics."""
-    current = traigent.get_trial_config()
+    current = traigent.get_config()
     config = current if isinstance(current, dict) else {}
 
     format_instructions = {
