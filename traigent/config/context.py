@@ -159,10 +159,12 @@ class ConfigurationContext:
         """
         self.config = config
         self._token: Token[TraigentConfig | dict[str, Any]] | None = None
+        self._applied_token: Token[TraigentConfig | dict[str, Any] | None] | None = None
 
     def __enter__(self) -> TraigentConfig | dict[str, Any]:
         """Enter configuration context."""
         self._token = set_config(self.config)
+        self._applied_token = set_applied_config(self.config)
         return self.config
 
     def __exit__(
@@ -174,6 +176,8 @@ class ConfigurationContext:
         """Exit configuration context and restore previous."""
         if self._token is not None:
             config_context.reset(self._token)
+        if self._applied_token is not None:
+            applied_config_context.reset(self._applied_token)
         return False  # Don't suppress exceptions
 
 

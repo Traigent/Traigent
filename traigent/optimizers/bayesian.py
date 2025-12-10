@@ -491,7 +491,8 @@ class BayesianOptimizer(BaseOptimizer):
                         f"{model_val}: EI={score_value:.6f}, predicted={mu_scalar:.4f}±{sigma_scalar:.4f}, improvement={improvement:.4f}"
                     )
                 else:
-                    score_value = float(self._upper_confidence_bound(test_x, y_best)[0])
+                    # UCB doesn't need y_best - it only uses mu + kappa * sigma
+                    score_value = float(self._upper_confidence_bound(test_x)[0])
                     logger.debug(
                         f"{model_val}: UCB={score_value:.6f}, predicted={mu_scalar:.4f}±{sigma_scalar:.4f}"
                     )
