@@ -281,10 +281,10 @@ For local development and testing, use mock mode (runs fully offline, no backend
 export TRAIGENT_MOCK_MODE=true  # Required for offline operation
 ```
 
-> **Restricted environments**: If your home directory isn't writable, also set a writable results folder:
+> **Restricted environments** (containers, CI, etc.): If you see permission errors or joblib warnings:
 > ```bash
-> export TRAIGENT_RESULTS_FOLDER=./results
-> export JOBLIB_TEMP_FOLDER=/tmp  # Prevents joblib cache warnings
+> export TRAIGENT_RESULTS_FOLDER=./results      # Writable results folder
+> export LOKY_MAX_CPU_COUNT=1                   # Prevents joblib semaphore errors
 > ```
 
 **Local Storage**: Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
