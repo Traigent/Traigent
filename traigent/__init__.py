@@ -24,15 +24,7 @@ Example:
 from __future__ import annotations
 
 import builtins
-import os
 import sys
-
-# Prevent joblib/loky semaphore errors in restricted environments (containers, CI)
-# by forcing serial execution when in mock mode. This must happen before any
-# joblib imports (e.g., from scikit-learn or optuna).
-if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true":
-    if "LOKY_MAX_CPU_COUNT" not in os.environ:
-        os.environ["LOKY_MAX_CPU_COUNT"] = "1"
 
 from traigent._version import get_version
 
@@ -168,6 +160,7 @@ __all__ = [
 # Legacy compatibility: expose the package via the builtins namespace.
 # DEPRECATED: This pollutes the global namespace and will be removed in v1.0.0.
 # Tests should use explicit imports: `import traigent`
+import os
 import warnings
 
 if os.environ.get("TRAIGENT_ENABLE_BUILTINS_COMPAT", "").lower() in ("1", "true"):
