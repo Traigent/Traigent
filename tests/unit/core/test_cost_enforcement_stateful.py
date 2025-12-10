@@ -104,6 +104,11 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
 
         result = self.enforcer.release_permit(permit)
 
+        # Denied permits (-1) are no-ops for release/track
+        if not permit.is_granted:
+            assert result is False
+            return
+
         if was_active:
             # First release of active permit should succeed
             assert result is True, f"First release of permit {permit.id} should succeed"
@@ -137,6 +142,10 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
         # Skip if permit is already released - models realistic usage
         # (double track_cost would add cost twice but only release once)
         if was_released:
+            return
+
+        if not permit.is_granted:
+            # Nothing to track for denied permits
             return
 
         # track_cost doesn't return bool, it just processes

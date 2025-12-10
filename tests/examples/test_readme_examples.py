@@ -208,6 +208,11 @@ if 'simple_qa_agent' in locals():
                             if "@traigent.optimize" in lines[j]:
                                 start_idx = j
                                 break
+                        # Include the knowledge base definition if it appears above
+                        for j in range(start_idx - 1, max(0, start_idx - 20), -1):
+                            if "KNOWLEDGE_BASE" in lines[j]:
+                                start_idx = j
+                                break
                         break
 
                 if start_idx is not None:

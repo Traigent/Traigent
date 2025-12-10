@@ -1,0 +1,2 @@
+{"input": {"query": "What is Python?"}, "output": "Python is a popular programming language."}
+{"input": {"query": "How do I install numpy?"}, "output": "Run: pip install numpy"}
