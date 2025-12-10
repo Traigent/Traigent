@@ -254,7 +254,7 @@ def summarize_keyword(text: str) -> str:
             return "timeline"
         return "decision"
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     style = cfg.get("style", "paragraph")
     max_tokens = int(cfg.get("max_tokens", 96))
     temperature = float(cfg.get("temperature", 0.0))

@@ -80,7 +80,7 @@ import traigent
     injection_mode="seamless",
 )
 def summarize(text: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     return f"Summary for: {text} | model={config['model']}"
 ```
 
