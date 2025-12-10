@@ -1532,6 +1532,11 @@ class OptimizedFunction:
         if not self.traigent_config.is_edge_analytics_mode():
             return
 
+        # Allow mock mode to run without CI approval since no real calls occur
+        if os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+            logger.info("Skipping CI approval in mock mode.")
+            return
+
         # Detect CI environment (robust detection - 10 providers)
         is_ci = (
             os.getenv("CI") in ("true", "1")

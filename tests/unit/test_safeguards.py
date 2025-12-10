@@ -499,6 +499,23 @@ class TestCIApproval:
         ):
             func._check_ci_approval()  # Should not raise
 
+    def test_mock_mode_skips_ci_approval(self):
+        """Mock mode should bypass CI approval gate."""
+        func = OptimizedFunction(
+            func=lambda x: x,
+            eval_dataset="test.jsonl",
+            objectives=["score"],
+            configuration_space={"x": [1, 2, 3]},
+        )
+        func.traigent_config = Mock(
+            is_edge_analytics_mode=lambda: True, get_local_storage_path=lambda: "/tmp"
+        )
+
+        with patch.dict(
+            os.environ, {"CI": "true", "TRAIGENT_MOCK_MODE": "true"}, clear=True
+        ):
+            func._check_ci_approval()  # Should not raise
+
     def test_token_file_approval(self):
         """Test approval via token file."""
         with tempfile.TemporaryDirectory() as tmpdir:
