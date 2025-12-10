@@ -275,19 +275,35 @@ uv pip install traigent
 
 ### Environment Configuration
 
-For local development and testing, use mock mode (runs fully offline, no backend or API keys required):
+#### Mock Mode
+
+For local development and testing without API keys:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true  # Required for offline operation
+export TRAIGENT_MOCK_MODE=true
 ```
 
-> **Restricted environments** (containers, CI, etc.): If you see permission errors or joblib warnings:
-> ```bash
-> export TRAIGENT_RESULTS_FOLDER=./results      # Writable results folder
-> export LOKY_MAX_CPU_COUNT=1                   # Prevents joblib semaphore errors
-> ```
+**What mock mode does:**
+- Returns simulated responses from your decorated functions (no real LLM calls)
+- Skips TraiGent backend/cloud connections
+- Generates realistic mock metrics (accuracy, cost, latency) for testing
 
-**Local Storage**: Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
+**What mock mode does NOT do:**
+- It does not disable the optimization loop itself—trials still run, configs are still tested
+- It does not affect compute resources or parallelism
+
+#### Restricted Environments
+
+If running in containers, CI, or environments with limited permissions, you may see errors or warnings. Set these variables as needed:
+
+```bash
+export TRAIGENT_RESULTS_FOLDER=./results   # If home directory isn't writable
+export LOKY_MAX_CPU_COUNT=1                # If you see joblib/semaphore permission errors
+```
+
+#### Local Storage
+
+Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
 
 <!-- Backend configuration (for TraiGent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
