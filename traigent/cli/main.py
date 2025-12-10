@@ -699,20 +699,21 @@ def _get_basic_template() -> str:
 import asyncio
 import traigent
 
-# Create your evaluation dataset (JSONL format)
-# Each line: {"input": {"text": "..."}, "output": "expected_result"}
+# Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
+# Use the example dataset or create your own:
+DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
 
 
 @traigent.optimize(
-    eval_dataset="my_dataset.jsonl",
+    eval_dataset=DATASET,
     objectives=["accuracy"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": (0.0, 1.0),
+        "temperature": [0.1, 0.5, 0.9],  # Use list for grid/random search
         "max_tokens": [100, 250, 500]
     }
 )
-def my_function(input_text: str, **config) -> str:
+def my_function(question: str, **config) -> str:
     """Your function to optimize."""
     # Replace with your actual logic
     model = config.get("model", "gpt-4o-mini")
@@ -720,7 +721,7 @@ def my_function(input_text: str, **config) -> str:
     max_tokens = config.get("max_tokens", 150)
 
     # Example: call your LLM here
-    result = f"Processed '{input_text}' with {model} (temp={temperature})"
+    result = f"Answer to '{question}' using {model} (temp={temperature})"
     return result
 
 
@@ -755,40 +756,42 @@ import asyncio
 import traigent
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
+# Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
+# Use the example dataset or create your own:
+DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+
 # Define custom objectives with weights
 custom_objectives = ObjectiveSchema.from_objectives([
-    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
-    ObjectiveDefinition("latency", orientation="minimize", weight=0.3),
-    ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.7),
+    ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
 ])
 
 
 @traigent.optimize(
-    eval_dataset="my_dataset.jsonl",
+    eval_dataset=DATASET,
     objectives=custom_objectives,
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": (0.0, 1.0),
+        "temperature": [0.1, 0.5, 0.9],  # Use list for grid/random search
         "max_tokens": [100, 250, 500]
     }
 )
-def multi_objective_function(input_text: str, **config) -> str:
+def multi_objective_function(question: str, **config) -> str:
     """Function with multiple objectives to optimize.
 
     TraiGent automatically tracks:
     - accuracy: compared against expected output
-    - latency: response time
     - cost: token usage costs
     """
     # Your LLM call here - TraiGent tracks metrics automatically
     model = config.get("model", "gpt-4o-mini")
-    return f"Processed '{input_text}' with {model}"
+    return f"Answer to '{question}' using {model}"
 
 
 async def main():
     """Run multi-objective optimization."""
     print("Starting multi-objective optimization...")
-    print("Balancing: accuracy (50%), latency (30%), cost (20%)")
+    print("Balancing: accuracy (70%), cost (30%)")
 
     result = await multi_objective_function.optimize(
         algorithm="random",
@@ -825,9 +828,13 @@ except ImportError:
     print("LangChain not installed. Install with: pip install langchain-openai")
     exit(1)
 
+# Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
+# Use the example dataset or create your own:
+DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+
 
 @traigent.optimize(
-    eval_dataset="data/qa_dataset.jsonl",
+    eval_dataset=DATASET,
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
@@ -886,10 +893,14 @@ from traigent.integrations import enable_openai_optimization
 # Enable OpenAI SDK optimization (intercepts openai.chat.completions.create)
 enable_openai_optimization()
 
+# Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
+# Use the example dataset or create your own:
+DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+
 
 @traigent.optimize(
-    eval_dataset="data/chat_dataset.jsonl",
-    objectives=["accuracy", "cost", "latency"],
+    eval_dataset=DATASET,
+    objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
         "temperature": [0.0, 0.5, 1.0],
@@ -897,7 +908,7 @@ enable_openai_optimization()
     },
     max_trials=15
 )
-def chat_agent(query: str) -> str:
+def chat_agent(question: str) -> str:
     """Chat function that TraiGent will optimize."""
     from openai import OpenAI
     client = OpenAI()
@@ -906,7 +917,7 @@ def chat_agent(query: str) -> str:
         model="gpt-4o-mini",  # TraiGent will override this
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": query}
+            {"role": "user", "content": question}
         ],
         temperature=0.7,  # TraiGent will override this
         max_tokens=150    # TraiGent will override this

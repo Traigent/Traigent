@@ -25,7 +25,7 @@ from traigent.config.types import TraigentConfig
     objectives=["accuracy"],
 )
 def seamless_qa_agent(question: str) -> str:
-    """Q&A agent using seamless injection - adaptive variables defined in function body."""
+    """Q&A agent using seamless injection - Tuned Variables defined in function body."""
     # These will be overridden by TraiGent during optimization
     model = "gpt-3.5-turbo"  # Will be replaced with values from config space
     temperature = 0.7  # Will be replaced with values from config space
@@ -59,7 +59,7 @@ def seamless_qa_agent(question: str) -> str:
 )
 def parameter_qa_agent(question: str, config: TraigentConfig) -> str:
     """Q&A agent using parameter injection - config passed explicitly."""
-    # Get adaptive variables from config parameter
+    # Get Tuned Variables from config parameter
     model = config.get("model", "gpt-3.5-turbo")
     temperature = config.get("temperature", 0.7)
 
@@ -206,7 +206,7 @@ def test_parameter_mode():
 )
 def context_qa_agent(question: str) -> str:
     """Q&A agent using context injection - config passed via context variables."""
-    # Get adaptive variables from context
+    # Get Tuned Variables from context
     from traigent.config.context import get_config
 
     config = get_config()
@@ -279,7 +279,7 @@ def test_context_mode():
 )
 def attribute_qa_agent(question: str) -> str:
     """Q&A agent using attribute injection - config stored as function attribute."""
-    # Get adaptive variables from function attribute
+    # Get Tuned Variables from function attribute
     # The config is stored on the wrapped function
     if hasattr(attribute_qa_agent, "_wrapped_func") and hasattr(
         attribute_qa_agent._wrapped_func, "current_config"
