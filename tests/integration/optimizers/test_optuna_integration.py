@@ -7,7 +7,7 @@ from typing import Any
 import optuna
 import pytest
 
-from traigent.api.functions import get_current_config
+from traigent.api.functions import get_trial_config
 from traigent.api.types import TrialStatus
 from traigent.config.types import TraigentConfig
 from traigent.core.orchestrator import OptimizationOrchestrator
@@ -79,7 +79,7 @@ async def test_optuna_pruning_with_progress_callback():
     def prunable_function(
         text: str,
     ) -> str:  # pragma: no cover - executed in orchestrator
-        cfg = get_current_config()
+        cfg = get_trial_config()
         assert cfg["model"] == "bad"
         return "wrong"
 

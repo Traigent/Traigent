@@ -10,7 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
-from traigent.config.context import get_config
+from traigent.config.context import (
+    get_applied_config,
+    get_trial_context,
+)
+from traigent.config.context import get_config as _get_context_config
 from traigent.config.feature_flags import flag_registry
 from traigent.config.parallel import (
     ParallelConfig,
@@ -295,6 +299,88 @@ def get_api_key(provider: str) -> str | None:
     return _API_KEY_MANAGER.get_api_key(provider)
 
 
+def _coerce_config_dict(
+    config: Any,
+    *,
+    source: str,
+    current_state: str,
+    expected_states: list[str],
+) -> dict[str, Any]:
+    """Normalize config objects to a plain dict and raise on invalid types."""
+    if isinstance(config, TraigentConfig):
+        return config.to_dict()
+    if isinstance(config, dict):
+        return dict(config)
+
+    raise OptimizationStateError(
+        f"{source} config has invalid type: {type(config).__name__}. "
+        "Expected TraigentConfig or dict. This may indicate corrupted context state.",
+        current_state=current_state,
+        expected_states=expected_states,
+    )
+
+
+def get_config() -> dict[str, Any]:
+    """Get the active configuration in any lifecycle context.
+
+    This unified accessor works both during optimization trials and after
+    applying the best configuration to your function.
+
+    Returns:
+        Dictionary with the currently active configuration.
+
+    Raises:
+        OptimizationStateError: If no configuration is available (e.g., called
+            outside an optimized function without apply_best_config()).
+
+    Example:
+        >>> @traigent.optimize(...)
+        ... def my_func(query: str):
+        ...     cfg = traigent.get_config()  # Works during and after optimization
+        ...     return call_llm(model=cfg["model"])
+    """
+    trial_ctx = get_trial_context()
+    if trial_ctx is not None:
+        return _coerce_config_dict(
+            _get_context_config(),
+            source="Trial",
+            current_state="OPTIMIZING",
+            expected_states=["OPTIMIZING"],
+        )
+
+    # Check applied config first, then fall back to context config
+    applied_config = get_applied_config()
+    if applied_config is not None:
+        return _coerce_config_dict(
+            applied_config,
+            source="Applied",
+            current_state="CONFIG_APPLIED",
+            expected_states=["CONFIG_APPLIED", "UNOPTIMIZED"],
+        )
+
+    # Fall back to context config (set by ConfigurationContext in wrappers)
+    context_config = _get_context_config()
+    if isinstance(context_config, dict) and context_config:
+        return _coerce_config_dict(
+            context_config,
+            source="Context",
+            current_state="CONFIG_APPLIED",
+            expected_states=["CONFIG_APPLIED", "UNOPTIMIZED"],
+        )
+    if isinstance(context_config, TraigentConfig):
+        config_dict = context_config.to_dict()
+        # Check if config has any meaningful values (not just defaults)
+        if any(v is not None for k, v in config_dict.items() if k != "execution_mode"):
+            return config_dict
+
+    raise OptimizationStateError(
+        "No config available. Run optimize() and apply_best_config(), "
+        "or call this inside an optimized function during an active trial.",
+        current_state="NO_ACTIVE_CONFIG",
+        expected_states=["UNOPTIMIZED", "CONFIG_APPLIED", "OPTIMIZING"],
+    )
+
+
 def get_trial_config() -> dict[str, Any]:
     """Get the configuration for the current optimization trial.
 
@@ -322,15 +408,13 @@ def get_trial_config() -> dict[str, Any]:
         >>> # Access best config via result
         >>> print(result.best_config)
     """
-    from traigent.config.context import get_trial_context
-
     # Check if we're in an active trial context
     trial_ctx = get_trial_context()
     if trial_ctx is None:
         raise OptimizationStateError(
             "get_trial_config() can only be called during an active optimization trial. "
-            "If you need the function's applied configuration, access it via "
-            "my_function.current_config or the OptimizationResult.best_config.",
+            "For post-optimization access, call traigent.get_config() inside your "
+            "function or use my_function.current_config / OptimizationResult.best_config.",
             current_state="NO_ACTIVE_TRIAL",
             expected_states=["OPTIMIZING"],
         )
@@ -353,19 +437,10 @@ def get_trial_config() -> dict[str, Any]:
         )
 
     # Get the actual config from context
-    config = get_config()
-
-    # Convert TraigentConfig to dict if needed
-    if isinstance(config, TraigentConfig):
-        return config.to_dict()
-    if isinstance(config, dict):
-        return dict(config)
-
-    # Unexpected config type - this should never happen in normal operation
-    # Raise error instead of silently returning empty dict to surface the bug
-    raise OptimizationStateError(
-        f"Trial config has invalid type: {type(config).__name__}. "
-        "Expected TraigentConfig or dict. This may indicate corrupted context state.",
+    config = _get_context_config()
+    return _coerce_config_dict(
+        config,
+        source="Trial",
         current_state="INVALID_CONFIG_TYPE",
         expected_states=["OPTIMIZING"],
     )
@@ -375,11 +450,11 @@ def get_current_config() -> dict[str, Any]:
     """Get the current optimization configuration.
 
     .. deprecated::
-        Use :func:`get_trial_config` instead. This function is deprecated
-        because "current" is ambiguous - it could mean the trial config
-        during optimization or the applied config after optimization.
+        Use :func:`get_config` for lifecycle-safe access. This function is
+        deprecated because "current" is ambiguous - it could mean the trial
+        config during optimization or the applied config after optimization.
 
-        - During optimization: Use ``traigent.get_trial_config()``
+        - During/after optimization: Use ``traigent.get_config()``
         - After optimization: Use ``result.best_config`` or ``func.current_config``
 
     Returns:
@@ -391,14 +466,14 @@ def get_current_config() -> dict[str, Any]:
         an optimization trial (for backward compatibility).
     """
     warnings.warn(
-        "get_current_config() is deprecated. Use get_trial_config() instead "
-        "during optimization, or access func.current_config / result.best_config "
-        "after optimization completes.",
+        "get_current_config() is deprecated. Use traigent.get_config() for active "
+        "configs (during and after optimization), or access func.current_config / "
+        "result.best_config directly.",
         ConfigAccessWarning,
         stacklevel=2,
     )
 
-    config = get_config()
+    config = _get_context_config()
 
     # Convert TraigentConfig to dict if needed
     if isinstance(config, TraigentConfig):

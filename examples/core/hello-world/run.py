@@ -284,7 +284,7 @@ def answer_question(question: str) -> str:
     print(f"DEBUG: MOCK={MOCK}, TRAIGENT_MOCK_MODE={os.getenv('TRAIGENT_MOCK_MODE')}")
     if MOCK:
         print("DEBUG: Returning mock answer with realistic telemetry")
-        cfg = traigent.get_trial_config()
+        cfg = traigent.get_config()
         model = cfg.get("model", "claude-3-5-sonnet-20241022")
         use_rag = bool(cfg.get("use_rag", True))
 
@@ -310,7 +310,7 @@ def answer_question(question: str) -> str:
     if os.getenv("ANTHROPIC_API_KEY") is None:
         raise APIKeyError("ANTHROPIC_API_KEY")
 
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     model = cfg.get("model", "claude-3-5-sonnet-20241022")
     temperature = float(cfg.get("temperature", 0.2))
     context = _build_context(
