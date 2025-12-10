@@ -72,7 +72,7 @@ def _json_accuracy(
     max_trials=10,
 )
 def extract_fields(text: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     guidance = {
         "direct": "Extract fields precisely.",
         "reasoned": "Identify key fields, then extract them precisely.",

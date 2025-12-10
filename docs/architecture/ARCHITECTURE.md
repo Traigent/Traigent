@@ -73,7 +73,7 @@ traigent/
 ## Module Overview & Sequence Flow
 
 ### Main Modules
-- **Core API Layer**: `traigent/__init__.py` (public exports), `api/decorators.py` (`@optimize`), `api/functions.py` (helpers like `get_trial_config`), `api/types.py` (public types).
+- **Core API Layer**: `traigent/__init__.py` (public exports), `api/decorators.py` (`@optimize`), `api/functions.py` (helpers like `get_config` / `get_trial_config`), `api/types.py` (public types).
 - **Core Orchestration**: `core/optimized_function.py` (lifecycle + state), `core/orchestrator.py` (optimization loop), `core/objectives.py`, `core/evaluator_wrapper.py`.
 - **Optimization Algorithms**: `optimizers/` (grid.py, random.py, optuna_adapter.py/coordinator.py, interactive_optimizer.py; base.py + registry.py).
 - **Evaluation**: `evaluators/` (base.py, local.py, metrics.py) plus stop conditions under `core/stop_condition_manager.py` and `core/stop_conditions.py`.
@@ -84,7 +84,7 @@ traigent/
 1. **Decoration**: `@optimize` wraps the function into `OptimizedFunction`, validates configuration space/objectives/dataset, and sets state to `UNOPTIMIZED`.
 2. **Optimize Call (async)**: state → `OPTIMIZING`; orchestrator selects optimizer (grid/random/optuna adapter), evaluator (local), invoker (local/batch), and stop conditions.
 3. **Trials**: optimizer suggests configs → invoker runs function with injected config (context/parameter/attribute/seamless) → evaluator scores → progress/stop conditions checked.
-4. **Results**: best configs recorded; state → `OPTIMIZED`; access via `results.best_config`, `func.current_config`, or `traigent.get_trial_config()` during trials.
+4. **Results**: best configs recorded; state → `OPTIMIZED`; access via `results.best_config`, `func.current_config`, or `traigent.get_config()` inside trials/functions (use `get_trial_config()` only for strict trial-only access).
 5. **Later Calls**: calling the function uses the applied best config automatically; framework overrides can apply to LangChain/OpenAI/Anthropic if enabled.
 
 > Execution modes: `edge_analytics` is the supported mode in OSS. Cloud/hybrid remain roadmap-only.
