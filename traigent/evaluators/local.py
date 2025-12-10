@@ -95,6 +95,9 @@ class LocalEvaluator(BaseEvaluator):
         self.privacy_enabled = privacy_enabled
         self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
+        self._mock_mode_warning_shown = (
+            False  # Track if we've shown the mock mode warning
+        )
 
     def _extract_prompt_info(
         self,
@@ -1045,7 +1048,24 @@ class LocalEvaluator(BaseEvaluator):
         # Accuracy (exact match or mock)
         if "accuracy" in self.metrics:
             if use_mock:
-                # Generate realistic accuracy values for mock mode
+                # Log a one-time warning about mock mode accuracy
+                if not self._mock_mode_warning_shown:
+                    logger.warning(
+                        "MOCK MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
+                        "not computed from actual vs expected outputs. These metrics do not "
+                        "reflect real model performance. Set TRAIGENT_MOCK_MODE=false for "
+                        "real evaluations.",
+                        base_accuracy_config,
+                        variance_config / 2,
+                    )
+                    self._mock_mode_warning_shown = True
+                # IMPORTANT: In mock mode, accuracy is SIMULATED, not computed from
+                # actual vs expected outputs. This is for testing optimization flows
+                # without incurring LLM API costs. The simulated accuracy does NOT
+                # reflect real model performance and should not be used to evaluate
+                # model quality. Set TRAIGENT_MOCK_MODE=false for real evaluations.
+                #
+                # Default base_accuracy=0.75 with variance=0.25 gives range ~0.625-0.875
                 base_accuracy = base_accuracy_config
                 # Add some variance based on actual output presence
                 if actual_output is not None:
@@ -1070,7 +1090,9 @@ class LocalEvaluator(BaseEvaluator):
                     )
                 else:
                     metrics["accuracy"] = 0.0
-            elif expected_output is not None:
+            elif expected_output is not None and not (
+                isinstance(expected_output, str) and not expected_output.strip()
+            ):
                 # If actual_output is dict, use its 'text' for accuracy comparison
                 actual_to_compare = (
                     actual_output.get("text")
@@ -1094,7 +1116,7 @@ class LocalEvaluator(BaseEvaluator):
                 else:
                     metrics["accuracy"] = 0.0
             else:
-                # No expected output available - cannot compute accuracy
+                # No expected output available (None or empty string) - cannot compute accuracy
                 metrics["accuracy"] = 0.0
 
         # Success (whether function completed without error)

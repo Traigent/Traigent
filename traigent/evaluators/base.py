@@ -140,6 +140,19 @@ def _maybe_restore_trial_context(trial_ctx: dict[str, Any] | None) -> Any:
         trial_context.reset(token)
 
 
+def _is_empty_expected_output(value: Any) -> bool:
+    """Check if an expected output value is effectively empty.
+
+    Returns True if the value is None, an empty string, or a string containing
+    only whitespace. These cases cannot be used for meaningful accuracy computation.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
 def _build_dataset(
     cls: type[Dataset],
     *,
@@ -153,6 +166,28 @@ def _build_dataset(
 ) -> Dataset:
     if not examples:
         raise ValidationError(f"No valid examples found in {source}")
+
+    # Check for missing/empty expected outputs and warn users
+    missing_count = sum(
+        1 for ex in examples if _is_empty_expected_output(ex.expected_output)
+    )
+    if missing_count > 0:
+        if missing_count == len(examples):
+            logger.warning(
+                "Dataset '%s' has no expected outputs (output field missing or empty "
+                "in all %d examples). Accuracy metrics will not be meaningful. "
+                "Consider adding expected outputs or using metrics that don't require them.",
+                source,
+                len(examples),
+            )
+        else:
+            logger.warning(
+                "Dataset '%s' has %d/%d examples with missing or empty expected outputs. "
+                "Accuracy metrics will only be computed for examples with valid outputs.",
+                source,
+                missing_count,
+                len(examples),
+            )
 
     metadata: dict[str, Any] | None = None
     if metadata_hint:
@@ -671,7 +706,13 @@ class BaseEvaluator(ABC):
         errors: list[str | None],
         **kwargs,
     ) -> float:
-        """Default accuracy metric (exact match)."""
+        """Default accuracy metric (exact match).
+
+        Note: Empty strings and whitespace-only strings in expected outputs
+        are treated as missing (equivalent to None) and excluded from accuracy
+        computation. This prevents misleading metrics when datasets lack proper
+        expected outputs.
+        """
         if not expected:
             return 0.0
 
@@ -679,7 +720,8 @@ class BaseEvaluator(ABC):
         total = 0
 
         for output, exp, error in zip(outputs, expected, errors):
-            if error is None and exp is not None:
+            # Skip if error occurred or expected output is missing/empty
+            if error is None and not _is_empty_expected_output(exp):
                 if output == exp:
                     correct += 1
                 total += 1
@@ -870,7 +912,7 @@ class BaseEvaluator(ABC):
                 trial_context,
             )
 
-            # Capture trial context for thread propagation (needed for get_trial_config())
+            # Capture trial context for thread propagation (needed for get_config())
             current_trial_ctx = get_trial_context()
 
             # Set configuration context for function execution

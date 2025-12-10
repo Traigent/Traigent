@@ -390,33 +390,39 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
     """Validate dataset format and optimization configuration."""
     console.print(f"\n[bold blue]Validating Dataset: {dataset_path}[/bold blue]\n")
 
+    from traigent.evaluators.base import _resolve_dataset_source
+    from traigent.utils.exceptions import ValidationError
     from traigent.utils.validation import Validators
 
-    # Validate dataset path
+    # Step 1: Validate using runtime path resolution (same as traigent.optimize)
+    # This ensures CLI validation matches runtime behavior
+    try:
+        resolved_path, _registry_entry = _resolve_dataset_source(dataset_path)
+        console.print("✅ [green]Dataset path validation passed[/green]")
+        if verbose:
+            console.print(f"   Resolved path: {resolved_path}")
+    except ValidationError as e:
+        console.print("❌ [red]Dataset path validation failed[/red]")
+        console.print(f"   [red]{e}[/red]")
+        console.print(
+            "\n[yellow]Hint:[/yellow] Dataset paths must reside under the current "
+            "working directory or the path specified by TRAIGENT_DATASET_ROOT."
+        )
+        return
+
+    # Step 2: Validate dataset content format
     path_result = Validators.validate_dataset(dataset_path)
 
     if path_result.is_valid:
-        console.print("✅ [green]Dataset path validation passed[/green]")
-    else:
-        console.print("❌ [red]Dataset path validation failed[/red]")
-        console.print(path_result.get_feedback())
-        return
-
-    # Validate dataset content (same as path validation)
-    content_result = path_result
-
-    if content_result.is_valid:
         console.print("✅ [green]Dataset content validation passed[/green]")
     else:
         console.print("❌ [red]Dataset content validation failed[/red]")
 
-    if verbose or not content_result.is_valid:
-        console.print(content_result.get_feedback())
+    if verbose or not path_result.is_valid:
+        console.print(path_result.get_feedback())
 
     # Validate objectives if provided
     if objectives:
-        from traigent.utils.validation import Validators
-
         obj_result = Validators.validate_objectives(list(objectives))
 
         if obj_result.is_valid:

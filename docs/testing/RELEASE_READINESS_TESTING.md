@@ -158,7 +158,7 @@ def smart_mock_agent(question: str) -> str:
     Mock agent that simulates quality differences based on config.
     Lower temperature + better model = better factual accuracy.
     """
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     temp = config.get("temperature", 0.7)
     model = config.get("model", "gpt-3.5-turbo")
     max_tokens = config.get("max_tokens", 150)
@@ -285,7 +285,7 @@ import traigent
     eval_dataset="my_test_data.jsonl",
 )
 def lifecycle_test(question: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     return f"Answer with temp={config.get('temp')}"
 
 async def main():

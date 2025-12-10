@@ -505,7 +505,7 @@ class TestGetApiKey:
 class TestGetCurrentConfig:
     """Test get_current_config function."""
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_traigent_config(self, mock_get_config):
         """Test get_current_config with TraigentConfig object."""
         config = TraigentConfig(execution_mode="cloud")
@@ -516,7 +516,7 @@ class TestGetCurrentConfig:
         assert isinstance(result, dict)
         # TraigentConfig.to_dict() returns a dict
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_dict(self, mock_get_config):
         """Test get_current_config with dict."""
         mock_get_config.return_value = {"model": "gpt-4", "temperature": 0.7}
@@ -525,7 +525,7 @@ class TestGetCurrentConfig:
 
         assert result == {"model": "gpt-4", "temperature": 0.7}
 
-    @patch("traigent.api.functions.get_config")
+    @patch("traigent.api.functions._get_context_config")
     def test_get_current_config_unexpected_type(self, mock_get_config):
         """Test get_current_config with unexpected type."""
         mock_get_config.return_value = "unexpected_string"
