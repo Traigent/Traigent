@@ -233,7 +233,9 @@ def generate_evaluation_dataset(total_samples: int = 500) -> list[DatasetSample]
         complexities = ["simple", "medium", "complex"]
         complexity_distribution = [0.4, 0.4, 0.2]  # More simple and medium cases
 
-        for complexity, ratio in zip(complexities, complexity_distribution, strict=True):
+        for complexity, ratio in zip(
+            complexities, complexity_distribution, strict=True
+        ):
             complexity_samples = int(samples_per_domain * ratio)
 
             for _i in range(complexity_samples):
