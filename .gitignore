@@ -192,6 +192,8 @@ resampling_configs.md
 *.jsonl
 # But keep example datasets tracked for users to run examples
 !examples/datasets/**/*.jsonl
+# Keep CI example datasets tracked
+!examples/integrations/ci-cd/**/*.jsonl
 # Keep the quickstart symlink at repo root for README examples
 !qa_samples.jsonl
 !tests/mcp/fixtures/sample_datasets.jsonl
