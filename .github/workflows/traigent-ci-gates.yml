@@ -63,8 +63,8 @@ jobs:
 
       - name: Copy baseline results
         run: |
-          mkdir -p work/results-ci/baseline
-          cp -r baseline/examples/integrations/ci-cd/math-qa/results-ci/math/* work/results-ci/baseline/
+          mkdir -p work/examples/integrations/ci-cd/math-qa/results-ci/baseline
+          cp -r baseline/examples/integrations/ci-cd/math-qa/results-ci/math/* work/examples/integrations/ci-cd/math-qa/results-ci/baseline/
 
       - name: Evaluate PR configuration
         working-directory: work/examples/integrations/ci-cd/math-qa
