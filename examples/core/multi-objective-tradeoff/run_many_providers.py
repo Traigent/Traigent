@@ -176,9 +176,7 @@ if _OTEL_AVAILABLE:
 
         events: list[dict[str, Any]] = []
         for event in span.events:
-            event_time = datetime.fromtimestamp(
-                event.timestamp / 1_000_000_000, tz=UTC
-            )
+            event_time = datetime.fromtimestamp(event.timestamp / 1_000_000_000, tz=UTC)
             events.append(
                 {
                     "name": event.name,
