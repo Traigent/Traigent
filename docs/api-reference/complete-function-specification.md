@@ -126,12 +126,12 @@ Later scopes override earlier ones field-by-field. The runtime resolution logs t
 **Example:**
 ```python
 @traigent.optimize(
-    eval_dataset="evals.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4"],
         "temperature": (0.0, 1.0)
-    }
+    },
+    evaluation={"eval_dataset": "evals.jsonl"},  # Grouped option bundle
 )
 def my_agent(query: str) -> str:
     return process_query(query)
@@ -153,32 +153,43 @@ async def optimize(
     timeout: float | None = None,
     save_to: str | None = None,
     custom_evaluator: Callable | None = None,
-    callbacks: list | None = None,
+    callbacks: list[Callable] | None = None,
     configuration_space: dict[str, Any] | None = None,
+    objectives: ObjectiveSchema | Sequence[str] | None = None,
+    tvl_spec: str | Path | None = None,
+    tvl_environment: str | None = None,
+    tvl: TVLOptions | dict[str, Any] | None = None,
     **algorithm_kwargs: Any,
 ) -> OptimizationResult
 ```
 
 **Arguments**
 
-| Parameter | Type | Default | Description | Notes |
-| --- | --- | --- | --- | --- |
-| `algorithm` | `str \| None` | Decorator default | Optimizer to use (`"grid"`, `"random"`, `"optuna"` variants). | Falls back to the decorator’s configured algorithm. |
-| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. | `None` means unlimited; stop conditions may still end the run. |
-| `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. | Applies across the entire optimization loop. |
-| `save_to` | `str \| None` | `None` | Optional path to persist results after completion. | Uses `.save_optimization_results()` under the hood. |
-| `custom_evaluator` | `Callable \| None` | `None` | Overrides the evaluator for this run only. | Same contract as the decorator-level parameter. |
-| `callbacks` | `list \| None` | `None` | Sequence of callback objects for progress reporting. | Must implement the callback protocol defined in `traigent.utils.callbacks`. |
-| `configuration_space` | `dict[str, Any] \| None` | Decorator default | Overrides the decorator-defined search space. | Validated with the same rules as the decorator argument. |
-| `**algorithm_kwargs` | `Any` | – | Extra tuning knobs for the orchestrator/evaluator. | See recognised keys below. |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `algorithm` | `str \| None` | Decorator default | Optimizer to use: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. |
+| `max_trials` | `int \| None` | Decorator default | Maximum number of trials to execute. `None` means unlimited. |
+| `timeout` | `float \| None` | Decorator default | Wall-clock budget in seconds. |
+| `save_to` | `str \| None` | `None` | Optional path to persist results after completion. |
+| `custom_evaluator` | `Callable \| None` | `None` | Overrides the evaluator for this run only. |
+| `callbacks` | `list[Callable] \| None` | `None` | Callback objects for progress reporting. |
+| `configuration_space` | `dict[str, Any] \| None` | Decorator default | Overrides the decorator-defined search space. |
+| `objectives` | `ObjectiveSchema \| Sequence[str] \| None` | Decorator default | Override objectives for this run. |
+| `tvl_spec` | `str \| Path \| None` | `None` | Load TVL spec at runtime. |
+| `tvl_environment` | `str \| None` | `None` | Environment overlay from the TVL spec. |
+| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options for runtime overrides. |
+| `**algorithm_kwargs` | `Any` | – | Extra tuning knobs. See recognised keys below. |
 
 **Recognised `algorithm_kwargs`**
 
 | Key | Description |
 | --- | --- |
-| `parallel_config` | Provides a one-shot concurrency override (same structure as the decorator/global setting). |
+| `parallel_config` | One-shot concurrency override (same structure as decorator/global setting). |
 | `max_examples` | Caps the number of dataset examples processed per trial. |
-| `cache_policy` | One of `"allow_repeats"` (default) or other evaluator cache policies. |
+| `max_total_examples` | Global sample budget across all trials. |
+| `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
+| `cost_limit` | Maximum USD spending for this run. |
+| `cost_approved` | Skip cost approval prompt. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
 
@@ -281,6 +292,32 @@ def run(*args: Any, **kwargs: Any) -> Any
 
 ## Global Configuration Functions
 
+### `traigent.get_config()`
+
+**Get the active configuration in any lifecycle context**
+
+```python
+def get_config() -> dict[str, Any]
+```
+
+This unified accessor works both during optimization trials and after applying the best configuration to your function. It is the recommended way to access configuration inside optimized functions.
+
+**Returns:** Dictionary with the currently active configuration.
+
+**Raises:** `OptimizationStateError` if no configuration is available (e.g., called outside an optimized function without `apply_best_config()`).
+
+**Example:**
+```python
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4"], "temperature": (0.0, 1.0)}
+)
+def my_agent(query: str) -> str:
+    config = traigent.get_config()  # Works during optimization AND after apply_best_config()
+    return call_llm(query, model=config["model"], temperature=config["temperature"])
+```
+
+> **Note:** `traigent.get_trial_config()` is deprecated. Use `traigent.get_config()` instead, which works in all contexts.
+
 ### `traigent.configure()`
 
 ```python
@@ -354,13 +391,26 @@ def get_optimization_insights(
 @dataclass
 class OptimizationResult:
     trials: list[TrialResult]
-    best_config: dict[str, Any] | None
-    best_score: float | None
+    best_config: dict[str, Any]
+    best_score: float
     optimization_id: str
     duration: float
     convergence_info: dict[str, Any]
-    metadata: dict[str, Any]
+    status: OptimizationStatus
+    objectives: list[str]
+    algorithm: str
+    timestamp: datetime
+    metadata: dict[str, Any] = field(default_factory=dict)
+    # Cost and token tracking
+    total_cost: float | None = None
+    total_tokens: int | None = None
+    metrics: dict[str, Any] = field(default_factory=dict)
 ```
+
+**Properties:**
+- `total_trials`: Total number of trials executed
+- `successful_trials`: Number of trials that completed successfully
+- `success_rate`: Ratio of successful trials to total trials
 
 ### TrialResult
 
@@ -374,6 +424,35 @@ class TrialResult:
     duration: float
     timestamp: datetime
     error_message: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+```
+
+**Properties:**
+- `is_successful`: Whether the trial completed successfully (`status == TrialStatus.COMPLETED`)
+
+**Methods:**
+- `get_metric(name: str, default: float | None = None) -> float | None`: Get a specific metric value
+
+### TrialStatus
+
+```python
+class TrialStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    PRUNED = "pruned"
+```
+
+### OptimizationStatus
+
+```python
+class OptimizationStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
 ```
 
 ### StrategyConfig
@@ -495,4 +574,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects TraiGent SDK v1.0.0.
+This documentation reflects TraiGent SDK v1.1.0.
