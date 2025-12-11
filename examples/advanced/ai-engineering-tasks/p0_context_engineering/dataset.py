@@ -12,7 +12,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 
 class QueryType(Enum):
@@ -32,7 +32,7 @@ class Document:
     id: str
     title: str
     content: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     relevance_score: float  # Ground truth relevance to queries
     chunk_size: int  # Optimal chunk size for this document
 
@@ -46,7 +46,7 @@ class DocumentChunk:
     content: str
     start_pos: int
     end_pos: int
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -56,21 +56,21 @@ class RAGQuery:
     question: str
     ground_truth_answer: str
     query_type: QueryType
-    required_doc_ids: List[str]  # Documents needed for correct answer
+    required_doc_ids: list[str]  # Documents needed for correct answer
     difficulty: float  # 0.0 (easy) to 1.0 (hard)
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 @dataclass
 class RAGDataset:
     """Complete RAG evaluation dataset."""
 
-    documents: List[Document]
-    queries: List[RAGQuery]
-    metadata: Dict[str, Any]
+    documents: list[Document]
+    queries: list[RAGQuery]
+    metadata: dict[str, Any]
 
 
-def generate_technical_documents() -> List[Document]:
+def generate_technical_documents() -> list[Document]:
     """Generate technical documentation corpus."""
     documents = [
         # Machine Learning Documentation
@@ -208,7 +208,7 @@ def generate_technical_documents() -> List[Document]:
     return documents
 
 
-def generate_queries(documents: List[Document]) -> List[RAGQuery]:
+def generate_queries(documents: list[Document]) -> list[RAGQuery]:
     """Generate queries for the document corpus."""
     queries = [
         # Factual queries - single document
@@ -302,8 +302,8 @@ def generate_queries(documents: List[Document]) -> List[RAGQuery]:
 
 
 def chunk_documents(
-    documents: List[Document], chunk_size: int = 256, overlap: int = 50
-) -> List[DocumentChunk]:
+    documents: list[Document], chunk_size: int = 256, overlap: int = 50
+) -> list[DocumentChunk]:
     """Chunk documents with specified size and overlap."""
     chunks = []
 
@@ -337,7 +337,7 @@ def chunk_documents(
     return chunks
 
 
-def generate_baseline_configs() -> Dict[str, Dict[str, Any]]:
+def generate_baseline_configs() -> dict[str, dict[str, Any]]:
     """Generate baseline RAG configurations for comparison."""
     return {
         "simple_rag": {
@@ -420,8 +420,8 @@ def create_rag_dataset(num_documents: int = 20, num_queries: int = 50) -> RAGDat
 
 
 def analyze_retrieval_quality(
-    retrieved_chunks: List[DocumentChunk], query: RAGQuery, documents: List[Document]
-) -> Dict[str, float]:
+    retrieved_chunks: list[DocumentChunk], query: RAGQuery, documents: list[Document]
+) -> dict[str, float]:
     """Analyze the quality of retrieved chunks for a query."""
 
     # Get required document IDs

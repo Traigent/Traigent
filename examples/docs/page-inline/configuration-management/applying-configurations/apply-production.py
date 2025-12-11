@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # --- Setup for running from repo without installation ---
 # Add repo root to path so we can import examples.utils and traigent

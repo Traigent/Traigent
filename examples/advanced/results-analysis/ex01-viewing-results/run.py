@@ -5,7 +5,7 @@ import asyncio
 import json
 import os
 import sys
-from typing import Any, Dict, List
+from typing import Any
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
@@ -21,8 +21,8 @@ RESULTS_FILE = "results.json"
 DATASET_FILE = "sentiment.jsonl"
 
 
-def _serialize_trials(opt_result: Any, limit: int = 10) -> List[Dict[str, Any]]:
-    trials_out: List[Dict[str, Any]] = []
+def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
+    trials_out: list[dict[str, Any]] = []
     trials = getattr(opt_result, "trials", [])
     for t in trials[:limit]:
         trials_out.append(
@@ -42,7 +42,7 @@ def main() -> None:
 
     opt_result = asyncio.run(sentiment_classifier.optimize(max_trials=10))
 
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "example": "results-analysis__viewing-results",
         "dataset": os.path.basename(DATASET_FILE),
         "best_config": getattr(opt_result, "best_config", {}),

@@ -190,12 +190,12 @@ Follow these best practices when contributing new examples:
 2. **Use the template:**
 
    ```bash
-   cp templates/run_template.py examples/core/my-example/run.py
+   cp templates/run_template.py examples/core/<YOUR_EXAMPLE>/run.py
    ```
 
 3. **Include all essentials:**
    - ✅ Self-contained `run.py` with clear documentation
-   - ✅ Evaluation dataset in `datasets/my-example/`
+   - ✅ Evaluation dataset in `datasets/<YOUR_EXAMPLE>/`
    - ✅ Mock mode support for testing without API keys
    - ✅ Clear comments explaining key concepts
    - ✅ Expected output examples
@@ -204,10 +204,10 @@ Follow these best practices when contributing new examples:
 
    ```bash
    # Test in mock mode
-   TRAIGENT_MOCK_MODE=true python examples/core/my-example/run.py
+   TRAIGENT_MOCK_MODE=true python examples/core/<YOUR_EXAMPLE>/run.py
 
    # Test with real APIs
-   python examples/core/my-example/run.py
+   python examples/core/<YOUR_EXAMPLE>/run.py
    ```
 
 5. **Update documentation:**

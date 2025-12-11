@@ -7,7 +7,7 @@ Based on the Context Engineering and RAG Optimization use case specification.
 """
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -24,7 +24,7 @@ class ContextConfig:
     retrieval_method: str  # See RETRIEVAL_METHODS below
 
     # Embedding models (if dense/hybrid)
-    embedding_model: Optional[str]  # See EMBEDDING_MODELS below
+    embedding_model: str | None  # See EMBEDDING_MODELS below
 
     # Chunking strategies
     chunk_size: int  # 256, 512, 1024, 2048
@@ -32,14 +32,14 @@ class ContextConfig:
     chunking_method: str  # See CHUNKING_METHODS below
 
     # Reranking approaches
-    reranker: Optional[str]  # See RERANKERS below
+    reranker: str | None  # See RERANKERS below
     rerank_top_k: int  # 20, 50, 100
 
     # Context assembly
     context_ordering: str  # See ORDERING_STRATEGIES below
 
     # Token budget allocation (percentages must sum to 1.0)
-    budget_allocation: Dict[str, float]
+    budget_allocation: dict[str, float]
 
     # Few-shot example selection
     example_selection: str  # See EXAMPLE_STRATEGIES below
@@ -136,7 +136,7 @@ def create_context_config(**kwargs) -> ContextConfig:
 class DocumentCorpus:
     """Represents a document corpus for retrieval."""
 
-    def __init__(self, documents: List[str], metadata: Optional[List[Dict]] = None):
+    def __init__(self, documents: list[str], metadata: list[dict] | None = None):
         self.documents = documents
         self.metadata = metadata or [{} for _ in documents]
         self.chunks = []
@@ -159,7 +159,7 @@ class DocumentCorpus:
                 meta["chunk_idx"] = chunk_idx
                 self.chunk_metadata.append(meta)
 
-    def _chunk_single_document(self, doc: str, config: ContextConfig) -> List[str]:
+    def _chunk_single_document(self, doc: str, config: ContextConfig) -> list[str]:
         """Chunk a single document based on configuration."""
 
         handlers = {
@@ -171,12 +171,12 @@ class DocumentCorpus:
         handler = handlers.get(config.chunking_method, lambda d, _: [d])
         return handler(doc, config)
 
-    def _chunk_fixed_tokens(self, doc: str, config: ContextConfig) -> List[str]:
+    def _chunk_fixed_tokens(self, doc: str, config: ContextConfig) -> list[str]:
         words = doc.split()
         chunk_size_words = max(1, config.chunk_size // 4)
         overlap_words = max(0, config.chunk_overlap // 4)
 
-        chunks: List[str] = []
+        chunks: list[str] = []
         start = 0
         while start < len(words):
             end = min(start + chunk_size_words, len(words))
@@ -188,12 +188,12 @@ class DocumentCorpus:
 
         return chunks if chunks else [doc]
 
-    def _chunk_sentence_boundary(self, doc: str, config: ContextConfig) -> List[str]:
+    def _chunk_sentence_boundary(self, doc: str, config: ContextConfig) -> list[str]:
         import re
 
         sentences = [s.strip() for s in re.split(r"[.!?]+", doc) if s.strip()]
-        chunks: List[str] = []
-        current_chunk: List[str] = []
+        chunks: list[str] = []
+        current_chunk: list[str] = []
         current_size = 0
 
         for sentence in sentences:
@@ -211,8 +211,8 @@ class DocumentCorpus:
         return chunks if chunks else [doc]
 
     def _apply_sentence_overlap(
-        self, sentences: List[str], overlap_tokens: int
-    ) -> Tuple[List[str], int]:
+        self, sentences: list[str], overlap_tokens: int
+    ) -> tuple[list[str], int]:
         if overlap_tokens <= 0 or not sentences:
             return [], 0
         overlap_sentences = max(1, overlap_tokens // 50)
@@ -220,11 +220,11 @@ class DocumentCorpus:
         size = sum(len(s.split()) * 4 for s in kept)
         return kept, size
 
-    def _chunk_semantic_segments(self, doc: str, config: ContextConfig) -> List[str]:
+    def _chunk_semantic_segments(self, doc: str, config: ContextConfig) -> list[str]:
         paragraphs = [p.strip() for p in doc.split("\n\n") if p.strip()]
         return paragraphs if paragraphs else [doc]
 
-    def _chunk_markdown_sections(self, doc: str, config: ContextConfig) -> List[str]:
+    def _chunk_markdown_sections(self, doc: str, config: ContextConfig) -> list[str]:
         import re
 
         sections = [s.strip() for s in re.split(r"^#+\s", doc, flags=re.MULTILINE)]
@@ -245,10 +245,10 @@ class ContextResult:
     """Result of context assembly."""
 
     context: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     token_count: int
-    retrieved_chunks: List[str]
-    selected_examples: List[Dict]
+    retrieved_chunks: list[str]
+    selected_examples: list[dict]
 
 
 class ContextAssembler:
@@ -262,7 +262,7 @@ class ContextAssembler:
         query: str,
         corpus: DocumentCorpus,
         token_budget: int = 4000,
-        conversation_history: Optional[List[dict]] = None,
+        conversation_history: list[dict] | None = None,
     ) -> ContextResult:
         """Assemble optimal context for query."""
 
@@ -326,7 +326,7 @@ class ContextAssembler:
             selected_examples=selected_examples,
         )
 
-    def _retrieve_chunks(self, query: str, corpus: DocumentCorpus) -> List[str]:
+    def _retrieve_chunks(self, query: str, corpus: DocumentCorpus) -> list[str]:
         """Retrieve relevant chunks based on retrieval method."""
 
         if not corpus.chunks:
@@ -372,7 +372,7 @@ class ContextAssembler:
         else:
             return corpus.chunks[:10]
 
-    def _rerank_chunks(self, query: str, chunks: List[str]) -> List[str]:
+    def _rerank_chunks(self, query: str, chunks: list[str]) -> list[str]:
         """Rerank chunks based on reranker configuration."""
 
         if self.config.reranker == "none":
@@ -398,7 +398,7 @@ class ContextAssembler:
         # Return top-k after reranking
         return chunks[: self.config.rerank_top_k]
 
-    def _select_examples(self, query: str) -> List[Dict]:
+    def _select_examples(self, query: str) -> list[dict]:
         """Select few-shot examples based on strategy."""
 
         # Simulate example selection
@@ -412,7 +412,7 @@ class ContextAssembler:
 
         return examples
 
-    def _allocate_budget(self, total_budget: int) -> Dict[str, int]:
+    def _allocate_budget(self, total_budget: int) -> dict[str, int]:
         """Allocate token budget to different components."""
 
         allocated = {}
@@ -421,7 +421,7 @@ class ContextAssembler:
 
         return allocated
 
-    def _format_examples(self, examples: List[Dict]) -> str:
+    def _format_examples(self, examples: list[dict]) -> str:
         """Format examples for inclusion in context."""
         formatted = []
         for i, ex in enumerate(examples):
@@ -430,7 +430,7 @@ class ContextAssembler:
             )
         return "\n\n".join(formatted)
 
-    def _format_history(self, history: List[dict]) -> str:
+    def _format_history(self, history: list[dict]) -> str:
         """Format conversation history."""
         formatted = []
         for turn in history[-3:]:  # Last 3 turns
@@ -439,7 +439,7 @@ class ContextAssembler:
             formatted.append(f"{role}: {content}")
         return "\n".join(formatted)
 
-    def _apply_ordering(self, context: str, parts: List[str]) -> str:
+    def _apply_ordering(self, context: str, parts: list[str]) -> str:
         """Apply ordering strategy to context."""
 
         if self.config.context_ordering == "relevance_score":
