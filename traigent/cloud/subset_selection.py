@@ -454,7 +454,7 @@ class HighConfidenceSampling(BaseSubsetSelector):
 
         # Sort by score (high to low if prioritizing difficult)
         sorted_examples = sorted(
-            zip(dataset.examples, example_scores),
+            zip(dataset.examples, example_scores, strict=False),
             key=lambda x: x[1],
             reverse=prioritize_difficult,
         )

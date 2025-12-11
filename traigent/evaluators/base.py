@@ -11,8 +11,7 @@ import math
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from collections.abc import Mapping as CollectionsMapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -33,11 +32,9 @@ from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
-)
-from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import (
     ValidationError,
 )
+from traigent.utils.exceptions import TraigentError as CoreTraigentError
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -722,7 +719,7 @@ class BaseEvaluator(ABC):
         correct = 0
         total = 0
 
-        for output, exp, error in zip(outputs, expected, errors):
+        for output, exp, error in zip(outputs, expected, errors, strict=False):
             # Skip if error occurred or expected output is missing/empty
             if error is None and not _is_empty_expected_output(exp):
                 if output == exp:
@@ -808,7 +805,9 @@ class BaseEvaluator(ABC):
     ) -> float:
         """Default average output length metric."""
         valid_outputs = [
-            out for out, err in zip(outputs, errors) if err is None and out is not None
+            out
+            for out, err in zip(outputs, errors, strict=False)
+            if err is None and out is not None
         ]
 
         if not valid_outputs:
@@ -838,7 +837,9 @@ class BaseEvaluator(ABC):
                 # Calculate average cost from successful examples
                 total_cost = 0.0
                 count = 0
-                for _i, (error, metrics) in enumerate(zip(errors, example_metrics)):
+                for _i, (error, metrics) in enumerate(
+                    zip(errors, example_metrics, strict=False)
+                ):
                     if error is None and metrics and hasattr(metrics, "cost"):
                         total_cost += metrics.cost.total_cost
                         count += 1
@@ -1227,7 +1228,7 @@ class BaseEvaluator(ABC):
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for i, result in zip(indices, results):
+        for i, result in zip(indices, results, strict=False):
             if isinstance(result, Exception):
                 if self._process_concurrent_exception(
                     result,
