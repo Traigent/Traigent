@@ -798,7 +798,9 @@ class OptimizationOrchestrator:
         scheduled_optuna_ids: list[int | None] = []
         tasks = []
 
-        for descriptor, sample_ceiling in zip(trial_descriptors, ceilings):
+        for descriptor, sample_ceiling in zip(
+            trial_descriptors, ceilings, strict=False
+        ):
             cfg, cfg_eval, ds_for_trial, optuna_id = descriptor
             if sample_ceiling is not None and sample_ceiling <= 0:
                 logger.debug(
@@ -867,7 +869,7 @@ class OptimizationOrchestrator:
         - None for trials cancelled due to cost limit
         """
         for batch_offset, (config, permitted_result, optuna_id) in enumerate(
-            zip(scheduled_configs, results, scheduled_optuna_ids)
+            zip(scheduled_configs, results, scheduled_optuna_ids, strict=False)
         ):
             # Unwrap PermittedTrialResult to get result and permit
             result = permitted_result.result

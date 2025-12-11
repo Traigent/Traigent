@@ -577,7 +577,7 @@ class OptimizationAnalyzer:
             return None
 
         # Compute Pareto front
-        points = np.array(list(zip(obj1_values, obj2_values)))
+        points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
         pareto_points = []
 
         for i, point in enumerate(points):

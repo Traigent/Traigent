@@ -694,7 +694,7 @@ class LocalEvaluator(BaseEvaluator):
         total = 0
         correct = 0
 
-        for raw_output, example in zip(outputs, dataset.examples):
+        for raw_output, example in zip(outputs, dataset.examples, strict=False):
             expected = example.expected_output
             if expected is None:
                 continue

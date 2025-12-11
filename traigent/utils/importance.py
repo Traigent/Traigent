@@ -133,7 +133,7 @@ class ParameterImportanceAnalyzer:
         # Calculate between-group sum of squares
         between_ss = sum(
             size * (mean - overall_mean) ** 2
-            for mean, size in zip(group_means, group_sizes)
+            for mean, size in zip(group_means, group_sizes, strict=False)
         )
 
         # Calculate within-group sum of squares
@@ -269,7 +269,7 @@ class ParameterImportanceAnalyzer:
         n = len(x)
         sum_x = sum(x)
         sum_y = sum(y)
-        sum_xy = sum(xi * yi for xi, yi in zip(x, y))
+        sum_xy = sum(xi * yi for xi, yi in zip(x, y, strict=False))
         sum_x2 = sum(xi * xi for xi in x)
         sum_y2 = sum(yi * yi for yi in y)
 

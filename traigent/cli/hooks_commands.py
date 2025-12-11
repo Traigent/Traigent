@@ -75,7 +75,7 @@ def install(force: bool, path: str | None) -> None:
 
     except Exception as e:
         console.print(f"[red]Error installing hooks: {e}[/red]")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @hooks.command()
@@ -112,7 +112,7 @@ def uninstall(path: str | None) -> None:
 
     except Exception as e:
         console.print(f"[red]Error uninstalling hooks: {e}[/red]")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @hooks.command()
@@ -199,7 +199,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
     except Exception as e:
         console.print(f"[red]Error loading configuration: {e}[/red]")
         if exit_code:
-            raise SystemExit(1)
+            raise SystemExit(1) from e
         return
 
     # Check if validation is enabled
@@ -294,7 +294,7 @@ def check(quick: bool) -> None:
             console.print("[green]Configuration valid[/green]")
         except Exception as e:
             console.print(f"[red]Configuration error: {e}[/red]")
-            raise SystemExit(1)
+            raise SystemExit(1) from e
     else:
         if not quick:
             console.print("[yellow]No traigent.yml found (using defaults)[/yellow]")
@@ -331,7 +331,7 @@ def init(output: str, force: bool) -> None:
 
     except Exception as e:
         console.print(f"[red]Error creating configuration: {e}[/red]")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
 
 @hooks.command()
@@ -351,7 +351,7 @@ def show(module_path: str, function: str | None) -> None:
         )
     except Exception as e:
         console.print(f"[red]Error loading module: {e}[/red]")
-        raise SystemExit(1)
+        raise SystemExit(1) from e
 
     if not functions:
         console.print(

@@ -197,10 +197,10 @@ class StreamingInvoker(LocalInvoker):
                 if self.chunk_timeout:
                     try:
                         yield chunk
-                    except TimeoutError:
+                    except TimeoutError as e:
                         raise InvocationError(
                             f"Chunk timeout after {self.chunk_timeout}s"
-                        )
+                        ) from e
                 else:
                     yield chunk
 
