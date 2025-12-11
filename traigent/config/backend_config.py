@@ -181,9 +181,12 @@ class BackendConfig:
                 logger.info(f"✅ Using API key from {env_var} (length={len(api_key)})")
                 return api_key
 
-        logger.warning(
-            "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
-        )
+        # Only warn if not in mock mode - mock mode doesn't need API keys
+        mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
+        if not mock_mode:
+            logger.warning(
+                "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
+            )
         return None
 
     @classmethod

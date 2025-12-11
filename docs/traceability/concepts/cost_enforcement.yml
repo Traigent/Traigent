@@ -1,0 +1,150 @@
+id: CONC-CostEnforcement
+name: Cost Enforcement
+purpose: "Prevent uncontrolled LLM API costs through permit-based budget control with parallel execution support."
+type_params:
+  - Permit  # Cost permit with single-release semantics
+  - CostEnforcerConfig  # Configuration for limits and estimation
+state:
+  - name: accumulated_cost
+    type: "float >= 0"
+    description: "Total confirmed cost in USD from completed trials."
+  - name: reserved_cost
+    type: "float >= 0"
+    description: "Sum of in-flight permit reservations in USD."
+  - name: in_flight_count
+    type: "int >= 0"
+    description: "Number of active permits (trials currently executing)."
+  - name: active_permits
+    type: "dict[int, Permit]"
+    description: "Registry of active permits by ID for tracking and validation."
+  - name: permit_counter
+    type: "int >= 0"
+    description: "Monotonically increasing permit ID counter."
+  - name: estimated_cost
+    type: "float > 0"
+    description: "EMA-based estimated cost per trial for permit reservation."
+  - name: unknown_cost_mode
+    type: "bool"
+    description: "Fallback mode when cost extraction fails."
+  - name: mock_mode_cached
+    type: "bool"
+    description: "Mock mode cached at init to prevent mid-run env changes."
+
+actions:
+  - name: acquire_permit
+    inputs:
+      - name: estimated_amount
+        type: "float | None"
+        description: "Optional override for reservation amount (defaults to EMA estimate)."
+    outputs:
+      - case: granted
+        fields:
+          - name: permit
+            type: "Permit"
+            description: "Active permit with unique ID and reserved amount."
+      - case: denied
+        fields:
+          - name: permit
+            type: "Permit"
+            description: "Denied permit with id=-1, amount=0, active=False."
+    description: "Check budget and issue permit if sufficient budget remains. Increments in_flight_count and reserved_cost atomically."
+
+  - name: release_permit
+    inputs:
+      - name: permit
+        type: "Permit"
+        description: "Permit to release (must have been acquired earlier)."
+    outputs:
+      - case: released
+        fields:
+          - name: success
+            type: "bool"
+            description: "True if first release, False if already released."
+    description: "Release permit reservation without tracking actual cost. Used for cancelled/failed trials."
+
+  - name: track_cost
+    inputs:
+      - name: actual_cost
+        type: "float | None"
+        description: "Actual cost incurred (None triggers unknown cost mode)."
+      - name: permit
+        type: "Permit"
+        description: "Permit associated with the completed trial."
+    outputs:
+      - case: tracked
+        fields:
+          - name: accumulated
+            type: "float"
+            description: "Updated accumulated cost."
+      - case: unknown
+        fields:
+          - name: fallback_mode
+            type: "bool"
+            description: "Entered unknown cost mode."
+    description: "Record actual cost, release permit, update EMA estimate. Releases reserved amount atomically."
+
+  - name: reset
+    inputs: []
+    outputs:
+      - case: reset
+        fields:
+          - name: success
+            type: "bool"
+    description: "Reset enforcer to initial state. Note: permit_counter is NOT reset to preserve ID uniqueness."
+
+  - name: get_status
+    inputs: []
+    outputs:
+      - case: status
+        fields:
+          - name: cost_status
+            type: "CostStatus"
+            description: "Current accumulated, reserved, limit, and remaining budget."
+    description: "Get current cost tracking status for monitoring and stop conditions."
+
+operational_principle:
+  - "A permit is acquired before any trial that may incur LLM costs."
+  - "Permits use single-release semantics: mark_released() returns True only on first call."
+  - "The sum of active permit amounts always equals reserved_cost (I8 invariant)."
+  - "Budget bound: accumulated_cost + reserved_cost <= limit at all times (I4 invariant)."
+  - "All state mutations occur atomically under a single RLock."
+  - "Mock mode bypasses all tracking to enable zero-cost development/testing."
+  - "Denied permits have id=-1, amount=0.0, active=False (I7 invariant)."
+  - "Permit IDs are monotonically increasing and never reused (I6 invariant)."
+
+invariants:
+  - id: I1
+    name: in_flight_non_negative
+    description: "in_flight_count >= 0"
+    expression: "self._in_flight_count >= 0"
+  - id: I2
+    name: reserved_non_negative
+    description: "reserved_cost >= 0"
+    expression: "self._reserved_cost >= 0"
+  - id: I3
+    name: active_permits_consistent
+    description: "len(active_permits) == in_flight_count"
+    expression: "len(self._active_permits) == self._in_flight_count"
+  - id: I4
+    name: budget_bound
+    description: "accumulated_cost + reserved_cost <= limit + ε"
+    expression: "self._accumulated_cost + self._reserved_cost <= self.config.limit + 0.0001"
+  - id: I5
+    name: released_permits_inactive
+    description: "All released permits have active=False"
+    expression: "not permit.active after mark_released()"
+  - id: I6
+    name: permit_ids_monotonic
+    description: "Permit IDs strictly increase"
+    expression: "new_permit.id > last_permit.id"
+  - id: I7
+    name: denied_permit_properties
+    description: "Denied permits: id=-1, amount=0, active=False"
+    expression: "denied_permit.id == -1 and denied_permit.amount == 0.0 and not denied_permit.active"
+  - id: I8
+    name: permit_sum_equals_reserved
+    description: "Sum of active permit amounts equals reserved_cost"
+    expression: "sum(p.amount for p in self._active_permits.values()) == self._reserved_cost"
+
+version: 1
+status: active

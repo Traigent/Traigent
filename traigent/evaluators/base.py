@@ -10,12 +10,14 @@ import json
 import math
 import os
 import time
-from contextlib import contextmanager
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Iterable
+from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.evaluators.dataset_registry import (
@@ -31,9 +33,11 @@ from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
-    ValidationError,
 )
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
+from traigent.utils.exceptions import (
+    ValidationError,
+)
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -86,12 +90,18 @@ def _get_dataset_root() -> Path:
 def _resolve_dataset_source(
     source: str,
 ) -> tuple[Path, DatasetRegistryEntry | None]:
-    """Resolve a dataset reference to an absolute path within the dataset root."""
+    """Resolve a dataset reference to an absolute path.
+
+    Security: All dataset paths must reside under the configured dataset root.
+    When TRAIGENT_DATASET_ROOT is not set, the current working directory is
+    treated as the trusted root to prevent accidental traversal.
+    """
 
     dataset_root = _get_dataset_root()
     resolved_reference, registry_entry = resolve_dataset_reference(source)
     path_obj = Path(resolved_reference)
-    candidate = path_obj if path_obj.is_absolute() else dataset_root / path_obj
+    is_absolute_path = path_obj.is_absolute()
+    candidate = path_obj if is_absolute_path else dataset_root / path_obj
 
     try:
         resolved_path = candidate.resolve(strict=True)
@@ -100,6 +110,9 @@ def _resolve_dataset_source(
     except RuntimeError as exc:  # pragma: no cover - symlink loops
         raise ValidationError(f"Invalid dataset path: {source}") from exc
 
+    # Enforce dataset root constraint for both relative and absolute paths.
+    # This prevents accidental access to files outside the intended dataset root
+    # even when TRAIGENT_DATASET_ROOT is not explicitly set.
     try:
         resolved_path.relative_to(dataset_root)
     except ValueError as exc:
@@ -130,6 +143,19 @@ def _maybe_restore_trial_context(trial_ctx: dict[str, Any] | None) -> Any:
         trial_context.reset(token)
 
 
+def _is_empty_expected_output(value: Any) -> bool:
+    """Check if an expected output value is effectively empty.
+
+    Returns True if the value is None, an empty string, or a string containing
+    only whitespace. These cases cannot be used for meaningful accuracy computation.
+    """
+    if value is None:
+        return True
+    if isinstance(value, str) and not value.strip():
+        return True
+    return False
+
+
 def _build_dataset(
     cls: type[Dataset],
     *,
@@ -143,6 +169,28 @@ def _build_dataset(
 ) -> Dataset:
     if not examples:
         raise ValidationError(f"No valid examples found in {source}")
+
+    # Check for missing/empty expected outputs and warn users
+    missing_count = sum(
+        1 for ex in examples if _is_empty_expected_output(ex.expected_output)
+    )
+    if missing_count > 0:
+        if missing_count == len(examples):
+            logger.warning(
+                "Dataset '%s' has no expected outputs (output field missing or empty "
+                "in all %d examples). Accuracy metrics will not be meaningful. "
+                "Consider adding expected outputs or using metrics that don't require them.",
+                source,
+                len(examples),
+            )
+        else:
+            logger.warning(
+                "Dataset '%s' has %d/%d examples with missing or empty expected outputs. "
+                "Accuracy metrics will only be computed for examples with valid outputs.",
+                source,
+                missing_count,
+                len(examples),
+            )
 
     metadata: dict[str, Any] | None = None
     if metadata_hint:
@@ -421,6 +469,58 @@ class EvaluationResult:
         """Check if any evaluations failed."""
         return self.successful_examples < self.total_examples
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to JSON-serializable dictionary."""
+        from traigent.utils.persistence import _safe_json_value
+
+        return {
+            "config": _safe_json_value(self.config),
+            "example_results": [
+                r.to_dict() if hasattr(r, "to_dict") else _safe_json_value(r)
+                for r in self.example_results
+            ],
+            "aggregated_metrics": _safe_json_value(self.aggregated_metrics),
+            "total_examples": self.total_examples,
+            "successful_examples": self.successful_examples,
+            "duration": self.duration,
+            "summary_stats": _safe_json_value(self.summary_stats),
+            "sample_budget_exhausted": self.sample_budget_exhausted,
+            "examples_consumed": self.examples_consumed,
+            "metrics": _safe_json_value(self.metrics),
+            "outputs": _safe_json_value(self.outputs),
+            "errors": self.errors,
+            "success_rate": self.success_rate,
+            "has_errors": self.has_errors,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvaluationResult:
+        """Reconstruct EvaluationResult from a dictionary."""
+        from traigent.api.types import ExampleResult
+
+        # Rehydrate example_results if they are dicts
+        example_results = []
+        for r in data.get("example_results", []):
+            if isinstance(r, dict) and "example_id" in r:
+                example_results.append(ExampleResult.from_dict(r))
+            else:
+                example_results.append(r)
+
+        return cls(
+            config=data.get("config", {}),
+            example_results=example_results,
+            aggregated_metrics=data.get("aggregated_metrics", {}),
+            total_examples=data.get("total_examples", 0),
+            successful_examples=data.get("successful_examples", 0),
+            duration=data.get("duration", 0.0),
+            summary_stats=data.get("summary_stats"),
+            sample_budget_exhausted=data.get("sample_budget_exhausted", False),
+            examples_consumed=data.get("examples_consumed", 0),
+            metrics=data.get("metrics"),
+            outputs=data.get("outputs"),
+            errors=data.get("errors"),
+        )
+
 
 class BaseEvaluator(ABC):
     """Base class for all evaluation strategies.
@@ -465,6 +565,7 @@ class BaseEvaluator(ABC):
             "error_rate": self._compute_error_rate,
             "avg_output_length": self._compute_avg_output_length,
             "cost": self._compute_cost,
+            "latency": self._compute_latency,
         }
 
         self._ragas_metric_names: set[str] = set(POPULAR_RAGAS_METRICS)
@@ -608,7 +709,13 @@ class BaseEvaluator(ABC):
         errors: list[str | None],
         **kwargs,
     ) -> float:
-        """Default accuracy metric (exact match)."""
+        """Default accuracy metric (exact match).
+
+        Note: Empty strings and whitespace-only strings in expected outputs
+        are treated as missing (equivalent to None) and excluded from accuracy
+        computation. This prevents misleading metrics when datasets lack proper
+        expected outputs.
+        """
         if not expected:
             return 0.0
 
@@ -616,7 +723,8 @@ class BaseEvaluator(ABC):
         total = 0
 
         for output, exp, error in zip(outputs, expected, errors):
-            if error is None and exp is not None:
+            # Skip if error occurred or expected output is missing/empty
+            if error is None and not _is_empty_expected_output(exp):
                 if output == exp:
                     correct += 1
                 total += 1
@@ -744,6 +852,36 @@ class BaseEvaluator(ABC):
 
         return 0.0
 
+    def _compute_latency(
+        self,
+        outputs: list[Any],
+        expected: list[Any],
+        errors: list[str | None],
+        **context,
+    ) -> float:
+        """Compute average latency (response time) in seconds.
+
+        Returns the average execution time across all successful examples.
+        """
+        if "example_results" in context:
+            example_results = context["example_results"]
+            if example_results:
+                response_times = [
+                    r.execution_time
+                    for r in example_results
+                    if hasattr(r, "execution_time") and r.execution_time > 0
+                ]
+                if response_times:
+                    return sum(response_times) / len(response_times)
+
+        # Fallback: look for latency in context directly
+        if "latency" in context:
+            return float(context["latency"])
+        if "avg_response_time" in context:
+            return float(context["avg_response_time"])
+
+        return 0.0
+
     # Common evaluation methods to reduce duplication in subclasses
     async def _execute_function(
         self,
@@ -777,7 +915,7 @@ class BaseEvaluator(ABC):
                 trial_context,
             )
 
-            # Capture trial context for thread propagation (needed for get_trial_config())
+            # Capture trial context for thread propagation (needed for get_config())
             current_trial_ctx = get_trial_context()
 
             # Set configuration context for function execution
@@ -867,7 +1005,7 @@ class BaseEvaluator(ABC):
             # Configuration-related issues should surface so the orchestrator can
             # mark the trial as failed rather than silently falling back.
             raise
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_msg = f"Function call timed out after {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg

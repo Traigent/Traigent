@@ -15,7 +15,7 @@ import os
 import platform
 import random
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -42,7 +42,7 @@ class ReproducibilityMetadata:
     def _collect_all_metadata(self) -> None:
         """Collect all reproducibility metadata."""
         self.metadata = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "environment": self._collect_environment(),
             "python": self._collect_python_info(),
             "dependencies": self._collect_dependencies(),

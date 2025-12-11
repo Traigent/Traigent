@@ -9,7 +9,7 @@ import statistics
 import threading
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -155,7 +155,9 @@ class OptimizationHistory:
             self.records.append(record)
             # Enforce memory limits
             if len(self.records) > MAX_OPTIMIZATION_HISTORY_SIZE:
-                items_to_keep = int(MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO))
+                items_to_keep = int(
+                    MAX_OPTIMIZATION_HISTORY_SIZE * (1 - HISTORY_PRUNE_RATIO)
+                )
                 self.records = self.records[-items_to_keep:]
                 logger.debug(
                     f"Pruned optimization history to stay within {MAX_OPTIMIZATION_HISTORY_SIZE} limit"
@@ -186,7 +188,7 @@ class OptimizationHistory:
             filtered_records = [r for r in filtered_records if r.status == status]
 
         if days_back:
-            cutoff_date = datetime.utcnow() - timedelta(days=days_back)
+            cutoff_date = datetime.now(UTC) - timedelta(days=days_back)
             filtered_records = [
                 r for r in filtered_records if r.timestamp >= cutoff_date
             ]
@@ -687,7 +689,7 @@ class MetaLearningEngine:
             total_trials=total_trials,
             duration_seconds=duration_seconds,
             status=status_enum,
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(UTC),
             metadata=metadata or {},
         )
 

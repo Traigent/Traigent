@@ -7,8 +7,9 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Iterable, Mapping, cast
+from typing import Any, cast
 
 from traigent.utils.logging import get_logger
 

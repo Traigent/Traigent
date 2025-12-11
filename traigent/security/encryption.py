@@ -10,7 +10,7 @@ import os
 import re
 import secrets
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, cast
 
@@ -87,7 +87,7 @@ class EncryptionKey:
     key_id: str
     key_data: bytes
     algorithm: str
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     rotation_count: int = 0
     is_active: bool = True
@@ -115,7 +115,7 @@ class DataRecord:
     classification: DataClassification
     encryption_key_id: str | None = None
     pii_detected: list[PIIMatch] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     accessed_at: datetime | None = None
     retention_until: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -722,7 +722,7 @@ class SecureStorage:
         retention_until = None
         retention_period = self.classifier.get_retention_period(classification)
         if retention_period:
-            retention_until = datetime.utcnow() + retention_period
+            retention_until = datetime.now(UTC) + retention_period
 
         # Create data record
         record = DataRecord(
@@ -749,7 +749,7 @@ class SecureStorage:
             return None
 
         # Check retention period
-        if record.retention_until and datetime.utcnow() > record.retention_until:
+        if record.retention_until and datetime.now(UTC) > record.retention_until:
             logger.warning(f"Data record {record_id} has expired and should be deleted")
             return None
 
@@ -785,7 +785,7 @@ class SecureStorage:
         data = data_bytes.decode("utf-8")
 
         # Update access time
-        record.accessed_at = datetime.utcnow()
+        record.accessed_at = datetime.now(UTC)
 
         logger.debug(f"Retrieved data record {record_id}")
         return cast(str | None, data)
@@ -800,7 +800,7 @@ class SecureStorage:
 
     def cleanup_expired_data(self) -> int:
         """Clean up expired data records."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
         expired_records = []
 
         for record_id, record in self.records.items():
@@ -848,7 +848,7 @@ class SecureStorage:
             "anonymized_data": anonymized_data,
             "classification": classification,
             "pii_detected": len(pii_matches),
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
     def retrieve(self, key: str) -> str | dict[str, Any] | None:
@@ -1115,7 +1115,7 @@ class DataProtectionManager:
         """
         retention_days = self.get_retention_period(classification)
         expiry_date = created_date + timedelta(days=retention_days)
-        return datetime.utcnow() > expiry_date
+        return datetime.now(UTC) > expiry_date
 
     def unprotect_data(self, protected_result: dict[str, Any]) -> str:
         """Unprotect data from protection result.
@@ -1139,7 +1139,7 @@ class KeyMetadata:
 
     algorithm: str
     key_length: int
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     expires_at: datetime | None = None
     rotation_count: int = 0
     is_active: bool = True
@@ -1148,7 +1148,7 @@ class KeyMetadata:
         """Check if key is expired."""
         if self.expires_at is None:
             return False
-        return datetime.utcnow() > self.expires_at
+        return datetime.now(UTC) > self.expires_at
 
     def is_valid(self) -> bool:
         """Check if key is valid (active and not expired)."""
@@ -1188,7 +1188,7 @@ class KeyManager:
         # Set expiration if provided
         expires_at = None
         if expires_in_days is not None:
-            expires_at = datetime.utcnow() + timedelta(days=expires_in_days)
+            expires_at = datetime.now(UTC) + timedelta(days=expires_in_days)
 
         # Store key and metadata
         self.keys[key_id] = key_data

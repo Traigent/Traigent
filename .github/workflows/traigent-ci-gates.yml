@@ -33,17 +33,17 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11'
 
       - name: Install dependencies (baseline)
         working-directory: baseline
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev,analytics,integrations]"
 
       - name: Install dependencies (PR)
         working-directory: work
         run: |
-          pip install -e ".[dev]"
+          pip install -e ".[dev,analytics,integrations]"
 
       - name: Evaluate baseline configuration
         working-directory: baseline/examples/integrations/ci-cd/math-qa

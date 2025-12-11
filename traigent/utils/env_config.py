@@ -28,14 +28,22 @@ else:
         / ".env.local.template"
     )
     if template_file.exists():
-        # Only warn in non-mock mode to reduce noise for demo/testing
+        # Suppress warning in mock mode or when running examples/tests
         mock_mode = os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true"
-        if not mock_mode:
-            warnings.warn(
-                "Using configs/env-templates/.env.local.template file. Create a .env file with actual values for production.",
-                UserWarning,
-                stacklevel=2,
-            )
+        suppress_warning = (
+            os.getenv("TRAIGENT_SUPPRESS_ENV_WARNING", "false").lower() == "true"
+        )
+        if not mock_mode and not suppress_warning:
+            # Only warn for non-demo usage - check if running interactively
+            import sys
+
+            if sys.stderr.isatty():
+                warnings.warn(
+                    "No .env file found. Using template defaults. "
+                    "For production, create a .env file with your configuration.",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}

@@ -19,7 +19,9 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    pass
+    from traigent.core.cost_enforcement import CostEnforcer
+
+from traigent.core.cost_enforcement import Permit
 
 logger = get_logger(__name__)
 
@@ -33,6 +35,28 @@ class ParallelBatchCaps:
     remaining_cap: int
     target_batch_size: int
     infinite_budget: bool
+
+
+@dataclass
+class CostPermitResult:
+    """Result of a cost permit check for parallel execution."""
+
+    permitted: bool
+    cancelled_count: int = 0
+
+
+@dataclass
+class PermittedTrialResult:
+    """Result from a trial execution with associated cost permit info.
+
+    This wrapper carries the Permit object through parallel execution
+    so that track_cost_async can use the exact reserved amount and
+    single-release semantics, even if the EMA estimate has changed
+    since permit acquisition.
+    """
+
+    result: Any  # TrialResult, Exception, or None (cancelled)
+    permit: Permit  # Permit object with single-release semantics
 
 
 @dataclass
@@ -124,18 +148,41 @@ class ParallelExecutionManager:
         parallel_trials: int,
         *,
         max_concurrent: int | None = None,
+        cost_enforcer: CostEnforcer | None = None,
     ) -> None:
         """Initialize parallel execution manager.
 
         Args:
             parallel_trials: Number of trials to run in parallel
             max_concurrent: Maximum concurrent tasks (defaults to parallel_trials)
+            cost_enforcer: Optional CostEnforcer for permit-based cost control
         """
         self.parallel_trials = parallel_trials
         self.max_concurrent = max_concurrent or parallel_trials
+        self.cost_enforcer = cost_enforcer
         self._semaphore: asyncio.Semaphore | None = None
         # Lock to protect lazy semaphore initialization (P5 fix)
         self._semaphore_init_lock = asyncio.Lock()
+
+    def set_cost_enforcer(self, cost_enforcer: CostEnforcer) -> None:
+        """Set or update the cost enforcer for permit-based cost control.
+
+        Args:
+            cost_enforcer: CostEnforcer instance for cost tracking
+        """
+        self.cost_enforcer = cost_enforcer
+
+    async def acquire_cost_permit(self) -> Permit:
+        """Acquire a cost permit before executing a trial.
+
+        Returns:
+            Permit object if granted (with amount > 0 and is_granted=True),
+            or a denied Permit (with amount=0 and is_granted=False) if limit reached.
+        """
+        if self.cost_enforcer is None:
+            # No enforcer, return a mock permit for API compatibility
+            return Permit(id=0, amount=0.05, active=True)
+        return await self.cost_enforcer.acquire_permit_async()
 
     def calculate_batch_caps(
         self,
@@ -270,3 +317,123 @@ class ParallelExecutionManager:
         """
         # Use parallel if we have more than 1 trial to run and capacity
         return self.parallel_trials > 1 and remaining_cap > 0 and configs_count > 0
+
+    async def run_with_cost_permits(
+        self,
+        coroutines: list[Any],
+        *,
+        cancel_sentinel: Any = None,
+    ) -> tuple[list[PermittedTrialResult], int]:
+        """Run coroutines with cost permit checking before each execution.
+
+        Each coroutine will only execute if a cost permit is acquired.
+        Coroutines that fail to acquire a permit are cancelled and
+        wrapped in PermittedTrialResult with a denied Permit.
+
+        If a coroutine raises an exception after a permit was acquired,
+        the permit is released to avoid stranding reserved budget.
+
+        Results are wrapped in PermittedTrialResult to carry the Permit object
+        through to track_cost_async, ensuring exact budget release with
+        single-release semantics even if the cost estimate (EMA) changes.
+
+        Args:
+            coroutines: List of coroutines to execute with permit checking
+            cancel_sentinel: Value to return for cancelled coroutines (default: None)
+
+        Returns:
+            Tuple of (permitted_results, cancelled_count) where each result is a
+            PermittedTrialResult containing (result, permit).
+        """
+        if not coroutines:
+            return [], 0
+
+        cancelled_count = 0
+        results: list[PermittedTrialResult] = []
+
+        # Initialize semaphore with double-check locking pattern
+        if self._semaphore is None:
+            async with self._semaphore_init_lock:
+                if self._semaphore is None:
+                    self._semaphore = asyncio.Semaphore(self.max_concurrent)
+
+        # Create a denied permit for cancelled/failed trials
+        denied_permit = Permit(id=-1, amount=0.0, active=False)
+
+        async def execute_with_permit(coro: Any, index: int) -> tuple[int, Any, Permit]:
+            """Execute coroutine if permit acquired, return (index, result, permit).
+
+            Always returns a tuple (index, result_or_exception, permit)
+            to preserve order and carry the permit through.
+            If an exception occurs after permit acquisition, the permit is released
+            and a denied permit is returned (already released).
+            """
+            nonlocal cancelled_count
+
+            # Check permit before acquiring semaphore to fail fast
+            permit = await self.acquire_cost_permit()
+            if not permit.is_granted:
+                # Increment cancelled count, don't execute - no permit was acquired
+                cancelled_count += 1
+                logger.info(
+                    "Trial at index %d cancelled due to cost limit reached",
+                    index,
+                )
+                # Return with denied permit (no permit was acquired)
+                return (index, cancel_sentinel, permit)
+
+            # Permit acquired, execute with concurrency control
+            # On exception, release the permit
+            try:
+                async with self._semaphore:  # type: ignore[union-attr]
+                    result = await coro
+                    # Success: return with the permit for track_cost_async
+                    return (index, result, permit)
+            except BaseException as e:
+                # Release the permit on exception - the trial failed after permit
+                # was granted, so we need to release the reservation
+                if self.cost_enforcer is not None:
+                    await self.cost_enforcer.release_permit_async(permit)
+                    logger.debug(
+                        "Released permit %d for trial %d after exception: %s",
+                        permit.id,
+                        index,
+                        type(e).__name__,
+                    )
+                # Return exception with denied permit (already released)
+                return (index, e, denied_permit)
+
+        # Create bounded tasks preserving order
+        tasks = [execute_with_permit(coro, idx) for idx, coro in enumerate(coroutines)]
+
+        # Run all tasks and collect results
+        indexed_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Sort by index to preserve original order
+        indexed_results = sorted(
+            indexed_results,
+            key=lambda x: x[0] if isinstance(x, tuple) and len(x) >= 1 else -1,
+        )
+
+        # Extract results and wrap in PermittedTrialResult
+        for item in indexed_results:
+            if isinstance(item, tuple) and len(item) == 3:
+                _index, result, permit = item
+                results.append(PermittedTrialResult(result=result, permit=permit))
+            elif isinstance(item, tuple) and len(item) == 2:
+                # Legacy format (should not happen, but handle gracefully)
+                _index, result = item
+                results.append(
+                    PermittedTrialResult(result=result, permit=denied_permit)
+                )
+            else:
+                # Exception from gather itself - wrap with denied permit
+                results.append(PermittedTrialResult(result=item, permit=denied_permit))
+
+        if cancelled_count > 0:
+            logger.info(
+                "Cancelled %d trial(s) due to cost limit",
+                cancelled_count,
+            )
+
+        return results, cancelled_count

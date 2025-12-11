@@ -9,8 +9,9 @@ Set GEMINI_MOCK=true to bypass SDK/network and get deterministic echoes.
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Any, AsyncGenerator, Generator, Iterable, Mapping, cast
+from typing import Any, cast
 
 
 def _coerce_messages(prompt_or_messages: str | Iterable[str] | list[Mapping[str, Any]]):
@@ -88,13 +89,17 @@ class GeminiChatClient:
 
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
-        kwargs: dict[str, Any] = {"temperature": float(temperature)}
+        # Build generation_config with generation parameters
+        gen_config: dict[str, Any] = {
+            "temperature": float(temperature),
+            "max_output_tokens": max_tokens,
+        }
         if extra_params:
-            kwargs.update(dict(extra_params))
+            gen_config.update(dict(extra_params))
         # Join content for basic chats
         texts = _coerce_messages(messages)
         prompt = "\n\n".join(texts)
-        response = client.generate_content(prompt, **kwargs)
+        response = client.generate_content(prompt, generation_config=gen_config)
 
         try:
             text = response.text or ""
@@ -151,13 +156,19 @@ class GeminiChatClient:
 
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
-        kwargs: dict[str, Any] = {"temperature": float(temperature), "stream": True}
+        # Build generation_config with generation parameters
+        gen_config: dict[str, Any] = {
+            "temperature": float(temperature),
+            "max_output_tokens": max_tokens,
+        }
         if extra_params:
-            kwargs.update(dict(extra_params))
+            gen_config.update(dict(extra_params))
 
         texts = _coerce_messages(messages)
         prompt = "\n\n".join(texts)
-        response = client.generate_content(prompt, **kwargs)
+        response = client.generate_content(
+            prompt, generation_config=gen_config, stream=True
+        )
 
         full_text_parts = []
         for chunk in response:
@@ -215,13 +226,19 @@ class GeminiChatClient:
 
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
-        kwargs: dict[str, Any] = {"temperature": float(temperature)}
+        # Build generation_config with generation parameters
+        gen_config: dict[str, Any] = {
+            "temperature": float(temperature),
+            "max_output_tokens": max_tokens,
+        }
         if extra_params:
-            kwargs.update(dict(extra_params))
+            gen_config.update(dict(extra_params))
 
         texts = _coerce_messages(messages)
         prompt = "\n\n".join(texts)
-        response = await client.generate_content_async(prompt, **kwargs)
+        response = await client.generate_content_async(
+            prompt, generation_config=gen_config
+        )
 
         try:
             text = response.text or ""
@@ -266,13 +283,19 @@ class GeminiChatClient:
 
         genai.configure(api_key=self._api_key)
         client = genai.GenerativeModel(model)
-        kwargs: dict[str, Any] = {"temperature": float(temperature), "stream": True}
+        # Build generation_config with generation parameters
+        gen_config: dict[str, Any] = {
+            "temperature": float(temperature),
+            "max_output_tokens": max_tokens,
+        }
         if extra_params:
-            kwargs.update(dict(extra_params))
+            gen_config.update(dict(extra_params))
 
         texts = _coerce_messages(messages)
         prompt = "\n\n".join(texts)
-        response = await client.generate_content_async(prompt, **kwargs)
+        response = await client.generate_content_async(
+            prompt, generation_config=gen_config, stream=True
+        )
 
         async for chunk in response:
             text_chunk = chunk.text

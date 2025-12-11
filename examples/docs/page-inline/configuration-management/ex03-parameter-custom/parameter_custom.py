@@ -82,7 +82,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 def adaptive_chat_bot(user_message: str) -> str:
     """Adaptive chatbot using custom parameters optimized by TraiGent."""
     # Get optimized parameters from TraiGent
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     if not isinstance(config, dict):
         config = {}
 

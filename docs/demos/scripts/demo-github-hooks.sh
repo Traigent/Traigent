@@ -4,197 +4,214 @@ set -e
 cd "$(dirname "$0")/.."
 export TERM="${TERM:-xterm-256color}"
 
+# Colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BLUE='\033[0;34m'
+MAGENTA='\033[0;35m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
 clear
-echo "# Traigent Hooks: Agent Configuration Validation"
+echo -e "${BLUE}${BOLD}┌────────────────────────────────────────────────────────────────┐${RESET}"
+echo -e "${BLUE}${BOLD}│  🛡️  TraiGent: Git Hooks for Agent Validation                   │${RESET}"
+echo -e "${BLUE}${BOLD}└────────────────────────────────────────────────────────────────┘${RESET}"
 echo ""
 sleep 1
 
-echo "# Traigent provides Git hooks to validate agent configurations"
-echo "# before they reach production."
+echo -e "${DIM}Prevent expensive mistakes ${BOLD}BEFORE${RESET}${DIM} they reach production!${RESET}"
 echo ""
 sleep 0.5
 
-echo "Available Traigent hooks:"
-echo "  traigent-validate    - Validates agent config against constraints"
-echo "  traigent-performance - Ensures config meets performance baseline"
-echo "  traigent-cost        - Enforces cost budget limits"
+echo -e "Available hooks:"
+echo -e "  ${CYAN}traigent-validate${RESET}     ${DIM}─${RESET} Validates agent config against constraints"
+echo -e "  ${CYAN}traigent-performance${RESET}  ${DIM}─${RESET} Ensures config meets performance baseline"
+echo -e "  ${CYAN}traigent-cost${RESET}         ${DIM}─${RESET} Enforces cost budget limits"
 echo ""
 sleep 2
 
-echo "# Step 1: Install Traigent hooks"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${CYAN}${BOLD}# Step 1: Install Traigent hooks${RESET}"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 sleep 0.5
 
-echo "$ traigent hooks install"
+echo -e "$ ${BOLD}traigent hooks install${RESET}"
 sleep 0.5
-echo "Installing Traigent Git hooks..."
-echo "  Installed: .git/hooks/pre-push (traigent-validate)"
-echo "  Installed: .git/hooks/pre-commit (traigent-config-check)"
+echo -e "Installing Traigent Git hooks..."
+echo -e "  ${GREEN}✓${RESET} Installed: .git/hooks/pre-push (traigent-validate)"
+echo -e "  ${GREEN}✓${RESET} Installed: .git/hooks/pre-commit (traigent-config-check)"
 echo ""
-echo "Hooks installed successfully!"
+echo -e "${GREEN}Hooks installed successfully!${RESET}"
 sleep 2
 
 echo ""
-echo "# Step 2: Define validation constraints in traigent.yml"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${CYAN}${BOLD}# Step 2: Define constraints in traigent.yml${RESET}"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 sleep 0.5
 
-cat << 'YAML'
-# traigent.yml - Agent configuration constraints
-validation:
-  hooks:
-    pre-push:
-      - traigent-validate
-      - traigent-performance
-
-constraints:
-  # Cost constraints
-  max_cost_per_query: 0.05      # $0.05 max per query
-  max_monthly_budget: 1000      # $1000/month limit
-
-  # Performance constraints
-  min_accuracy: 0.85            # 85% minimum accuracy
-  max_latency_ms: 500           # 500ms max response time
-
-  # Model constraints
-  allowed_models:
-    - gpt-4o-mini
-    - gpt-4o
-    - claude-3-haiku
-  blocked_models:
-    - gpt-4-32k                 # Too expensive for production
-YAML
+echo -e "${DIM}# traigent.yml - Agent configuration constraints${RESET}"
+echo -e "${CYAN}validation${RESET}:"
+echo -e "  ${CYAN}hooks${RESET}:"
+echo -e "    ${CYAN}pre-push${RESET}:"
+echo -e "      - traigent-validate"
+echo -e "      - traigent-performance"
+echo ""
+echo -e "${CYAN}constraints${RESET}:"
+echo -e "  ${DIM}# Cost constraints${RESET}"
+echo -e "  ${GREEN}max_cost_per_query${RESET}: ${YELLOW}0.05${RESET}       ${DIM}# \$0.05 max per query${RESET}"
+echo -e "  ${GREEN}max_monthly_budget${RESET}: ${YELLOW}1000${RESET}       ${DIM}# \$1000/month limit${RESET}"
+echo ""
+echo -e "  ${DIM}# Performance constraints${RESET}"
+echo -e "  ${GREEN}min_accuracy${RESET}: ${CYAN}0.85${RESET}             ${DIM}# 85% minimum accuracy${RESET}"
+echo -e "  ${GREEN}max_latency_ms${RESET}: ${CYAN}500${RESET}            ${DIM}# 500ms max response time${RESET}"
+echo ""
+echo -e "  ${DIM}# Model constraints${RESET}"
+echo -e "  ${GREEN}allowed_models${RESET}:"
+echo -e "    - gpt-4o-mini"
+echo -e "    - gpt-4o"
+echo -e "    - claude-3-haiku"
+echo -e "  ${RED}blocked_models${RESET}:"
+echo -e "    - gpt-4-32k                ${DIM}# Too expensive${RESET}"
 sleep 3
 
 echo ""
-echo "# Step 3: Commit an agent with valid configuration"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${GREEN}${BOLD}# Step 3: Push a VALID configuration${RESET}"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 sleep 0.5
 
-cat << 'PYTHON'
-@traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4o-mini"],      # Allowed model
-        "temperature": [0.1, 0.3]
-    }
-)
-def support_agent(query: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
-    return llm.invoke(query).content
-PYTHON
+echo -e "${CYAN}@traigent.optimize${RESET}("
+echo -e "    configuration_space={"
+echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\"],      ${DIM}# Allowed model ✓${RESET}"
+echo -e "        ${GREEN}\"temperature\"${RESET}: [0.1, 0.3]"
+echo -e "    }"
+echo -e ")"
+echo -e "${BLUE}def${RESET} ${YELLOW}support_agent${RESET}(query: str) -> str:"
+echo -e "    llm = ChatOpenAI(model=${GREEN}\"gpt-4o-mini\"${RESET}, temperature=${CYAN}0.1${RESET})"
+echo -e "    ${MAGENTA}return${RESET} llm.invoke(query).content"
 sleep 2
 
 echo ""
-echo '$ git commit -m "Add support agent with gpt-4o-mini"'
-echo '$ git push origin main'
+echo -e "$ ${BOLD}git commit -m \"Add support agent\"${RESET}"
+echo -e "$ ${BOLD}git push origin main${RESET}"
 echo ""
 sleep 0.5
 
-echo "Running Traigent validation hooks..."
+echo -e "Running Traigent validation hooks..."
 echo ""
 sleep 0.3
 
-echo "[traigent-validate] Checking agent configurations..."
-echo "  Found 1 decorated function: support_agent"
-echo "  Model: gpt-4o-mini .......... ALLOWED"
-echo "  Est. cost: \$0.008/query ..... WITHIN BUDGET"
+echo -e "[${CYAN}traigent-validate${RESET}] Checking agent configurations..."
+echo -e "  Found 1 decorated function: ${BOLD}support_agent${RESET}"
+echo -e "  Model: gpt-4o-mini ............. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Est. cost: \$0.008/query ........ ${GREEN}✓ WITHIN BUDGET${RESET}"
 sleep 0.5
 echo ""
-echo "[traigent-performance] Checking performance baseline..."
-echo "  Accuracy: 0.89 .............. PASSES (min: 0.85)"
-echo "  Latency: 120ms .............. PASSES (max: 500ms)"
+echo -e "[${CYAN}traigent-performance${RESET}] Checking performance baseline..."
+echo -e "  Accuracy: 0.89 ................. ${GREEN}✓ PASSES${RESET} (min: 0.85)"
+echo -e "  Latency: 120ms ................. ${GREEN}✓ PASSES${RESET} (max: 500ms)"
 sleep 0.5
 echo ""
-echo "All Traigent hooks passed!"
-echo "Pushing to origin/main..."
+echo -e "${GREEN}${BOLD}✓ All Traigent hooks passed!${RESET}"
+echo -e "${DIM}Pushing to origin/main...${RESET}"
 sleep 2
 
 echo ""
-echo "# Step 4: Try to push an agent that VIOLATES constraints"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${RED}${BOLD}# Step 4: Push an INVALID configuration${RESET}"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 sleep 0.5
 
-cat << 'PYTHON'
-@traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4-32k"],        # BLOCKED model!
-        "temperature": [0.9]
-    }
-)
-def expensive_agent(query: str) -> str:
-    llm = ChatOpenAI(model="gpt-4-32k", temperature=0.9)
-    return llm.invoke(query).content
-PYTHON
+echo -e "${CYAN}@traigent.optimize${RESET}("
+echo -e "    configuration_space={"
+echo -e "        ${RED}\"model\"${RESET}: [\"gpt-4-32k\"],        ${RED}# BLOCKED model!${RESET}"
+echo -e "        ${RED}\"temperature\"${RESET}: [0.9]"
+echo -e "    }"
+echo -e ")"
+echo -e "${BLUE}def${RESET} ${YELLOW}expensive_agent${RESET}(query: str) -> str:"
+echo -e "    llm = ChatOpenAI(model=${RED}\"gpt-4-32k\"${RESET}, temperature=${CYAN}0.9${RESET})"
+echo -e "    ${MAGENTA}return${RESET} llm.invoke(query).content"
 sleep 2
 
 echo ""
-echo '$ git commit -m "Add expensive agent with gpt-4-32k"'
-echo '$ git push origin main'
+echo -e "$ ${BOLD}git commit -m \"Add expensive agent\"${RESET}"
+echo -e "$ ${BOLD}git push origin main${RESET}"
 echo ""
 sleep 0.5
 
-echo "Running Traigent validation hooks..."
+echo -e "Running Traigent validation hooks..."
 echo ""
 sleep 0.3
 
-echo "[traigent-validate] Checking agent configurations..."
-echo "  Found 1 decorated function: expensive_agent"
+echo -e "[${CYAN}traigent-validate${RESET}] Checking agent configurations..."
+echo -e "  Found 1 decorated function: ${BOLD}expensive_agent${RESET}"
 echo ""
 sleep 0.3
-echo "  ERROR: Model 'gpt-4-32k' is in blocked_models list"
-echo "         Reason: Too expensive for production"
-echo ""
-echo "  ERROR: Estimated cost \$0.12/query exceeds max_cost_per_query (\$0.05)"
+echo -e "${RED}┌────────────────────────────────────────────────────────────────┐${RESET}"
+echo -e "${RED}│  ${BOLD}VALIDATION ERRORS${RESET}${RED}                                              │${RESET}"
+echo -e "${RED}├────────────────────────────────────────────────────────────────┤${RESET}"
+echo -e "${RED}│${RESET}  ${RED}✗${RESET} Model '${BOLD}gpt-4-32k${RESET}' is in ${RED}blocked_models${RESET} list          ${RED}│${RESET}"
+echo -e "${RED}│${RESET}    Reason: Too expensive for production                       ${RED}│${RESET}"
+echo -e "${RED}│${RESET}                                                                ${RED}│${RESET}"
+echo -e "${RED}│${RESET}  ${RED}✗${RESET} Est. cost ${YELLOW}\$0.12/query${RESET} exceeds ${GREEN}max_cost_per_query${RESET}      ${RED}│${RESET}"
+echo -e "${RED}│${RESET}    Limit: \$0.05/query                                         ${RED}│${RESET}"
+echo -e "${RED}└────────────────────────────────────────────────────────────────┘${RESET}"
 echo ""
 sleep 0.5
-echo "PUSH REJECTED: Agent configuration violates constraints"
+echo -e "${RED}${BOLD}✗ PUSH REJECTED${RESET}: Agent configuration violates constraints"
 echo ""
-echo "To bypass (not recommended):"
-echo "  git push --no-verify"
+echo -e "${DIM}To bypass (not recommended): git push --no-verify${RESET}"
 echo ""
-echo "To fix:"
-echo "  1. Use an allowed model: gpt-4o-mini, gpt-4o, claude-3-haiku"
-echo "  2. Or request budget increase in traigent.yml"
+echo -e "${BOLD}To fix:${RESET}"
+echo -e "  1. Use an allowed model: ${GREEN}gpt-4o-mini${RESET}, ${GREEN}gpt-4o${RESET}, ${GREEN}claude-3-haiku${RESET}"
+echo -e "  2. Or request budget increase in traigent.yml"
 sleep 3
 
 echo ""
-echo "# Step 5: Fix the configuration and push successfully"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${GREEN}${BOLD}# Step 5: Fix and push successfully${RESET}"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo ""
 sleep 0.5
 
-cat << 'PYTHON'
-@traigent.optimize(
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],  # Allowed models
-        "temperature": [0.1, 0.5]
-    }
-)
-def fixed_agent(query: str) -> str:
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.1)
-    return llm.invoke(query).content
-PYTHON
+echo -e "${CYAN}@traigent.optimize${RESET}("
+echo -e "    configuration_space={"
+echo -e "        ${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\", \"gpt-4o\"],  ${DIM}# Fixed!${RESET}"
+echo -e "        ${GREEN}\"temperature\"${RESET}: [0.1, 0.5]"
+echo -e "    }"
+echo -e ")"
+echo -e "${BLUE}def${RESET} ${YELLOW}fixed_agent${RESET}(query: str) -> str: ..."
 sleep 2
 
 echo ""
-echo '$ git push origin main'
+echo -e "$ ${BOLD}git push origin main${RESET}"
 echo ""
 sleep 0.5
 
-echo "[traigent-validate] Checking agent configurations..."
-echo "  Model: gpt-4o-mini .......... ALLOWED"
-echo "  Model: gpt-4o ............... ALLOWED"
-echo "  Est. cost: \$0.008/query ..... WITHIN BUDGET"
+echo -e "[${CYAN}traigent-validate${RESET}] Checking agent configurations..."
+echo -e "  Model: gpt-4o-mini ............. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Model: gpt-4o .................. ${GREEN}✓ ALLOWED${RESET}"
+echo -e "  Est. cost: \$0.008/query ........ ${GREEN}✓ WITHIN BUDGET${RESET}"
 echo ""
-echo "All Traigent hooks passed!"
-echo "Pushing to origin/main..."
+echo -e "${GREEN}${BOLD}✓ All Traigent hooks passed!${RESET}"
+echo -e "${DIM}Pushing to origin/main...${RESET}"
 sleep 2
 
 echo ""
-echo "# Summary: Traigent Agent Hooks"
+echo -e "${DIM}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
+echo -e "${BOLD}Summary: Traigent Git Hooks${RESET}"
 echo ""
-echo "  Validate:    Block pushes with invalid agent configs"
-echo "  Performance: Ensure accuracy/latency meet baseline"
-echo "  Cost:        Enforce budget limits before production"
+echo -e "  ${GREEN}✓${RESET} ${CYAN}Validate${RESET}     Block pushes with invalid agent configs"
+echo -e "  ${GREEN}✓${RESET} ${CYAN}Performance${RESET}  Ensure accuracy/latency meet baseline"
+echo -e "  ${GREEN}✓${RESET} ${CYAN}Cost${RESET}         Enforce budget limits before production"
 echo ""
-echo "  Prevent expensive mistakes BEFORE they reach production!"
+echo -e "  ${YELLOW}${BOLD}Prevent expensive mistakes BEFORE they reach production!${RESET}"
 sleep 2

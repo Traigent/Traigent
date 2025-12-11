@@ -25,6 +25,7 @@ try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
     import importlib
+
     traigent = importlib.import_module("traigent")
 
 # Create dataset file path
@@ -98,9 +99,15 @@ def classify_support_intent(message: str) -> str:
     Returns:
         Intent category: billing, account, technical, general, or cancellation
     """
-    # Get optimized configuration
-    current = traigent.get_trial_config()
-    config = current if isinstance(current, dict) else {}
+    # Get configuration - works both during optimization and normal calls
+    # During optimization: get_trial_config() returns trial params
+    # Outside optimization: use the function's current_config (applied best config or defaults)
+    try:
+        current = traigent.get_trial_config()
+        config = current if isinstance(current, dict) else {}
+    except traigent.utils.exceptions.OptimizationStateError:
+        # Not in an optimization trial - use applied config or defaults
+        config = getattr(classify_support_intent, "current_config", {}) or {}
 
     # Build prompt based on style
     prompt_styles = {

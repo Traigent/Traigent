@@ -25,7 +25,9 @@ import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 # Path to dataset (relative to this file)
-DATASET_PATH = Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
+DATASET_PATH = (
+    Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
+)
 
 
 @traigent.optimize(
@@ -39,7 +41,7 @@ DATASET_PATH = Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_sa
     max_trials=5,  # Limit trials for quick demo
 )
 def simple_qa_agent(question: str) -> str:
-    """Simple Q&A agent with adaptive variables.
+    """Simple Q&A agent with Tuned Variables.
 
     In mock mode, this returns a simulated response.
     With real API keys, it would call the actual LLM.
@@ -88,7 +90,9 @@ async def main():
         print("-" * 40)
         for i, trial in enumerate(results.trials, 1):
             # Handle different trial result formats
-            score = getattr(trial, "score", None) or getattr(trial, "metrics", {}).get("score", "N/A")
+            score = getattr(trial, "score", None) or getattr(trial, "metrics", {}).get(
+                "score", "N/A"
+            )
             config = getattr(trial, "config", getattr(trial, "configuration", {}))
             print(f"  Trial {i}: {config} -> score={score}")
 

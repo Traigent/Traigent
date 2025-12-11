@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -40,7 +40,7 @@ class HealthCheck:
     service: str
     status: HealthStatus
     response_time_ms: float
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     details: dict[str, Any] = field(default_factory=dict)
 
 
@@ -51,7 +51,7 @@ class SLAMetrics:
     uptime_percentage: float = 99.99
     response_time_p95_ms: float = 500.0
     error_rate_percentage: float = 0.01
-    measured_at: datetime = field(default_factory=datetime.utcnow)
+    measured_at: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 
 class DeploymentManager:
@@ -96,7 +96,7 @@ class DeploymentManager:
             "service_name": service_name,
             "mode": self.mode.value,
             "config": config,
-            "deployed_at": datetime.utcnow().isoformat(),
+            "deployed_at": datetime.now(UTC).isoformat(),
             "status": "deployed",
         }
 
@@ -141,7 +141,7 @@ class SLAMonitor:
             "metric": metric,
             "actual_value": actual,
             "target_value": target,
-            "violation_time": datetime.utcnow().isoformat(),
+            "violation_time": datetime.now(UTC).isoformat(),
             "severity": "high" if actual < target * 0.95 else "medium",
         }
 
@@ -150,7 +150,7 @@ class SLAMonitor:
 
     def get_sla_report(self, period_days: int = 30) -> dict[str, Any]:
         """Generate SLA compliance report."""
-        cutoff_date = datetime.utcnow() - timedelta(days=period_days)
+        cutoff_date = datetime.now(UTC) - timedelta(days=period_days)
         recent_metrics = [
             m for m in self.metrics_history if m.measured_at >= cutoff_date
         ]
@@ -255,7 +255,7 @@ class HealthChecker:
 
         return {
             "overall_status": overall_status,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "services": health_results,
         }
 
@@ -276,11 +276,11 @@ class BackupManager:
         backup_info = {
             "backup_id": backup_id,
             "type": backup_type,
-            "created_at": datetime.utcnow().isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "size_gb": 2.5,  # Simulated
             "status": "completed",
             "retention_until": (
-                datetime.utcnow() + timedelta(days=self.retention_days)
+                datetime.now(UTC) + timedelta(days=self.retention_days)
             ).isoformat(),
         }
 
@@ -291,7 +291,7 @@ class BackupManager:
     def list_backups(self) -> list[dict[str, Any]]:
         """List available backups."""
         # Filter out expired backups
-        current_time = datetime.utcnow()
+        current_time = datetime.now(UTC)
         valid_backups = [
             b
             for b in self.backups
@@ -310,7 +310,7 @@ class BackupManager:
         # Simulate restore process
         restore_info = {
             "backup_id": backup_id,
-            "restore_started_at": datetime.utcnow().isoformat(),
+            "restore_started_at": datetime.now(UTC).isoformat(),
             "estimated_duration_minutes": 30,
             "status": "in_progress",
         }
@@ -320,7 +320,7 @@ class BackupManager:
 
     def cleanup_expired_backups(self) -> int:
         """Clean up expired backups."""
-        current_time = datetime.utcnow()
+        current_time = datetime.now(UTC)
         initial_count = len(self.backups)
 
         self.backups = [

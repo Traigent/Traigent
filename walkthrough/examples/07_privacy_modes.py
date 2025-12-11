@@ -51,7 +51,7 @@ def local_mode_example(text: str) -> str:
         return f"Local response for: {text[:20]}..."
 
     from langchain_openai import ChatOpenAI
-    config = traigent.get_current_config()
+    config = traigent.get_config()
     llm = ChatOpenAI(model=config.get("model"), temperature=config.get("temperature"))
     return llm.invoke(text).content
 
@@ -71,7 +71,7 @@ def cloud_mode_example(text: str) -> str:
         return f"Cloud-optimized response: {text[:20]}..."
 
     from langchain_openai import ChatOpenAI
-    config = traigent.get_current_config()
+    config = traigent.get_config()
     llm = ChatOpenAI(model=config.get("model"), temperature=config.get("temperature"))
     return llm.invoke(text).content
 
@@ -93,7 +93,7 @@ def hybrid_mode_example(text: str) -> str:
         return f"Hybrid response: {text[:20]}..."
 
     from langchain_openai import ChatOpenAI
-    config = traigent.get_current_config()
+    config = traigent.get_config()
     llm = ChatOpenAI(
         model=config.get("model"),
         temperature=config.get("temperature"),

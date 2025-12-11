@@ -139,7 +139,7 @@ def hotpot_agent(question: str, context: list[str] | None = None) -> str:
     """Simulated HotpotQA agent; context is captured via TraiGent instrumentation."""
 
     context = context or []
-    config: dict[str, Any] = traigent.get_trial_config()
+    config: dict[str, Any] = traigent.get_config()
     if USE_MOCK:
         return generate_case_study_answer(question, config)
     return generate_real_answer(question, context, config)

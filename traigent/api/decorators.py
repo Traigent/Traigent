@@ -43,9 +43,10 @@ Examples:
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -477,13 +478,23 @@ def optimize(
             mock_mode_config: Dict controlling mock behaviour keys such as
                 ``enabled``, ``override_evaluator``, ``base_accuracy``, ``variance``.
 
+        Cost safeguards:
+            cost_limit: Maximum USD spending per optimization run. Defaults to
+                TRAIGENT_RUN_COST_LIMIT env var or $2.00.
+            cost_approved: Skip cost approval prompt. Use with caution in production.
+
         Additional controls:
             legacy: Adapter for the legacy decorator signature. Accepts either a
                 LegacyOptimizeArgs instance or a dict with the historic keyword
                 arguments. Values provided here merge with the explicit parameters.
             **runtime_overrides: Runtime overrides such as ``algorithm``, ``max_trials``,
                 ``timeout``, ``cache_policy``, or stop-condition knobs like
-                ``budget_limit`` and ``plateau_window``.
+                ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
+
+    Warning:
+        Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_MODE=true for testing.
+        Cost estimates are approximations; actual billing is determined by your LLM provider.
+        See DISCLAIMER.md for full liability terms.
 
     Returns:
         OptimizedFunction: Wrapper that adds optimization methods to your function:

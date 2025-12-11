@@ -6,6 +6,15 @@ import subprocess
 import time
 import os
 
+# Timing constants (in seconds) - adjust for comfortable viewing pace
+TYPING_SPEED = 0.06         # Time per character when typing commands (was 0.03)
+OUTPUT_LINE_DELAY = 0.15    # Time between output lines (was 0.05)
+EMPTY_LINE_DELAY = 0.10     # Time for empty lines (was 0.02)
+COMMAND_PAUSE = 0.8         # Pause after typing a command (was 0.5)
+POST_COMMAND_DELAY = 0.6    # Delay before showing output (was 0.3)
+FINAL_PAUSE = 2.0           # Pause at end of recording (was 1.0)
+
+
 def generate_cast(script_path: str, output_path: str, title: str):
     """Generate an asciinema cast file from a script."""
 
@@ -43,20 +52,20 @@ def generate_cast(script_path: str, output_path: str, title: str):
                 # Type character by character for commands/comments
                 for char in line:
                     f.write(json.dumps([current_time, "o", char]) + '\n')
-                    current_time += 0.03
-                current_time += 0.3
+                    current_time += TYPING_SPEED
+                current_time += POST_COMMAND_DELAY
                 f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
-                current_time += 0.5
+                current_time += COMMAND_PAUSE
             else:
-                # Output lines appear instantly
+                # Output lines appear with readable pacing
                 if line:
                     f.write(json.dumps([current_time, "o", line + "\r\n"]) + '\n')
-                    current_time += 0.05
+                    current_time += OUTPUT_LINE_DELAY
                 else:
                     f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
-                    current_time += 0.02
+                    current_time += EMPTY_LINE_DELAY
 
-        f.write(json.dumps([current_time + 1.0, "o", ""]) + '\n')
+        f.write(json.dumps([current_time + FINAL_PAUSE, "o", ""]) + '\n')
 
     print(f"  Generated {output_path}")
 

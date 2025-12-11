@@ -342,7 +342,7 @@ class TestCloudExecutionIntegration:
                 execution_mode="cloud",
             )
             def text_processor(input_data: dict) -> str:
-                config = traigent.get_current_config()
+                config = traigent.get_config()
                 text = input_data["text"]
 
                 if config and config.get("strategy") == "upper":
@@ -424,7 +424,7 @@ class TestCloudExecutionIntegration:
             default_config={"strategy": "upper"},
         )
         def text_processor(input_data: dict) -> str:
-            config = traigent.get_current_config()
+            config = traigent.get_config()
             text = input_data["text"]
 
             if config and config.get("strategy") == "upper":
@@ -499,7 +499,7 @@ class TestCloudExecutionIntegration:
             default_config={"multiplier": 2},
         )
         def multiply_text_length(input_data: dict) -> str:
-            config = traigent.get_current_config()
+            config = traigent.get_config()
             multiplier = config.get("multiplier", 1) if config else 1
             text = input_data["text"]
             return text * multiplier

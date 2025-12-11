@@ -54,7 +54,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "sentiment_eval.jsonl")
     max_trials=10,
 )
 def sentiment_analysis(text: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
 
     guidance = {
         "direct": "Classify sentiment. Be concise.",

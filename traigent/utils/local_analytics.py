@@ -10,7 +10,7 @@ All data sent is privacy-safe and contains no sensitive information.
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -102,7 +102,7 @@ class LocalAnalytics:
             avg_trials_per_session = total_trials / len(sessions) if sessions else 0
 
             # Time-based aggregations
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             recent_sessions = [
                 s
                 for s in sessions
@@ -161,7 +161,7 @@ class LocalAnalytics:
                 # Version and environment (non-sensitive)
                 "sdk_version": "1.1.0",  # Should be dynamic from version
                 "execution_mode": self.config.execution_mode,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 # Anonymous user tracking
                 "anonymous_user_id": self.user_id,
                 # No sensitive data included:
@@ -187,7 +187,7 @@ class LocalAnalytics:
             )
 
             first_use = datetime.fromisoformat(earliest_session.created_at)
-            return (datetime.now(timezone.utc) - first_use).days
+            return (datetime.now(UTC) - first_use).days
 
         except Exception as e:
             logger.debug(f"Could not calculate days active (defaulting to 0): {e}")
@@ -275,7 +275,7 @@ class LocalAnalytics:
                 # Submit the aggregated stats as trial results
                 success = await backend_client.submit_privacy_trial_results(
                     session_id=session_id,
-                    trial_id=f"analytics_{datetime.now(timezone.utc).isoformat()}",
+                    trial_id=f"analytics_{datetime.now(UTC).isoformat()}",
                     config={},
                     metrics={
                         "total_sessions": float(stats.get("total_sessions", 0)),
@@ -315,7 +315,7 @@ class LocalAnalytics:
                         "reason": "Failed to submit trial results",
                     }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
         except ImportError:
             logger.debug("Backend client not available for analytics submission")
@@ -337,10 +337,10 @@ class LocalAnalytics:
 
             # Ensure timezone-aware comparison
             if last_submission.tzinfo is None:
-                last_submission = last_submission.replace(tzinfo=timezone.utc)
+                last_submission = last_submission.replace(tzinfo=UTC)
 
             # Submit once per day
-            return datetime.now(timezone.utc) - last_submission > timedelta(days=1)
+            return datetime.now(UTC) - last_submission > timedelta(days=1)
 
         except Exception as e:
             logger.debug(f"Could not check submission status (assuming due): {e}")
@@ -350,7 +350,7 @@ class LocalAnalytics:
         """Update the timestamp of last analytics submission."""
         try:
             last_submission_file = Path(self.storage.storage_path) / ".last_analytics"
-            last_submission_file.write_text(datetime.now(timezone.utc).isoformat())
+            last_submission_file.write_text(datetime.now(UTC).isoformat())
         except Exception as e:
             logger.debug(f"Could not update last submission time: {e}")
 

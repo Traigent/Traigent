@@ -6,9 +6,9 @@ Inspired by DeepEval's approach to encourage cloud adoption.
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, cast
+from typing import Any, cast
 
 from ..api.types import OptimizationStatus
 from ..config.types import TraigentConfig
@@ -51,7 +51,7 @@ class IncentiveManager:
     def _load_state(self) -> dict[str, Any]:
         """Load incentive state from disk."""
         default_state = {
-            "first_use": datetime.now(timezone.utc).isoformat(),
+            "first_use": datetime.now(UTC).isoformat(),
             "total_sessions": 0,
             "total_trials": 0,
             "hints_shown": [],
@@ -67,7 +67,7 @@ class IncentiveManager:
             with open(self._state_file) as f:
                 data = json.load(f)
                 if isinstance(data, dict):
-                    return cast(Dict[str, Any], data)
+                    return cast(dict[str, Any], data)
                 logger.warning(
                     "Incentive state file had unexpected structure; resetting"
                 )
@@ -118,8 +118,8 @@ class IncentiveManager:
         if isinstance(last_hint, str):
             last_hint_time = datetime.fromisoformat(last_hint)
             if last_hint_time.tzinfo is None:
-                last_hint_time = last_hint_time.replace(tzinfo=timezone.utc)
-            if datetime.now(timezone.utc) - last_hint_time < timedelta(hours=24):
+                last_hint_time = last_hint_time.replace(tzinfo=UTC)
+            if datetime.now(UTC) - last_hint_time < timedelta(hours=24):
                 return False
 
         # Context-specific rules
@@ -180,12 +180,12 @@ class IncentiveManager:
         else:
             hint_key = "power_user"
 
-        self._state["last_hint"] = datetime.now(timezone.utc).isoformat()
+        self._state["last_hint"] = datetime.now(UTC).isoformat()
         self._state["hints_shown"].append(
             {
                 "context": context,
                 "hint_key": hint_key,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": datetime.now(UTC).isoformat(),
                 "completed_sessions": completed_count,
             }
         )
@@ -332,13 +332,13 @@ class IncentiveManager:
         if context in hints and self.should_show_hint(context):
             hint_message = "\n".join(hints[context])
             print(f"Upgrade hint: {hint_message}")
-            self._state["last_hint"] = datetime.now(timezone.utc).isoformat()
+            self._state["last_hint"] = datetime.now(UTC).isoformat()
             self._save_state()
 
     def dismiss_upgrade_hints(self) -> None:
         """Allow user to dismiss upgrade hints."""
         self._state["upgrade_dismissed"] = True
-        self._state["dismiss_timestamp"] = datetime.now(timezone.utc).isoformat()
+        self._state["dismiss_timestamp"] = datetime.now(UTC).isoformat()
         self._save_state()
         print(
             "✅ Upgrade hints dismissed. You can re-enable them by deleting the incentive_state.json file."

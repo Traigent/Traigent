@@ -9,7 +9,7 @@ field-level F1 scores, precision, and recall.
 
 import json
 import time
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 from extraction_config import ExtractionConfig
 from pydantic import BaseModel, ValidationError
@@ -17,10 +17,10 @@ from pydantic import BaseModel, ValidationError
 
 def extract_structured(
     text: str,
-    schema: Type[BaseModel],
+    schema: type[BaseModel],
     config: "ExtractionConfig",
-    examples: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    examples: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """
     Extract structured data from text according to schema.
 
@@ -62,8 +62,8 @@ def extract_structured(
 
 
 def score_extraction(
-    predicted: Dict[str, Any], ground_truth: Dict[str, Any], schema: Type[BaseModel]
-) -> Dict[str, float]:
+    predicted: dict[str, Any], ground_truth: dict[str, Any], schema: type[BaseModel]
+) -> dict[str, float]:
     """
     Score extraction attempt against ground truth.
 
@@ -126,9 +126,9 @@ def score_extraction(
 
 def _build_extraction_prompt(
     text: str,
-    schema: Type[BaseModel],
+    schema: type[BaseModel],
     config: "ExtractionConfig",
-    examples: Optional[List[Dict[str, Any]]] = None,
+    examples: list[dict[str, Any]] | None = None,
 ) -> str:
     """Build extraction prompt based on configuration."""
 
@@ -184,8 +184,8 @@ Extract structured data from the following text according to the schema.
 
 
 def _simulate_llm_extraction(
-    text: str, schema: Type[BaseModel], config: "ExtractionConfig"
-) -> Dict[str, Any]:
+    text: str, schema: type[BaseModel], config: "ExtractionConfig"
+) -> dict[str, Any]:
     """Simulate LLM extraction with realistic success/failure patterns."""
 
     # Simulate different success rates based on configuration
@@ -217,8 +217,8 @@ def _simulate_llm_extraction(
 
 
 def _generate_realistic_extraction(
-    schema: Type[BaseModel], text: str
-) -> Dict[str, Any]:
+    schema: type[BaseModel], text: str
+) -> dict[str, Any]:
     """Generate realistic extraction data for testing."""
     # This would normally be the actual LLM output
     # For demo purposes, create a basic structure
@@ -246,8 +246,8 @@ def _generate_realistic_extraction(
 
 
 def _apply_validation(
-    data: Dict[str, Any], schema: Type[BaseModel], config: "ExtractionConfig"
-) -> Dict[str, Any]:
+    data: dict[str, Any], schema: type[BaseModel], config: "ExtractionConfig"
+) -> dict[str, Any]:
     """Apply validation based on configuration."""
 
     if config.validation_approach == "retry_with_error_feedback":
@@ -272,8 +272,8 @@ def _apply_validation(
 
 
 def _calculate_field_metrics(
-    predicted: Dict[str, Any], ground_truth: Dict[str, Any]
-) -> Dict[str, float]:
+    predicted: dict[str, Any], ground_truth: dict[str, Any]
+) -> dict[str, float]:
     """Calculate field-level precision, recall, and F1 scores."""
 
     # Remove internal fields
@@ -309,12 +309,12 @@ def _calculate_field_metrics(
 
 
 # Helper functions
-def _convert_to_typescript(schema: Type[BaseModel]) -> str:
+def _convert_to_typescript(schema: type[BaseModel]) -> str:
     """Convert Pydantic schema to TypeScript interface."""
     return f"// TypeScript interface for {schema.__name__}\n// Simplified for demo"
 
 
-def _format_examples(examples: Optional[List[Dict[str, Any]]]) -> str:
+def _format_examples(examples: list[dict[str, Any]] | None) -> str:
     """Format examples for prompt inclusion."""
     if not examples:
         return ""
@@ -323,7 +323,7 @@ def _format_examples(examples: Optional[List[Dict[str, Any]]]) -> str:
     )
 
 
-def _minimal_schema_description(schema: Type[BaseModel]) -> str:
+def _minimal_schema_description(schema: type[BaseModel]) -> str:
     """Generate minimal schema description."""
     fields = schema.model_fields
     descriptions = []
@@ -333,8 +333,8 @@ def _minimal_schema_description(schema: Type[BaseModel]) -> str:
 
 
 def _attempt_correction(
-    data: Dict[str, Any], schema: Type[BaseModel]
-) -> Dict[str, Any]:
+    data: dict[str, Any], schema: type[BaseModel]
+) -> dict[str, Any]:
     """Simulate correction attempt."""
     # Simple correction logic for demo
     corrected = data.copy()

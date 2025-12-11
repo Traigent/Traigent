@@ -111,7 +111,7 @@ def intelligent_assistant(query: str) -> str:
     """An intelligent assistant that answers queries with optimal parameters."""
 
     # Get the current configuration from TraiGent
-    current = traigent.get_trial_config()
+    current = traigent.get_config()
     config = current if isinstance(current, dict) else {}
 
     # Map response style to system prompt

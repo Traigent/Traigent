@@ -10,9 +10,10 @@ import asyncio
 import logging
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from enum import Enum
 from hashlib import sha256
-from typing import Any, Awaitable, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from traigent.utils.exceptions import NonRetryableError, RetryableError
 

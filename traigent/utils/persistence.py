@@ -9,7 +9,7 @@ import hashlib
 import json
 import logging
 import pickle
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,6 +17,118 @@ from ..api.types import OptimizationResult, OptimizationStatus, TrialResult
 from ..utils.function_identity import sanitize_identifier
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_json_value(value: Any) -> Any:
+    """Convert a value to a JSON-safe type, handling nested structures recursively.
+
+    This handles:
+    - Objects with to_dict() methods (EvaluationResult, ExampleResult, etc.)
+    - datetime objects (converted to ISO format strings)
+    - Nested dicts and lists (recursively processed)
+    - Unknown types (converted to string representation as fallback)
+    """
+    if value is None:
+        return None
+
+    # Handle objects with to_dict() method
+    if hasattr(value, "to_dict") and callable(value.to_dict):
+        return value.to_dict()
+
+    # Handle datetime objects
+    if isinstance(value, datetime):
+        return value.isoformat()
+
+    # Handle dicts recursively
+    if isinstance(value, dict):
+        return {k: _safe_json_value(v) for k, v in value.items()}
+
+    # Handle lists recursively
+    if isinstance(value, list):
+        return [_safe_json_value(item) for item in value]
+
+    # Handle tuples (convert to list)
+    if isinstance(value, tuple):
+        return [_safe_json_value(item) for item in value]
+
+    # Handle sets (convert to list)
+    if isinstance(value, set):
+        return [_safe_json_value(item) for item in value]
+
+    # Primitives that are already JSON-safe
+    if isinstance(value, (str, int, float, bool)):
+        return value
+
+    # Handle numpy types (must come after primitives check)
+    # numpy scalars have item() method to convert to Python native types
+    if hasattr(value, "item") and callable(value.item):
+        try:
+            return value.item()
+        except (TypeError, ValueError):
+            pass
+
+    # Fallback: convert to string representation
+    try:
+        # Try to see if it's JSON serializable as-is
+        json.dumps(value)
+        return value
+    except (TypeError, ValueError):
+        # Last resort: string representation
+        return str(value)
+
+
+def _serialize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Serialize metadata dict, converting objects with to_dict() methods.
+
+    This handles EvaluationResult, ExampleResult, and other dataclass objects
+    that need to be converted to dicts for JSON serialization. Recursively
+    processes nested dicts and lists.
+    """
+    return cast(dict[str, Any], _safe_json_value(metadata))
+
+
+def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Rehydrate metadata dict, converting dicts back to typed objects where possible.
+
+    This reconstructs EvaluationResult and ExampleResult objects from their
+    dict representations when loading from JSON.
+    """
+    if not metadata:
+        return metadata
+
+    result: dict[str, Any] = {}
+
+    for key, value in metadata.items():
+        if key == "evaluation_result" and isinstance(value, dict):
+            # Rehydrate EvaluationResult
+            from ..evaluators.base import EvaluationResult
+
+            result[key] = EvaluationResult.from_dict(value)
+        elif key == "example_results" and isinstance(value, list):
+            # Rehydrate list of ExampleResult
+            from ..api.types import ExampleResult
+
+            result[key] = [
+                (
+                    ExampleResult.from_dict(item)
+                    if isinstance(item, dict) and "example_id" in item
+                    else item
+                )
+                for item in value
+            ]
+        elif isinstance(value, dict):
+            # Recursively process nested dicts
+            result[key] = _rehydrate_metadata(value)
+        elif isinstance(value, list):
+            # Process lists that might contain rehydratable objects
+            result[key] = [
+                _rehydrate_metadata(item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        else:
+            result[key] = value
+
+    return result
 
 
 class PersistenceManager:
@@ -43,7 +155,7 @@ class PersistenceManager:
         """
         if name is None:
             # Generate name from metadata or generic name
-            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
             func_slug = result.metadata.get("function_slug") or sanitize_identifier(
                 str(result.metadata.get("function_name", "optimization"))
             )
@@ -61,14 +173,16 @@ class PersistenceManager:
                 result.metadata.get("function_name", "unknown"),
             ),
             "algorithm": result.algorithm,
-            "objectives": result.objectives,
-            "configuration_space": result.metadata.get("configuration_space", {}),
-            "best_score": result.best_score,
-            "best_config": result.best_config,
-            "success_rate": result.success_rate,
+            "objectives": _safe_json_value(result.objectives),
+            "configuration_space": _safe_json_value(
+                result.metadata.get("configuration_space", {})
+            ),
+            "best_score": _safe_json_value(result.best_score),
+            "best_config": _safe_json_value(result.best_config),
+            "success_rate": _safe_json_value(result.success_rate),
             "duration": result.duration,
-            "convergence_info": result.convergence_info,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "convergence_info": _safe_json_value(result.convergence_info),
+            "created_at": datetime.now(UTC).isoformat(),
             "total_trials": len(result.trials),
             "successful_trials": len(result.successful_trials),
         }
@@ -79,9 +193,15 @@ class PersistenceManager:
         # Save trials as compressed JSON (secure and portable)
         trials_data = []
         for trial in result.trials:
+            # Serialize metadata, converting objects with to_dict() methods
+            raw_metadata = trial.metadata if hasattr(trial, "metadata") else {}
+            serialized_metadata = _serialize_metadata(raw_metadata)
+
             trial_dict = {
-                "config": trial.config,
-                "metrics": trial.metrics if hasattr(trial, "metrics") else {},
+                "config": _safe_json_value(trial.config),
+                "metrics": _safe_json_value(
+                    trial.metrics if hasattr(trial, "metrics") else {}
+                ),
                 "duration": trial.duration if hasattr(trial, "duration") else 0.0,
                 "status": trial.status if hasattr(trial, "status") else "unknown",
                 "timestamp": (
@@ -89,7 +209,7 @@ class PersistenceManager:
                     if hasattr(trial, "timestamp") and trial.timestamp
                     else None
                 ),
-                "metadata": trial.metadata if hasattr(trial, "metadata") else {},
+                "metadata": serialized_metadata,
             }
             trials_data.append(trial_dict)
 
@@ -105,8 +225,8 @@ class PersistenceManager:
         for trial in result.successful_trials[:50]:  # Limit to first 50 for readability
             trials_summary.append(
                 {
-                    "config": trial.config,
-                    "metrics": trial.metrics,
+                    "config": _safe_json_value(trial.config),
+                    "metrics": _safe_json_value(trial.metrics),
                     "duration": trial.duration,
                     "status": trial.status,
                 }
@@ -159,6 +279,10 @@ class PersistenceManager:
 
                 trials = []
                 for i, t in enumerate(trials_data):
+                    # Rehydrate metadata objects if present
+                    raw_metadata = t.get("metadata", {})
+                    rehydrated_metadata = _rehydrate_metadata(raw_metadata)
+
                     trial = TrialResult(
                         trial_id=t.get("trial_id", f"trial_{i}"),
                         config=t["config"],
@@ -168,10 +292,10 @@ class PersistenceManager:
                         timestamp=(
                             datetime.fromisoformat(t["timestamp"])
                             if t.get("timestamp")
-                            else datetime.now(timezone.utc)
+                            else datetime.now(UTC)
                         ),
                         error_message=t.get("error_message"),
-                        metadata=t.get("metadata", {}),
+                        metadata=rehydrated_metadata,
                     )
                     trials.append(trial)
         elif pkl_file.exists():

@@ -13,11 +13,12 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from contextlib import nullcontext
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Sequence
+from typing import Any
 
 MOCK = str(os.getenv("TRAIGENT_MOCK_MODE", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
@@ -168,16 +169,14 @@ if _OTEL_AVAILABLE:
     def _serialize_span(span: ReadableSpan) -> dict[str, Any]:
         """Convert a span into a JSON-serializable dictionary."""
 
-        start = datetime.fromtimestamp(span.start_time / 1_000_000_000, tz=timezone.utc)
-        end = datetime.fromtimestamp(span.end_time / 1_000_000_000, tz=timezone.utc)
+        start = datetime.fromtimestamp(span.start_time / 1_000_000_000, tz=UTC)
+        end = datetime.fromtimestamp(span.end_time / 1_000_000_000, tz=UTC)
 
         attributes = dict(span.attributes.items()) if span.attributes else {}
 
         events: list[dict[str, Any]] = []
         for event in span.events:
-            event_time = datetime.fromtimestamp(
-                event.timestamp / 1_000_000_000, tz=timezone.utc
-            )
+            event_time = datetime.fromtimestamp(event.timestamp / 1_000_000_000, tz=UTC)
             events.append(
                 {
                     "name": event.name,

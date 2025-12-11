@@ -30,9 +30,9 @@ from traigent.core.orchestrator_helpers import (
     prepare_objectives,
     validate_constructor_arguments,
 )
-from traigent.utils.exceptions import TVLConstraintError
 from traigent.evaluators.base import BaseEvaluator
 from traigent.optimizers.base import BaseOptimizer
+from traigent.utils.exceptions import TVLConstraintError
 
 
 class MockOptimizer(BaseOptimizer):
