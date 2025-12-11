@@ -191,7 +191,7 @@ class BasePlatformExecutor(AgentExecutor):
 
     # ===== Cost Estimation =====
 
-    def estimate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+    def estimate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:  # type: ignore[override]
         """Estimate cost for a completion.
 
         Args:

@@ -1,8 +1,6 @@
 # TraiGent SDK API Reference
 
-Accurate documentation for TraiGent SDK v1.1.0.
-
-This document reflects the current implementation of TraiGent SDK.
+Authoritative reference for TraiGent SDK **v0.8.0 (Beta)**.
 
 ## Core Decorator
 
@@ -60,11 +58,11 @@ def optimize(
 | `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, `max_total_examples`, `reps_per_trial`, and `reps_aggregation`. |
 | `mock` | `MockModeOptions \| dict \| None` | Bundle for mock-mode settings: `enabled`, `override_evaluator`, `base_accuracy`, `variance`. |
 
-**ExecutionOptions Fields**
+**ExecutionOptions Fields** (open-source builds run in `edge_analytics` only; other modes are roadmap-compatible but not currently provisioned)
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | Where orchestration occurs: `"edge_analytics"` (local-first), `"cloud"`, `"privacy"`. |
+| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` is supported today; `"cloud"`, `"hybrid"`, `"standard"` are reserved for managed backends. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
@@ -98,11 +96,11 @@ def optimize(
 
 **Usage Notes**
 
-- The default execution mode is now `"edge_analytics"` to keep evaluation data and model calls local unless you explicitly request `execution_mode="cloud"` (or `ExecutionOptions(execution_mode="cloud")`).
+- The default execution mode is `"edge_analytics"` and is the only supported mode in the open-source build. Other modes are present for forward compatibility but require a managed backend.
 - Prefer the grouped option classes (`EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`, `MockModeOptions`) when you need to adjust several related knobs. Import them from `traigent.api.decorators` and pass either instances or plain dicts.
 - `parallel_config=ParallelConfig(...)` remains the primary way to control concurrency. Set global defaults via `traigent.configure(parallel_config=...)`, override them in the decorator, and fine-tune per `.optimize()` call. Later scopes override earlier ones field-by-field.
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
-- Setting `privacy_enabled=True` while running in `"cloud"` mode does not redact prompts; the flag is honoured only in local/edge execution.
+- `privacy_enabled=True` applies in local/edge contexts; cloud/hybrid execution is not available yet in OSS builds.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
 - Provide plain lists for quick starts; TraiGent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
 - Removed decorator kwargs `auto_optimize`, `trigger`, `batch_size`, and `parallel_trials`. Use the grouped options or `parallel_config` instead.
@@ -132,6 +130,7 @@ Later scopes override earlier ones field-by-field. The runtime resolution logs t
         "temperature": (0.0, 1.0)
     },
     evaluation={"eval_dataset": "evals.jsonl"},  # Grouped option bundle
+    execution={"execution_mode": "edge_analytics"},
 )
 def my_agent(query: str) -> str:
     return process_query(query)

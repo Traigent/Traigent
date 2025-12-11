@@ -1,9 +1,6 @@
 # Case Study Pipeline Overhaul – Technical Documentation
 
-> **Version**: 2.0
-> **Last Updated**: January 2025
-> **Status**: Production-Ready
-> **Breaking Changes**: Yes (see [Breaking Changes Alert](#breaking-changes-alert))
+> **Status note**: This document describes the historical paper-experiments pipeline. Verify paths/dependencies against current `paper_experiments/` before running; regenerate configs if they changed.
 
 ## Executive Summary
 
@@ -14,9 +11,9 @@ This document describes a comprehensive overhaul of the TraiGent paper experimen
 - **Telemetry-driven metrics** capturing token/cost/latency from real LLM calls
 - **Simulator safeguards** preventing production leakage
 
-**Impact**: All existing custom evaluators are deprecated. Teams must migrate to the new `metric_functions` interface and set `TRAIGENT_MOCK_MODE=true` for all automated tests.
+**Impact**: Custom evaluators in this pipeline were deprecated in favor of the `metric_functions` interface. Set `TRAIGENT_MOCK_MODE=true` for automated tests to avoid API spend.
 
-**Timeline**: Immediate action required for CI/CD pipelines to avoid unintended API charges.
+**Timeline**: Keep mock mode on by default; enable real providers only for intentional benchmarking.
 
 ---
 

@@ -60,6 +60,24 @@ class ConfigurationProvider:
         """
         raise NotImplementedError
 
+    def get_config(self) -> dict[str, Any] | None:
+        """Get the current active configuration.
+
+        This provides a unified interface for getting configuration
+        regardless of the injection mode. Defaults to using context-based
+        configuration retrieval.
+
+        Returns:
+            Current configuration or None if no configuration is set
+        """
+        from traigent.config.context import get_config as ctx_get_config
+        from traigent.config.types import TraigentConfig
+
+        config = ctx_get_config()
+        if isinstance(config, TraigentConfig):
+            return config.to_dict()
+        return config if config else None
+
     def supports_function(self, func: Callable[..., Any]) -> bool:
         """Check if provider can handle this function.
 

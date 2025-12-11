@@ -246,9 +246,9 @@ class ParallelBatchOptimizer(BaseOptimizer):
             score = self._calculate_composite_score(evaluation_result.metrics or {})
 
             # Update adaptive batch sizing
-            successful_count = evaluation_result.successful_invocations
+            successful_count = evaluation_result.successful_examples
             error_rate = 1.0 - (
-                successful_count / max(1, evaluation_result.total_invocations)
+                successful_count / max(1, evaluation_result.total_examples)
             )
 
             trial_duration = time.time() - trial_start
@@ -721,8 +721,8 @@ class AdaptiveBatchOptimizer(BaseOptimizer):
             trial_duration = time.time() - trial_start
             throughput = total_examples / trial_duration if trial_duration > 0 else 0
             error_rate = 1.0 - (
-                evaluation_result.successful_invocations
-                / max(1, evaluation_result.total_invocations)
+                evaluation_result.successful_examples
+                / max(1, evaluation_result.total_examples)
             )
             avg_batch_duration = (
                 sum(batch_durations) / len(batch_durations) if batch_durations else 0

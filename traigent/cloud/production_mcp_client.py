@@ -700,8 +700,8 @@ class ProductionMCPClient:
 
             # Step 3: Create experiment
             # Update optimization request with backend IDs
-            optimization_request.agent_id = agent_id
-            optimization_request.example_set_id = example_set_id
+            optimization_request.agent_id = agent_id  # type: ignore[attr-defined]
+            optimization_request.example_set_id = example_set_id  # type: ignore[attr-defined]
 
             experiment_response = await self.create_experiment(optimization_request)
             if not experiment_response.success:
@@ -739,7 +739,7 @@ class ProductionMCPClient:
             logger.info(
                 f"Created optimization workflow: {agent_id} -> {experiment_id} -> {experiment_run_id}"
             )
-            return agent_id, experiment_id, experiment_run_id
+            return str(agent_id or ""), str(experiment_id), str(experiment_run_id or "")
 
         except Exception as e:
             logger.error(f"Failed to create optimization workflow: {e}")

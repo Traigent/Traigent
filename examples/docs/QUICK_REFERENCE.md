@@ -4,8 +4,8 @@ Everything you need to run and adapt examples quickly.
 
 ## Common commands
 ```bash
-# Install from repo root
-pip install -e .
+# Install from repo root (includes example deps)
+pip install -e ".[examples]"
 
 # Mock mode (no keys)
 export TRAIGENT_MOCK_MODE=true
@@ -31,11 +31,9 @@ def summarize(text: str) -> str:
     return f"Summary | model={cfg['model']}"  # call your LLM here
 ```
 
-## Execution modes
-- `edge_analytics` (default) - local execution with analytics.
-- `cloud` - run in Traigent cloud.
-- `hybrid` - mix local execution with cloud analytics.
-- Mock: `TRAIGENT_MOCK_MODE=true` works with any mode.
+## Execution mode
+- `edge_analytics` (default and supported) - local execution with analytics.
+- Mock: `TRAIGENT_MOCK_MODE=true` works in OSS/local mode.
 
 ## Quick knobs
 - Constrain cost: smaller `max_trials`, cheaper models, `constraints={"cost_per_call": "<0.01"}`.
@@ -53,7 +51,7 @@ examples/
 ```
 
 ## Troubleshooting highlights
-- `ModuleNotFoundError: traigent` -> `pip install -e .` from repo root.
+- `ModuleNotFoundError: traigent` -> `pip install -e ".[examples]"` from repo root.
 - `API key not found` -> `TRAIGENT_MOCK_MODE=true` or export keys.
 - Slow runs -> lower `max_trials` or narrow the configuration space.
 - Empty results -> verify dataset paths in `eval_dataset`.

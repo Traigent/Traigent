@@ -562,7 +562,7 @@ class PlotGenerator:
         lines.append("")
 
         # Basic information
-        lines.append(f"Function: {result.function_name}")
+        lines.append(f"Function: {getattr(result, 'function_name', 'unknown')}")
         lines.append(f"Algorithm: {result.algorithm}")
         lines.append(f"Objectives: {', '.join(result.objectives)}")
         lines.append(f"Duration: {result.duration:.1f}s")
@@ -592,7 +592,8 @@ class PlotGenerator:
         # Configuration space summary
         lines.append("⚙️ Configuration Space")
         lines.append("-" * 30)
-        for param, values in result.configuration_space.items():
+        config_space = getattr(result, "configuration_space", {})
+        for param, values in config_space.items():
             if isinstance(values, list):
                 lines.append(f"{param}: {len(values)} discrete values")
             elif isinstance(values, tuple):

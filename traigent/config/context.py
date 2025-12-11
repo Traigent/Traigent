@@ -92,7 +92,7 @@ def set_config_space(
 
 def set_config(
     config: TraigentConfig | dict[str, Any],
-) -> Token[TraigentConfig | dict[str, Any]]:
+) -> Token[TraigentConfig | dict[str, Any] | None]:
     """Set configuration in context.
 
     Args:
@@ -162,7 +162,7 @@ class ConfigurationContext:
             config: Configuration to use in context
         """
         self.config = config
-        self._token: Token[TraigentConfig | dict[str, Any]] | None = None
+        self._token: Token[TraigentConfig | dict[str, Any] | None] | None = None
         self._applied_token: Token[TraigentConfig | dict[str, Any] | None] | None = None
 
     def __enter__(self) -> TraigentConfig | dict[str, Any]:
@@ -329,11 +329,11 @@ class ContextRestorer:
             self._tokens.append((trial_context, token))
 
         if self.snapshot.config is not None:
-            token = config_context.set(self.snapshot.config)
+            token = config_context.set(self.snapshot.config)  # type: ignore[assignment]
             self._tokens.append((config_context, token))
 
         if self.snapshot.applied_config is not None:
-            token = applied_config_context.set(self.snapshot.applied_config)
+            token = applied_config_context.set(self.snapshot.applied_config)  # type: ignore[assignment]
             self._tokens.append((applied_config_context, token))
 
         if self.snapshot.config_space is not None:
