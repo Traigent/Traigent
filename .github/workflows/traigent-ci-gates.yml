@@ -11,6 +11,8 @@ on:
 env:
   TRAIGENT_MOCK_MODE: "true"
   CI: "true"
+  TRAIGENT_RUN_APPROVED: "1"  # Auto-approve CI runs for testing
+  TRAIGENT_APPROVED_BY: "github-actions"
   REGRESSION_THRESHOLD: "-0.01"  # 1% regression blocks
   IMPROVEMENT_MIN_PCT: "0.03"    # 3% improvement triggers warning
 

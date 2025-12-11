@@ -1,68 +1,37 @@
 # TraiGent Evaluation Guide
 
-## Overview
-
-TraiGent evaluates your AI agent's performance by comparing actual outputs to expected results. This guide explains evaluation methods, dataset formats, custom evaluators, and troubleshooting.
-
-## Table of Contents
-
-- [Dataset Format](#dataset-format)
-- [Evaluation Methods](#evaluation-methods)
-- [Custom Evaluators](#custom-evaluators)
-- [Mock Mode Testing](#mock-mode-testing)
-- [Troubleshooting](#troubleshooting)
+How TraiGent scores your runs and how to customize it.
 
 ## Dataset Format
 
-Evaluation datasets use JSONL (JSON Lines) format with the following structure:
+Use JSONL with `input` and optional `output`/`expected_output` keys (both are accepted):
 
 ```jsonl
-{"input": {"question": "What is 2+2?"}, "expected_output": "4"}
-{"input": {"question": "Capital of France?"}, "expected_output": "Paris"}
-{"input": {"query": "Sentiment of: Great product!"}, "expected_output": "positive"}
+{"input": {"question": "What is 2+2?"}, "output": "4"}
+{"input": {"question": "Capital of France?"}, "output": "Paris"}
+{"input": {"query": "Sentiment of: Great product!"}, "output": "positive"}
 ```
 
-### Key Fields
-
-- **`input`**: Dictionary containing all input parameters for your function
-- **`expected_output`**: The correct/desired output for comparison
-
-### Example Dataset Creation
+Minimal creator:
 
 ```python
 import json
 
-# Create evaluation dataset
-examples = [
-    {"input": {"question": "What is 2+2?"}, "expected_output": "4"},
-    {"input": {"question": "Capital of France?"}, "expected_output": "Paris"},
-    {"input": {"question": "Who wrote Hamlet?"}, "expected_output": "Shakespeare"}
+data = [
+    {"input": {"question": "What is 2+2?"}, "output": "4"},
+    {"input": {"question": "Capital of France?"}, "output": "Paris"},
 ]
-
-# Save as JSONL
 with open("qa_samples.jsonl", "w") as f:
-    for example in examples:
-        f.write(json.dumps(example) + "\n")
+    for row in data:
+        f.write(json.dumps(row) + "\n")
 ```
 
-## Evaluation Methods
+## Evaluation Modes
 
-TraiGent supports three evaluation approaches:
+### 1) Default semantic similarity
 
-### 1. Default Evaluation: Semantic Similarity
-
-Uses embedding-based comparison to measure semantic similarity between outputs.
-
-**Advantages:**
-- Compares meaning, not exact text match
-- Tolerates paraphrasing and formatting differences
-- Works well for natural language outputs
-
-**Requirements:**
-- Requires `OPENAI_API_KEY` environment variable for embeddings
-- Uses OpenAI's embedding model (default: `text-embedding-ada-002`)
-
-**Example:**
+- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless running in `TRAIGENT_MOCK_MODE`.
+- Great for natural language tasks where paraphrasing is fine.
 
 ```python
 import traigent
@@ -70,134 +39,58 @@ from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     eval_dataset="qa_samples.jsonl",
-    objectives=["accuracy", "cost"]
+    objectives=["accuracy", "cost"],
 )
 def qa_agent(question: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-    response = llm.invoke(f"Question: {question}\nAnswer:")
-    return response.content
-
-# Uses semantic similarity by default
+    return llm.invoke(f"Question: {question}\nAnswer:").content
 ```
 
-### 2. Custom Evaluators
+### 2) Custom evaluators
 
-Define your own evaluation logic for domain-specific metrics.
-
-**Simple Custom Evaluator:**
+Use your own scoring function when exact rules or domain metrics matter.
 
 ```python
-def exact_match_evaluator(output: str, expected: str) -> float:
-    """Return 1.0 for exact match, 0.0 otherwise"""
-    return 1.0 if output.lower().strip() == expected.lower().strip() else 0.0
+def exact_match(output: str, expected: str) -> float:
+    return 1.0 if output.strip().lower() == expected.strip().lower() else 0.0
 
 @traigent.optimize(
-    evaluator=exact_match_evaluator,
-    eval_dataset="data.jsonl"
+    evaluator=exact_match,
+    eval_dataset="data.jsonl",
+    objectives=["accuracy"],
 )
 def strict_agent(query: str) -> str:
-    return process_query(query)
+    ...
 ```
 
-**Advanced Custom Evaluator:**
-
-```python
-from typing import Dict, Any
-
-def sentiment_evaluator(output: str, expected: str, context: Dict[str, Any] = None) -> float:
-    """
-    Custom evaluator for sentiment analysis
-    Returns score between 0.0 and 1.0
-    """
-    sentiment_map = {
-        "positive": ["positive", "good", "great", "excellent"],
-        "negative": ["negative", "bad", "poor", "terrible"],
-        "neutral": ["neutral", "okay", "average"]
-    }
-
-    output_lower = output.lower().strip()
-    expected_lower = expected.lower().strip()
-
-    # Exact match
-    if output_lower == expected_lower:
-        return 1.0
-
-    # Fuzzy match within sentiment category
-    if expected_lower in sentiment_map:
-        if any(word in output_lower for word in sentiment_map[expected_lower]):
-            return 0.8
-
-    return 0.0
-
-@traigent.optimize(
-    evaluator=sentiment_evaluator,
-    eval_dataset="sentiment_data.jsonl",
-    objectives=["accuracy", "cost"]
-)
-def sentiment_classifier(text: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
-    response = llm.invoke(f"Classify sentiment: {text}\nSentiment:")
-    return response.content
-```
-
-**Multi-Metric Evaluator:**
+Multi-metric example:
 
 ```python
 from traigent.evaluators.base import EvaluationResult
 
-def comprehensive_evaluator(output: str, expected: str) -> EvaluationResult:
-    """
-    Returns multiple metrics for comprehensive evaluation
-    """
-    # Calculate various metrics
-    exact_match = 1.0 if output == expected else 0.0
-
-    # Calculate semantic similarity (example)
-    similarity = calculate_similarity(output, expected)
-
-    # Calculate length penalty
-    length_diff = abs(len(output) - len(expected))
-    length_score = max(0.0, 1.0 - (length_diff / 100))
-
+def combined_eval(output: str, expected: str) -> EvaluationResult:
+    exact = 1.0 if output == expected else 0.0
+    length_penalty = max(0.0, 1.0 - abs(len(output) - len(expected)) / 100)
     return EvaluationResult(
-        accuracy=similarity,
-        custom_metrics={
-            "exact_match": exact_match,
-            "length_score": length_score,
-            "combined_score": (similarity + exact_match + length_score) / 3
-        }
+        accuracy=exact,
+        custom_metrics={"exact_match": exact, "length_score": length_penalty},
     )
 ```
 
-### 3. Mock Mode for Testing
+### 3) Mock mode
 
-When `TRAIGENT_MOCK_MODE=true`, TraiGent simulates realistic optimization results without making real API calls.
-
-**Features:**
-- Shows realistic accuracy improvements (60-95%)
-- Demonstrates optimization value without costs
-- Perfect for demos, CI/CD, and initial testing
-- Generates deterministic results for reproducibility
-
-**Usage:**
+`TRAIGENT_MOCK_MODE=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
 
 ```bash
-# Enable mock mode
 export TRAIGENT_MOCK_MODE=true
-
-# Run optimization
 python your_optimization_script.py
 ```
 
-**Example Mock Results:**
+## Troubleshooting
 
-```
-Trial 1/10: accuracy=0.72, cost=$0.15
-Trial 2/10: accuracy=0.81, cost=$0.12
-Trial 3/10: accuracy=0.88, cost=$0.09
-...
-Best configuration found: accuracy=0.94, cost=$0.08
-```
+- **Semantic similarity fails**: Confirm `OPENAI_API_KEY` is set or switch to a custom evaluator.
+- **Scores all zeros**: Check that dataset `output`/`expected_output` values are non-empty strings.
+- **Dataset errors**: Run `traigent validate path/to/dataset.jsonl` to see the exact row/field causing issues.
 
 ## Custom Evaluators - Advanced Patterns
 

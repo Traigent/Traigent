@@ -1,6 +1,6 @@
 # TraiGent SDK API Reference
 
-Accurate documentation for TraiGent SDK v1.0.0.
+Accurate documentation for TraiGent SDK v1.1.0.
 
 This document reflects the current implementation of TraiGent SDK.
 
@@ -12,63 +12,89 @@ This document reflects the current implementation of TraiGent SDK.
 
 ```python
 def optimize(
-    eval_dataset: str | list[str] | Dataset | None = None,
-    objectives: Sequence[str] | ObjectiveSchema | None = None,
+    *,
+    objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Callable] | None = None,
-    injection_mode: str | InjectionMode = InjectionMode.CONTEXT,
-    config_param: str | None = None,
-    auto_override_frameworks: bool = True,
-    framework_targets: list[str] | None = None,
-    execution_mode: str = "edge_analytics",
-    local_storage_path: str | None = None,
-    minimal_logging: bool = True,
-    parallel_config: ParallelConfig | dict | None = None,
-    privacy_enabled: bool | None = None,
-    mock_mode_config: dict[str, Any] | None = None,
-    custom_evaluator: Callable | None = None,
-    scoring_function: Callable | None = None,
-    metric_functions: dict[str, Callable] | None = None,
+    # TVL integration
+    tvl_spec: str | Path | None = None,
+    tvl_environment: str | None = None,
+    tvl: TVLOptions | dict[str, Any] | None = None,
+    # Grouped options (preferred)
     evaluation: EvaluationOptions | dict[str, Any] | None = None,
     injection: InjectionOptions | dict[str, Any] | None = None,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
-    **kwargs: Any,
+    # Legacy compatibility
+    legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
+    **runtime_overrides: Any,
 ) -> OptimizedFunction
 ```
 
-> **New in 1.1** – supply grouped `EvaluationOptions`, `InjectionOptions`, `ExecutionOptions`, and `MockModeOptions` (or plain dicts) to keep the decorator concise. Legacy keyword arguments remain supported; conflicting values between a bundle and a direct keyword raise `TypeError`.
+> **New in 1.1** – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the `legacy` parameter or directly in `**runtime_overrides`. Conflicting values between a bundle and a direct keyword raise `TypeError`.
 
-**Parameters**
+**Core Parameters**
 
-| Parameter | Type | Default | Description | Notes |
-| --- | --- | --- | --- | --- |
-| `eval_dataset` | `str \| list[str] \| Dataset \| None` | `None` | Evaluation data used for scoring trials. Accepts a JSONL path, list of paths, or a pre-built `Dataset`. | Files must expose `input` and `expected_output` fields. Empty datasets raise validation errors. |
-| `objectives` | `Sequence[str] \| ObjectiveSchema \| None` | `["accuracy"]` | Objectives to optimize. Lists are converted to `ObjectiveSchema`. | Provide an `ObjectiveSchema` when you need explicit orientations/weights. |
-| `configuration_space` | `dict[str, Any] \| None` | `{}` | Search space describing tunable parameters. | Required for optimization. Lists denote discrete choices; `(min, max)` tuples denote ranges. |
-| `default_config` | `dict[str, Any] \| None` | `{}` | Configuration applied before optimization runs. | Missing keys fall back to values detected in the decorated function. |
-| `constraints` | `list[Callable] \| None` | `None` | Hard constraints evaluated before running a trial. | Callables should accept `(config, metrics=None)` and return `True/False`. |
-| `injection_mode` | `str \| InjectionMode` | `"context"` | How optimized params reach your function. Supports `"context"`, `"parameter"`, `"attribute"`, `"seamless"`. | `"decorator"` is deprecated and maps to `"attribute"`. |
-| `config_param` | `str \| None` | `None` | Parameter name used when `injection_mode="parameter"`. | Ignored for other injection modes. |
-| `auto_override_frameworks` | `bool` | `True` | Enables automatic overrides for supported LLM clients (OpenAI, Anthropic, LangChain, etc.). | Disable when you manage client wiring manually. |
-| `framework_targets` | `list[str] \| None` | `None` | Explicit list of framework classes to override. | Only applied when `auto_override_frameworks` is `True`. |
-| `execution_mode` | `str` | `"edge_analytics"` | Determines where orchestration occurs. Supports `"edge_analytics"` (local-first) and `"cloud"` today. | `"hybrid"`/`"standard"` are **not yet supported** in OSS builds; `"privacy"` maps to `"hybrid"` + `privacy_enabled=True` but remains experimental. |
-| `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results in edge analytics mode. | Must be writable when `execution_mode="edge_analytics"`. Ignored for cloud runs. |
-| `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. | Only meaningful when running locally; cloud mode ignores this hint. |
-| `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration for sequential/parallel runs. | Runtime overrides from `optimize()` take precedence over decorator/global settings. Bundled automatically when you pass `execution=ExecutionOptions(...)`. |
-| `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. | Effective only for `"edge_analytics"` today. For `"cloud"` it is ignored. |
-| `mock_mode_config` | `dict[str, Any] \| None` | `None` | Overrides behaviour when `TRAIGENT_MOCK_MODE` is enabled. | Keys include `"enabled"`, `"override_evaluator"`, `"base_accuracy"`, `"variance"`. |
-| `custom_evaluator` | `Callable \| None` | `None` | Fully custom evaluation routine returning `ExampleResult`. | Takes precedence over `scoring_function` unless mock mode forces override. |
-| `scoring_function` | `Callable \| None` | `None` | Simple scorer returning a numeric value or dict per example. | Used when no custom evaluator is supplied. |
-| `metric_functions` | `dict[str, Callable] \| None` | `None` | Map of metric names to scoring callables. | Merges with `scoring_function`; useful for multiple metrics. |
-| `evaluation` | `EvaluationOptions \| dict \| None` | `None` | Bundle `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. | Preferred for new code; legacy keywords continue to work. |
-| `injection` | `InjectionOptions \| dict \| None` | `None` | Bundle `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. | Conflicting values with direct keywords raise `TypeError`. |
-| `execution` | `ExecutionOptions \| dict \| None` | `None` | Bundle execution-mode, storage, logging, privacy, and parallelism knobs. | A clean alternative to managing half a dozen keywords. |
-| `mock` | `MockModeOptions \| dict \| None` | `None` | Bundle mock-mode behaviour tweaks such as `enabled`, `base_accuracy`, `variance`. | Converts to `mock_mode_config` internally. |
-| `**kwargs` | `Any` | – | Additional optimizer settings routed to downstream components. | Recognised keys include `algorithm`, `max_trials`, `timeout`, `cache_policy`, and stop-condition parameters. Unknown keys are forwarded untouched. |
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `objectives` | `list[str] \| ObjectiveSchema \| None` | `["accuracy"]` | Target metrics to optimize. Lists are converted to `ObjectiveSchema` with sensible defaults. Provide an `ObjectiveSchema` for explicit weights/orientations. |
+| `configuration_space` | `dict[str, Any] \| None` | `None` | Search space describing tunable parameters. Lists denote discrete choices; `(min, max)` tuples denote ranges. Required for optimization. |
+| `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys fall back to values detected in the decorated function. |
+| `constraints` | `list[Callable] \| None` | `None` | Hard constraints evaluated before running a trial. Callables accept `(config, metrics=None)` and return `True/False`. |
 
-> **Removed parameter**: `commercial_mode` has been fully retired. To opt into managed cloud orchestration, set `execution_mode="cloud"` (or `execution=ExecutionOptions(execution_mode="cloud")`).
+**TVL Integration** (Test Variation Language)
+
+| Parameter | Type | Default | Description |
+| --- | --- | --- | --- |
+| `tvl_spec` | `str \| Path \| None` | `None` | Path to a TVL specification file. When provided, becomes the authoritative source for configuration space, objectives, and constraints. |
+| `tvl_environment` | `str \| None` | `None` | Named environment overlay from the TVL spec (e.g., "development", "production"). |
+| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options controlling how the spec is applied (`apply_configuration_space`, `apply_objectives`, `apply_constraints`, `apply_budget`). |
+
+**Grouped Option Bundles** (Preferred for new code)
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `evaluation` | `EvaluationOptions \| dict \| None` | Bundle for `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. |
+| `injection` | `InjectionOptions \| dict \| None` | Bundle for `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. |
+| `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, `max_total_examples`, `reps_per_trial`, and `reps_aggregation`. |
+| `mock` | `MockModeOptions \| dict \| None` | Bundle for mock-mode settings: `enabled`, `override_evaluator`, `base_accuracy`, `variance`. |
+
+**ExecutionOptions Fields**
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `execution_mode` | `str` | `"edge_analytics"` | Where orchestration occurs: `"edge_analytics"` (local-first), `"cloud"`, `"privacy"`. |
+| `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
+| `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
+| `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
+| `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
+| `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
+| `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
+| `reps_per_trial` | `int` | `1` | Number of repetitions per configuration for statistical stability. Set to 3-5 for noisy evaluations. |
+| `reps_aggregation` | `str` | `"mean"` | How to aggregate metrics across repetitions: `"mean"`, `"median"`, `"min"`, `"max"`. |
+
+**Legacy Compatibility**
+
+| Parameter | Type | Description |
+| --- | --- | --- |
+| `legacy` | `LegacyOptimizeArgs \| dict \| None` | Adapter for the previous decorator signature. Pass a dict with historic keyword arguments; values merge with explicit parameters. |
+| `**runtime_overrides` | `Any` | Additional settings routed to downstream components. See Recognised Keys below. |
+
+**Recognised `runtime_overrides` Keys**
+
+| Key | Description |
+| --- | --- |
+| `algorithm` | Optimizer to use: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. |
+| `max_trials` | Maximum number of trials to execute. |
+| `timeout` | Wall-clock budget in seconds. |
+| `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
+| `cost_limit` | Maximum USD spending per optimization run. Defaults to `TRAIGENT_RUN_COST_LIMIT` env var or `$2.00`. |
+| `cost_approved` | Skip cost approval prompt. Use with caution in production. |
+| `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
+| `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
+
+> **Removed parameters**: `commercial_mode`, `auto_optimize`, `trigger`, `batch_size`, `parallel_trials` have been retired. Use the grouped options or `parallel_config` instead.
 
 **Usage Notes**
 
