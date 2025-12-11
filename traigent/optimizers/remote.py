@@ -151,7 +151,10 @@ class MockRemoteSuggestionClient:
         configs: list[dict[str, Any]] = []
         dataset_size = int(ctx.get("dataset_size", 0)) if isinstance(ctx, dict) else 0
         for i in range(n):
-            cfg = {k: vals[min(i, len(vals) - 1)] for k, vals in zip(keys, values)}
+            cfg = {
+                k: vals[min(i, len(vals) - 1)]
+                for k, vals in zip(keys, values, strict=False)
+            }
             # Provide indices-only subset split if dataset_size known
             if dataset_size > 0:
                 idxs = list(range(i, dataset_size, max(1, n)))

@@ -9,14 +9,14 @@ from contextvars import ContextVar, Token
 from types import TracebackType
 from typing import Any, Literal
 
-logger = logging.getLogger(__name__)
-
 from traigent.config.types import TraigentConfig
 
+logger = logging.getLogger(__name__)
+
 # Global context variable for configuration
-# Default to empty TraigentConfig for thread safety (avoids LookupError in new threads)
-config_context: ContextVar[TraigentConfig | dict[str, Any]] = ContextVar(
-    "traigent_config", default=TraigentConfig()
+# Default to None for thread safety; consumers should handle None case
+config_context: ContextVar[TraigentConfig | dict[str, Any] | None] = ContextVar(
+    "traigent_config", default=None
 )
 
 # Track the configuration currently applied to a function invocation (outside trials)
@@ -46,7 +46,11 @@ def get_config() -> TraigentConfig | dict[str, Any]:
         {'model': 'gpt-4', 'temperature': 0.7}
     """
     try:
-        return config_context.get()
+        config = config_context.get()
+        # If context is None (default), return new TraigentConfig
+        if config is None:
+            return TraigentConfig()
+        return config
     except LookupError:
         # If context is not set, return default TraigentConfig
         return TraigentConfig()

@@ -312,7 +312,9 @@ class CostOptimizationAI:
         x_mean = sum(x_values) / n
         y_mean = sum(values) / n
 
-        numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, values))
+        numerator = sum(
+            (x - x_mean) * (y - y_mean) for x, y in zip(x_values, values, strict=False)
+        )
         denominator = sum((x - x_mean) ** 2 for x in x_values)
 
         if denominator == 0:
