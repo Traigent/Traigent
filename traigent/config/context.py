@@ -19,6 +19,11 @@ config_context: ContextVar[TraigentConfig | dict[str, Any]] = ContextVar(
     "traigent_config", default=TraigentConfig()
 )
 
+# Track the configuration currently applied to a function invocation (outside trials)
+applied_config_context: ContextVar[TraigentConfig | dict[str, Any] | None] = ContextVar(
+    "traigent_applied_config", default=None
+)
+
 # Global context variable for active configuration space during optimization
 config_space_context: ContextVar[dict[str, Any] | None] = ContextVar(
     "traigent_config_space", default=None
@@ -45,6 +50,14 @@ def get_config() -> TraigentConfig | dict[str, Any]:
     except LookupError:
         # If context is not set, return default TraigentConfig
         return TraigentConfig()
+
+
+def get_applied_config() -> TraigentConfig | dict[str, Any] | None:
+    """Get the configuration currently applied to the function (if any)."""
+    try:
+        return applied_config_context.get()
+    except LookupError:
+        return None
 
 
 def get_config_space() -> dict[str, Any] | None:
@@ -90,6 +103,14 @@ def set_config(
         >>> config_context.reset(token)  # Reset to previous
     """
     return config_context.set(config)
+
+
+def set_applied_config(
+    config: TraigentConfig | dict[str, Any] | None,
+) -> Token[TraigentConfig | dict[str, Any] | None]:
+    """Set applied configuration in context."""
+
+    return applied_config_context.set(config)
 
 
 class ConfigurationSpaceContext:
@@ -138,10 +159,12 @@ class ConfigurationContext:
         """
         self.config = config
         self._token: Token[TraigentConfig | dict[str, Any]] | None = None
+        self._applied_token: Token[TraigentConfig | dict[str, Any] | None] | None = None
 
     def __enter__(self) -> TraigentConfig | dict[str, Any]:
         """Enter configuration context."""
         self._token = set_config(self.config)
+        self._applied_token = set_applied_config(self.config)
         return self.config
 
     def __exit__(
@@ -153,6 +176,8 @@ class ConfigurationContext:
         """Exit configuration context and restore previous."""
         if self._token is not None:
             config_context.reset(self._token)
+        if self._applied_token is not None:
+            applied_config_context.reset(self._applied_token)
         return False  # Don't suppress exceptions
 
 
@@ -246,6 +271,7 @@ class ContextSnapshot:
         trial_ctx: dict[str, Any] | None,
         config: TraigentConfig | dict[str, Any] | None,
         config_space: dict[str, Any] | None,
+        applied_config: TraigentConfig | dict[str, Any] | None,
     ) -> None:
         """Initialize context snapshot.
 
@@ -253,10 +279,12 @@ class ContextSnapshot:
             trial_ctx: Trial context dict or None
             config: Configuration (TraigentConfig or dict) or None
             config_space: Configuration space dict or None
+            applied_config: Applied configuration dict or TraigentConfig or None
         """
         self.trial_context = trial_ctx
         self.config = config
         self.config_space = config_space
+        self.applied_config = applied_config
 
     def restore(self) -> ContextRestorer:
         """Return a context manager that restores this snapshot.
@@ -275,7 +303,12 @@ class ContextSnapshot:
 
     def __bool__(self) -> bool:
         """Return True if any context is set."""
-        return bool(self.trial_context or self.config or self.config_space)
+        return bool(
+            self.trial_context
+            or self.config
+            or self.config_space
+            or self.applied_config
+        )
 
 
 class ContextRestorer:
@@ -294,6 +327,10 @@ class ContextRestorer:
         if self.snapshot.config is not None:
             token = config_context.set(self.snapshot.config)
             self._tokens.append((config_context, token))
+
+        if self.snapshot.applied_config is not None:
+            token = applied_config_context.set(self.snapshot.applied_config)
+            self._tokens.append((applied_config_context, token))
 
         if self.snapshot.config_space is not None:
             token = config_space_context.set(self.snapshot.config_space)
@@ -360,6 +397,7 @@ def copy_context_to_thread() -> ContextSnapshot:
         trial_ctx=get_trial_context(),
         config=get_config(),
         config_space=get_config_space(),
+        applied_config=get_applied_config(),
     )
 
 

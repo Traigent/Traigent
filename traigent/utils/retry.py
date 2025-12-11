@@ -16,12 +16,13 @@ import asyncio
 import functools
 import random
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from threading import RLock
-from typing import Any, Callable, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from traigent.utils.exceptions import (
     NetworkError,
@@ -167,8 +168,8 @@ class RetryResult:
     error: Exception | None = None
     attempts: int = 0
     total_delay: float = 0.0
-    start_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    end_time: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    start_time: datetime = field(default_factory=lambda: datetime.now(UTC))
+    end_time: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     @property
     def duration(self) -> float:
@@ -194,7 +195,7 @@ class CircuitBreaker:
         self.failure_count = 0
         self.success_count = 0
         self.last_failure_time: datetime | None = None
-        self.last_state_change: datetime = datetime.now(timezone.utc)
+        self.last_state_change: datetime = datetime.now(UTC)
         self._lock = RLock()
         self._half_open_in_flight = False
 
@@ -202,7 +203,7 @@ class CircuitBreaker:
         """Execute function with circuit breaker protection."""
         with self._lock:
             if self.state == CircuitBreakerState.OPEN:
-                now = datetime.now(timezone.utc)
+                now = datetime.now(UTC)
                 if self._should_attempt_reset(now):
                     self.state = CircuitBreakerState.HALF_OPEN
                     self.success_count = 0
@@ -229,7 +230,7 @@ class CircuitBreaker:
         if self.last_failure_time is None:
             return False
         if reference_time is None:
-            reference_time = datetime.now(timezone.utc)
+            reference_time = datetime.now(UTC)
         return reference_time - self.last_failure_time > timedelta(
             seconds=self.recovery_timeout
         )
@@ -245,7 +246,7 @@ class CircuitBreaker:
                 if self.success_count >= self.success_threshold:
                     self.state = CircuitBreakerState.CLOSED
                     self.success_count = 0
-                    self.last_state_change = datetime.now(timezone.utc)
+                    self.last_state_change = datetime.now(UTC)
                     logger.info("Circuit breaker entering CLOSED state")
             else:
                 self._half_open_in_flight = False
@@ -254,13 +255,13 @@ class CircuitBreaker:
         """Handle failed call."""
         with self._lock:
             self.failure_count += 1
-            self.last_failure_time = datetime.now(timezone.utc)
+            self.last_failure_time = datetime.now(UTC)
             self.success_count = 0
             self._half_open_in_flight = False
 
             if self.failure_count >= self.failure_threshold:
                 self.state = CircuitBreakerState.OPEN
-                self.last_state_change = datetime.now(timezone.utc)
+                self.last_state_change = datetime.now(UTC)
                 logger.warning(
                     f"Circuit breaker entering OPEN state after {self.failure_count} failures"
                 )
@@ -289,7 +290,7 @@ class RetryHandler:
         self, func: Callable[..., T], *args, **kwargs
     ) -> RetryResult:
         """Execute function with retry logic and return detailed result."""
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         last_exception = None
         total_delay = 0.0
         final_attempt = 0
@@ -309,7 +310,7 @@ class RetryHandler:
                     attempts=attempt,
                     total_delay=total_delay,
                     start_time=start_time,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=datetime.now(UTC),
                 )
 
             except Exception as e:
@@ -345,7 +346,7 @@ class RetryHandler:
             attempts=final_attempt,
             total_delay=total_delay,
             start_time=start_time,
-            end_time=datetime.now(timezone.utc),
+            end_time=datetime.now(UTC),
         )
 
     async def execute_async(self, func: Callable[..., T], *args, **kwargs) -> T:
@@ -359,7 +360,7 @@ class RetryHandler:
         self, func: Callable[..., T], *args, **kwargs
     ) -> RetryResult:
         """Execute async function with retry logic and return detailed result."""
-        start_time = datetime.now(timezone.utc)
+        start_time = datetime.now(UTC)
         last_exception = None
         total_delay = 0.0
         final_attempt = 0
@@ -374,7 +375,7 @@ class RetryHandler:
                     attempts=attempt,
                     total_delay=total_delay,
                     start_time=start_time,
-                    end_time=datetime.now(timezone.utc),
+                    end_time=datetime.now(UTC),
                 )
 
             except Exception as e:
@@ -410,7 +411,7 @@ class RetryHandler:
             attempts=final_attempt,
             total_delay=total_delay,
             start_time=start_time,
-            end_time=datetime.now(timezone.utc),
+            end_time=datetime.now(UTC),
         )
 
     def _should_retry(self, exception: Exception, attempt: int) -> bool:

@@ -547,7 +547,9 @@ class BackendSynchronizer:
                 )
                 # Track the dropped sync for debugging
                 with self._stats_lock:
-                    self._stats["dropped_syncs"] = self._stats.get("dropped_syncs", 0) + 1
+                    self._stats["dropped_syncs"] = (
+                        self._stats.get("dropped_syncs", 0) + 1
+                    )
                 continue
 
             task = asyncio.create_task(
@@ -564,7 +566,9 @@ class BackendSynchronizer:
         if tasks:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             # S4 fix: Include payload in zip to preserve data for requeue
-            for session_id, result, payload in zip(task_sessions, results, task_payloads):
+            for session_id, result, payload in zip(
+                task_sessions, results, task_payloads
+            ):
                 self._sync_tasks.pop(session_id, None)
 
                 if isinstance(result, Exception):

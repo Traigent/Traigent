@@ -48,7 +48,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "summarization_eval.jsonl")
     max_trials=10,
 )
 def summarize(document: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=cfg.get("temperature", 0.0))
 
     def _sum(text: str) -> str:

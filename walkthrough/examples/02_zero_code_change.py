@@ -63,7 +63,7 @@ def answer_question_optimized(question: str) -> str:
     """EXACT SAME CODE as above - just copy-pasted!"""
     if MOCK:
         # Mock will show different configs being tested
-        config = traigent.get_current_config()
+        config = traigent.get_config()
         model = config.get("model", "gpt-3.5-turbo")
         temp = config.get("temperature", 0.7)
         print(f"  Testing: {model} with temp={temp}")

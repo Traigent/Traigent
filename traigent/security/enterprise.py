@@ -18,10 +18,11 @@ import logging
 import os
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 import psutil
 
@@ -138,7 +139,7 @@ class SLAConfiguration:
 class SystemMetrics:
     """System performance and health metrics"""
 
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     # System resources
     cpu_usage_percent: float = 0.0
@@ -192,7 +193,7 @@ class MetricsCollector:
     """Collects system and application metrics"""
 
     def __init__(self) -> None:
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now(UTC)
         self.request_counts: list[Any] = []
         self.response_times: list[Any] = []
         self.error_counts: list[Any] = []
@@ -209,7 +210,7 @@ class MetricsCollector:
             net_io = psutil.net_io_counters()
 
             # Calculate application metrics
-            now = datetime.utcnow()
+            now = datetime.now(UTC)
 
             with self._lock:
                 # RPS calculation (last minute)
@@ -308,7 +309,7 @@ class MetricsCollector:
 
     def record_request(self, response_time_ms: float, is_error: bool = False) -> None:
         """Record request metrics"""
-        now = datetime.utcnow()
+        now = datetime.now(UTC)
 
         with self._lock:
             self.request_counts.append(now)
@@ -394,14 +395,14 @@ class SLAMonitor:
                 with self._lock:
                     self.sla_history.append(
                         {
-                            "timestamp": datetime.utcnow().isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                             "metrics": metrics.to_dict(),
                             "sla_status": sla_status,
                         }
                     )
 
                     # Keep last 24 hours of history
-                    cutoff = datetime.utcnow() - timedelta(hours=24)
+                    cutoff = datetime.now(UTC) - timedelta(hours=24)
                     self.sla_history = [
                         h
                         for h in self.sla_history
@@ -526,7 +527,7 @@ class SLAMonitor:
 
     def get_sla_report(self, hours: int = 24) -> dict[str, Any]:
         """Get SLA compliance report"""
-        cutoff = datetime.utcnow() - timedelta(hours=hours)
+        cutoff = datetime.now(UTC) - timedelta(hours=hours)
         with self._lock:
             recent_history = [
                 h
@@ -713,7 +714,7 @@ class EnterpriseDeploymentManager:
             "health_status": metrics.health_status.value,
             "health_score": metrics.health_score,
             "uptime_seconds": (
-                datetime.utcnow() - self.metrics_collector.start_time
+                datetime.now(UTC) - self.metrics_collector.start_time
             ).total_seconds(),
             "metrics": metrics.to_dict(),
             "config": self.config,
@@ -762,13 +763,13 @@ class EnterpriseDeploymentManager:
 
         return {
             "overall_status": "healthy" if all_healthy else "unhealthy",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "checks": health_checks,
         }
 
     def create_backup(self) -> dict[str, Any]:
         """Create system backup"""
-        backup_id = f"backup_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        backup_id = f"backup_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}"
 
         # In production, this would:
         # - Backup database
@@ -778,11 +779,11 @@ class EnterpriseDeploymentManager:
 
         backup_info = {
             "backup_id": backup_id,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "deployment_mode": self.deployment_mode.value,
             "size_bytes": 1024 * 1024 * 100,  # Mock 100MB
             "retention_until": (
-                datetime.utcnow()
+                datetime.now(UTC)
                 + timedelta(days=self.config.get("backup_retention_days", 30))
             ).isoformat(),
             "status": "completed",
@@ -796,11 +797,11 @@ class EnterpriseDeploymentManager:
         metrics = self.metrics_collector.collect_system_metrics()
 
         dashboard = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "deployment": {
                 "mode": self.deployment_mode.value,
                 "uptime_hours": (
-                    datetime.utcnow() - self.metrics_collector.start_time
+                    datetime.now(UTC) - self.metrics_collector.start_time
                 ).total_seconds()
                 / 3600,
                 "config": self.config,

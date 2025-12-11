@@ -112,7 +112,7 @@ def _json_accuracy(
     max_trials=10,
 )
 def extract_json(text: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     hint = cfg.get("format_hint", "json")
     llm = ChatOpenAI(
         model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.0)

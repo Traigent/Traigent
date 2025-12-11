@@ -7,7 +7,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from traigent.config.providers import get_provider
 from traigent.invokers.base import BaseInvoker, InvocationResult
@@ -119,7 +120,7 @@ class LocalInvoker(BaseInvoker):
                 is_successful=True,
             )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             end_time = time.time()
             execution_time = end_time - start_time
             error_msg = f"Function call timed out after {self.timeout}s"

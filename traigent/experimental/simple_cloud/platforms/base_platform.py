@@ -15,7 +15,8 @@ Real TraiGent cloud execution happens in the OptiGen backend (proprietary).
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
 
 from traigent.agents.executor import AgentExecutor
 from traigent.utils.exceptions import PlatformCapabilityError

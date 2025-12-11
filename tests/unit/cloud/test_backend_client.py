@@ -201,13 +201,13 @@ class TestPrivacyFirstOptimization:
         """Test creating privacy-first optimization session."""
 
         async def run_test():
-            with patch.object(
-                backend_client, "_create_cloud_session"
-            ) as mock_cloud, patch.object(
-                backend_client, "_create_traigent_session_via_api"
-            ) as mock_session_api, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(backend_client, "_create_cloud_session") as mock_cloud,
+                patch.object(
+                    backend_client, "_create_traigent_session_via_api"
+                ) as mock_session_api,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 # Mock responses
                 mock_cloud.return_value = MagicMock(
@@ -283,11 +283,12 @@ class TestPrivacyFirstOptimization:
         async def run_test():
             session_id = "session_123"
 
-            with patch.object(
-                backend_client, "_get_cloud_trial_suggestion"
-            ) as mock_cloud, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(
+                    backend_client, "_get_cloud_trial_suggestion"
+                ) as mock_cloud,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 # Setup mock response
                 from traigent.cloud.models import (
@@ -351,11 +352,12 @@ class TestPrivacyFirstOptimization:
         async def run_test():
             session_id = "session_123"
 
-            with patch.object(
-                backend_client, "_get_cloud_trial_suggestion"
-            ) as mock_cloud, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(
+                    backend_client, "_get_cloud_trial_suggestion"
+                ) as mock_cloud,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 from traigent.cloud.models import NextTrialResponse
 
@@ -397,15 +399,19 @@ class TestPrivacyFirstOptimization:
             session_id = "session_123"
             trial_id = "trial_456"
 
-            with patch.object(
-                backend_client, "_submit_cloud_trial_results", new_callable=AsyncMock
-            ) as mock_cloud, patch.object(
-                backend_client,
-                "_submit_trial_result_via_session",
-                new_callable=AsyncMock,
-            ) as mock_session, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(
+                    backend_client,
+                    "_submit_cloud_trial_results",
+                    new_callable=AsyncMock,
+                ) as mock_cloud,
+                patch.object(
+                    backend_client,
+                    "_submit_trial_result_via_session",
+                    new_callable=AsyncMock,
+                ) as mock_session,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
@@ -448,15 +454,19 @@ class TestPrivacyFirstOptimization:
         """Test submitting privacy trial results with error."""
 
         async def run_test():
-            with patch.object(
-                backend_client, "_submit_cloud_trial_results", new_callable=AsyncMock
-            ) as mock_cloud, patch.object(
-                backend_client,
-                "_submit_trial_result_via_session",
-                new_callable=AsyncMock,
-            ) as mock_session, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(
+                    backend_client,
+                    "_submit_cloud_trial_results",
+                    new_callable=AsyncMock,
+                ) as mock_cloud,
+                patch.object(
+                    backend_client,
+                    "_submit_trial_result_via_session",
+                    new_callable=AsyncMock,
+                ) as mock_session,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 mock_cloud.return_value = True  # Mock cloud submission success
                 mock_session.return_value = True  # Mock session submission success
@@ -519,13 +529,15 @@ class TestCloudSaaSOptimization:
         """Test starting agent optimization."""
 
         async def run_test():
-            with patch.object(
-                backend_client, "_create_backend_agent_experiment"
-            ) as mock_backend, patch.object(
-                backend_client, "_submit_agent_optimization"
-            ) as mock_cloud, patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge:
+            with (
+                patch.object(
+                    backend_client, "_create_backend_agent_experiment"
+                ) as mock_backend,
+                patch.object(
+                    backend_client, "_submit_agent_optimization"
+                ) as mock_cloud,
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+            ):
 
                 # Mock responses
                 mock_backend.return_value = ("exp_123", "run_456")
@@ -1025,15 +1037,19 @@ class TestEdgeCases:
         """Test trial operations without session mapping."""
 
         async def run_test():
-            with patch(
-                "traigent.cloud.backend_client.bridge"
-            ) as mock_bridge, patch.object(
-                backend_client, "_submit_cloud_trial_results", new_callable=AsyncMock
-            ) as mock_cloud, patch.object(
-                backend_client,
-                "_submit_trial_result_via_session",
-                new_callable=AsyncMock,
-            ) as mock_session:
+            with (
+                patch("traigent.cloud.backend_client.bridge") as mock_bridge,
+                patch.object(
+                    backend_client,
+                    "_submit_cloud_trial_results",
+                    new_callable=AsyncMock,
+                ) as mock_cloud,
+                patch.object(
+                    backend_client,
+                    "_submit_trial_result_via_session",
+                    new_callable=AsyncMock,
+                ) as mock_session,
+            ):
 
                 mock_bridge.get_trial_mapping.return_value = None
                 mock_cloud.return_value = True
@@ -1059,11 +1075,14 @@ class TestEdgeCases:
         async def run_test():
             empty_dataset = Dataset(examples=[], name="empty")
 
-            with patch.object(
-                backend_client, "_create_backend_agent_experiment"
-            ) as mock_backend, patch.object(
-                backend_client, "_submit_agent_optimization"
-            ) as mock_cloud:
+            with (
+                patch.object(
+                    backend_client, "_create_backend_agent_experiment"
+                ) as mock_backend,
+                patch.object(
+                    backend_client, "_submit_agent_optimization"
+                ) as mock_cloud,
+            ):
 
                 mock_backend.return_value = ("exp_123", "run_456")
                 mock_cloud.return_value = MagicMock(session_id="session_123")

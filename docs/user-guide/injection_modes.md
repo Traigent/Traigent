@@ -28,7 +28,7 @@ Access configuration through TraiGent's context system — flexible, thread/asyn
     }
 )
 def generate_text(prompt: str) -> str:
-    cfg = traigent.get_trial_config()  # Get config for current optimization trial
+    cfg = traigent.get_config()  # Works during optimization and after apply_best_config()
     return ai_client.generate(
         model=cfg.get("model", "gpt-3.5-turbo"),
         temperature=cfg.get("temperature", 0.7),
@@ -48,7 +48,7 @@ def generate_text(prompt: str) -> str:
     }
 )
 def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
-    cfg = traigent.get_trial_config()  # Get config for current optimization trial
+    cfg = traigent.get_config()  # Get the config applied to this invocation
     strategy = cfg.get("strategy", "balanced")
     risk_factor = cfg.get("risk_factor", 0.5)
     max_exposure = cfg.get("max_exposure", 5000)
@@ -59,11 +59,11 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 ### How It Works
 
 1. TraiGent sets a thread/async-local config context
-2. Your function reads config via `traigent.get_trial_config()` during optimization
+2. Your function reads config via `traigent.get_config()` (or `get_trial_config()` during optimization)
 3. Optimizer updates the active config per trial
 4. Your code stays unchanged apart from the decorator and get call
 
-> **Note**: `get_trial_config()` should only be called during an active optimization trial. After optimization, access the best config via `result.best_config` or `func.current_config`.
+> **Note**: Use `traigent.get_config()` for unified access. `get_trial_config()` should only be called during an active optimization trial. After optimization, access the best config via `result.best_config` or `func.current_config`.
 
 ### Pros & Cons
 
@@ -75,7 +75,7 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 
 **Cons:**
 
-- ❌ Requires explicit `get_trial_config()` call during optimization
+- ❌ Requires explicit `get_config()` call during optimization
 - ❌ Implicit context may be less explicit than parameters
 
 ### When to Use
@@ -485,13 +485,13 @@ Context mode is the default and recommended starting point for most use cases:
     configuration_space={"model": ["gpt-3.5-turbo", "gpt-4o"]}
 )
 def my_function(prompt: str) -> str:
-    cfg = traigent.get_trial_config()  # Get config for current trial
+    cfg = traigent.get_config()  # Get config for current call
     return call_llm(model=cfg.get("model"), prompt=prompt)
 ```
 
 ### 2. Use Seamless for Zero-Touch Migration
 
-For existing code where you don't want to add `get_trial_config()` calls:
+For existing code where you don't want to add `get_config()` calls:
 
 ```python
 # Seamless mode: TraiGent overrides variable assignments automatically
@@ -552,7 +552,7 @@ def preprocess(text):
 # Context for complex pipelines
 @traigent.optimize(injection_mode="context")
 def pipeline(data):
-    config = traigent.get_trial_config()  # Get config for current trial
+    config = traigent.get_config()  # Get config for current call
     # Complex logic with config
 
 # Parameter for type-safe components
@@ -580,7 +580,7 @@ def process(data):
 
 | Mode | Best For |
 |------|----------|
-| **Context** (default) | Most cases; dynamic config access via `get_trial_config()` during optimization |
+| **Context** (default) | Most cases; dynamic config access via `get_config()` inside your function |
 | **Seamless** | Zero-code-change; existing code with matching variable names |
 | **Parameter** | Type safety; explicit dependencies; team projects |
 | **Attribute** | External monitoring; A/B testing; debugging |
@@ -593,6 +593,7 @@ Understanding **when** to use each config access method is critical:
 
 | Lifecycle Phase | Access Method | Description |
 |-----------------|---------------|-------------|
+| **During/After Optimization** | `traigent.get_config()` | Unified accessor inside your optimized function. Works during trials and after `apply_best_config()`. |
 | **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Only valid inside your optimized function while `.optimize()` is running. |
 | **After Optimization** | `result.best_config` | The best configuration found, returned in `OptimizationResult`. Recommended for most post-optimization use. |
 | **After Optimization** | `func.current_config` | The config currently applied to the function (same as `best_config` after optimization). |
@@ -611,7 +612,7 @@ import traigent
     }
 )
 def my_function(prompt: str) -> str:
-    cfg = traigent.get_trial_config()  # ✅ Valid DURING optimization
+    cfg = traigent.get_config()  # ✅ Unified access during/after optimization
     return call_llm(model=cfg["model"], temperature=cfg["temperature"], prompt=prompt)
 
 # Run optimization
@@ -628,4 +629,4 @@ response = my_function("Hello!")  # Uses {"model": "gpt-4o", "temperature": 0.5}
 print(f"Applied config: {my_function.current_config}")    # ✅ Same as best_config
 ```
 
-> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`.
+> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`. Use `traigent.get_config()` inside your function for lifecycle-safe access.

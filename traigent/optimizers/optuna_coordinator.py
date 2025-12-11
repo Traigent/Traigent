@@ -9,7 +9,8 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from traigent.optimizers.optuna_utils import (
     config_space_to_distributions,

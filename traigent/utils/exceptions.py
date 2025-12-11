@@ -232,8 +232,9 @@ class TraigentWarning(UserWarning):
 class ConfigAccessWarning(TraigentWarning):
     """Warning for deprecated or discouraged configuration access patterns.
 
-    Raised when using deprecated config access methods like get_current_config()
-    or accessing current_config in inappropriate lifecycle states.
+    Raised when using deprecated config access methods like get_current_config().
+    Use traigent.get_config() instead, which works both during optimization
+    trials and after apply_best_config().
     """
 
 
@@ -256,21 +257,24 @@ class OptimizationStateError(TraigentError):
 
     This error is raised when:
     - Accessing current_config during an active optimization trial
-      (use get_trial_config() instead)
     - Calling get_trial_config() outside of an active optimization trial
+    - Calling get_config() when no trial or applied config is available
     - Attempting operations that are invalid for the current state
 
     Example:
         @traigent.optimize(configuration_space={"model": ["a", "b"]})
         def my_func():
-            # During optimization, use get_trial_config()
-            cfg = traigent.get_trial_config()
+            # Use get_config() - works during and after optimization
+            cfg = traigent.get_config()
             return cfg["model"]
 
-        # After optimization, access via result or current_config
-        result = traigent.optimize(my_func, ...)
-        print(result.best_config)  # Recommended
-        print(my_func.current_config)  # Also valid after optimization
+        # Run optimization
+        result = my_func.optimize(...)
+        print(result.best_config)  # Best config from optimization
+
+        # Apply best config for production use
+        my_func.apply_best_config()
+        my_func("query")  # get_config() now returns applied config
     """
 
     def __init__(

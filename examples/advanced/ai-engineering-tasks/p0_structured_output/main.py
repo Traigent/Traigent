@@ -15,7 +15,6 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, Optional
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -92,14 +91,14 @@ COMPANY_PATTERNS = {
 }
 
 
-def _match_pattern(text: str, patterns: Dict[str, str]) -> Optional[str]:
+def _match_pattern(text: str, patterns: dict[str, str]) -> str | None:
     for key, value in patterns.items():
         if key in text:
             return value
     return None
 
 
-def _format_entities(entities: Dict[str, str], output_format: str) -> str:
+def _format_entities(entities: dict[str, str], output_format: str) -> str:
     if output_format == "json":
         return json.dumps(entities)
     if output_format == "xml":
@@ -133,7 +132,7 @@ def extract_entities(
 ) -> str:
     """Extract structured entities from text."""
 
-    entities: Dict[str, str] = {}
+    entities: dict[str, str] = {}
     person = _match_pattern(text, PERSON_PATTERNS)
     if person:
         entities["person"] = person

@@ -8,8 +8,9 @@ can still run without raising import errors.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, Sequence
+from typing import Any
 
 __all__ = [
     "ChatAnthropic",
@@ -97,15 +98,9 @@ def _load_messages() -> (
     tuple[type[_BaseMessage], type[_BaseMessage], type[_BaseMessage]]
 ):
     try:  # pragma: no cover - executed when dependency is installed
-        from langchain_core.messages import (  # type: ignore
-            AIMessage as real_ai,
-        )
-        from langchain_core.messages import (
-            HumanMessage as real_human,
-        )
-        from langchain_core.messages import (
-            SystemMessage as real_system,
-        )
+        from langchain_core.messages import AIMessage as real_ai  # type: ignore
+        from langchain_core.messages import HumanMessage as real_human
+        from langchain_core.messages import SystemMessage as real_system
 
         return real_human, real_system, real_ai  # type: ignore[return-value]
     except ImportError:  # pragma: no cover - exercised in lint/mock environments
@@ -172,7 +167,9 @@ class _BaseRetriever:
 
 def _load_bm25() -> type[_BaseRetriever]:
     try:  # pragma: no cover - executed when dependency is installed
-        from langchain_community.retrievers import BM25Retriever as real_retriever  # type: ignore
+        from langchain_community.retrievers import (
+            BM25Retriever as real_retriever,  # type: ignore
+        )
 
         return real_retriever  # type: ignore[no-any-return, return-value]
     except ImportError:  # pragma: no cover - exercised in lint/mock environments

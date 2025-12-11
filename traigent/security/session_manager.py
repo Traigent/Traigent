@@ -13,7 +13,7 @@ import hmac
 import json
 import secrets
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.utils.logging import get_logger
@@ -149,7 +149,7 @@ class SessionManager:
         token_hash = self._hash_token(session_token)
 
         # Create session data
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         session_data = {
             "user_id": user_id,
             "token_hash": token_hash,
@@ -212,7 +212,7 @@ class SessionManager:
             self.revoke_session(session_id)
             return None
 
-        if datetime.now(timezone.utc) > expires_at:
+        if datetime.now(UTC) > expires_at:
             self.revoke_session(session_id)
             return None
 
@@ -232,7 +232,7 @@ class SessionManager:
         if not isinstance(current_access_count, int):
             current_access_count = 0
 
-        session_data["last_accessed"] = datetime.now(timezone.utc).isoformat()
+        session_data["last_accessed"] = datetime.now(UTC).isoformat()
         session_data["access_count"] = current_access_count + 1
 
         # Update storage
@@ -269,7 +269,7 @@ class SessionManager:
             return False
 
         additional_ttl = additional_ttl or self.session_ttl
-        new_expires = datetime.now(timezone.utc) + timedelta(seconds=additional_ttl)
+        new_expires = datetime.now(UTC) + timedelta(seconds=additional_ttl)
         session_data["expires_at"] = new_expires.isoformat()
 
         if self.use_redis and self.redis_client:
@@ -335,7 +335,7 @@ class SessionManager:
             Number of sessions cleaned up
         """
         count = 0
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         if self.use_redis and self.redis_client:
             # Redis handles expiration automatically
@@ -426,7 +426,7 @@ class SessionManager:
                     logger.warning(
                         f"Failed to parse created_at for session {session_id}: {e}"
                     )
-        return datetime.min.replace(tzinfo=timezone.utc)
+        return datetime.min.replace(tzinfo=UTC)
 
     def _check_rate_limit(
         self, user_id: str, max_requests: int = 10, window: int = 60

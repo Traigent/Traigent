@@ -1,5 +1,5 @@
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -7,10 +7,43 @@ from traigent.integrations.google_gemini_client import GeminiChatClient
 
 
 @pytest.fixture
-def mock_genai():
-    with patch.dict(sys.modules, {"google.generativeai": MagicMock()}):
-        mock = sys.modules["google.generativeai"]
-        yield mock
+def mock_genai_module():
+    """Fixture that creates a mock google.generativeai module.
+
+    Returns the mock module so tests can configure it as needed.
+    """
+    mock_genai = MagicMock()
+    mock_model_instance = MagicMock()
+    mock_genai.GenerativeModel.return_value = mock_model_instance
+
+    # Store a reference to the model instance for test configuration
+    mock_genai._mock_model = mock_model_instance
+
+    # Save original modules to restore later
+    saved_modules = {}
+    modules_to_patch = ["google", "google.ai", "google.generativeai"]
+    for mod in modules_to_patch:
+        if mod in sys.modules:
+            saved_modules[mod] = sys.modules[mod]
+
+    # Create a mock "google" module that returns our mock_genai when .generativeai is accessed
+    mock_google = MagicMock()
+    mock_google.generativeai = mock_genai
+
+    # Replace with our mocks - the key is that google.generativeai points to same mock
+    sys.modules["google"] = mock_google
+    sys.modules["google.ai"] = MagicMock()
+    sys.modules["google.generativeai"] = mock_genai
+
+    try:
+        yield mock_genai
+    finally:
+        # Restore original modules
+        for mod in modules_to_patch:
+            if mod in saved_modules:
+                sys.modules[mod] = saved_modules[mod]
+            elif mod in sys.modules:
+                del sys.modules[mod]
 
 
 @pytest.mark.unit
@@ -28,106 +61,112 @@ def test_gemini_client_init_with_env_var(monkeypatch):
 
 
 @pytest.mark.unit
-def test_gemini_invoke_real_path(mock_genai, monkeypatch):
+def test_gemini_invoke_real_path(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
 
-    # Setup mock
-    mock_model = MagicMock()
+    # Setup mock response
     mock_response = MagicMock()
     mock_response.text = "Real response"
     mock_response.usage_metadata.to_dict.return_value = {"tokens": 10}
-    mock_model.generate_content.return_value = mock_response
-    mock_genai.GenerativeModel.return_value = mock_model
+    mock_genai_module._mock_model.generate_content.return_value = mock_response
 
     client = GeminiChatClient(api_key="test_key")
     response = client.invoke(model="gemini-pro", messages="Hello")
 
     assert response.text == "Real response"
     assert response.usage == {"tokens": 10}
-    mock_genai.configure.assert_called_with(api_key="test_key")
-    mock_model.generate_content.assert_called()
+    mock_genai_module.configure.assert_called_with(api_key="test_key")
+    mock_genai_module._mock_model.generate_content.assert_called_once()
+
+    # Verify generation_config is used correctly
+    call_args = mock_genai_module._mock_model.generate_content.call_args
+    assert call_args[0][0] == "Hello"  # prompt
+    assert "generation_config" in call_args[1]
+    assert call_args[1]["generation_config"]["temperature"] == 0.5
 
 
 @pytest.mark.unit
-def test_gemini_invoke_stream_real_path(mock_genai, monkeypatch):
+def test_gemini_invoke_stream_real_path(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
 
-    # Setup mock
-    mock_model = MagicMock()
+    # Setup mock chunks
     mock_chunk1 = MagicMock()
     mock_chunk1.text = "Chunk 1"
     mock_chunk2 = MagicMock()
     mock_chunk2.text = "Chunk 2"
 
-    # Mock iterator
+    # Mock response as an iterable
     mock_response = MagicMock()
-    mock_response.__iter__.return_value = [mock_chunk1, mock_chunk2]
+    mock_response.__iter__ = MagicMock(return_value=iter([mock_chunk1, mock_chunk2]))
     mock_response.usage_metadata.to_dict.return_value = {"tokens": 20}
 
-    mock_model.generate_content.return_value = mock_response
-    mock_genai.GenerativeModel.return_value = mock_model
+    mock_genai_module._mock_model.generate_content.return_value = mock_response
 
     client = GeminiChatClient(api_key="test_key")
     chunks = list(client.invoke_stream(model="gemini-pro", messages="Hello"))
 
     assert chunks == ["Chunk 1", "Chunk 2"]
-    mock_model.generate_content.assert_called_with(
-        "Hello", temperature=0.5, stream=True
-    )
+    mock_genai_module._mock_model.generate_content.assert_called_once()
+
+    # Verify generation_config and stream=True
+    call_args = mock_genai_module._mock_model.generate_content.call_args
+    assert call_args[1]["stream"] is True
+    assert "generation_config" in call_args[1]
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_gemini_ainvoke_real_path(mock_genai, monkeypatch):
+async def test_gemini_ainvoke_real_path(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
 
-    # Setup mock
-    mock_model = MagicMock()
+    # Setup async mock response
     mock_response = MagicMock()
     mock_response.text = "Async response"
     mock_response.usage_metadata.to_dict.return_value = {"tokens": 15}
 
-    # Async mock
-    async def async_generate(*args, **kwargs):
-        return mock_response
-
-    mock_model.generate_content_async = async_generate
-    mock_genai.GenerativeModel.return_value = mock_model
+    # Make generate_content_async return an awaitable
+    mock_genai_module._mock_model.generate_content_async = AsyncMock(
+        return_value=mock_response
+    )
 
     client = GeminiChatClient(api_key="test_key")
     response = await client.ainvoke(model="gemini-pro", messages="Hello")
 
     assert response.text == "Async response"
+    mock_genai_module._mock_model.generate_content_async.assert_called_once()
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_gemini_ainvoke_stream_real_path(mock_genai, monkeypatch):
+async def test_gemini_ainvoke_stream_real_path(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
 
-    # Setup mock
-    mock_model = MagicMock()
+    # Setup mock chunk
     mock_chunk = MagicMock()
     mock_chunk.text = "Async Chunk"
 
-    # Async iterator mock
-    class AsyncIter:
+    # Create async iterator for streaming response
+    class AsyncChunkIterator:
+        def __init__(self):
+            self.chunks = [mock_chunk]
+            self.index = 0
+
         def __aiter__(self):
             return self
 
         async def __anext__(self):
-            if hasattr(self, "done"):
+            if self.index >= len(self.chunks):
                 raise StopAsyncIteration
-            self.done = True
-            return mock_chunk
+            chunk = self.chunks[self.index]
+            self.index += 1
+            return chunk
 
-    mock_response = AsyncIter()
+    mock_response = AsyncChunkIterator()
 
-    async def async_generate(*args, **kwargs):
-        return mock_response
-
-    mock_model.generate_content_async = async_generate
-    mock_genai.GenerativeModel.return_value = mock_model
+    # Make generate_content_async return an awaitable that yields our iterator
+    mock_genai_module._mock_model.generate_content_async = AsyncMock(
+        return_value=mock_response
+    )
 
     client = GeminiChatClient(api_key="test_key")
     chunks = []
@@ -172,29 +211,27 @@ def test_gemini_coerce_messages_complex():
 
 
 @pytest.mark.unit
-def test_gemini_invoke_extra_params(mock_genai, monkeypatch):
+def test_gemini_invoke_extra_params(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
 
-    mock_model = MagicMock()
     mock_response = MagicMock()
     mock_response.text = "Response"
-    mock_model.generate_content.return_value = mock_response
-    mock_genai.GenerativeModel.return_value = mock_model
+    mock_genai_module._mock_model.generate_content.return_value = mock_response
 
     client = GeminiChatClient(api_key="key")
     client.invoke(model="gemini-pro", messages="Hi", extra_params={"top_k": 1})
 
-    mock_model.generate_content.assert_called()
-    call_kwargs = mock_model.generate_content.call_args[1]
-    assert call_kwargs["top_k"] == 1
+    mock_genai_module._mock_model.generate_content.assert_called()
+    call_kwargs = mock_genai_module._mock_model.generate_content.call_args[1]
+    # extra_params are now merged into generation_config
+    assert call_kwargs["generation_config"]["top_k"] == 1
 
 
 @pytest.mark.unit
-def test_gemini_invoke_error_handling(mock_genai, monkeypatch):
+def test_gemini_invoke_error_handling(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
     from unittest.mock import PropertyMock
 
-    mock_model = MagicMock()
     mock_response = MagicMock()
 
     # Simulate text property error
@@ -205,8 +242,7 @@ def test_gemini_invoke_error_handling(mock_genai, monkeypatch):
     mock_usage.to_dict.side_effect = Exception("No usage dict")
     type(mock_response).usage_metadata = PropertyMock(return_value=mock_usage)
 
-    mock_model.generate_content.return_value = mock_response
-    mock_genai.GenerativeModel.return_value = mock_model
+    mock_genai_module._mock_model.generate_content.return_value = mock_response
 
     client = GeminiChatClient(api_key="key")
     response = client.invoke(model="gemini-pro", messages="Hi")
@@ -217,11 +253,10 @@ def test_gemini_invoke_error_handling(mock_genai, monkeypatch):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_gemini_ainvoke_error_handling(mock_genai, monkeypatch):
+async def test_gemini_ainvoke_error_handling(mock_genai_module, monkeypatch):
     monkeypatch.setenv("GEMINI_MOCK", "false")
     from unittest.mock import PropertyMock
 
-    mock_model = MagicMock()
     mock_response = MagicMock()
 
     # Simulate text property error
@@ -232,11 +267,9 @@ async def test_gemini_ainvoke_error_handling(mock_genai, monkeypatch):
     mock_usage.to_dict.side_effect = Exception("No usage dict")
     type(mock_response).usage_metadata = PropertyMock(return_value=mock_usage)
 
-    async def async_generate(*args, **kwargs):
-        return mock_response
-
-    mock_model.generate_content_async = async_generate
-    mock_genai.GenerativeModel.return_value = mock_model
+    mock_genai_module._mock_model.generate_content_async = AsyncMock(
+        return_value=mock_response
+    )
 
     client = GeminiChatClient(api_key="key")
     response = await client.ainvoke(model="gemini-pro", messages="Hi")

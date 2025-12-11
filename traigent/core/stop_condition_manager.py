@@ -4,12 +4,17 @@
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from traigent.api.types import TrialResult
+
+if TYPE_CHECKING:
+    from traigent.core.cost_enforcement import CostEnforcer
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.stop_conditions import (
     BudgetStopCondition,
+    CostLimitStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
     PlateauAfterNStopCondition,
@@ -135,3 +140,26 @@ class StopConditionManager:
                 reason = getattr(condition, "reason", condition.__class__.__name__)
                 return True, reason
         return False, None
+
+    def register_cost_limit_condition(
+        self, cost_enforcer: CostEnforcer
+    ) -> CostLimitStopCondition:
+        """Register a cost limit stop condition using the shared CostEnforcer.
+
+        Args:
+            cost_enforcer: Shared CostEnforcer instance for cost tracking.
+
+        Returns:
+            The registered CostLimitStopCondition for reference.
+        """
+        condition = CostLimitStopCondition(cost_enforcer)
+        self._conditions.append(condition)
+        return condition
+
+    def add_condition(self, condition: StopCondition) -> None:
+        """Add a custom stop condition.
+
+        Args:
+            condition: The stop condition to add.
+        """
+        self._conditions.append(condition)

@@ -5,15 +5,15 @@ Context Engineering and RAG Evaluator
 Evaluation functions for context engineering and RAG optimization.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from context_config import ContextAssembler, ContextConfig, DocumentCorpus
 
 
 def retrieve_context(
-    query: str, config: ContextConfig, documents: Optional[List[str]] = None
-) -> Dict[str, Any]:
+    query: str, config: ContextConfig, documents: list[str] | None = None
+) -> dict[str, Any]:
     """Retrieve and assemble context based on configuration."""
 
     if documents is None:
@@ -44,8 +44,8 @@ def retrieve_context(
 
 
 def evaluate_answer_quality(
-    context: str, query: str, ground_truth: Optional[str] = None
-) -> Dict[str, float]:
+    context: str, query: str, ground_truth: str | None = None
+) -> dict[str, float]:
     """Evaluate answer quality based on context."""
 
     # Simulate answer quality evaluation
@@ -75,7 +75,7 @@ def evaluate_answer_quality(
     }
 
 
-def calculate_context_metrics(context_result: Dict[str, Any]) -> Dict[str, float]:
+def calculate_context_metrics(context_result: dict[str, Any]) -> dict[str, float]:
     """Calculate context-specific metrics."""
 
     token_count = context_result.get("token_count", 0)

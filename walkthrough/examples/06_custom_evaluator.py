@@ -86,7 +86,7 @@ def custom_code_evaluator(output: str, expected: str) -> float:
 def generate_code(task: str) -> str:
     """Generate code with custom evaluation."""
 
-    config = traigent.get_current_config()
+    config = traigent.get_config()
     style = config.get("style", "concise")
     language = config.get("language", "python")
 

@@ -32,7 +32,6 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TrialPrunedError, TVLConstraintError
 
-
 # =============================================================================
 # Mock Classes
 # =============================================================================
@@ -80,6 +79,7 @@ class MockOrchestrator:
         self.config = {}
         self.cache_policy_handler = MagicMock()
         self.callback_manager = MagicMock()
+        self.cost_enforcer = None  # Added for sequential permit enforcement
 
     async def _handle_trial_result(self, **kwargs):
         return kwargs.get("current_trial_index", 0) + 1

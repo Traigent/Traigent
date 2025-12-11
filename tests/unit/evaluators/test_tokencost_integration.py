@@ -116,10 +116,10 @@ class TestTokencostIntegration:
             metrics.cost.total_cost = 0.000007
 
         # Mock tokencost functions and disable mock mode for this specific test
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True
-        ), patch("os.environ.get") as mock_env, patch.object(
-            CostCalculator, "calculate_cost", mock_calculate_cost
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
+            patch("os.environ.get") as mock_env,
+            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -171,9 +171,10 @@ class TestTokencostIntegration:
             # Do nothing - leave costs at 0
             pass
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False
-        ), patch.object(CostCalculator, "calculate_cost", mock_calculate_cost):
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
+            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+        ):
             metrics = extract_llm_metrics(response=response, model_name=model_name)
 
             # Verify token extraction still works
@@ -204,9 +205,10 @@ class TestTokencostIntegration:
             # Do nothing - preserve existing costs in metrics
             pass
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False
-        ), patch.object(CostCalculator, "calculate_cost", mock_calculate_cost):
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", False),
+            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
+        ):
             metrics = extract_llm_metrics(response=response)
 
             # Verify existing cost information is used
@@ -235,10 +237,10 @@ class TestTokencostIntegration:
             metrics.cost.output_cost = 0.000090
             metrics.cost.total_cost = 0.000126
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True
-        ), patch("os.environ.get") as mock_env, patch.object(
-            CostCalculator, "calculate_cost", mock_calculate_cost
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
+            patch("os.environ.get") as mock_env,
+            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -271,11 +273,12 @@ class TestTokencostIntegration:
         response = MockOpenAIResponse("positive", 15, 8)
         model_name = "gpt-4o-mini"
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True
-        ), patch(
-            "traigent.evaluators.metrics_tracker.calculate_prompt_cost"
-        ) as mock_prompt_cost:
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
+            patch(
+                "traigent.evaluators.metrics_tracker.calculate_prompt_cost"
+            ) as mock_prompt_cost,
+        ):
 
             # Make tokencost raise an exception
             mock_prompt_cost.side_effect = Exception("tokencost API error")
@@ -345,10 +348,10 @@ class TestLocalEvaluatorWithTokencost:
             metrics.cost.output_cost = 0.000002
             metrics.cost.total_cost = 0.000005
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True
-        ), patch("os.environ.get") as mock_env, patch.object(
-            CostCalculator, "calculate_cost", mock_calculate_cost
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
+            patch("os.environ.get") as mock_env,
+            patch.object(CostCalculator, "calculate_cost", mock_calculate_cost),
         ):
 
             # Make os.environ.get return False for mock mode checks
@@ -448,11 +451,12 @@ class TestCostTrackingEdgeCases:
         response_text = "positive"
         model_name = "gpt-4o-mini"
 
-        with patch(
-            "traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True
-        ), patch(
-            "traigent.evaluators.metrics_tracker.calculate_completion_cost"
-        ) as mock_completion_cost:
+        with (
+            patch("traigent.evaluators.metrics_tracker.TOKENCOST_AVAILABLE", True),
+            patch(
+                "traigent.evaluators.metrics_tracker.calculate_completion_cost"
+            ) as mock_completion_cost,
+        ):
 
             mock_completion_cost.return_value = 0.000002
 

@@ -37,6 +37,7 @@ from traigent.api.decorators import optimize
 from traigent.api.functions import (
     configure,
     get_available_strategies,
+    get_config,
     get_current_config,
     get_optimization_insights,
     get_trial_config,
@@ -57,22 +58,14 @@ from traigent.api.types import (
     TrialResult,
 )
 
+# Thread context helpers
+from traigent.config.context import copy_context_to_thread
+
 # Configuration types
 from traigent.config.types import TraigentConfig
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
-
-# Thread context helpers
-from traigent.config.context import copy_context_to_thread
-
-# Exceptions and warnings
-from traigent.utils.exceptions import (
-    ConfigAccessWarning,
-    OptimizationStateError,
-    TraigentDeprecationWarning,
-    TraigentWarning,
-)
 from traigent.utils.callbacks import (
     LoggingCallback,
     ProgressBarCallback,
@@ -85,6 +78,14 @@ from traigent.utils.constraints import (
     max_tokens_constraint,
     model_cost_constraint,
     temperature_constraint,
+)
+
+# Exceptions and warnings
+from traigent.utils.exceptions import (
+    ConfigAccessWarning,
+    OptimizationStateError,
+    TraigentDeprecationWarning,
+    TraigentWarning,
 )
 from traigent.utils.importance import ParameterImportanceAnalyzer
 from traigent.utils.multi_objective import MultiObjectiveMetrics, ParetoFrontCalculator
@@ -110,6 +111,7 @@ __all__ = [
     "override_config",
     "set_strategy",
     "get_available_strategies",
+    "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
     "get_optimization_insights",

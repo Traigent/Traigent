@@ -8,7 +8,8 @@ and handling response parsing logic.
 
 from __future__ import annotations
 
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from typing import Any, cast
 
 from traigent.core.types_ext import LLMMetrics
 from traigent.core.utils import safe_get_nested_attr

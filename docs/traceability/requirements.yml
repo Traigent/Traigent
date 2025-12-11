@@ -194,3 +194,113 @@
   priority: medium
   type: functional
   status: active
+
+- id: REQ-COST-014
+  name: "Cost limit enforcement"
+  title: "Users can set dollar limits to prevent uncontrolled API costs"
+  description: >
+    Provide a configurable cost limit (default $2.00 USD) that prevents optimization
+    runs from exceeding the specified budget through permit-based cost control.
+  acceptance_criteria:
+    - Cost limit configurable via CostEnforcerConfig or decorator parameter.
+    - Budget tracking accumulates actual costs from completed trials.
+    - Optimization stops gracefully when limit is reached with clear stop reason.
+  tags: [cost, budget, safety]
+  priority: critical
+  type: non-functional
+  status: active
+
+- id: REQ-COST-015
+  name: "Permit-based budget control"
+  title: "Parallel trials acquire permits before execution"
+  description: >
+    Each trial must acquire a cost permit before execution, reserving estimated
+    budget to prevent parallel trials from collectively exceeding the limit.
+  acceptance_criteria:
+    - Permits acquired before trial execution in both sequential and parallel modes.
+    - Permit denial cancels trial execution without error.
+    - Reserved budget released on permit release or cost tracking.
+  tags: [cost, parallel, permits]
+  priority: critical
+  type: functional
+  status: active
+
+- id: REQ-COST-016
+  name: "Single-release semantics"
+  title: "Permits have single-release semantics to prevent double-counting"
+  description: >
+    Each permit can only be released once via mark_released() to prevent
+    budget accounting errors from double-release bugs.
+  acceptance_criteria:
+    - mark_released() returns True on first call, False on subsequent calls.
+    - Double-release attempts logged as warnings but don't corrupt state.
+    - Permit active flag set to False after first release.
+  tags: [cost, safety, permits]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-COST-017
+  name: "Exception path permit release"
+  title: "Permits released correctly on trial exceptions"
+  description: >
+    When a trial fails with an exception, its permit must be released to
+    prevent stranded reservations that block future trials.
+  acceptance_criteria:
+    - try/finally ensures permit release on exception paths.
+    - Exception handling does not corrupt in_flight_count or reserved_cost.
+    - Stranded permits detectable via invariant I3 (active_permits == in_flight).
+  tags: [cost, safety, exceptions]
+  priority: critical
+  type: non-functional
+  status: active
+
+- id: REQ-COST-018
+  name: "Unknown cost fallback"
+  title: "Graceful fallback when cost extraction fails"
+  description: >
+    When cost cannot be extracted from LLM responses, fall back to trial count
+    limiting with appropriate warning, or raise error in strict mode.
+  acceptance_criteria:
+    - TRAIGENT_REQUIRE_COST_TRACKING=true raises CostTrackingRequiredError.
+    - Default behavior logs warning and enters unknown_cost_mode.
+    - Fallback uses configured max_trials as safety limit.
+  tags: [cost, fallback, safety]
+  priority: high
+  type: functional
+  status: active
+
+- id: REQ-COST-019
+  name: "Mock mode bypass"
+  title: "Mock mode bypasses all cost tracking"
+  description: >
+    When TRAIGENT_MOCK_MODE=true, cost enforcement is bypassed to enable
+    zero-cost development and testing.
+  acceptance_criteria:
+    - Mock mode cached at CostEnforcer init time.
+    - All permits granted (id=0) in mock mode.
+    - No state mutations occur in mock mode operations.
+  tags: [cost, mock, testing]
+  priority: medium
+  type: functional
+  status: active
+
+- id: REQ-COST-020
+  name: "Cost tracking invariants"
+  title: "Cost enforcement maintains critical invariants"
+  description: >
+    Cost enforcement system must maintain 8 invariants to ensure correct
+    budget tracking and prevent financial harm from bugs.
+  acceptance_criteria:
+    - I1: in_flight_count >= 0 (never negative).
+    - I2: reserved_cost >= 0 (never negative).
+    - I3: len(active_permits) == in_flight_count (consistency).
+    - I4: accumulated + reserved <= limit + ε (budget bound).
+    - I5: Released permits have active=False.
+    - I6: Permit IDs monotonically increasing.
+    - I7: Denied permits have id=-1, amount=0, active=False.
+    - I8: Sum of active permit amounts equals reserved_cost.
+  tags: [cost, invariants, safety, verification]
+  priority: critical
+  type: non-functional
+  status: active
