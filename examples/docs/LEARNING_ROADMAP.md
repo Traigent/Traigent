@@ -22,10 +22,10 @@ Outcome: you can run examples, read metrics, and tweak configuration spaces.
 4. Structured outputs: `examples/core/structured-output-json/run.py`
 5. Tool calling: `examples/core/tool-use-calculator/run.py`
 
-Outcome: you can choose execution modes, constrain costs, and add guardrails.
+Outcome: you can constrain costs, add guardrails, and tune prompts.
 
 ## Week 3: Advanced exploration (researcher)
-1. Execution modes and rollouts: `examples/advanced/execution-modes/`
+1. Execution modes and rollouts: `examples/advanced/execution-modes/` (local patterns + roadmap stubs)
 2. Context engineering & RAG eval: `examples/advanced/ai-engineering-tasks/p0_context_engineering/` and `examples/advanced/ragas/`
 3. Metrics and analysis: `examples/advanced/results-analysis/` and `examples/advanced/metric-registry/`
 4. CI/CD integration: `examples/integrations/ci-cd/`
@@ -34,7 +34,7 @@ Outcome: you can experiment with new metrics, evaluate RAG systems, and integrat
 
 ## Running and debugging
 ```bash
-pip install -e .
+pip install -e ".[examples]"
 export TRAIGENT_MOCK_MODE=true
 ls examples/datasets/<example-name>
 rg "optimize(" examples

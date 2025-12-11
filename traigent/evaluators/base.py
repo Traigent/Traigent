@@ -56,8 +56,8 @@ except Exception:  # pragma: no cover - executed only when module missing
         llm: Any | None = None
         embeddings: Any | None = None
 
-    RagasConfig = _FallbackRagasConfig  # type: ignore[misc]
-    RagasConfigurationError = RuntimeError  # type: ignore[misc]
+    RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
+    RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
 
 
@@ -868,7 +868,7 @@ class BaseEvaluator(ABC):
                     if hasattr(r, "execution_time") and r.execution_time > 0
                 ]
                 if response_times:
-                    return sum(response_times) / len(response_times)
+                    return float(sum(response_times) / len(response_times))
 
         # Fallback: look for latency in context directly
         if "latency" in context:

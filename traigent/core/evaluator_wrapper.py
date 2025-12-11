@@ -272,7 +272,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 "function_duration", current_execution_time
             )
 
-    def _create_failed_example_result(
+    def _create_failed_example_result(  # type: ignore[override]
         self, example_index: int, example: Any, error: Exception
     ) -> ExampleResult:
         """Create an ExampleResult for a failed evaluation.
@@ -357,7 +357,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
         return aggregated
 
-    async def evaluate(
+    async def evaluate(  # type: ignore[override]
         self,
         func: Callable[..., Any],
         config: dict[str, Any],

@@ -160,7 +160,7 @@ class HuggingFaceAgentExecutor(BasePlatformExecutor):
     ) -> str:
         """Complete using HuggingFace Inference API."""
         # Prepare parameters
-        api_params = {"inputs": prompt, "parameters": {}}
+        api_params: dict[str, Any] = {"inputs": prompt, "parameters": {}}
 
         # Map parameters
         param_mapping = {
@@ -208,6 +208,7 @@ class HuggingFaceAgentExecutor(BasePlatformExecutor):
             self.model_id = model_id
 
         # Generate
+        assert self.local_pipeline is not None  # Ensured by the above if block
         result = self.local_pipeline(prompt, **params)
 
         # Extract generated text
@@ -325,6 +326,7 @@ class HuggingFaceAgentExecutor(BasePlatformExecutor):
                 self.model_id = model_id
 
             # Batch generate
+            assert self.local_pipeline is not None  # Ensured by the above if block
             results = self.local_pipeline(prompts, **params)
 
             # Extract generated texts
