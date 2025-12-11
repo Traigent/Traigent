@@ -93,7 +93,7 @@ def customer_support_agent(query: str) -> str:
 
     # Retrieve relevant documents
     docs = simple_retriever(query, k=k)
-    context = "\n".join(docs)
+    _context = "\n".join(docs)  # noqa: F841 - prepared for real LangChain usage
 
     # In real usage with LangChain:
     # from langchain_openai import ChatOpenAI

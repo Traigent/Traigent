@@ -29,8 +29,9 @@ import os
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict
+from typing import Any
 
 import numpy as np
 
@@ -85,7 +86,7 @@ def print_header() -> None:
 def create_evaluation_function(dataset: RAGDataset) -> Callable:
     """Create the evaluation function for TraiGent optimization."""
 
-    def evaluate_rag_configuration(**config_params) -> Dict[str, float]:
+    def evaluate_rag_configuration(**config_params) -> dict[str, float]:
         """
         Evaluate RAG configuration on the dataset.
 
@@ -274,7 +275,7 @@ def optimize_context_engineering(
     pass
 
 
-def run_baseline_comparison(dataset: RAGDataset) -> Dict[str, Dict[str, float]]:
+def run_baseline_comparison(dataset: RAGDataset) -> dict[str, dict[str, float]]:
     """Run baseline RAG configurations for comparison."""
 
     console.print("\n[yellow]Running baseline RAG configurations...[/yellow]")
@@ -320,7 +321,7 @@ def run_baseline_comparison(dataset: RAGDataset) -> Dict[str, Dict[str, float]]:
 
 
 def display_results(
-    optimization_results, baseline_results: Dict[str, Dict[str, float]]
+    optimization_results, baseline_results: dict[str, dict[str, float]]
 ) -> None:
     """Display optimization results in a formatted table."""
 
@@ -422,7 +423,7 @@ def display_results(
         console.print(config_panel)
 
 
-def _display_retrieval_method_insight(config: Dict[str, Any]) -> None:
+def _display_retrieval_method_insight(config: dict[str, Any]) -> None:
     method_messages = {
         "hybrid": "• Hybrid retrieval (BM25 + dense) provides best results",
         "dense": "• Dense retrieval excels for semantic understanding",
@@ -433,7 +434,7 @@ def _display_retrieval_method_insight(config: Dict[str, Any]) -> None:
         console.print(message)
 
 
-def _display_chunking_insight(config: Dict[str, Any]) -> None:
+def _display_chunking_insight(config: dict[str, Any]) -> None:
     chunk_size = config.get("chunk_size", 512)
     overlap = config.get("chunk_overlap", 0)
     if chunk_size <= 256:
@@ -444,7 +445,7 @@ def _display_chunking_insight(config: Dict[str, Any]) -> None:
         console.print(f"• High overlap ({overlap} tokens) ensures continuity")
 
 
-def _display_enhancement_insight(config: Dict[str, Any]) -> None:
+def _display_enhancement_insight(config: dict[str, Any]) -> None:
     enhancements = {
         "reranking": "• Reranking significantly improves relevance",
         "query_expansion": "• Query expansion helps with ambiguous queries",

@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 try:  # pragma: no cover - allow direct execution
     import traigent

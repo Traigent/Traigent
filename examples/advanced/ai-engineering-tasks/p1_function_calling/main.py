@@ -25,7 +25,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -70,10 +70,10 @@ def print_header() -> None:
     )
 
 
-def create_evaluation_function(tasks: List[Any]) -> Any:
+def create_evaluation_function(tasks: list[Any]) -> Any:
     """Create the evaluation function for TraiGent optimization."""
 
-    def evaluate_function_config(**config_params) -> Dict[str, float]:
+    def evaluate_function_config(**config_params) -> dict[str, float]:
         """
         Evaluate function calling configuration on the task dataset.
 
@@ -196,7 +196,7 @@ def optimize_function_calling(
     pass
 
 
-def run_baseline_comparison(tasks: List[Any]) -> Dict[str, Dict[str, float]]:
+def run_baseline_comparison(tasks: list[Any]) -> dict[str, dict[str, float]]:
     """Run baseline configurations for comparison."""
 
     console.print(
@@ -228,7 +228,7 @@ def run_baseline_comparison(tasks: List[Any]) -> Dict[str, Dict[str, float]]:
 
 
 def display_results(
-    optimization_results: Any, baseline_results: Dict[str, Dict[str, float]]
+    optimization_results: Any, baseline_results: dict[str, dict[str, float]]
 ) -> None:
     """Display optimization results in a formatted table."""
 
@@ -327,7 +327,7 @@ def display_results(
         console.print(config_panel)
 
 
-def display_insights(optimization_results: Any, tasks: List[Any]) -> None:
+def display_insights(optimization_results: Any, tasks: list[Any]) -> None:
     """Display insights from function calling optimization."""
 
     console.print("\n[bold blue]Key Insights:[/bold blue]")
@@ -369,7 +369,7 @@ def display_insights(optimization_results: Any, tasks: List[Any]) -> None:
     console.print("• Text processing: Flexible parameters, format validation")
 
 
-def display_reliability_analysis(tasks: List[Any]) -> None:
+def display_reliability_analysis(tasks: list[Any]) -> None:
     """Display analysis of task reliability patterns."""
 
     console.print("\n[bold cyan]📊 Task Reliability Analysis:[/bold cyan]")

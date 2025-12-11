@@ -19,7 +19,7 @@ Schema Complexity Levels:
 
 import random
 from dataclasses import dataclass
-from typing import Any, Dict, List, Type
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -29,7 +29,7 @@ class DatasetSample:
     """A single dataset sample with text and expected extraction."""
 
     text: str
-    schema: Type[BaseModel]
+    schema: type[BaseModel]
     expected_output: dict
     domain: str
     complexity: str  # "simple", "medium", "complex"
@@ -59,7 +59,7 @@ class MediumInvoice(BaseModel):
 class ComplexInvoice(BaseModel):
     vendor_info: dict
     billing_address: dict
-    line_items: List[dict]
+    line_items: list[dict]
     payment_terms: str
     total_amount: float
     tax_details: dict
@@ -87,9 +87,9 @@ class ComplexTicket(BaseModel):
     ticket_metadata: dict
     customer_info: dict
     issue_details: dict
-    resolution_history: List[dict]
+    resolution_history: list[dict]
     escalation_info: dict
-    tags: List[str]
+    tags: list[str]
     sla_details: dict
 
 
@@ -112,10 +112,10 @@ class MediumMedical(BaseModel):
 
 class ComplexMedical(BaseModel):
     patient_demographics: dict
-    medical_history: List[dict]
+    medical_history: list[dict]
     current_diagnosis: dict
     treatment_plan: dict
-    medication_list: List[dict]
+    medication_list: list[dict]
     lab_results: dict
     provider_info: dict
 
@@ -169,7 +169,7 @@ class ComplexNews(BaseModel):
     content_structure: dict
     author_info: dict
     publication_details: dict
-    topics_and_tags: List[str]
+    topics_and_tags: list[str]
     engagement_metrics: dict
     editorial_notes: dict
 
@@ -204,7 +204,7 @@ SCHEMA_REGISTRY = {
 }
 
 
-def generate_evaluation_dataset(total_samples: int = 500) -> List[DatasetSample]:
+def generate_evaluation_dataset(total_samples: int = 500) -> list[DatasetSample]:
     """
     Generate the complete evaluation dataset with 500 samples across 5 domains.
 
@@ -233,7 +233,7 @@ def generate_evaluation_dataset(total_samples: int = 500) -> List[DatasetSample]
         complexities = ["simple", "medium", "complex"]
         complexity_distribution = [0.4, 0.4, 0.2]  # More simple and medium cases
 
-        for complexity, ratio in zip(complexities, complexity_distribution):
+        for complexity, ratio in zip(complexities, complexity_distribution, strict=True):
             complexity_samples = int(samples_per_domain * ratio)
 
             for _i in range(complexity_samples):
@@ -276,7 +276,7 @@ def _generate_domain_sample(
 
 
 def _generate_invoice_sample(
-    schema: Type[BaseModel], complexity: str, is_edge_case: bool
+    schema: type[BaseModel], complexity: str, is_edge_case: bool
 ) -> DatasetSample:
     """Generate invoice domain sample."""
 
@@ -368,7 +368,7 @@ Multiple line items, payment terms, detailed tax breakdown...
 
 
 def _generate_ticket_sample(
-    schema: Type[BaseModel], complexity: str, is_edge_case: bool
+    schema: type[BaseModel], complexity: str, is_edge_case: bool
 ) -> DatasetSample:
     """Generate support ticket domain sample."""
 
@@ -437,7 +437,7 @@ Multiple escalations, detailed resolution history, SLA tracking...
 
 
 def _generate_medical_sample(
-    schema: Type[BaseModel], complexity: str, is_edge_case: bool
+    schema: type[BaseModel], complexity: str, is_edge_case: bool
 ) -> DatasetSample:
     """Generate medical records sample."""
 
@@ -519,7 +519,7 @@ Patient demographics, complete medical history, treatment plans...
 
 
 def _generate_review_sample(
-    schema: Type[BaseModel], complexity: str, is_edge_case: bool
+    schema: type[BaseModel], complexity: str, is_edge_case: bool
 ) -> DatasetSample:
     """Generate product review sample."""
 
@@ -602,7 +602,7 @@ Complete product analysis, detailed reviewer profile, engagement metrics...
 
 
 def _generate_news_sample(
-    schema: Type[BaseModel], complexity: str, is_edge_case: bool
+    schema: type[BaseModel], complexity: str, is_edge_case: bool
 ) -> DatasetSample:
     """Generate news article sample."""
 
@@ -698,7 +698,7 @@ Complete article metadata, detailed content structure, engagement analytics...
     )
 
 
-def get_baseline_configs() -> List[Dict[str, Any]]:
+def get_baseline_configs() -> list[dict[str, Any]]:
     """Get baseline configurations for comparison."""
     return [
         {
