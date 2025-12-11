@@ -1,0 +1,10 @@
+{"input": {"expression": "2 + 3"}, "output": "5"}
+{"input": {"expression": "10 - 4"}, "output": "6"}
+{"input": {"expression": "3 * 7"}, "output": "21"}
+{"input": {"expression": "20 / 4"}, "output": "5"}
+{"input": {"expression": "2 + 3 * 4"}, "output": "14"}
+{"input": {"expression": "15 - 3 * 2"}, "output": "9"}
+{"input": {"expression": "(2 + 3) * 4"}, "output": "20"}
+{"input": {"expression": "100 / 5 + 10"}, "output": "30"}
+{"input": {"expression": "8 * 8 - 4"}, "output": "60"}
+{"input": {"expression": "50 / 2 / 5"}, "output": "5"}
