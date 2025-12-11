@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, TypeVar, cast
+from typing import Any, TypeVar, cast
 
 # --- Setup for running from repo without installation ---
 # Add repo root to path so we can import examples.utils and traigent
@@ -54,7 +55,7 @@ def _apply_saved_config(func: Any, config_path: Path) -> None:
     setter = getattr(func, "set_config", None)
     if config and callable(setter):
         try:
-            cast("Callable[[Dict[str, Any]], Any]", setter)(config)
+            cast("Callable[[dict[str, Any]], Any]", setter)(config)
         except Exception:
             # Safety net: examples should not crash if config contains unexpected values
             pass

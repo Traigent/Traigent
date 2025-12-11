@@ -14,7 +14,7 @@ import os
 import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 # Always enable mock mode for examples
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
@@ -25,14 +25,14 @@ class BaseExample(ABC):
 
     def __init__(self, name: str):
         self.name = name
-        self._temp_files: List[str] = []
+        self._temp_files: list[str] = []
 
     @abstractmethod
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Return TraiGent optimization configuration."""
         pass
 
-    def create_dataset(self, samples: List[Dict]) -> str:
+    def create_dataset(self, samples: list[dict]) -> str:
         """Create a temporary JSONL dataset file."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
             for sample in samples:
@@ -56,7 +56,7 @@ class BaseExample(ABC):
         self.cleanup()
 
 
-def create_sample_dataset(task_type: str, num_samples: int = 5) -> List[Dict]:
+def create_sample_dataset(task_type: str, num_samples: int = 5) -> list[dict]:
     """Create sample dataset for common tasks."""
 
     datasets = {
