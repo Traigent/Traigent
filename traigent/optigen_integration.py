@@ -277,14 +277,26 @@ class OptiGenClient:
             poll_interval = 0.1
 
         async with self.backend_client:
-            # Upload dataset
-            dataset_response = await self.backend_client.upload_dataset(
+            # Upload dataset (using dynamic attribute access for optional methods)
+            upload_dataset = getattr(self.backend_client, "upload_dataset", None)
+            if upload_dataset is None:
+                raise OptimizationError(
+                    "Backend client does not support upload_dataset"
+                )
+            dataset_response = await upload_dataset(
                 name=f"{function.__name__}_dataset", data=dataset
             )
             dataset_id = dataset_response["dataset_id"]
 
             # Create optimization session
-            session_response = await self.backend_client.create_optimization_session(
+            create_session = getattr(
+                self.backend_client, "create_optimization_session", None
+            )
+            if create_session is None:
+                raise OptimizationError(
+                    "Backend client does not support create_optimization_session"
+                )
+            session_response = await create_session(
                 function_name=function.__name__,
                 dataset_id=dataset_id,
                 configuration_space=configuration_space,
@@ -297,8 +309,13 @@ class OptiGenClient:
             logger.info(f"Created SaaS session: {session_id}")
 
             # Wait for completion (with progress updates)
+            get_status = getattr(self.backend_client, "get_session_status", None)
+            if get_status is None:
+                raise OptimizationError(
+                    "Backend client does not support get_session_status"
+                )
             while True:
-                status = await self.backend_client.get_session_status(session_id)
+                status = await get_status(session_id)
 
                 logger.info(
                     f"Session progress: {status.get('completed_trials', 0)}/{max_trials} trials"
@@ -310,7 +327,12 @@ class OptiGenClient:
                 await asyncio.sleep(poll_interval)
 
             # Get results
-            results = await self.backend_client.get_optimization_results(session_id)
+            get_results = getattr(self.backend_client, "get_optimization_results", None)
+            if get_results is None:
+                raise OptimizationError(
+                    "Backend client does not support get_optimization_results"
+                )
+            results = await get_results(session_id)
             results["execution_mode"] = "cloud"
 
             return cast(dict[str, Any], results)

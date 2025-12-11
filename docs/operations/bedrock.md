@@ -33,7 +33,7 @@ export TRAIGENT_LLM_PROVIDER=bedrock
 ## Dependency Installation
 Ensure you installed integration dependencies:
 ```bash
-pip install -r requirements/requirements-integrations.txt
+pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
 ```
 
 ## Smoke Tests

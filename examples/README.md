@@ -7,9 +7,8 @@ This directory contains professional, production-ready examples demonstrating th
 Browse all examples visually with the web-based gallery:
 
 ```bash
-cd examples
-python -m http.server 8000
-# Open http://localhost:8000/docs/index.html
+python -m http.server -d examples 8000
+# Open http://localhost:8000/index.html
 ```
 
 The gallery provides:
@@ -39,7 +38,8 @@ The gallery provides:
 These are the exact examples from the main README, ready to run immediately:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+pip install -e ".[examples]"          # Ensure example deps
+export TRAIGENT_MOCK_MODE=true        # No API keys needed
 python examples/quickstart/01_simple_qa.py           # Basic Q&A optimization
 python examples/quickstart/02_customer_support_rag.py # RAG with customer support
 python examples/quickstart/03_custom_objectives.py    # Custom weighted objectives
@@ -78,7 +78,7 @@ For users comfortable with TraiGent basics who want to explore advanced patterns
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
-| **`execution-modes/`** | 6 examples | Local, cloud, and hybrid execution patterns |
+| **`execution-modes/`** | 6 examples | Local patterns plus roadmap-only cloud/hybrid stubs |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
 | **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
 | **`ragas/`** | RAG evaluation | Specialized RAG metrics and evaluation |
@@ -152,7 +152,7 @@ cd Traigent
 # Install TraiGent
 pip install -e .
 
-# Run any example in mock mode
+# Run any example in mock mode (no API keys)
 export TRAIGENT_MOCK_MODE=true
 python examples/core/simple-prompt/run.py
 ```

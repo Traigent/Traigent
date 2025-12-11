@@ -694,7 +694,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
 
         # Run local optimization
         start_time = time.time()
-        optimization_result = await optimizer.optimize(
+        optimization_result = await optimizer.optimize(  # type: ignore[attr-defined]
             configuration_space=configuration_space,
             evaluator=evaluator,
             dataset=dataset,
@@ -1041,7 +1041,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
             await self._reset_http_session("next_trial network error")
             raise CloudServiceError(f"Network error getting next trial: {e}") from None
 
-    async def submit_trial_result(
+    async def submit_trial_result(  # type: ignore[override]
         self,
         session_id: str,
         trial_id: str,
