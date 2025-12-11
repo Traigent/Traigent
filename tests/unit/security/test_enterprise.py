@@ -4,7 +4,7 @@ Tests for enterprise deployment features
 
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
 
 from traigent.security.enterprise import (
@@ -256,7 +256,7 @@ class TestSLAMonitor:
         monitor = SLAMonitor(sla_config, metrics_collector)
 
         # Add some history data
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         for i in range(5):
             metrics = SystemMetrics(
                 requests_per_second=5000 + i * 100,

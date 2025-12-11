@@ -7,8 +7,9 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, Mapping, Sequence, TypeVar
+from typing import Any, Generic, TypeVar
 
 from .base import BaseSampler
 

@@ -7,8 +7,9 @@ from __future__ import annotations
 import inspect
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
@@ -94,6 +95,9 @@ class LocalEvaluator(BaseEvaluator):
         self.privacy_enabled = privacy_enabled
         self.mock_mode_config = mock_mode_config or {}
         self.metric_functions = metric_functions or {}
+        self._mock_mode_warning_shown = (
+            False  # Track if we've shown the mock mode warning
+        )
 
     def _extract_prompt_info(
         self,
@@ -476,8 +480,8 @@ class LocalEvaluator(BaseEvaluator):
             return example_metric
 
         model_name = config.get("model")
-        logger.info(
-            f"🔍 EVALUATOR DEBUG: i={index}, output type={type(output).__name__}, "
+        logger.debug(
+            f"EVALUATOR DEBUG: i={index}, output type={type(output).__name__}, "
             f"model_name from config='{model_name}'"
         )
 
@@ -513,8 +517,8 @@ class LocalEvaluator(BaseEvaluator):
             response_length=response_length,
         )
 
-        logger.info(
-            f"📊 Extracted metrics for model {model_name}: "
+        logger.debug(
+            f"Extracted metrics for model {model_name}: "
             f"tokens={extracted_metrics.tokens.total_tokens}, "
             f"cost=${extracted_metrics.cost.total_cost:.8f}"
         )
@@ -723,15 +727,15 @@ class LocalEvaluator(BaseEvaluator):
             aggregated_metrics: Target metrics dict (modified in place)
             comprehensive_metrics: Source comprehensive metrics
         """
-        logger.info(
-            f"🔍 LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
+        logger.debug(
+            f"LOCAL EVALUATOR DEBUG: comprehensive_metrics['cost'] = "
             f"{comprehensive_metrics.get('cost', 'MISSING')}"
         )
 
         # If cost is in objectives but was computed as 0, use comprehensive value
         if "cost" in self.metrics and "cost" in comprehensive_metrics:
-            logger.info(
-                f"🔍 LOCAL EVALUATOR DEBUG: aggregated cost="
+            logger.debug(
+                f"LOCAL EVALUATOR DEBUG: aggregated cost="
                 f"{aggregated_metrics.get('cost', 'MISSING')}, "
                 f"comprehensive cost={comprehensive_metrics['cost']}"
             )
@@ -897,8 +901,8 @@ class LocalEvaluator(BaseEvaluator):
 
         # Get all captured LangChain responses before clearing
         all_captured_responses = get_all_captured_responses()
-        logger.info(
-            f"📦 Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
+        logger.debug(
+            f"Got {len(all_captured_responses)} captured LangChain responses for {len(outputs)} outputs"
         )
 
         # Clear captured responses now that we have them
@@ -1044,7 +1048,24 @@ class LocalEvaluator(BaseEvaluator):
         # Accuracy (exact match or mock)
         if "accuracy" in self.metrics:
             if use_mock:
-                # Generate realistic accuracy values for mock mode
+                # Log a one-time warning about mock mode accuracy
+                if not self._mock_mode_warning_shown:
+                    logger.warning(
+                        "MOCK MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
+                        "not computed from actual vs expected outputs. These metrics do not "
+                        "reflect real model performance. Set TRAIGENT_MOCK_MODE=false for "
+                        "real evaluations.",
+                        base_accuracy_config,
+                        variance_config / 2,
+                    )
+                    self._mock_mode_warning_shown = True
+                # IMPORTANT: In mock mode, accuracy is SIMULATED, not computed from
+                # actual vs expected outputs. This is for testing optimization flows
+                # without incurring LLM API costs. The simulated accuracy does NOT
+                # reflect real model performance and should not be used to evaluate
+                # model quality. Set TRAIGENT_MOCK_MODE=false for real evaluations.
+                #
+                # Default base_accuracy=0.75 with variance=0.25 gives range ~0.625-0.875
                 base_accuracy = base_accuracy_config
                 # Add some variance based on actual output presence
                 if actual_output is not None:
@@ -1069,7 +1090,9 @@ class LocalEvaluator(BaseEvaluator):
                     )
                 else:
                     metrics["accuracy"] = 0.0
-            elif expected_output is not None:
+            elif expected_output is not None and not (
+                isinstance(expected_output, str) and not expected_output.strip()
+            ):
                 # If actual_output is dict, use its 'text' for accuracy comparison
                 actual_to_compare = (
                     actual_output.get("text")
@@ -1093,7 +1116,7 @@ class LocalEvaluator(BaseEvaluator):
                 else:
                     metrics["accuracy"] = 0.0
             else:
-                # No expected output available - cannot compute accuracy
+                # No expected output available (None or empty string) - cannot compute accuracy
                 metrics["accuracy"] = 0.0
 
         # Success (whether function completed without error)

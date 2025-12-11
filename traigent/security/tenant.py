@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import secrets
 import threading
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Generator, cast
+from typing import Any, cast
 
 from ..utils.logging import get_logger
 
@@ -194,7 +195,7 @@ class TenantUsage:
     api_calls_today: int = 0
     api_calls_this_hour: int = 0
     api_calls_this_minute: int = 0
-    last_updated: datetime = field(default_factory=datetime.utcnow)
+    last_updated: datetime = field(default_factory=lambda: datetime.now(UTC))
 
     def reset_monthly_counters(self) -> None:
         """Reset monthly usage counters at the start of a new billing cycle.
@@ -203,7 +204,7 @@ class TenantUsage:
         Updates the last_updated timestamp.
         """
         self.optimizations_this_month = 0
-        self.last_updated = datetime.utcnow()
+        self.last_updated = datetime.now(UTC)
 
     def reset_daily_counters(self) -> None:
         """Reset daily API call counter at midnight UTC.
@@ -212,7 +213,7 @@ class TenantUsage:
         Updates the last_updated timestamp.
         """
         self.api_calls_today = 0
-        self.last_updated = datetime.utcnow()
+        self.last_updated = datetime.now(UTC)
 
     def reset_hourly_counters(self) -> None:
         """Reset hourly API call counter at the start of each hour.
@@ -221,7 +222,7 @@ class TenantUsage:
         Updates the last_updated timestamp.
         """
         self.api_calls_this_hour = 0
-        self.last_updated = datetime.utcnow()
+        self.last_updated = datetime.now(UTC)
 
     def reset_minute_counters(self) -> None:
         """Reset per-minute API call counter for rate limiting.
@@ -230,7 +231,7 @@ class TenantUsage:
         Updates the last_updated timestamp.
         """
         self.api_calls_this_minute = 0
-        self.last_updated = datetime.utcnow()
+        self.last_updated = datetime.now(UTC)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert usage statistics to dictionary format.
@@ -259,8 +260,8 @@ class Tenant:
     contact_email: str
     tier: TenantTier = TenantTier.BASIC
     status: TenantStatus = TenantStatus.ACTIVE
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     trial_ends_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     quotas: TenantQuotas | None = None
@@ -325,7 +326,7 @@ class Tenant:
             if not self._has_quota_unlocked(resource_type, amount):
                 return False
             self._apply_consumption_unlocked(resource_type, amount)
-            self.usage.last_updated = datetime.utcnow()
+            self.usage.last_updated = datetime.now(UTC)
             return True
 
     def release_quota(self, resource_type: str, amount: int = 1) -> None:
@@ -339,7 +340,7 @@ class Tenant:
             else:
                 new_value = max(0, current - amount)
             setattr(self.usage, usage_attr, new_value)
-            self.usage.last_updated = datetime.utcnow()
+            self.usage.last_updated = datetime.now(UTC)
 
     def _validate_inputs(self, resource_type: str, amount: int | float) -> None:
         if resource_type not in self._RESOURCE_MAP:
@@ -502,7 +503,7 @@ class TenantManager:
         # Set trial end date if status is TRIAL
         trial_ends_at = None
         if status == TenantStatus.TRIAL:
-            trial_ends_at = datetime.utcnow() + timedelta(days=30)
+            trial_ends_at = datetime.now(UTC) + timedelta(days=30)
 
         tenant = Tenant(
             tenant_id=tenant_id,
@@ -552,7 +553,7 @@ class TenantManager:
                     setattr(tenant, key, value)
 
             # Update the timestamp
-            tenant.updated_at = datetime.utcnow()
+            tenant.updated_at = datetime.now(UTC)
 
         logger.info(f"Updated tenant {tenant_id}: {updates}")
         return True
@@ -563,7 +564,7 @@ class TenantManager:
             tenant = self.tenants.get(tenant_id)
             if tenant:
                 tenant.status = TenantStatus.DELETED
-                tenant.updated_at = datetime.utcnow()
+                tenant.updated_at = datetime.now(UTC)
                 logger.info(f"Soft deleted tenant {tenant_id}")
                 return True
         return False
@@ -611,7 +612,7 @@ class TenantManager:
                         "tenant_id": tenant_id,
                         "resource": resource_type,  # As expected by tests
                         "requested_amount": amount,  # As expected by tests
-                        "timestamp": datetime.utcnow(),
+                        "timestamp": datetime.now(UTC),
                         "quota_limit": getattr(
                             tenant.quotas, f"max_{resource_type}", "unknown"
                         ),
@@ -657,7 +658,7 @@ class TenantManager:
             self.usage_history[tenant_id].append(
                 {
                     "reset_type": counter_type,
-                    "timestamp": datetime.utcnow(),
+                    "timestamp": datetime.now(UTC),
                     "previous_usage": {
                         "optimizations_this_month": tenant.usage.optimizations_this_month,
                         "api_calls_today": tenant.usage.api_calls_today,
@@ -775,7 +776,7 @@ class TenantManager:
                         [
                             v
                             for v in self._quota_violations
-                            if v["timestamp"] > datetime.utcnow() - timedelta(hours=24)
+                            if v["timestamp"] > datetime.now(UTC) - timedelta(hours=24)
                         ]
                     ),
                 },
@@ -783,7 +784,7 @@ class TenantManager:
                     [
                         v
                         for v in self._quota_violations
-                        if v["timestamp"].date() == datetime.utcnow().date()
+                        if v["timestamp"].date() == datetime.now(UTC).date()
                     ]
                 ),
             }
@@ -837,7 +838,7 @@ class BillingIntegration:
             "quantity": quantity,
             "unit_cost": unit_cost,
             "total_cost": quantity * unit_cost,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         self.usage_records.append(record)
@@ -864,5 +865,5 @@ class BillingIntegration:
             "period_end": period_end.isoformat(),
             "line_items": tenant_records,
             "total_cost": total_cost,
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(UTC).isoformat(),
         }

@@ -11,9 +11,7 @@ Tests cover:
 import pytest
 
 from traigent.utils.validation import ValidationError as NewValidationError
-from traigent.utils.validation import (
-    ValidationResult as NewValidationResult,
-)
+from traigent.utils.validation import ValidationResult as NewValidationResult
 from traigent.utils.validation import (
     Validators,
     validate_or_raise,
@@ -21,9 +19,7 @@ from traigent.utils.validation import (
 from traigent.utils.validation import (
     validate_positive_int as validate_positive_int_func,
 )
-from traigent.utils.validation import (
-    validate_probability as validate_probability_func,
-)
+from traigent.utils.validation import validate_probability as validate_probability_func
 
 # ===== Compatibility Layer =====
 

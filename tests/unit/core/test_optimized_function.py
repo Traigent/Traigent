@@ -19,7 +19,7 @@ import pytest
 
 import traigent
 from traigent.api.types import ExampleResult, OptimizationResult, OptimizationStatus
-from traigent.core.optimized_function import OptimizedFunction
+from traigent.core.optimized_function import OptimizationState, OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -27,7 +27,6 @@ from traigent.utils.exceptions import (
     OptimizationStateError,
     ValidationError,
 )
-from traigent.core.optimized_function import OptimizationState
 
 # Test Fixtures and Mock Classes
 
@@ -447,9 +446,12 @@ class TestOptimizedFunction:
         )
 
         # Mock dependencies
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             # Setup mock optimizer
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
@@ -524,9 +526,12 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
         )
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -575,9 +580,12 @@ class TestOptimizedFunction:
             },  # Don't override custom evaluator in mock mode
         )
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -682,13 +690,15 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
         )
 
-        with patch.object(
-            opt_func, "_optimize_with_cloud_service"
-        ) as mock_cloud_optimize, patch(
-            "traigent.optimizers.get_optimizer"
-        ) as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch.object(
+                opt_func, "_optimize_with_cloud_service"
+            ) as mock_cloud_optimize,
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             # Cloud service fails
             mock_cloud_optimize.side_effect = OptimizationError(
                 "Cloud service unavailable"
@@ -788,11 +798,13 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
         )
 
-        with patch("traigent.integrations.framework_override.override_context"), patch(
-            "traigent.optimizers.get_optimizer"
-        ) as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.integrations.framework_override.override_context"),
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             # Setup mocks
             mock_get_optimizer.return_value = Mock()
             mock_orchestrator = Mock()
@@ -946,9 +958,12 @@ class TestOptimizedFunction:
         )
 
         # Mock all required dependencies
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             # Setup realistic mocks
             mock_optimizer = Mock()
             mock_optimizer.suggest.side_effect = [
@@ -1395,11 +1410,13 @@ class TestOptimizedFunctionLifecycle:
             states_seen.append(("end", opt_func._state))
             return result
 
-        with patch.object(
-            opt_func, "_run_and_finalize_optimization", tracking_wrapper
-        ), patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch.object(opt_func, "_run_and_finalize_optimization", tracking_wrapper),
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             from datetime import datetime
 
             from traigent.api.types import TrialResult, TrialStatus
@@ -1523,9 +1540,12 @@ class TestReOptimization:
         first_config = {"temperature": 0.1, "top_k": 10}
         second_config = {"temperature": 0.9, "top_k": 50}
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -1579,9 +1599,12 @@ class TestReOptimization:
 
         best_config = {"temperature": 0.5, "top_k": 20}
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -1631,9 +1654,12 @@ class TestReOptimization:
             max_trials=2,
         )
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -1682,9 +1708,12 @@ class TestReOptimization:
 
         best_config = {"temperature": 0.5, "top_k": 20}
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 
@@ -1725,9 +1754,12 @@ class TestReOptimization:
 
         best_config = {"temperature": 0.5, "top_k": 20}
 
-        with patch("traigent.optimizers.get_optimizer") as mock_get_optimizer, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as mock_orchestrator_class:
+        with (
+            patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as mock_orchestrator_class,
+        ):
             mock_optimizer = Mock()
             mock_get_optimizer.return_value = mock_optimizer
 

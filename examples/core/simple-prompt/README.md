@@ -6,7 +6,7 @@ This is the "Hello World" of TraiGent. It demonstrates the most basic usage: opt
 
 - How to use the `@traigent.optimize` decorator.
 - How to define a `configuration_space` (parameters to tune).
-- How to access injected parameters using `traigent.get_trial_config()`.
+- How to access injected parameters using `traigent.get_config()`.
 - How to run an optimization loop.
 
 ## The Task

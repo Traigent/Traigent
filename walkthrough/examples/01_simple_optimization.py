@@ -117,7 +117,7 @@ def answer_question(question: str) -> str:
     # Real implementation would use LLM here
     from langchain_openai import ChatOpenAI
 
-    config = traigent.get_current_config()
+    config = traigent.get_config()
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.5),

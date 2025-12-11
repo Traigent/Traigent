@@ -17,8 +17,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from collections.abc import AsyncGenerator, Generator, Iterable, Mapping
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Generator, Iterable, Mapping
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     pass

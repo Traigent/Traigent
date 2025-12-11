@@ -13,12 +13,13 @@ import inspect
 import textwrap
 import types
 from collections import defaultdict
+from collections.abc import Callable
 from functools import wraps
 from threading import Lock
-from typing import Any, Callable
+from typing import Any
 
 from traigent.config.ast_transformer import ConfigTransformer, SafeASTCompiler
-from traigent.config.context import get_config, merge_with_context
+from traigent.config.context import ConfigurationContext, get_config, merge_with_context
 from traigent.config.runtime_injector import create_runtime_shim
 from traigent.config.types import TraigentConfig
 from traigent.utils.exceptions import ConfigurationError
@@ -230,7 +231,8 @@ class ParameterBasedProvider(ConfigurationProvider):
             # Only inject configuration if not already provided
             if param_name not in kwargs:
                 kwargs[param_name] = config_obj
-            return func(*args, **kwargs)
+            with ConfigurationContext(config_obj):
+                return func(*args, **kwargs)
 
         # For async functions
         if inspect.iscoroutinefunction(func):
@@ -240,7 +242,8 @@ class ParameterBasedProvider(ConfigurationProvider):
                 # Only inject configuration if not already provided
                 if param_name not in kwargs:
                     kwargs[param_name] = config_obj
-                return await func(*args, **kwargs)
+                with ConfigurationContext(config_obj):
+                    return await func(*args, **kwargs)
 
             return async_wrapper
 
@@ -294,16 +297,17 @@ class AttributeBasedProvider(ConfigurationProvider):
         Configuration is set on the wrapper only, not the original function.
         This avoids polluting the original function with unexpected attributes.
 
-        To access config during optimization, use traigent.get_trial_config().
-        To access config after optimization, use func.current_config on the
-        OptimizedFunction wrapper.
+        To access config inside your function, use traigent.get_config() which
+        works both during optimization trials and after apply_best_config().
+        For post-optimization access, you can also use func.current_config.
         """
 
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Store current config on wrapper only (not original)
             setattr(wrapper, self.attribute_name, config)
-            return func(*args, **kwargs)
+            with ConfigurationContext(config):
+                return func(*args, **kwargs)
 
         # For async functions
         if inspect.iscoroutinefunction(func):
@@ -312,7 +316,8 @@ class AttributeBasedProvider(ConfigurationProvider):
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 # Set config on wrapper only (not original)
                 setattr(async_wrapper, self.attribute_name, config)
-                return await func(*args, **kwargs)
+                with ConfigurationContext(config):
+                    return await func(*args, **kwargs)
 
             # Set initial config on wrapper for immediate visibility after inject_config()
             # The inner setattr ensures config stays up-to-date on each call
@@ -561,7 +566,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
                 return func(*args, **kwargs)
 
             except Exception as e:  # noqa: BLE001
-                logger.warning(
+                logger.debug(
                     "Failed to transform function %s. Attempting runtime shim fallback.",
                     func.__name__,
                     exc_info=False,

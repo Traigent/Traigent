@@ -19,7 +19,7 @@ import secrets
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from traigent.cloud.auth import AuthenticationError, AuthManager
@@ -184,7 +184,7 @@ class BackendSessionManager:
             "session_id": session_id,
             "config": session_config,
             "metadata": metadata or {},
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "nonce": self.auth_manager.generate_request_nonce(),
         }
 

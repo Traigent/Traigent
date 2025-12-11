@@ -16,10 +16,10 @@ import csv
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 # Add parent directory to path to ensure traigent can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent))

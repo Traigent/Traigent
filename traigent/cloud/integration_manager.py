@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 
@@ -348,8 +348,8 @@ class IntegrationManager:
                 objectives=optimization_request.objectives,
                 max_trials=optimization_request.max_trials,
                 status=OptimizationSessionStatus.CREATED,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
             )
 
             mapping = SessionExperimentMapping(

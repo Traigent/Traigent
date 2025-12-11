@@ -97,18 +97,20 @@ class TestTraiGentCloudClient:
 
         async def run_test():
             # Mock the auth and submission
-            with patch.object(
-                mock_cloud_client.auth, "is_authenticated", return_value=True
-            ), patch.object(
-                mock_cloud_client.auth,
-                "get_headers",
-                return_value={
-                    "Authorization": "Bearer test_token",
-                    "Content-Type": "application/json",
-                },
-            ), patch.object(
-                mock_cloud_client, "_submit_optimization"
-            ) as mock_submit:
+            with (
+                patch.object(
+                    mock_cloud_client.auth, "is_authenticated", return_value=True
+                ),
+                patch.object(
+                    mock_cloud_client.auth,
+                    "get_headers",
+                    return_value={
+                        "Authorization": "Bearer test_token",
+                        "Content-Type": "application/json",
+                    },
+                ),
+                patch.object(mock_cloud_client, "_submit_optimization") as mock_submit,
+            ):
 
                 mock_submit.return_value = {
                     "best_config": {"param1": "value1", "param2": 0.5},
@@ -143,12 +145,15 @@ class TestTraiGentCloudClient:
         async def run_test():
             from traigent.cloud.auth import AuthenticationError
 
-            with patch.object(
-                mock_cloud_client.auth, "is_authenticated", return_value=False
-            ), patch.object(
-                mock_cloud_client.auth,
-                "get_headers",
-                side_effect=AuthenticationError("Not authenticated"),
+            with (
+                patch.object(
+                    mock_cloud_client.auth, "is_authenticated", return_value=False
+                ),
+                patch.object(
+                    mock_cloud_client.auth,
+                    "get_headers",
+                    side_effect=AuthenticationError("Not authenticated"),
+                ),
             ):
 
                 with pytest.raises(AuthenticationError, match="Not authenticated"):
@@ -161,24 +166,30 @@ class TestTraiGentCloudClient:
         """Test fallback to local optimization when cloud fails."""
 
         async def run_test():
-            with patch.object(
-                mock_cloud_client.auth, "is_authenticated", return_value=True
-            ), patch.object(
-                mock_cloud_client.auth,
-                "get_headers",
-                return_value={
-                    "Authorization": "Bearer test_token",
-                    "Content-Type": "application/json",
-                },
-            ), patch.object(
-                mock_cloud_client,
-                "_submit_optimization",
-                side_effect=Exception("Network error"),
-            ), patch(
-                "traigent.optimizers.registry.get_optimizer"
-            ) as mock_get_optimizer, patch(
-                "traigent.evaluators.local.LocalEvaluator"
-            ) as mock_evaluator_class:
+            with (
+                patch.object(
+                    mock_cloud_client.auth, "is_authenticated", return_value=True
+                ),
+                patch.object(
+                    mock_cloud_client.auth,
+                    "get_headers",
+                    return_value={
+                        "Authorization": "Bearer test_token",
+                        "Content-Type": "application/json",
+                    },
+                ),
+                patch.object(
+                    mock_cloud_client,
+                    "_submit_optimization",
+                    side_effect=Exception("Network error"),
+                ),
+                patch(
+                    "traigent.optimizers.registry.get_optimizer"
+                ) as mock_get_optimizer,
+                patch(
+                    "traigent.evaluators.local.LocalEvaluator"
+                ) as mock_evaluator_class,
+            ):
 
                 # Mock the fallback local optimizer
                 mock_optimizer = MagicMock()
@@ -218,17 +229,21 @@ class TestTraiGentCloudClient:
                 enable_fallback=False, api_key="tg_test_" + "x" * 56
             )
 
-            with patch.object(
-                client.auth, "is_authenticated", return_value=True
-            ), patch.object(
-                client.auth,
-                "get_headers",
-                return_value={
-                    "Authorization": "Bearer test_token",
-                    "Content-Type": "application/json",
-                },
-            ), patch.object(
-                client, "_submit_optimization", side_effect=Exception("Network error")
+            with (
+                patch.object(client.auth, "is_authenticated", return_value=True),
+                patch.object(
+                    client.auth,
+                    "get_headers",
+                    return_value={
+                        "Authorization": "Bearer test_token",
+                        "Content-Type": "application/json",
+                    },
+                ),
+                patch.object(
+                    client,
+                    "_submit_optimization",
+                    side_effect=Exception("Network error"),
+                ),
             ):
 
                 async with client as c:

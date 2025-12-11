@@ -283,7 +283,7 @@ class TestPrivacyDecoratorE2E:
             def secure_function(input_data):
                 """Function using context-based config access."""
                 # Get config from context (no parameters needed)
-                config = traigent.get_current_config()
+                config = traigent.get_config()
 
                 # Process confidential data locally
                 input_data.get("confidential", "")

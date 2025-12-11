@@ -184,7 +184,7 @@ def respond_safely(prompt_input: str) -> str:
             return "I cannot help with that."
         return "Here are some helpful tips to stay safe and compliant."
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     strength = cfg.get("safety_strength", "medium")
     style = cfg.get("refusal_style", "brief")
     policy = f"Safety level: {strength}. " + (

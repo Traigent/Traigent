@@ -4,8 +4,9 @@
 
 import asyncio
 import os
-from datetime import datetime, timezone
-from typing import Any, Callable, cast
+from collections.abc import Callable
+from datetime import UTC, datetime
+from typing import Any, cast
 
 from traigent.adapters.execution_adapter import (
     LocalExecutionAdapter,
@@ -424,7 +425,7 @@ class OptiGenClient:
                 metrics=metrics,
                 status=status,
                 duration=duration,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 error_message=error_message,
                 metadata=metadata,
             )

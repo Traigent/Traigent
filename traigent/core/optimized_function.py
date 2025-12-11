@@ -33,12 +33,15 @@ import hashlib
 import hmac
 import json
 import os
+import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+import warnings
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any, Callable, Literal, Sequence, cast
+from typing import Any, Literal, cast
 
 from traigent.api.functions import _GLOBAL_CONFIG, get_global_parallel_config
 from traigent.api.types import OptimizationResult, OptimizationStatus
@@ -81,6 +84,33 @@ from traigent.utils.validation import (
 
 logger = get_logger(__name__)
 
+# Module-level flag to ensure cost warning is emitted only once per process
+_COST_WARNING_EMITTED = False
+
+
+def _emit_cost_warning_once() -> None:
+    """Emit cost warning once per process when optimization starts.
+
+    This warning informs users that optimization will make multiple LLM API calls
+    and that cost estimates are approximations. The warning is suppressed in mock mode.
+    """
+    global _COST_WARNING_EMITTED
+    if _COST_WARNING_EMITTED:
+        return
+    if os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+        return
+
+    _COST_WARNING_EMITTED = True
+    warnings.warn(
+        "TraiGent optimization will make multiple LLM API calls. "
+        "Cost estimates are approximations; actual billing is determined by your LLM provider. "
+        "Set TRAIGENT_MOCK_MODE=true for testing. See DISCLAIMER.md for full details.",
+        UserWarning,
+        stacklevel=4,  # Point to caller of optimize()
+    )
+    # Ensure warning goes to stderr
+    sys.stderr.flush()
+
 
 class OptimizationState(Enum):
     """Lifecycle state of an OptimizedFunction.
@@ -92,7 +122,7 @@ class OptimizationState(Enum):
         UNOPTIMIZED: Before any optimization has been run. The function uses
             its default_config when called.
         OPTIMIZING: During an active optimization run. Configuration should
-            be accessed via get_trial_config(), not current_config.
+            be accessed via traigent.get_config() inside the function.
         OPTIMIZED: After optimization has completed successfully. The function
             uses best_config automatically, accessible via current_config.
         ERROR: Optimization failed. The function reverts to default_config.
@@ -615,6 +645,9 @@ class OptimizedFunction:
 
         logger.info(f"Starting optimization of {self.func.__name__}")
 
+        # Emit cost warning once per process (suppressed in mock mode)
+        _emit_cost_warning_once()
+
         # Merge decorator-provided runtime overrides with call-time overrides
         decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
         if decorator_overrides:
@@ -872,8 +905,8 @@ class OptimizedFunction:
         )
 
         # Resolve algorithm (prefer method arg, else decorator-provided)
-        resolved_algorithm: str = algorithm if algorithm else cast(
-            str, getattr(self, "algorithm", "grid")
+        resolved_algorithm: str = (
+            algorithm if algorithm else cast(str, getattr(self, "algorithm", "grid"))
         )
 
         # Resolve max_trials value for this run
@@ -1380,7 +1413,7 @@ class OptimizedFunction:
                 metrics=cloud_result.best_metrics,
                 status=TrialStatus.COMPLETED,
                 duration=cloud_result.optimization_time,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 metadata={},
             )
 
@@ -1400,7 +1433,7 @@ class OptimizedFunction:
                 status=OptimizationStatus.COMPLETED,
                 objectives=self.objectives,
                 algorithm="cloud_service",
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
                 metadata={
                     "cloud_service": True,
                     "cost_reduction": cloud_result.cost_reduction,
@@ -1473,7 +1506,7 @@ class OptimizedFunction:
         best_config = (
             self._current_config.copy() if hasattr(self, "_current_config") else {}
         )
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         return OptimizationResult(
             trials=[],
@@ -1542,7 +1575,7 @@ class OptimizedFunction:
                         )
                         now = datetime.now()
                         if expires_at.tzinfo:
-                            now = now.replace(tzinfo=timezone.utc)
+                            now = now.replace(tzinfo=UTC)
                         if expires_at > now:
                             logger.info(
                                 f"CI optimization approved by legacy token: {token_data['approved_by']}"
@@ -1560,11 +1593,7 @@ class OptimizedFunction:
                         expires_at = datetime.fromisoformat(
                             token_data["expires_iso"].replace("Z", "+00:00")
                         )
-                        now = (
-                            datetime.now(timezone.utc)
-                            if expires_at.tzinfo
-                            else datetime.now()
-                        )
+                        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
                         if expires_at > now:
                             logger.warning(
                                 f"Token approved by {token_data['approver']} (signature not verified)"
@@ -1586,7 +1615,7 @@ class OptimizedFunction:
                                 token_data["expires_iso"].replace("Z", "+00:00")
                             )
                             now = (
-                                datetime.now(timezone.utc)
+                                datetime.now(UTC)
                                 if expires_at.tzinfo
                                 else datetime.now()
                             )
@@ -1755,7 +1784,9 @@ To approve, use one of these methods:
             elif self._optimization_results.status == OptimizationStatus.FAILED:
                 self._state = OptimizationState.ERROR
             else:
-                self._state = OptimizationState.OPTIMIZED  # Assume optimized for loaded results
+                self._state = (
+                    OptimizationState.OPTIMIZED
+                )  # Assume optimized for loaded results
 
             logger.info(f"Loaded optimization results from {path}")
 
@@ -1802,7 +1833,7 @@ To approve, use one of these methods:
 
         Raises:
             OptimizationStateError: If accessed during an active optimization.
-                Use traigent.get_trial_config() instead during optimization.
+                Use traigent.get_config() inside your function during optimization.
 
         Returns:
             Copy of the current configuration dict.
@@ -1811,7 +1842,7 @@ To approve, use one of these methods:
             if self._state == OptimizationState.OPTIMIZING:
                 raise OptimizationStateError(
                     "Cannot access current_config during an active optimization. "
-                    "Use traigent.get_trial_config() to access the current trial's "
+                    "Use traigent.get_config() to access the current trial's "
                     "configuration within your optimized function.",
                     current_state=self._state.name,
                     expected_states=["UNOPTIMIZED", "OPTIMIZED", "ERROR"],

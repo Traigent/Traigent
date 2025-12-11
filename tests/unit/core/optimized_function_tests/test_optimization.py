@@ -264,12 +264,15 @@ class TestOptimization:
             algorithm="grid",
         )
 
-        with patch(
-            "traigent.core.optimized_function.load_tvl_spec",
-            return_value=tvl_artifact,
-        ) as mock_loader, patch(
-            "traigent.core.optimized_function.OptimizationOrchestrator"
-        ) as MockOrchestrator:
+        with (
+            patch(
+                "traigent.core.optimized_function.load_tvl_spec",
+                return_value=tvl_artifact,
+            ) as mock_loader,
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as MockOrchestrator,
+        ):
             mock_orchestrator = MockOrchestrator.return_value
             mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
 

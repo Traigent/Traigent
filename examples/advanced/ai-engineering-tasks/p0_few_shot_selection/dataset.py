@@ -10,7 +10,7 @@ including classification, generation, and complex reasoning tasks.
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 
 class TaskType(Enum):
@@ -29,7 +29,7 @@ class FewShotExample:
 
     input: str
     output: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     difficulty: float  # 0.0 (easy) to 1.0 (hard)
     domain: str
 
@@ -42,11 +42,11 @@ class FewShotTask:
     expected_output: str
     task_type: TaskType
     domain: str
-    candidate_examples: List[FewShotExample]
-    metadata: Dict[str, Any]
+    candidate_examples: list[FewShotExample]
+    metadata: dict[str, Any]
 
 
-def generate_classification_examples() -> List[FewShotExample]:
+def generate_classification_examples() -> list[FewShotExample]:
     """Generate sentiment classification examples."""
     examples = [
         # Easy positive examples
@@ -129,7 +129,7 @@ def generate_classification_examples() -> List[FewShotExample]:
     return examples
 
 
-def generate_generation_examples() -> List[FewShotExample]:
+def generate_generation_examples() -> list[FewShotExample]:
     """Generate text generation examples (email writing)."""
     examples = [
         # Formal business emails
@@ -177,7 +177,7 @@ def generate_generation_examples() -> List[FewShotExample]:
     return examples
 
 
-def generate_reasoning_examples() -> List[FewShotExample]:
+def generate_reasoning_examples() -> list[FewShotExample]:
     """Generate reasoning and problem-solving examples."""
     examples = [
         # Math word problems
@@ -217,7 +217,7 @@ def generate_reasoning_examples() -> List[FewShotExample]:
     return examples
 
 
-def generate_baseline_strategies() -> Dict[str, Any]:
+def generate_baseline_strategies() -> dict[str, Any]:
     """Generate baseline selection strategies for comparison."""
     return {
         "random_selection": {
@@ -238,7 +238,7 @@ def generate_baseline_strategies() -> Dict[str, Any]:
     }
 
 
-def generate_evaluation_tasks(num_tasks: int = 50) -> List[FewShotTask]:
+def generate_evaluation_tasks(num_tasks: int = 50) -> list[FewShotTask]:
     """Generate evaluation tasks for testing selection strategies."""
     tasks = []
 
@@ -291,7 +291,7 @@ def generate_evaluation_tasks(num_tasks: int = 50) -> List[FewShotTask]:
 
 def create_task_variations(
     base_task: FewShotTask, num_variations: int = 5
-) -> List[FewShotTask]:
+) -> list[FewShotTask]:
     """Create variations of a task to test robustness."""
     variations = []
 
@@ -310,7 +310,7 @@ def create_task_variations(
     return variations
 
 
-def analyze_example_diversity(examples: List[FewShotExample]) -> Dict[str, float]:
+def analyze_example_diversity(examples: list[FewShotExample]) -> dict[str, float]:
     """Analyze diversity metrics of example set."""
     if not examples:
         return {}

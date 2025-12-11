@@ -52,7 +52,7 @@ DATASET = os.path.join(os.path.dirname(__file__), "support_eval.jsonl")
     max_trials=10,
 )
 def support_intent(message: str) -> str:
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
 
     guidance = {
         "direct": "Classify customer support intent.",

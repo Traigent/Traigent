@@ -7,13 +7,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import time
-from collections.abc import AsyncIterator
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
 from traigent.invokers.base import (
     InvocationResult,
     StreamingChunk,
-    StreamingInvocationResult,
 )
 from traigent.invokers.local import LocalInvoker
 from traigent.utils.exceptions import InvocationError
@@ -163,7 +162,7 @@ class StreamingInvoker(LocalInvoker):
                     },
                 )
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             error_msg = f"Streaming timed out after {self.timeout}s"
             logger.warning(error_msg)
             yield StreamingChunk(
@@ -183,9 +182,7 @@ class StreamingInvoker(LocalInvoker):
                 metadata={"error": error_msg, "exception_type": type(e).__name__},
             )
 
-    async def _iterate_response(
-        self, response: Any
-    ) -> AsyncIterator[Any]:
+    async def _iterate_response(self, response: Any) -> AsyncIterator[Any]:
         """Iterate over response, handling both sync and async iterators.
 
         Args:
@@ -200,7 +197,7 @@ class StreamingInvoker(LocalInvoker):
                 if self.chunk_timeout:
                     try:
                         yield chunk
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         raise InvocationError(
                             f"Chunk timeout after {self.chunk_timeout}s"
                         )

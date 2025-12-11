@@ -19,7 +19,7 @@ import traigent
 )
 def answer_question(question: str) -> str:
     # Your existing logic; TraiGent reads the active config internally
-    cfg = traigent.get_trial_config()  # Get config for current optimization trial
+    cfg = traigent.get_config()  # Get config for current optimization trial
     # ... call your LLM with cfg["model"], cfg["temperature"] ...
     return "example"
 

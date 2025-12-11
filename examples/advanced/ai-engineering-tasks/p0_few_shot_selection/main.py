@@ -24,8 +24,8 @@ import os
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, List
 
 import numpy as np
 
@@ -73,10 +73,10 @@ def print_header() -> None:
     )
 
 
-def create_evaluation_function(tasks: List[FewShotTask]) -> Callable:
+def create_evaluation_function(tasks: list[FewShotTask]) -> Callable:
     """Create the evaluation function for TraiGent optimization."""
 
-    def evaluate_selection_strategy(**config_params) -> Dict[str, float]:
+    def evaluate_selection_strategy(**config_params) -> dict[str, float]:
         """
         Evaluate example selection strategy on the task dataset.
 
@@ -209,7 +209,7 @@ def optimize_few_shot_selection(
     pass
 
 
-def run_baseline_comparison(tasks: List[FewShotTask]) -> Dict[str, Dict[str, float]]:
+def run_baseline_comparison(tasks: list[FewShotTask]) -> dict[str, dict[str, float]]:
     """Run baseline strategies for comparison."""
 
     console.print("\n[yellow]Running baseline strategies...[/yellow]")
@@ -252,7 +252,7 @@ def run_baseline_comparison(tasks: List[FewShotTask]) -> Dict[str, Dict[str, flo
 
 
 def display_results(
-    optimization_results, baseline_results: Dict[str, Dict[str, float]]
+    optimization_results, baseline_results: dict[str, dict[str, float]]
 ) -> None:
     """Display optimization results in a formatted table."""
 
@@ -358,7 +358,7 @@ def display_results(
         console.print(config_panel)
 
 
-def display_insights(optimization_results, tasks: List[FewShotTask]) -> None:
+def display_insights(optimization_results, tasks: list[FewShotTask]) -> None:
     """Display insights from optimization."""
 
     console.print("\n[bold blue]Key Insights:[/bold blue]")

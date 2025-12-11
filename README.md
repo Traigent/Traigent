@@ -2,6 +2,23 @@
 
 **Current Version**: 0.8.0 (Beta)
 
+---
+
+## Cost Warning
+
+TraiGent optimizes LLM applications by running multiple trials across configurations.
+**This can result in significant API costs.**
+
+| Recommendation      | How                                                         |
+| ------------------- | ----------------------------------------------------------- |
+| Development/Testing | Use `TRAIGENT_MOCK_MODE=true`                               |
+| Control Spending    | Set `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2 USD per run) |
+| Before Production   | Review the [DISCLAIMER.md](DISCLAIMER.md)                   |
+
+**Important**: Cost estimates are approximations. Actual billing is determined by your LLM provider.
+
+---
+
 Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
 
 > 💡 **Local Playground**: Run the interactive Streamlit control center locally with `streamlit run playground/traigent_control_center.py`. Also explore the `examples/` directory for end-to-end flows.
@@ -23,13 +40,15 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ![Traigent Agent Hooks Demo](docs/demos/output/github-hooks.svg)
 
-## 🚀 Quick Example: See Adaptive Variables in Action
+## 🚀 Quick Example: See Tuned Variables in Action
 
-> **Want to run this now?** The code examples below show the pattern but require API keys (e.g., `OPENAI_API_KEY`) when using `ChatOpenAI`. For **no-API-key testing**, use the ready-to-run quickstart examples:
+> **Want to run this now?** First [install TraiGent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
+>
 > ```bash
 > export TRAIGENT_MOCK_MODE=true
 > python examples/quickstart/01_simple_qa.py
 > ```
+>
 > The `examples/quickstart/` directory contains runnable versions that work without API keys.
 
 ```python
@@ -52,7 +71,7 @@ load_dotenv()
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def simple_qa_agent(question: str) -> str:
-    """Simple Q&A agent with adaptive variables"""
+    """Simple Q&A agent with Tuned Variables"""
 
     # These values will be automatically optimized by TraiGent!
     llm = ChatOpenAI(
@@ -71,13 +90,22 @@ def simple_qa_agent(question: str) -> str:
 ## 📊 Full Customer Support Example with RAG
 
 ```python
+import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
 from dotenv import load_dotenv
+from traigent.api.decorators import EvaluationOptions
 
 # Load environment variables (API keys, etc.)
 load_dotenv()
+
+# Define your knowledge base (used during optimization and inference)
+KNOWLEDGE_BASE = [
+    "Returns accepted within 30 days with original receipt",
+    "Free shipping on orders over $50",
+    "Contact support@example.com for order issues",
+]
 
 @traigent.optimize(
     configuration_space={
@@ -87,7 +115,7 @@ load_dotenv()
     },
     evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl")  # Provide your dataset
 )
-def customer_support_agent(query: str, knowledge_base: list) -> str:
+def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
 
     # Your existing code - TraiGent optimizes these automatically!
@@ -105,15 +133,17 @@ def customer_support_agent(query: str, knowledge_base: list) -> str:
     return response.content
 
 # Step 1: Find optimal configuration
-import asyncio
-results = asyncio.run(customer_support_agent.optimize())
+# Note: algorithm and max_trials are passed to .optimize(), not the decorator
+results = asyncio.run(customer_support_agent.optimize(
+    algorithm="random",  # Options: "random", "grid", "bayesian"
+    max_trials=20        # Number of configurations to test
+))
 
 # Step 2: Apply best configuration
 customer_support_agent.apply_best_config(results)
 
-# Step 3: Use optimized agent
-knowledge = ["Returns accepted within 30 days", "Free shipping on orders over $50"]
-answer = customer_support_agent("What's your return policy?", knowledge)
+# Step 3: Use optimized agent (uses default KNOWLEDGE_BASE, or pass custom)
+answer = customer_support_agent("What's your return policy?")
 # 🔧 Using: gpt-4o-mini, temp=0.1, k=3  # ← Shows optimized parameters!
 
 # Step 4: View optimization results
@@ -163,9 +193,9 @@ TraiGent can inject parameters in two ways:
 
 **↗️ Try TraiGent now - see the results above in under 5 minutes!**
 
-### TVL Specs: Declarative Configuration
+### TVL Specs: The Foundation Layer
 
-Use the new TVL bridge when you already maintain typed specs:
+TVL (TraiGent Validation Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
 
 ```python
 @traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
@@ -175,7 +205,9 @@ def rag_agent(query: str) -> str:
 
 TVL sections control the configuration space, objectives, constraints, and budgets—no
 extra arguments required. The CLI also accepts `traigent optimize ... --tvl-spec path`
-and an optional `--tvl-environment staging` flag, mirroring the decorator behavior.
+and an optional `--tvl-environment staging` flag.
+
+> 💡 **Why specifications matter**: A TVL spec can be validated by any conformant tool—TraiGent today, your internal optimizer tomorrow. The foundation is the contract, not the implementation.
 
 ## 📦 Quick Installation
 
@@ -186,6 +218,7 @@ Get started with TraiGent in under 2 minutes:
 ### Method 1: From Source (Recommended for Examples)
 
 #### Using pip (Traditional)
+
 ```bash
 # Clone the repository
 git clone https://github.com/Traigent/Traigent.git
@@ -206,6 +239,9 @@ python -c "import traigent; print('✅ TraiGent installed successfully')"
 ```
 
 #### Using uv (Faster - Recommended)
+
+> **First time?** Install uv: `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
+
 ```bash
 # Clone the repository
 git clone https://github.com/Traigent/Traigent.git
@@ -226,6 +262,7 @@ python -c "import traigent; print('✅ TraiGent installed successfully')"
 ```
 
 **Why use uv?**
+
 - ⚡ 10-100x faster dependency resolution
 - 🎯 Drop-in replacement for pip
 - 📦 Works with existing `pyproject.toml`
@@ -244,48 +281,115 @@ uv pip install traigent
 ```
 -->
 
-### Configure Local & Dev Environment
+### Environment Configuration
 
-Before pointing the SDK at a running backend, export the core environment variables:
+#### Mock Mode
+
+For local development and testing without API keys:
 
 ```bash
+export TRAIGENT_MOCK_MODE=true
+```
+
+**What mock mode does:**
+
+- Returns simulated responses from your decorated functions (no real LLM calls)
+- Skips TraiGent backend/cloud connections
+- Generates realistic mock metrics (accuracy, cost, latency) for testing
+
+**What mock mode does NOT do:**
+
+- It does not disable the optimization loop itself—trials still run, configs are still tested
+- It does not affect compute resources or parallelism
+
+#### Restricted Environments
+
+If running in containers, CI, or environments with limited permissions, you may see errors or warnings. Set these variables as needed:
+
+```bash
+export TRAIGENT_RESULTS_FOLDER=./results   # If home directory isn't writable
+export LOKY_MAX_CPU_COUNT=1                # If you see joblib/semaphore permission errors
+```
+
+#### Local Storage
+
+Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
+
+#### Working with Past Results
+
+After running an optimization, you can access and reuse results in several ways:
+
+```python
+# During or after optimization - get the current config
+result = await my_agent.optimize(algorithm="random", max_trials=10)
+print(result.best_config)   # {'model': 'gpt-4o-mini', 'temperature': 0.1}
+print(result.best_score)    # 0.94
+
+# Apply best config for future calls
+my_agent.apply_best_config(result)
+
+# Later, check what config is active
+print(my_agent.current_config)  # Shows the applied config
+```
+
+**Inspecting saved runs:**
+
+- Results are stored in `.traigent_local/experiments/<function_name>/runs/<timestamp>/`
+- Each run directory contains `config.json`, `metrics.json`, and trial data
+- Use `traigent results` CLI to list past runs
+- Use `traigent plot <result_name>` to visualize optimization progress
+
+**Reusing a previous config without re-optimizing:**
+
+```python
+# If you know the config you want to use
+my_agent.apply_config({"model": "gpt-4o-mini", "temperature": 0.1, "k": 3})
+
+# Or inside the function, access the current trial/applied config
+@traigent.optimize(...)
+def my_agent(query: str) -> str:
+    config = traigent.get_config()  # Works during optimization and after apply
+    # Use config values...
+```
+
+<!-- Backend configuration (for TraiGent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
 export TRAIGENT_BACKEND_URL=http://localhost:5000
 export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
-export TRAIGENT_MOCK_MODE=false  # set true to stay fully offline
-```
-
-Every scenario in `examples/` calls out these exports (for example, see `examples/docs/EXAMPLES_GUIDE.md` and the README in `examples/core/hello-world/`) so you can copy/paste the exact commands for each experiment.
-
-If you omit the exports, TraiGent automatically falls back to mock/edge mode: API calls are skipped and all optimization logs are written to the path in `TRAIGENT_RESULTS_FOLDER` (defaulting to `~/.traigent`, see `traigent/api/decorators.py:357`). Most examples set `TRAIGENT_RESULTS_FOLDER` with `os.environ.setdefault(...)` so that logs stay alongside the example folder when you run them locally.
+-->
 
 ### Available Feature Sets
 
 When installing TraiGent, you can choose specific feature sets:
 
-| Feature Set | Description | Includes |
-|------------|-------------|----------|
-| `[core]` | Basic functionality (default) | Core dependencies only |
-| `[analytics]` | Analytics and visualization | numpy, pandas, matplotlib |
-| `[bayesian]` | Bayesian optimization | scikit-learn, scipy |
-| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic, MLflow, WandB |
-| `[security]` | Enterprise security | JWT, cryptography, FastAPI |
-| `[visualization]` | Advanced visualizations | matplotlib, plotly |
-| `[playground]` | Interactive UI | streamlit, plotly |
-| `[examples]` | Run all examples | All demo dependencies |
-| `[all]` | Complete installation | Everything above |
-| `[enterprise]` | Enterprise bundle | Same as `[all]` |
-| `[dev]` | Development tools | pytest, black, ruff, mypy |
+| Feature Set      | Description                   | Use Case                         |
+| ---------------- | ----------------------------- | -------------------------------- |
+| `[core]`         | Basic functionality (default) | Minimal install                  |
+| `[analytics]`    | Analytics and visualization   | View optimization results        |
+| `[bayesian]`     | Bayesian optimization         | Advanced optimization algorithms |
+| `[integrations]` | Framework integrations        | LangChain, OpenAI, Anthropic     |
+| `[playground]`   | Interactive UI                | Streamlit control center         |
+| `[examples]`     | Example dependencies          | Run all demo scripts             |
+| `[dev]`          | Development tools             | pytest, black, ruff, mypy        |
+| `[all]`          | Complete installation         | Everything above                 |
+
+**Recommended installs:**
 
 ```bash
-# Install with specific features
-pip install -e ".[integrations,analytics]"
-uv pip install -e ".[all]"  # Or install everything
+# For running examples and development
+pip install -e ".[dev,integrations,analytics]"
+
+# For the Streamlit playground UI
+pip install -e ".[playground]"
+
+# For everything (largest install)
+pip install -e ".[all]"
 ```
 
 ### Next Steps
 
 1. **Try the quickstart examples** (recommended first):
+
    ```bash
    export TRAIGENT_MOCK_MODE=true
    python examples/quickstart/01_simple_qa.py
@@ -293,20 +397,27 @@ uv pip install -e ".[all]"  # Or install everything
    python examples/quickstart/03_custom_objectives.py
    ```
 
+   > 💡 If you see `joblib will operate in serial mode` warnings, that's harmless—see [Restricted Environments](#restricted-environments) to suppress them.
+
 2. **Run the curated walkthroughs**: Explore `examples/core/simple-prompt/run.py` and other examples (each README shows the `export` commands to copy)
 
 3. **Set up API keys** (optional): Copy `.env.example` to `.env` and add your `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`
 
 4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: TraiGent works in mock mode by default (`TRAIGENT_MOCK_MODE=true`), so you can try all examples without API keys!
+> **Note**: `TRAIGENT_MOCK_MODE=true` runs examples without real API calls. The quickstart commands above include this export.
 
 ---
 
 ## 🎮 Interactive UI - Get Started in Minutes
 
 > 💡 **Local Playground**: Launch the interactive Streamlit control center locally:
+>
 > ```bash
+> # Install playground dependencies first (if not already installed)
+> pip install -e ".[playground]"
+>
+> # Then launch the control center
 > streamlit run playground/traigent_control_center.py
 > ```
 
@@ -322,6 +433,7 @@ The TraiGent Control Center provides a user-friendly interface to:
 TraiGent evaluates your AI agent's performance by comparing outputs to expected results using semantic similarity, custom evaluators, or mock mode for testing.
 
 **Quick Start:**
+
 ```python
 # Simple evaluation with default semantic similarity
 @traigent.optimize(
@@ -329,12 +441,22 @@ TraiGent evaluates your AI agent's performance by comparing outputs to expected 
         "temperature": [0.1, 0.5, 0.9],
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"]
     },
-    eval_dataset="qa_samples.jsonl",  # JSONL format (symlinked to examples/datasets/quickstart/)
+    eval_dataset="qa_samples.jsonl",  # JSONL format
     objectives=["accuracy", "cost"]
 )
 def my_agent(question: str) -> str:
     return process_question(question)
 ```
+
+**Dataset Format (JSONL):** Each line must be valid JSON with these fields:
+
+```jsonl
+{"input": {"question": "What is AI?"}, "output": "Artificial Intelligence"}
+{"input": {"question": "Explain ML"}, "output": "Machine learning uses data and algorithms"}
+```
+
+- `input` (required): Dictionary with your function's parameter names as keys
+- `output` (optional): Expected output for accuracy evaluation
 
 **Learn More:** See the [Evaluation Guide](docs/guides/evaluation.md) for:
 
@@ -346,25 +468,24 @@ def my_agent(question: str) -> str:
 
 ## 🎯 Execution Modes
 
-TraiGent offers three execution modes balancing privacy, performance, and features:
+TraiGent supports local execution with cloud modes planned:
 
-| Mode | Privacy | Algorithm | Best For |
-|------|---------|-----------|----------|
-| **Local** (`edge_analytics`) | ✅ Complete | Random/Grid | Sensitive data, testing |
-| **Cloud** | ⚠️ Metadata | Bayesian | Production, teams |
-| **Hybrid** | ✅ Execution local | Bayesian | Balanced approach |
+| Mode                         | Status         | Privacy            | Algorithm            | Best For          |
+| ---------------------------- | -------------- | ------------------ | -------------------- | ----------------- |
+| **Local** (`edge_analytics`) | ✅ Available   | ✅ Complete        | Random/Grid/Bayesian | All use cases     |
+| **Cloud**                    | 🚧 Coming Soon | ⚠️ Metadata        | Bayesian             | Production, teams |
+| **Hybrid**                   | 🚧 Coming Soon | ✅ Execution local | Bayesian             | Balanced approach |
 
-**Quick Start - Local Mode:**
+**Quick Start - Local Mode (Recommended):**
+
 ```python
 @traigent.optimize(
-    execution_mode="edge_analytics",  # Full privacy
+    execution_mode="edge_analytics",  # Full privacy, works today
     local_storage_path="./my_optimizations"
 )
 def my_agent(query: str) -> str:
     return process_query(query)
 ```
-
-> **Note**: Cloud and Hybrid modes coming soon. Use `edge_analytics` for now.
 
 > **Local Storage**: When using `edge_analytics` mode, TraiGent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
 
@@ -381,11 +502,13 @@ def my_agent(query: str) -> str:
 TraiGent works with your existing code through a simple decorator. Here's how the example above works step by step:
 
 **🎯 The Magic: Parameter Interception**
+
 - TraiGent automatically detects `ChatOpenAI()` and `similarity_search()` calls
 - During optimization, it overrides your hardcoded values with test configurations
 - Your original code stays exactly the same - no refactoring needed!
 
 **📊 Optimization Results You'll See:**
+
 ```bash
 🔧 Trial 1/20: gpt-3.5-turbo, temp=0.7, k=5 → 81% accuracy, $0.15/1K
 🔧 Trial 5/20: gpt-4o-mini, temp=0.1, k=3 → 94% accuracy, $0.12/1K
@@ -394,32 +517,62 @@ TraiGent works with your existing code through a simple decorator. Here's how th
 ```
 
 **🚀 Business Impact:**
+
 - **15% accuracy improvement** (81% → 94%)
 - **20% cost reduction** ($0.15 → $0.12 per 1K queries)
 - **Zero development time** - just add a decorator
 
-### 🧠 Adaptive Variables: The Core Concept
+**⚙️ Optimization Parameters:**
 
-**Adaptive Variables** are configuration parameters whose optimal values dynamically change based on:
+| Parameter | Where | Description |
+|-----------|-------|-------------|
+| `configuration_space` | `@traigent.optimize()` decorator | Define what parameters to test |
+| `objectives` | `@traigent.optimize()` decorator | Metrics to optimize for |
+| `eval_dataset` | `@traigent.optimize()` decorator | Dataset for evaluation |
+| `algorithm` | `.optimize()` method call | Search algorithm: `"random"`, `"grid"`, `"bayesian"` |
+| `max_trials` | `.optimize()` method call | Number of configurations to test |
+
+```python
+# Decorator defines WHAT to optimize
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data.jsonl"
+)
+def my_agent(query: str) -> str:
+    ...
+
+# Method call defines HOW to optimize
+results = await my_agent.optimize(
+    algorithm="random",  # Search strategy
+    max_trials=20        # Number of trials
+)
+```
+
+### 🧠 Tuned Variables: The Core Concept
+
+**Tuned Variables** are configuration parameters whose optimal values dynamically change based on:
 
 1. **Objective shifts**: Changes in optimization priorities (e.g., prioritizing cost reduction vs. accuracy)
 2. **Environmental changes**: New model availability, data distribution shifts, or context evolution
 
-Unlike static configuration parameters (like API endpoints or credentials), **Adaptive Variables** directly influence agent behavior and require continuous optimization:
+Unlike static configuration parameters (like API endpoints or credentials), **Tuned Variables** directly influence agent behavior and require continuous optimization:
 
-#### Examples of Adaptive Variables:
+#### Examples of Tuned Variables:
+
 - **Model Selection**: `gpt-3.5-turbo` → `gpt-4o` based on accuracy/cost trade-offs
 - **Temperature**: `0.1` (factual) → `0.9` (creative) based on task requirements
 - **Retrieval Depth**: `k=3` (fast) → `k=10` (comprehensive) based on precision needs
 - **Output Format**: `json` vs `text` based on downstream processing requirements
 
-#### Static vs Adaptive Variables:
+#### Static vs Tuned Variables:
+
 ```python
 # ❌ Static variables (don't optimize these)
 database_url = "postgresql://..."
 api_key = "sk-..."
 
-# ✅ Adaptive variables (optimize these for agent performance)
+# ✅ Tuned Variables (optimize these for agent performance)
 model = "gpt-4o-mini"        # Cost vs accuracy trade-off
 temperature = 0.3            # Creativity vs consistency
 k = 5                        # Retrieval depth vs speed
@@ -470,8 +623,6 @@ def my_agent(query: str, config: TraigentConfig) -> str:
 - **Seamless**: Existing codebases, rapid adoption, zero migration
 - **Parameter**: New development, type safety, complex logic
 
-See [examples/docs/injection-modes/](examples/docs/injection-modes/) for detailed comparisons.
-
 ## 🌟 Natural Language Problem Definition
 
 ### Define Problems with AI Understanding
@@ -508,12 +659,19 @@ The CLI provides local optimization, validation, results management, and templat
 ```bash
 # Help and version info
 traigent --help
-traigent info
+traigent --version   # Quick version check
+traigent info        # Detailed version, features, and integrations
+
+# Quiet mode (suppress logs) or verbose mode
+traigent --quiet info    # Errors only
+traigent --verbose info  # Full logging
 
 # Algorithms
 traigent algorithms
 
 # Optimize decorated functions in a Python file
+# Note: The module must have @traigent.optimize decorated functions with
+# configuration_space and eval_dataset defined
 traigent optimize path/to/module.py -a grid -n 10
 
 # Validate dataset and configuration files
@@ -632,6 +790,7 @@ def fn(x: int) -> str:
 def agent(x: int) -> str:
     return f"val-{x}"
 ```
+
 - **🔐 Privacy Options**: Keep sensitive data on your servers
 
 ### 💰 **Cost Tracking & Optimization**
@@ -651,6 +810,7 @@ results = await my_agent.optimize()
 print(f"Total optimization cost: ${results.total_cost:.4f}")
 print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 ```
+
 - **📊 Privacy-Safe Analytics**: Track optimization patterns with zero sensitive data
 - **🎯 Smart Insights**: Get personalized upgrade recommendations based on usage
 - **🏃‍♂️ Gradual Migration**: Start local, upgrade selectively based on real value
@@ -698,7 +858,7 @@ def analyze_customer_data(customer_id: str, query: str) -> str:
     execution_mode="interactive"  # Model 1
 )
 def optimized_analyzer(customer_id: str, query: str) -> str:
-    config = traigent.get_trial_config()  # Only valid during optimization
+    config = traigent.get_config()  # Works during optimization and after apply_best_config()
     # Your logic with optimized parameters
     return analyze_customer_data(customer_id, query)
 
@@ -710,13 +870,16 @@ def optimized_analyzer(customer_id: str, query: str) -> str:
 
 **Config access: during vs. after**
 
-| When you're running | Use this | Notes |
-| --- | --- | --- |
-| During optimization | `traigent.get_trial_config()` | Raises `OptimizationStateError` if no active trial. |
-| After optimization completes | `result.best_config` | Returned by `func.optimize()`. |
-| When calling the function later | `func.current_config` | Automatically set to the best config. |
+| When you're running             | Use this                      | Notes                                                         |
+| ------------------------------- | ----------------------------- | ------------------------------------------------------------- |
+| Inside the optimized function   | `traigent.get_config()`       | Unified access during optimization and after apply_best_config(). |
+| During optimization (strict)    | `traigent.get_trial_config()` | Raises `OptimizationStateError` if no active trial.           |
+| After optimization completes    | `result.best_config`          | Returned by `func.optimize()`.                                |
+| When calling the function later | `func.current_config`         | Automatically set to the best config.                         |
 
-### ☁️ Model 2: Cloud-Based Agent Optimization
+### ☁️ Model 2: Cloud-Based Agent Optimization (Coming Soon)
+
+> **Note**: Cloud optimization is under development. The API below shows the planned interface.
 
 ```python
 from traigent.cloud.models import AgentSpecification
@@ -783,7 +946,7 @@ def analyze_sentiment(text: str) -> str:
 # Optimize it with zero code changes!
 @traigent.optimize(
     eval_dataset="sentiment_test_set.jsonl",
-    objectives=["accuracy", "latency"],
+    objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o", "davinci-002"],
         "temperature": [0.0, 0.3, 0.7, 1.0]
@@ -835,7 +998,7 @@ def translate_text(text: str, target_language: str) -> str:
 ```python
 @traigent.optimize(
     eval_dataset="complex_tasks.jsonl",
-    objectives=["accuracy", "cost", "latency"],
+    objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o", "claude-2"],
         "temperature": [0.0, 0.5, 1.0],
@@ -856,42 +1019,38 @@ def complex_reasoning_task(query: str) -> str:
 
 ## 📚 Pre-built Examples
 
-TraiGent comes with ready-to-use examples for common AI tasks:
+TraiGent comes with ready-to-use examples in `examples/`:
 
-### LangChain Integration Examples
+### Core Examples
 
-Located in `demos/06-framework-integrations/langchain/examples/`:
+Located in `examples/core/`:
 
-- **Emotion Detection**: Analyze emotional content in text
-- **Fact Checking**: Verify factual claims automatically
-- **NER Extraction**: Extract named entities from documents
-- **Sentiment Analysis**: Classify text sentiment
-- **Spam Detection**: Filter unwanted content
-- **Text Summarization**: Condense long documents
-- **Intent Classification**: Understand user intentions
-- **Keyword Extraction**: Find important terms
-- **Email Generation**: Create professional emails
-- **Dialogue Generation**: Build conversational agents
-- **Text-to-SQL**: Convert natural language to SQL queries
+- **simple-prompt**: Basic prompt optimization
+- **hello-world**: Q&A with RAG optimization
+- **few-shot-classification**: Few-shot learning patterns
+- **multi-objective-tradeoff**: Balance accuracy vs cost with weighted objectives
+- **token-budget-summarization**: Optimize within token limits
+- **structured-output-json**: JSON schema validation
+- **tool-use-calculator**: Function calling optimization
+- **prompt-style-optimization**: Tune prompt style and tone
+- **safety-guardrails**: Content moderation patterns
 
 Each example includes:
 
-- Pre-configured optimization settings
-- Sample evaluation datasets
-- Custom evaluators for the specific task
-- Ready-to-run code
+- Complete `run.py` with production-quality code
+- Evaluation datasets in `examples/datasets/`
+- Mock mode support (no API keys needed!)
+- Inline documentation
 
 ### Running Examples
 
 ```bash
-# First, ensure you have the integrations installed
+# First, ensure you have the dependencies installed
 pip install -e ".[integrations]"
 
-# Navigate to any example
-cd demos/06-framework-integrations/langchain/examples/emotion_detection
-
-# Run the optimization
-python function.py
+# Run any example in mock mode
+export TRAIGENT_MOCK_MODE=true
+python examples/core/simple-prompt/run.py
 ```
 
 ## 🤔 Why TraiGent?
@@ -926,11 +1085,11 @@ python function.py
 
 - **[Quick Start Guide](docs/getting-started/GETTING_STARTED.md)**: Get started in 5 minutes
 - **[Playground UI Guide](playground/README.md)**: Interactive Playground
-- **[API Reference](docs/api-reference/)**: Complete API documentation
 - **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
 - **[Secrets Management](docs/guides/secrets_management.md)**: Secure AWS-backed workflow
 - **[Examples](examples/)**: Working code examples
-- **[Contributing](docs/guides/CONTRIBUTING.md)**: Join our community
+- **[Evaluation Guide](docs/guides/evaluation.md)**: Dataset formats and custom evaluators
+- **[Execution Modes](docs/guides/execution-modes.md)**: Local, cloud, and hybrid modes
 
 ## 🛠️ Development
 
@@ -944,14 +1103,12 @@ Traigent/
 │   ├── optimizers/    # Optimization algorithms
 │   ├── cloud/         # Cloud integration
 │   └── integrations/  # Framework integrations
-├── playground/        # Interactive UI and experiments
+├── playground/        # Interactive UI (Streamlit control center)
 ├── examples/          # Example scripts and demos
 ├── tests/             # Test suite and configurations
 ├── docs/              # All documentation
-├── reports/           # Analysis and project reports
 ├── scripts/           # Development and automation tools
-├── requirements/      # Dependency specifications
-└── venv/             # Virtual environment (local)
+└── requirements/      # Dependency specifications
 ```
 
 ### Development Setup
@@ -986,17 +1143,15 @@ pre-commit install
 ### 📂 Clean Project Organization
 
 The project maintains a clean, professional structure:
-- **9 main directories** with clear, single purposes
+
+- **Core directories** with clear, single purposes
 - **All scripts centralized** in `scripts/` with subdirectory organization
-- **All reports consolidated** in `reports/` with categorization
 - **All documentation unified** in `docs/` with logical grouping
 - **Clean root directory** with only essential files
 
-See `reports/project-status/` for detailed organization documentation.
-
 ## 🤝 Contributing
 
-We welcome contributions! Please see our [Contributing Guide](docs/guides/CONTRIBUTING.md) for details.
+We welcome contributions! See the guidelines below for how to get started.
 
 ### Testing
 
@@ -1022,13 +1177,14 @@ pytest tests/unit/test_api.py
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 ## 🔧 Troubleshooting
 
 ### Verify Installation
 
 Run our verification script to check all dependencies:
+
 ```bash
 python scripts/validation/verify_installation.py
 ```
@@ -1038,6 +1194,7 @@ python scripts/validation/verify_installation.py
 If you encounter installation errors:
 
 1. **Missing Dependencies** (e.g., `ModuleNotFoundError: No module named 'langchain_openai'`):
+
    ```bash
    pip install -r requirements/requirements-integrations.txt
    pip install -e .
@@ -1087,6 +1244,7 @@ The `@traigent.optimize` decorator **requires** a `configuration_space` paramete
 #### Dataset Paths
 
 Some dataset files have symlinks in the repo root for convenience:
+
 - `qa_samples.jsonl` → `examples/datasets/quickstart/qa_samples.jsonl`
 - `rag_feedback.jsonl` → `examples/quickstart/rag_feedback.jsonl`
 
@@ -1101,6 +1259,7 @@ For other datasets, use the full path or create your own symlink.
 #### 0.0% Accuracy in Results
 
 If you see 0.0% accuracy:
+
 - **Enable Mock Mode**: Set `TRAIGENT_MOCK_MODE=true` for realistic demo values
 - **Check Dataset Format**: Ensure your dataset follows the correct format (see Evaluation section)
 - **Use Custom Evaluator**: For non-exact matches, provide a custom evaluator function
@@ -1145,4 +1304,4 @@ load_dotenv()
 
 ---
 
-**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[API Docs](docs/api-reference/)** | **[Contributing](docs/guides/CONTRIBUTING.md)**
+**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[Evaluation Guide](docs/guides/evaluation.md)**

@@ -6,12 +6,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.utils import extract_examples_attempted
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.core.cost_enforcement import CostEnforcer
 
 logger = get_logger(__name__)
 
@@ -259,3 +263,61 @@ class MaxSamplesStopCondition(StopCondition):
 
         self._last_index = len(trial_seq)
         return self._total_attempted >= self._max_samples
+
+
+class CostLimitStopCondition(StopCondition):
+    """Stop when cost limit reached using shared CostEnforcer.
+
+    This stop condition uses a shared CostEnforcer instance to avoid double
+    counting costs. The enforcer tracks actual costs; this condition just
+    checks the enforcer's state.
+
+    Note:
+        The CostEnforcer must be passed in and is expected to be tracking
+        costs already (via track_cost() calls from the orchestrator).
+    """
+
+    reason = "cost_limit"
+
+    def __init__(self, cost_enforcer: CostEnforcer) -> None:
+        """Initialize with shared cost enforcer.
+
+        Args:
+            cost_enforcer: Shared CostEnforcer instance that tracks costs.
+        """
+        self._cost_enforcer = cost_enforcer
+
+    def reset(self) -> None:
+        """Reset is handled by the shared CostEnforcer, not here."""
+        # Note: We don't reset the enforcer here because it's shared
+        # and may be used across multiple stop condition checks
+        pass
+
+    def should_stop(self, trials: Iterable[TrialResult]) -> bool:
+        """Check if cost limit has been reached.
+
+        Args:
+            trials: Trial results (not used - we check the enforcer directly).
+
+        Returns:
+            True if the cost limit has been reached.
+        """
+        # Cost is already tracked by the orchestrator - just check status
+        return self._cost_enforcer.is_limit_reached
+
+    def get_reason(self) -> str:
+        """Get a descriptive reason for stopping.
+
+        Returns:
+            Human-readable description of why optimization stopped.
+        """
+        status = self._cost_enforcer.get_status()
+        if status.unknown_cost_mode:
+            return (
+                f"Trial limit reached: {status.trial_count} trials "
+                f"(cost unknown, fallback mode)"
+            )
+        return (
+            f"Cost limit reached: ${status.accumulated_cost_usd:.2f} "
+            f">= ${status.limit_usd:.2f} USD"
+        )

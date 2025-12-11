@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
@@ -165,9 +165,13 @@ class TokenManager:
                             _value=existing_refresh_token,
                             _expires_at=time.time() + expires_in * 24,
                         )
-                        logger.debug("Restored existing refresh token after new token failed")
+                        logger.debug(
+                            "Restored existing refresh token after new token failed"
+                        )
                     except ValueError:
-                        logger.warning("Could not restore existing refresh token either")
+                        logger.warning(
+                            "Could not restore existing refresh token either"
+                        )
         else:
             self._refresh_token_secure = None
 
@@ -504,9 +508,7 @@ class TokenManager:
             metadata["user"] = token_data.get("user", {})
 
         api_key = token_data.get("api_key") or token_data.get("apiKey")
-        expires_at_dt = (
-            datetime.fromtimestamp(expires_at, timezone.utc) if expires_at else None
-        )
+        expires_at_dt = datetime.fromtimestamp(expires_at, UTC) if expires_at else None
 
         if api_key and self._validate_key_format and self._validate_key_format(api_key):
             if self._set_api_key_token:

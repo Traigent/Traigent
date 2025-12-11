@@ -27,7 +27,7 @@ import re
 import threading
 import warnings
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 # Import tokencost with graceful fallback
 try:
@@ -131,7 +131,7 @@ class CostCalculator:
 
     def calculate_cost(
         self,
-        prompt: Union[str, list[dict[str, Any]]] | None = None,
+        prompt: str | list[dict[str, Any]] | None = None,
         response: str | None = None,
         model_name: str | None = None,
         input_tokens: int | None = None,
@@ -385,7 +385,7 @@ class CostCalculator:
         return (*UNVERSIONED_FALLBACK_DATE, specificity)
 
     def _safe_calculate_prompt_cost(
-        self, prompt: Union[str, list[dict[str, Any]]], model: str
+        self, prompt: str | list[dict[str, Any]], model: str
     ) -> float:
         """Safely calculate prompt cost with error handling."""
         try:
@@ -508,7 +508,7 @@ class CostCalculator:
 
 # Convenience functions for simple usage
 def calculate_llm_cost(
-    prompt: Union[str, list[dict[str, Any]]] | None = None,
+    prompt: str | list[dict[str, Any]] | None = None,
     response: str | None = None,
     model_name: str | None = None,
     input_tokens: int | None = None,

@@ -59,7 +59,9 @@ class _RetrieverProtocol:
 
 
 try:  # pragma: no cover - optional dependency
-    from langchain_community.retrievers import BM25Retriever  # type: ignore[import-not-found]
+    from langchain_community.retrievers import (
+        BM25Retriever,  # type: ignore[import-not-found]
+    )
 
     class _BM25Wrapper(_RetrieverProtocol):
         def __init__(self, docs: list[Document]) -> None:
@@ -282,7 +284,7 @@ def rag_qa(question: str) -> str:
         # fallback based on doc-like timeline mention
         return "timeline"
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_trial_config()
+    cfg = traigent.get_config()
     retriever = _build_retriever(
         int(cfg.get("chunk_size", 512)), int(cfg.get("overlap", 16))
     )

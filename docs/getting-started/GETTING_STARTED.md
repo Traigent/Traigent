@@ -28,7 +28,7 @@ import traigent
     },
 )
 def answer_question(question: str) -> str:
-    cfg = traigent.get_trial_config()  # Raises if called outside an active trial
+    cfg = traigent.get_config()  # Unified access during and after optimization
     # Call your LLM here using cfg["model"], cfg["temperature"]
     return "example"
 
@@ -58,7 +58,8 @@ if __name__ == "__main__":
 
 | When | Use | Notes |
 | --- | --- | --- |
-| During optimization | `traigent.get_trial_config()` | Raises `OptimizationStateError` if called outside an active trial. |
+| Inside the optimized function | `traigent.get_config()` | Unified access during trials and after `apply_best_config()`. |
+| During optimization (strict) | `traigent.get_trial_config()` | Raises `OptimizationStateError` if called outside an active trial. |
 | After optimization completes | `results.best_config` | Returned from `func.optimize()`. |
 | When calling the function later | `answer_question.current_config` | Automatically set to the best config found. |
 
@@ -86,7 +87,7 @@ This is your main entry point. It wraps your existing function and automatically
     }
 )
 def my_function(input_text: str) -> str:
-    config = traigent.get_trial_config()  # Get config for current trial
+    config = traigent.get_config()  # Get config for the current call
     # Your code here
     return result
 ```
@@ -266,8 +267,8 @@ pip install -e .
 ### Configuration Issues
 
 ```python
-# Use traigent.get_trial_config() inside your function during optimization
-config = traigent.get_trial_config()
+# Use traigent.get_config() inside your function to read applied parameters
+config = traigent.get_config()
 model = config.get("model", "o4-mini")  # Provide defaults
 
 # After optimization, access the best config via the result:

@@ -26,8 +26,8 @@ jobs:
     strategy:
       fail-fast: true  # Stop on first failure to save minutes
       matrix:
-        # Reduce matrix to essential Python versions only
-        python-version: ['3.8', '3.11']  # Min and max supported versions
+        # Test on supported Python versions (>=3.11 per pyproject.toml)
+        python-version: ['3.11', '3.12']
 
     steps:
     - uses: actions/checkout@v4
@@ -118,7 +118,7 @@ print('✅ Mock mode works!')
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
+        python-version: '3.11'
 
     - name: Quick install and test
       env:

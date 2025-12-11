@@ -6,8 +6,9 @@ import os
 import statistics
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Optional, Sequence, cast
+from typing import Any, Optional, cast
 
 from traigent._version import get_version
 from traigent.utils.cost_calculator import calculate_llm_cost
@@ -966,8 +967,8 @@ class CostCalculator:
         generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
 
         # DEBUG: Log environment variables
-        self.logger.info(
-            f"🔍 COST DEBUG: Checking mock mode - TRAIGENT_MOCK_MODE='{mock_mode_env}', "
+        self.logger.debug(
+            f"COST DEBUG: Checking mock mode - TRAIGENT_MOCK_MODE='{mock_mode_env}', "
             f"TRAIGENT_GENERATE_MOCKS='{generate_mocks_env}', model_name='{model_name}'"
         )
 
@@ -986,7 +987,7 @@ class CostCalculator:
             metrics.cost.input_cost = 0.0
             metrics.cost.output_cost = 0.0
             metrics.cost.total_cost = 0.0
-            self.logger.info("🚫 COST DEBUG: Mock mode enabled - setting costs to 0")
+            self.logger.debug("COST DEBUG: Mock mode enabled - setting costs to 0")
             return
 
         if not model_name or metrics.cost.total_cost > 0.0:
