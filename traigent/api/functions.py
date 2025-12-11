@@ -10,11 +10,9 @@ from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
-from traigent.config.context import (
-    get_applied_config,
-    get_trial_context,
-)
+from traigent.config.context import get_applied_config
 from traigent.config.context import get_config as _get_context_config
+from traigent.config.context import get_trial_context
 from traigent.config.feature_flags import flag_registry
 from traigent.config.parallel import (
     ParallelConfig,
