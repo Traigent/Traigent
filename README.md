@@ -315,6 +315,43 @@ export LOKY_MAX_CPU_COUNT=1                # If you see joblib/semaphore permiss
 
 Optimization results are stored in `.traigent_local/` in your working directory (or customize with `local_storage_path` parameter). Logs go to `TRAIGENT_RESULTS_FOLDER` (defaults to `~/.traigent`).
 
+#### Working with Past Results
+
+After running an optimization, you can access and reuse results in several ways:
+
+```python
+# During or after optimization - get the current config
+result = await my_agent.optimize(algorithm="random", max_trials=10)
+print(result.best_config)   # {'model': 'gpt-4o-mini', 'temperature': 0.1}
+print(result.best_score)    # 0.94
+
+# Apply best config for future calls
+my_agent.apply_best_config(result)
+
+# Later, check what config is active
+print(my_agent.current_config)  # Shows the applied config
+```
+
+**Inspecting saved runs:**
+
+- Results are stored in `.traigent_local/experiments/<function_name>/runs/<timestamp>/`
+- Each run directory contains `config.json`, `metrics.json`, and trial data
+- Use `traigent results` CLI to list past runs
+- Use `traigent plot <result_name>` to visualize optimization progress
+
+**Reusing a previous config without re-optimizing:**
+
+```python
+# If you know the config you want to use
+my_agent.apply_config({"model": "gpt-4o-mini", "temperature": 0.1, "k": 3})
+
+# Or inside the function, access the current trial/applied config
+@traigent.optimize(...)
+def my_agent(query: str) -> str:
+    config = traigent.get_config()  # Works during optimization and after apply
+    # Use config values...
+```
+
 <!-- Backend configuration (for TraiGent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
 export TRAIGENT_BACKEND_URL=http://localhost:5000

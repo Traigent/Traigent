@@ -187,9 +187,50 @@ class TestOptimizationValidator:
     @pytest.fixture
     def mock_function_info(self):
         """Create mock function info for testing."""
+        from traigent.evaluators.base import EvaluationExample
+
+        # The actual function that will be called
+        def actual_func(*args, **kwargs):
+            return "expected result"  # Return string for _extract_response_text
+
+        # Create a simple callable class that acts like a decorated function
+        class MockOptimizedFunction:
+            """Mock that acts like a traigent-decorated function."""
+
+            __name__ = "test_func"
+
+            def __init__(self):
+                self.func = actual_func  # The wrapped function
+                self.config_param = None  # Config parameter name
+                # Mock the provider with inject_config method
+                self._provider = Mock()
+                self._provider.inject_config = Mock(return_value=actual_func)
+
+            def __call__(self, *args, **kwargs):
+                return "expected result"  # Return string for _extract_response_text
+
+            def _load_dataset(self):
+                mock_dataset = Mock()
+                mock_dataset.examples = [
+                    EvaluationExample(
+                        input_data={"text": "test input"},
+                        expected_output="expected result",
+                    )
+                ]
+                return mock_dataset
+
+            async def optimize(self, **kwargs):
+                mock_result = Mock()
+                mock_result.successful_trials = [Mock()]
+                mock_result.best_metrics = {"accuracy": 0.9}
+                mock_result.best_config = {"model": "optimized"}
+                return mock_result
+
+        mock_func = MockOptimizedFunction()
+
         return OptimizedFunction(
             name="test_func",
-            func=lambda x: {"accuracy": 0.8},
+            func=mock_func,
             decorator_config={
                 "eval_dataset": "test.jsonl",
                 "objectives": ["accuracy"],
