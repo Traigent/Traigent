@@ -359,79 +359,102 @@ def load_dataset() -> list[dict]:
 
 
 def demo_evaluator():
-    """
-    Demo the Knowledge & RAG Agent evaluator.
-
-    This runs in MOCK MODE - no API calls are made.
-    The evaluator uses heuristic rules to score RAG responses on:
-    - Grounded Accuracy: Correctness × Faithfulness to sources
-    - Retrieval Quality: MRR, precision of retrieved documents
-    - Abstention F1: Knowing when NOT to answer (critical for RAG!)
-    """
-    print("=" * 60)
+    """Demo the Knowledge & RAG Agent evaluator with clear input/output examples."""
+    print("=" * 70)
     print("KNOWLEDGE & RAG AGENT - Evaluator Demo")
-    print("=" * 60)
-    print("\nMODE: Mock (heuristic scoring, no API calls)")
-    print("\nEVALUATOR: RAGEvaluator")
-    print("  - Measures grounded accuracy (correct + faithful)")
-    print("  - Evaluates retrieval quality (MRR, source precision)")
-    print("  - Tracks abstention F1 (knowing when to say 'I don't know')")
-    print("\nFAILURE MODES DETECTED:")
-    print("  - 'Correct but ungrounded': True answer, but not from docs")
-    print("  - 'Grounded but wrong': Accurately cites wrong/outdated docs")
+    print("=" * 70)
+
+    print("""
+WHAT THIS AGENT DOES:
+  A Q&A agent that answers questions using a knowledge base (documents).
+  It retrieves relevant docs, generates an answer, and cites sources.
+  Critically, it should say "I don't know" when the answer isn't in the docs.
+
+HOW IT'S EVALUATED:
+  The evaluator checks three things:
+  1. Is the answer correct AND supported by the cited documents?
+  2. Did it retrieve the right documents?
+  3. Did it correctly abstain when the question can't be answered?
+
+MODE: Mock (heuristic scoring, no API calls needed)
+""")
 
     # Load and show dataset info
     dataset = load_dataset()
-    print(f"\nDATASET: qa_dataset.jsonl ({len(dataset)} Q&A pairs)")
+    print(f"DATASET: {len(dataset)} Q&A pairs in qa_dataset.jsonl")
 
     if dataset:
-        # Count unanswerable questions
         unanswerable = sum(1 for e in dataset if not e.get("answerable", True))
-        print(f"  - Answerable questions: {len(dataset) - unanswerable}")
-        print(f"  - Unanswerable (should abstain): {unanswerable}")
+        print(f"  - {len(dataset) - unanswerable} questions have answers in the docs")
+        print(f"  - {unanswerable} questions should be answered with \"I don't know\"")
 
-        print("\n" + "-" * 60)
-        print("FIRST 3 Q&A PAIRS FROM DATASET:")
-        print("-" * 60)
-        for i, entry in enumerate(dataset[:3]):
+        print("\n" + "-" * 70)
+        print("SAMPLE DATA (first 2 entries):")
+        print("-" * 70)
+        for i, entry in enumerate(dataset[:2]):
             input_data = entry.get("input", {})
-            question = input_data.get("question", "")[:60] if isinstance(input_data, dict) else str(input_data)[:60]
-            answerable = entry.get("answerable", True)
+            question = input_data.get("question", "") if isinstance(input_data, dict) else str(input_data)
+            output = entry.get("output", "")
             sources = entry.get("source_ids", [])
-            print(f"\n  [{i+1}] Q: \"{question}...\"")
-            print(f"      Answerable: {'Yes' if answerable else 'No (should abstain)'}")
-            print(f"      Sources: {sources[:2]}{'...' if len(sources) > 2 else ''}")
+            answerable = entry.get("answerable", True)
+
+            print(f"\n[Entry {i+1}]")
+            print(f"  INPUT (question):")
+            print(f"    \"{question}\"")
+            print(f"\n  OUTPUT (expected answer):")
+            preview = output[:120].replace('\n', ' ')
+            print(f"    \"{preview}...\"")
+            print(f"    Sources: {sources}")
+            print(f"    Answerable: {'Yes' if answerable else 'No (should say I don\\'t know)'}")
 
     evaluator = RAGEvaluator()
 
-    print("\n" + "=" * 60)
-    print("EVALUATION EXAMPLES")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("HOW SCORING WORKS:")
+    print("=" * 70)
+    print("""
+The evaluator measures:
+
+  - Grounded Accuracy:   Is the answer BOTH correct AND supported by docs?
+                         (Catches "right answer but made it up" errors)
+
+  - Retrieval Quality:   Did the agent find the right documents?
+                         (Based on which docs it cited vs expected)
+
+  - Abstention Accuracy: When question can't be answered from docs, did
+                         the agent say "I don't know" instead of guessing?
+                         (Very important for trust!)
+""")
+
+    print("=" * 70)
+    print("EVALUATION EXAMPLES:")
+    print("=" * 70)
 
     # Test case 1: Good answer
-    print("\n[EXAMPLE 1] Correct answer with right sources")
-    print("-" * 60)
+    print("\n[CORRECT ANSWER] - Right answer with right sources")
+    print("-" * 70)
     result = evaluator(
         prediction={
             "answer": "The rate limit is 100 requests per minute for Standard tier, 500 for Professional, and 2000 for Enterprise.",
             "sources": ["doc_rate_01"],
             "is_abstention": False,
         },
-        expected="The rate limit depends on your tier: Standard tier has 100 requests per minute, Professional tier has 500 requests per minute, and Enterprise tier has 2000 requests per minute.",
+        expected="The rate limit depends on your tier: Standard tier has 100 requests per minute...",
         input_data={"source_ids": ["doc_rate_01"], "answerable": True},
     )
-    print(f"  Answer: \"The rate limit is 100 requests per minute...\"")
-    print(f"  Sources cited: ['doc_rate_01'] ✓")
-    print(f"\n  Scores:")
-    print(f"    Grounded Accuracy:   {result['grounded_accuracy']:.2f} (correctness × faithfulness)")
-    print(f"    Retrieval Quality:   {result['retrieval_quality']:.2f}")
-    print(f"    Abstention Accuracy: {result['abstention_accuracy']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Question: \"What is the rate limit?\"")
+    print(f"  Answer:   \"The rate limit is 100 requests per minute...\"")
+    print(f"  Sources:  ['doc_rate_01'] ✓ (correct)")
+    print(f"\nScores:")
+    print(f"  Grounded Accuracy:   {result['grounded_accuracy']:.2f}")
+    print(f"  Retrieval Quality:   {result['retrieval_quality']:.2f}")
+    print(f"  Abstention Accuracy: {result['abstention_accuracy']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
     # Test case 2: Correct abstention
-    print("\n[EXAMPLE 2] Correct abstention (unanswerable question)")
-    print("-" * 60)
+    print("\n[CORRECT ABSTENTION] - Correctly said \"I don't know\"")
+    print("-" * 70)
     result = evaluator(
         prediction={
             "answer": "I don't have information about GraphQL support in the documentation.",
@@ -442,17 +465,18 @@ def demo_evaluator():
         input_data={"source_ids": [], "answerable": False},
     )
     print(f"  Question: \"Does the API support GraphQL?\"")
-    print(f"  Answer: \"I don't have information...\" (abstained) ✓")
-    print(f"\n  Scores:")
-    print(f"    Grounded Accuracy:   {result['grounded_accuracy']:.2f}")
-    print(f"    Retrieval Quality:   {result['retrieval_quality']:.2f}")
-    print(f"    Abstention Accuracy: {result['abstention_accuracy']:.2f} ← Correctly abstained!")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Answer:   \"I don't have information...\" ✓ (correct to abstain)")
+    print(f"  Sources:  [] (none needed)")
+    print(f"\nScores:")
+    print(f"  Grounded Accuracy:   {result['grounded_accuracy']:.2f}")
+    print(f"  Retrieval Quality:   {result['retrieval_quality']:.2f}")
+    print(f"  Abstention Accuracy: {result['abstention_accuracy']:.2f} ✓")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
-    # Test case 3: False confidence
-    print("\n[EXAMPLE 3] False confidence (should have abstained)")
-    print("-" * 60)
+    # Test case 3: Hallucination
+    print("\n[HALLUCINATION] - Made up an answer (should have abstained)")
+    print("-" * 70)
     result = evaluator(
         prediction={
             "answer": "Yes, CloudStack fully supports GraphQL with a dedicated endpoint.",
@@ -463,20 +487,22 @@ def demo_evaluator():
         input_data={"source_ids": [], "answerable": False},
     )
     print(f"  Question: \"Does the API support GraphQL?\"")
-    print(f"  Answer: \"Yes, fully supports GraphQL...\" (WRONG - hallucinated)")
-    print(f"\n  Scores:")
-    print(f"    Grounded Accuracy:   {result['grounded_accuracy']:.2f}")
-    print(f"    Retrieval Quality:   {result['retrieval_quality']:.2f}")
-    print(f"    Abstention Accuracy: {result['abstention_accuracy']:.2f} ← Should have abstained!")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Answer:   \"Yes, fully supports GraphQL...\" ✗ (hallucinated!)")
+    print(f"  Sources:  ['doc_endpoint_01'] (wrong doc)")
+    print(f"\nScores:")
+    print(f"  Grounded Accuracy:   {result['grounded_accuracy']:.2f}")
+    print(f"  Retrieval Quality:   {result['retrieval_quality']:.2f}")
+    print(f"  Abstention Accuracy: {result['abstention_accuracy']:.2f} ← Should have said \"I don't know\"!")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
-    print("\n" + "=" * 60)
-    print("To run optimization with real API calls:")
-    print("  export OPENAI_API_KEY=<your-key>")
-    print("  unset TRAIGENT_MOCK_MODE")
-    print("  python use-cases/knowledge-rag/agent/rag_agent.py")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("NEXT STEPS:")
+    print("  To run with real LLM scoring (more accurate, costs money):")
+    print("    export OPENAI_API_KEY=<your-key>")
+    print("    unset TRAIGENT_MOCK_MODE")
+    print("    python use-cases/knowledge-rag/agent/rag_agent.py")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

@@ -365,58 +365,81 @@ def load_dataset() -> list[dict]:
 
 
 def demo_evaluator():
-    """
-    Demo the Product & Technical Agent evaluator.
-
-    This runs in MOCK MODE - no API calls are made.
-    The evaluator uses ACTUAL CODE EXECUTION to score generated code:
-    - Test Pass Rate: Runs test cases against generated code
-    - Code Quality: AST analysis for style, complexity, best practices
-    - Efficiency: Code conciseness vs reference solution
-    """
-    print("=" * 60)
+    """Demo the Product & Technical Agent evaluator with clear input/output examples."""
+    print("=" * 70)
     print("PRODUCT & TECHNICAL AGENT - Evaluator Demo")
-    print("=" * 60)
-    print("\nMODE: Mock (actual code execution, no API calls)")
-    print("\nEVALUATOR: CodeEvaluator")
-    print("  - Executes generated code against test cases")
-    print("  - Analyzes code quality via AST parsing")
-    print("  - Compares solution length to reference")
-    print("\nNOTE: This evaluator runs actual Python code in a sandbox!")
+    print("=" * 70)
+
+    print("""
+WHAT THIS AGENT DOES:
+  A code generation agent that writes Python functions based on task
+  descriptions. Given a task like "write a function to check if prime",
+  it generates working Python code.
+
+HOW IT'S EVALUATED:
+  The evaluator ACTUALLY RUNS the generated code against test cases!
+  This is the most objective evaluation - either the code works or it doesn't.
+
+MODE: Mock (actual code execution, no API calls needed)
+""")
 
     # Load and show dataset info
     dataset = load_dataset()
-    print(f"\nDATASET: coding_tasks.jsonl ({len(dataset)} coding tasks)")
+    print(f"DATASET: {len(dataset)} coding tasks in coding_tasks.jsonl")
 
     if dataset:
-        # Categorize by difficulty
-        difficulties = {}
-        for e in dataset:
-            diff = e.get("difficulty", "unknown")
-            difficulties[diff] = difficulties.get(diff, 0) + 1
-        print(f"  - Difficulty distribution: {difficulties}")
-
-        print("\n" + "-" * 60)
-        print("FIRST 3 CODING TASKS FROM DATASET:")
-        print("-" * 60)
-        for i, entry in enumerate(dataset[:3]):
+        print("\n" + "-" * 70)
+        print("SAMPLE DATA (first 2 entries):")
+        print("-" * 70)
+        for i, entry in enumerate(dataset[:2]):
             input_data = entry.get("input", {})
+            task = input_data.get("task", "")
             func_name = input_data.get("function_name", "unknown")
-            task_desc = input_data.get("task", "")[:40]
-            test_count = len(entry.get("test_cases", []))
-            print(f"\n  [{i+1}] Function: {func_name}()")
-            print(f"      Task: \"{task_desc}...\"")
-            print(f"      Test cases: {test_count}")
+            test_cases = entry.get("test_cases", [])
+            ref_solution = entry.get("reference_solution", "")
+
+            print(f"\n[Entry {i+1}]")
+            print(f"  INPUT (task description):")
+            print(f"    Task: \"{task}\"")
+            print(f"    Function name: {func_name}()")
+            print(f"\n  OUTPUT (expected code):")
+            # Show first line of reference solution
+            first_line = ref_solution.split('\n')[0] if ref_solution else "N/A"
+            print(f"    {first_line}")
+            print(f"    ... (full solution in dataset)")
+            print(f"\n  TEST CASES ({len(test_cases)} tests):")
+            for tc in test_cases[:2]:
+                print(f"    {func_name}({tc['input']}) → {tc['expected']}")
+            if len(test_cases) > 2:
+                print(f"    ... and {len(test_cases) - 2} more tests")
 
     evaluator = CodeEvaluator()
 
-    print("\n" + "=" * 60)
-    print("EVALUATION EXAMPLES")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("HOW SCORING WORKS:")
+    print("=" * 70)
+    print("""
+The evaluator measures:
+
+  - Test Pass Rate:  How many test cases pass? (0-100%)
+                     Code is executed in a sandbox - this is objective!
+
+  - Code Quality:    Is the code well-structured? (checked via AST analysis)
+                     - Valid syntax
+                     - Has docstrings/type hints
+                     - Not too deeply nested
+
+  - Efficiency:      Is the solution concise vs the reference solution?
+                     (Fewer lines is better, if tests still pass)
+""")
+
+    print("=" * 70)
+    print("EVALUATION EXAMPLES:")
+    print("=" * 70)
 
     # Test case 1: Correct solution
-    print("\n[EXAMPLE 1] Correct implementation (all tests pass)")
-    print("-" * 60)
+    print("\n[CORRECT CODE] - All tests pass")
+    print("-" * 70)
     code1 = '''def is_prime(n: int) -> bool:
     if n < 2:
         return False
@@ -438,20 +461,23 @@ def demo_evaluator():
             ],
         },
     )
-    print(f"  Code: is_prime() with sqrt optimization")
-    print(f"  Tests: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
-    print(f"\n  Scores:")
-    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"    Code Quality:   {result['code_quality']:.2f}")
-    print(f"    Efficiency:     {result['efficiency']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:        {result['overall']:.2f}")
+    print(f"  Task: \"Write a function to check if a number is prime\"")
+    print(f"  Generated code:")
+    print(f"    def is_prime(n): ...")
+    print(f"    (uses sqrt optimization)")
+    print(f"\n  Test Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed ✓")
+    print(f"\nScores:")
+    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f}")
+    print(f"  Code Quality:   {result['code_quality']:.2f}")
+    print(f"  Efficiency:     {result['efficiency']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:        {result['overall']:.2f}")
 
-    # Test case 2: Incorrect solution
-    print("\n[EXAMPLE 2] Buggy implementation (tests fail)")
-    print("-" * 60)
+    # Test case 2: Buggy solution
+    print("\n[BUGGY CODE] - Some tests fail")
+    print("-" * 70)
     code2 = '''def is_prime(n: int) -> bool:
-    return n > 1  # Wrong! 4 is > 1 but not prime'''
+    return n > 1  # Bug: 4 > 1 but 4 is not prime!'''
     result = evaluator(
         prediction={"code": code2, "function_name": "is_prime"},
         expected=None,
@@ -464,18 +490,21 @@ def demo_evaluator():
             ],
         },
     )
-    print(f"  Code: is_prime() → returns n > 1 (BUGGY)")
-    print(f"  Tests: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
-    print(f"\n  Scores:")
-    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f} ← Tests failing!")
-    print(f"    Code Quality:   {result['code_quality']:.2f}")
-    print(f"    Efficiency:     {result['efficiency']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:        {result['overall']:.2f}")
+    print(f"  Task: \"Write a function to check if a number is prime\"")
+    print(f"  Generated code:")
+    print(f"    def is_prime(n): return n > 1  # BUGGY!")
+    print(f"\n  Test Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
+    print(f"    is_prime(4) returned True, expected False ✗")
+    print(f"\nScores:")
+    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f} ← Tests failing!")
+    print(f"  Code Quality:   {result['code_quality']:.2f}")
+    print(f"  Efficiency:     {result['efficiency']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:        {result['overall']:.2f}")
 
     # Test case 3: Syntax error
-    print("\n[EXAMPLE 3] Syntax error (code doesn't compile)")
-    print("-" * 60)
+    print("\n[SYNTAX ERROR] - Code won't even run")
+    print("-" * 70)
     code3 = '''def is_prime(n: int) -> bool
     return n > 1'''  # Missing colon
     result = evaluator(
@@ -486,19 +515,24 @@ def demo_evaluator():
             "test_cases": [{"input": [2], "expected": True}],
         },
     )
-    print(f"  Code: Missing colon after function signature")
-    print(f"\n  Scores:")
-    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f} ← Can't run tests!")
-    print(f"    Code Quality:   {result['code_quality']:.2f} ← Syntax error")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:        {result['overall']:.2f}")
+    print(f"  Task: \"Write a function to check if a number is prime\"")
+    print(f"  Generated code:")
+    print(f"    def is_prime(n: int) -> bool  # Missing colon!")
+    print(f"        return n > 1")
+    print(f"\n  Test Results: Can't run - syntax error!")
+    print(f"\nScores:")
+    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f} ← Code doesn't compile!")
+    print(f"  Code Quality:   {result['code_quality']:.2f} ← Syntax error")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:        {result['overall']:.2f}")
 
-    print("\n" + "=" * 60)
-    print("To run optimization with real API calls:")
-    print("  export OPENAI_API_KEY=<your-key>")
-    print("  unset TRAIGENT_MOCK_MODE")
-    print("  python use-cases/product-technical/agent/code_agent.py")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("NEXT STEPS:")
+    print("  To run with real LLM code generation (costs money):")
+    print("    export OPENAI_API_KEY=<your-key>")
+    print("    unset TRAIGENT_MOCK_MODE")
+    print("    python use-cases/product-technical/agent/code_agent.py")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

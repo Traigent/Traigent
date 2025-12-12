@@ -406,50 +406,71 @@ def load_dataset() -> list[dict]:
 
 
 def demo_evaluator():
-    """
-    Demo the GTM & Acquisition evaluator.
-
-    This runs in MOCK MODE - no API calls are made.
-    The evaluator uses heuristic rules to score messages on:
-    - ICP Fit (1-5): How well message addresses lead's characteristics
-    - Personalization (1-5): Use of name, company, news, pain points
-    - Value Proposition (1-5): Clarity of benefits and outcomes
-    - Tone (1-5): Professional yet warm communication style
-    - Compliance: Checks for spam triggers and banned phrases
-    """
-    print("=" * 60)
+    """Demo the GTM & Acquisition evaluator with clear input/output examples."""
+    print("=" * 70)
     print("GTM & ACQUISITION AGENT - Evaluator Demo")
-    print("=" * 60)
-    print("\nMODE: Mock (heuristic-based scoring, no API calls)")
-    print("\nEVALUATOR: MessageQualityEvaluator")
-    print("  - Scores outbound sales messages on quality dimensions")
-    print("  - Checks compliance against spam/banned phrase rules")
-    print("  - Calibration target: Cohen's κ > 0.7 vs human raters")
+    print("=" * 70)
+
+    print("""
+WHAT THIS AGENT DOES:
+  An SDR (Sales Development Rep) agent that writes personalized outreach
+  emails to sales leads. Given info about a lead, it generates a message.
+
+HOW IT'S EVALUATED:
+  The evaluator scores each generated message on quality and compliance.
+  In production, scores are calibrated so the evaluator agrees with human
+  sales experts at least 70% of the time.
+
+MODE: Mock (using heuristic rules, no API calls needed)
+""")
 
     # Load and show dataset info
     dataset = load_dataset()
-    print(f"\nDATASET: leads_dataset.jsonl ({len(dataset)} lead profiles)")
+    print(f"DATASET: {len(dataset)} lead profiles in leads_dataset.jsonl")
 
     if dataset:
-        print("\n" + "-" * 60)
-        print("FIRST 3 LEADS FROM DATASET:")
-        print("-" * 60)
-        for i, entry in enumerate(dataset[:3]):
+        print("\n" + "-" * 70)
+        print("SAMPLE DATA (first 2 entries):")
+        print("-" * 70)
+        for i, entry in enumerate(dataset[:2]):
             input_data = entry.get("input", {})
             lead = input_data.get("lead", {})
-            print(f"\n  [{i+1}] {lead.get('name', 'N/A')} - {lead.get('title', 'N/A')}")
-            print(f"      Company: {lead.get('company', 'N/A')} ({lead.get('industry', 'N/A')})")
-            print(f"      Pain Points: {', '.join(lead.get('pain_points', [])[:2])}")
+            output = entry.get("output", "")
+
+            print(f"\n[Entry {i+1}]")
+            print(f"  INPUT (lead info):")
+            print(f"    Name:        {lead.get('name', 'N/A')}")
+            print(f"    Title:       {lead.get('title', 'N/A')}")
+            print(f"    Company:     {lead.get('company', 'N/A')} ({lead.get('industry', 'N/A')})")
+            print(f"    Pain Points: {', '.join(lead.get('pain_points', []))}")
+            print(f"    Recent News: {lead.get('recent_news', 'N/A')}")
+            print(f"\n  OUTPUT (expected message):")
+            # Show first 150 chars of expected output
+            preview = output[:150].replace('\n', ' ')
+            print(f"    \"{preview}...\"")
 
     # Initialize evaluator
     evaluator = MessageQualityEvaluator()
 
-    print("\n" + "=" * 60)
-    print("EVALUATION EXAMPLES")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("HOW SCORING WORKS:")
+    print("=" * 70)
+    print("""
+The evaluator scores messages on these dimensions (1-5 scale each):
 
-    # Sample input
-    input_data = {
+  - ICP Fit:          Does the message address the lead's industry/role/challenges?
+  - Personalization:  Does it use the lead's name, company, news, pain points?
+  - Value Proposition: Is the benefit clear? Are there specific outcomes/metrics?
+  - Tone:             Is it professional but warm? Not too pushy or too formal?
+
+Plus a compliance check (pass/fail):
+  - No spam phrases like "ACT NOW", "LIMITED TIME", "GUARANTEED"
+  - No excessive punctuation (!!!) or ALL CAPS
+  - Appropriate message length (30-200 words)
+""")
+
+    # Sample input for evaluation
+    sample_input = {
         "lead": {
             "name": "Sarah Chen",
             "title": "VP of Engineering",
@@ -483,46 +504,49 @@ BUY NOW and get FREE bonus!!!
 
 Click here to learn more!!!"""
 
-    print("\n[EXAMPLE 1] Well-crafted personalized message")
-    print("-" * 60)
-    print(f"Lead: {input_data['lead']['name']} @ {input_data['lead']['company']}")
-    print(f"Message preview: \"{good_message[:80]}...\"")
-    print("\nScores:")
-    good_result = evaluator.evaluate_message(good_message, input_data)
-    print(f"  ICP Fit:          {good_result.icp_fit}/5")
-    print(f"  Personalization:  {good_result.personalization}/5")
-    print(f"  Value Proposition:{good_result.value_proposition}/5")
-    print(f"  Tone:             {good_result.tone_appropriateness}/5")
-    print(f"  ─────────────────────────")
-    print(f"  Overall Quality:  {good_result.overall_quality:.2f}/5")
-    print(f"  Compliance:       {'✓ PASSED' if good_result.compliance_passed else '✗ FAILED'}")
+    print("=" * 70)
+    print("EVALUATION EXAMPLES:")
+    print("=" * 70)
 
-    print("\n[EXAMPLE 2] Spammy non-compliant message")
-    print("-" * 60)
-    print(f"Lead: {input_data['lead']['name']} @ {input_data['lead']['company']}")
-    print(f"Message preview: \"{bad_message[:60]}...\"")
-    print("\nScores:")
-    bad_result = evaluator.evaluate_message(bad_message, input_data)
-    print(f"  ICP Fit:          {bad_result.icp_fit}/5")
-    print(f"  Personalization:  {bad_result.personalization}/5")
-    print(f"  Value Proposition:{bad_result.value_proposition}/5")
-    print(f"  Tone:             {bad_result.tone_appropriateness}/5")
-    print(f"  ─────────────────────────")
-    print(f"  Overall Quality:  {bad_result.overall_quality:.2f}/5")
-    print(f"  Compliance:       {'✓ PASSED' if bad_result.compliance_passed else '✗ FAILED'}")
+    print("\n[GOOD MESSAGE] - Personalized, professional, compliant")
+    print("-" * 70)
+    print(f"Message:\n  \"{good_message[:120]}...\"")
+    good_result = evaluator.evaluate_message(good_message, sample_input)
+    print(f"\nScores:")
+    print(f"  ICP Fit:           {good_result.icp_fit}/5")
+    print(f"  Personalization:   {good_result.personalization}/5")
+    print(f"  Value Proposition: {good_result.value_proposition}/5")
+    print(f"  Tone:              {good_result.tone_appropriateness}/5")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall Quality:   {good_result.overall_quality:.2f}/5")
+    print(f"  Compliance:        {'✓ PASSED' if good_result.compliance_passed else '✗ FAILED'}")
+
+    print("\n[BAD MESSAGE] - Spammy, generic, non-compliant")
+    print("-" * 70)
+    print(f"Message:\n  \"{bad_message[:80]}...\"")
+    bad_result = evaluator.evaluate_message(bad_message, sample_input)
+    print(f"\nScores:")
+    print(f"  ICP Fit:           {bad_result.icp_fit}/5")
+    print(f"  Personalization:   {bad_result.personalization}/5")
+    print(f"  Value Proposition: {bad_result.value_proposition}/5")
+    print(f"  Tone:              {bad_result.tone_appropriateness}/5")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall Quality:   {bad_result.overall_quality:.2f}/5")
+    print(f"  Compliance:        {'✓ PASSED' if bad_result.compliance_passed else '✗ FAILED'}")
     if bad_result.compliance_issues:
-        print(f"  Issues ({len(bad_result.compliance_issues)}):")
+        print(f"\n  Why it failed compliance ({len(bad_result.compliance_issues)} issues):")
         for issue in bad_result.compliance_issues[:5]:
             print(f"    - {issue}")
         if len(bad_result.compliance_issues) > 5:
             print(f"    ... and {len(bad_result.compliance_issues) - 5} more")
 
-    print("\n" + "=" * 60)
-    print("To run optimization with real API calls:")
-    print("  export OPENAI_API_KEY=<your-key>")
-    print("  unset TRAIGENT_MOCK_MODE")
-    print("  python use-cases/gtm-acquisition/agent/gtm_agent.py")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("NEXT STEPS:")
+    print("  To run with real LLM scoring (more accurate, costs money):")
+    print("    export OPENAI_API_KEY=<your-key>")
+    print("    unset TRAIGENT_MOCK_MODE")
+    print("    python use-cases/gtm-acquisition/agent/gtm_agent.py")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
