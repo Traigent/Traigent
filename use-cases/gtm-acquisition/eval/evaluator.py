@@ -6,15 +6,16 @@ This evaluator scores outbound sales messages on:
 1. Message Quality Score (ICP fit, personalization, value proposition, tone)
 2. Compliance Pass Rate (spam indicators, banned phrases, professional tone)
 
-Based on the Traigent Agent Optimization Guide specifications.
+Supports two modes:
+- MOCK MODE (default): Uses heuristic rules for fast, free evaluation
+- REAL MODE: Uses actual LLM calls for agent and LLM-as-judge evaluation
 
-Calibration Notes:
-- LLM-as-judge scores should be calibrated against human raters
-- Target Cohen's κ > 0.7 for inter-rater reliability
-- Calibration set: Have sales leadership score 50+ messages
-- Adjust rubric anchors until LLM-human agreement meets threshold
+Usage:
+  Mock mode: python evaluator.py  (default, uses heuristics)
+  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -51,6 +52,57 @@ SPAM_TRIGGERS = [
     "EARN EXTRA CASH",
     "DOUBLE YOUR",
 ]
+
+# ============================================================================
+# PROMPTS FOR REAL LLM MODE
+# ============================================================================
+
+# Prompt for the SDR agent to generate outbound messages
+AGENT_PROMPT = """You are an SDR (Sales Development Rep) writing a personalized outreach email.
+
+LEAD INFORMATION:
+- Name: {name}
+- Title: {title}
+- Company: {company} ({industry})
+- Company Size: {company_size}
+- Pain Points: {pain_points}
+- Recent News: {recent_news}
+
+PRODUCT: {product}
+
+Write a short, personalized outreach email (50-150 words) that:
+1. Opens with something specific to their situation (news, pain point, or industry)
+2. Briefly mentions how our product helps with their specific challenges
+3. Ends with a soft call-to-action (suggest a brief call, not a hard sell)
+
+Keep it conversational and professional. No spam phrases like "ACT NOW" or "LIMITED TIME".
+"""
+
+# Prompt for LLM-as-judge to score messages
+JUDGE_PROMPT = """You are evaluating an SDR outreach email for quality.
+
+LEAD CONTEXT:
+- Name: {name}
+- Title: {title}
+- Company: {company} ({industry})
+- Pain Points: {pain_points}
+
+MESSAGE TO EVALUATE:
+{message}
+
+Score each dimension from 1-5:
+
+ICP_FIT: How well does it address their industry/role/challenges? (1=generic, 5=highly specific)
+PERSONALIZATION: Does it use their name, company, news, pain points? (1=none, 5=deeply personalized)
+VALUE_PROPOSITION: Is the benefit clear and relevant? (1=vague, 5=compelling and specific)
+TONE: Professional but warm? (1=spammy/pushy, 5=perfect professional warmth)
+
+Respond in EXACTLY this format:
+ICP_FIT: [1-5]
+PERSONALIZATION: [1-5]
+VALUE_PROPOSITION: [1-5]
+TONE: [1-5]
+"""
 
 
 @dataclass
@@ -110,6 +162,10 @@ class MessageQualityEvaluator:
             "tone": result.tone_appropriateness / 5.0,
         }
 
+    def is_mock_mode(self) -> bool:
+        """Check if running in mock mode."""
+        return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+
     def evaluate_message(
         self,
         message: str,
@@ -127,11 +183,26 @@ class MessageQualityEvaluator:
         """
         lead = input_data.get("lead", {})
 
-        # Evaluate each dimension
-        icp_fit = self._evaluate_icp_fit(message, lead)
-        personalization = self._evaluate_personalization(message, lead)
-        value_prop = self._evaluate_value_proposition(message, input_data)
-        tone = self._evaluate_tone(message)
+        # Use LLM-as-judge in real mode, heuristics in mock mode
+        if not self.is_mock_mode():
+            llm_scores = self._llm_judge_evaluate(message, lead, input_data)
+            if llm_scores:
+                icp_fit = llm_scores.get("icp_fit", 3.0)
+                personalization = llm_scores.get("personalization", 3.0)
+                value_prop = llm_scores.get("value_proposition", 3.0)
+                tone = llm_scores.get("tone", 3.0)
+            else:
+                # Fallback to heuristics if LLM fails
+                icp_fit = self._evaluate_icp_fit(message, lead)
+                personalization = self._evaluate_personalization(message, lead)
+                value_prop = self._evaluate_value_proposition(message, input_data)
+                tone = self._evaluate_tone(message)
+        else:
+            # Mock mode: use heuristics
+            icp_fit = self._evaluate_icp_fit(message, lead)
+            personalization = self._evaluate_personalization(message, lead)
+            value_prop = self._evaluate_value_proposition(message, input_data)
+            tone = self._evaluate_tone(message)
 
         # Calculate overall quality
         overall = (
@@ -153,6 +224,44 @@ class MessageQualityEvaluator:
             compliance_passed=compliance_passed,
             compliance_issues=issues,
         )
+
+    def _llm_judge_evaluate(
+        self, message: str, lead: dict, input_data: dict
+    ) -> dict[str, float] | None:
+        """Use LLM-as-judge to evaluate message quality."""
+        try:
+            from openai import OpenAI
+
+            client = OpenAI()
+            prompt = JUDGE_PROMPT.format(
+                name=lead.get("name", "Unknown"),
+                title=lead.get("title", "Unknown"),
+                company=lead.get("company", "Unknown"),
+                industry=lead.get("industry", "Unknown"),
+                pain_points=", ".join(lead.get("pain_points", [])),
+                message=message,
+            )
+
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+            )
+
+            # Parse scores from response using robust regex
+            content = response.choices[0].message.content
+            scores = {}
+            for key in ["icp_fit", "personalization", "value_proposition", "tone"]:
+                # Match patterns like "ICP_FIT: 4" or "ICP_FIT: 4/5" or "ICP_FIT: [4]"
+                pattern = rf"{key.upper()}\s*:\s*\[?(\d(?:\.\d)?)"
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    scores[key] = float(match.group(1))
+
+            return scores if scores else None
+        except Exception as e:
+            print(f"  [LLM Judge Error: {e}]")
+            return None
 
     def _evaluate_icp_fit(self, message: str, lead: dict) -> float:
         """
@@ -237,9 +346,7 @@ class MessageQualityEvaluator:
 
         return min(score, 5.0)
 
-    def _evaluate_value_proposition(
-        self, message: str, input_data: dict
-    ) -> float:
+    def _evaluate_value_proposition(self, message: str, input_data: dict) -> float:
         """
         Evaluate clarity and relevance of value proposition.
 
@@ -257,7 +364,9 @@ class MessageQualityEvaluator:
         product = input_data.get("product", "").lower()
         if product:
             product_keywords = product.split()[:2]  # First 2 words
-            if any(kw.lower() in message_lower for kw in product_keywords if len(kw) > 2):
+            if any(
+                kw.lower() in message_lower for kw in product_keywords if len(kw) > 2
+            ):
                 score += 1.0
 
         # Check for benefit language
@@ -313,10 +422,7 @@ class MessageQualityEvaluator:
         message_lower = message.lower()
 
         # Professional greeting
-        if any(
-            greeting in message_lower
-            for greeting in ["hi ", "hello ", "dear "]
-        ):
+        if any(greeting in message_lower for greeting in ["hi ", "hello ", "dear "]):
             score += 0.5
 
         # Professional sign-off
@@ -379,13 +485,44 @@ class MessageQualityEvaluator:
         # Check for all caps words (excluding common acronyms)
         words = message.split()
         all_caps_words = [
-            w for w in words
-            if w.isupper() and len(w) > 2 and w not in ["CEO", "CTO", "VP", "AI", "ML", "API", "SaaS", "ROI"]
+            w
+            for w in words
+            if w.isupper()
+            and len(w) > 2
+            and w not in ["CEO", "CTO", "VP", "AI", "ML", "API", "SaaS", "ROI"]
         ]
         if len(all_caps_words) > 1:
             issues.append("Excessive capitalization")
 
         return len(issues) == 0, issues
+
+
+def generate_message_with_llm(input_data: dict) -> str:
+    """Generate an outbound message using LLM (real mode only)."""
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        lead = input_data.get("lead", {})
+        prompt = AGENT_PROMPT.format(
+            name=lead.get("name", "Unknown"),
+            title=lead.get("title", "Unknown"),
+            company=lead.get("company", "Unknown"),
+            industry=lead.get("industry", "Unknown"),
+            company_size=lead.get("company_size", "Unknown"),
+            pain_points=", ".join(lead.get("pain_points", [])),
+            recent_news=lead.get("recent_news", "N/A"),
+            product=input_data.get("product", "our product"),
+        )
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7,
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"[Error generating message: {e}]"
 
 
 def load_dataset() -> list[dict]:
@@ -405,24 +542,165 @@ def load_dataset() -> list[dict]:
     return entries
 
 
+def run_optimization(num_configs: int = 5, num_examples: int = 10):
+    """
+    Run a mini optimization loop testing different prompt configurations.
+
+    Args:
+        num_configs: Number of configurations to test
+        num_examples: Number of examples to evaluate per config
+    """
+    from openai import OpenAI
+
+    client = OpenAI()
+    dataset = load_dataset()[:num_examples]
+    evaluator = MessageQualityEvaluator()
+
+    # Define different prompt configurations to test
+    configs = [
+        {
+            "name": "baseline",
+            "temperature": 0.7,
+            "system_prompt": "You are an SDR writing outreach emails.",
+        },
+        {
+            "name": "formal",
+            "temperature": 0.3,
+            "system_prompt": "You are a professional sales representative. Write formal, polished emails.",
+        },
+        {
+            "name": "casual",
+            "temperature": 0.9,
+            "system_prompt": "You are a friendly SDR. Write conversational, warm emails.",
+        },
+        {
+            "name": "data-driven",
+            "temperature": 0.5,
+            "system_prompt": "You are an SDR focused on metrics and ROI. Include specific numbers.",
+        },
+        {
+            "name": "empathy-first",
+            "temperature": 0.6,
+            "system_prompt": "You are an SDR who leads with empathy. Focus on pain points.",
+        },
+    ][:num_configs]
+
+    print("\n" + "=" * 70)
+    print("OPTIMIZATION RUN: Testing Different Prompt Configurations")
+    print("=" * 70)
+    print(f"\nConfigurations: {num_configs}")
+    print(f"Examples per config: {num_examples}")
+    print(f"Total LLM calls: {num_configs * num_examples}")
+
+    results = []
+
+    for config in configs:
+        print(f"\n--- Config: {config['name']} (temp={config['temperature']}) ---")
+        config_scores = []
+
+        for i, entry in enumerate(dataset):
+            input_data = entry.get("input", {})
+            lead = input_data.get("lead", {})
+
+            prompt = f"""{config['system_prompt']}
+
+Write a personalized outreach email for:
+- Name: {lead.get('name', 'Unknown')}
+- Title: {lead.get('title', 'Unknown')}
+- Company: {lead.get('company', 'Unknown')} ({lead.get('industry', 'Unknown')})
+- Pain Points: {', '.join(lead.get('pain_points', []))}
+- Recent News: {lead.get('recent_news', 'N/A')}
+
+Product: {input_data.get('product', 'our product')}
+
+Keep it under 150 words. End with a soft call-to-action."""
+
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=config["temperature"],
+                    max_tokens=300,
+                )
+                message = response.choices[0].message.content
+                scores = evaluator(message, None, input_data)
+                config_scores.append(scores)
+                status = "✓" if scores["compliance"] == 1.0 else "✗"
+                print(
+                    f"  [{i+1}/{num_examples}] quality={scores['message_quality']:.2f} {status}"
+                )
+            except Exception as e:
+                print(f"  [{i+1}/{num_examples}] Error: {e}")
+                config_scores.append({"message_quality": 0, "compliance": 0})
+
+        avg_quality = sum(s["message_quality"] for s in config_scores) / len(
+            config_scores
+        )
+        avg_compliance = sum(s["compliance"] for s in config_scores) / len(
+            config_scores
+        )
+        results.append(
+            {
+                "config": config["name"],
+                "temp": config["temperature"],
+                "quality": avg_quality,
+                "compliance": avg_compliance,
+                "overall": (avg_quality + avg_compliance) / 2,
+            }
+        )
+
+    # Print results table
+    print("\n" + "=" * 70)
+    print("RESULTS TABLE")
+    print("=" * 70)
+    print(
+        f"\n{'Config':<15} {'Temp':<6} {'Quality':<10} {'Compliance':<12} {'Overall':<10}"
+    )
+    print("-" * 55)
+    for r in sorted(results, key=lambda x: x["overall"], reverse=True):
+        print(
+            f"{r['config']:<15} {r['temp']:<6.1f} {r['quality']:.3f}      {r['compliance']*100:>5.0f}%       {r['overall']:.3f}"
+        )
+
+    best = max(results, key=lambda x: x["overall"])
+    print("-" * 55)
+    print(f"🏆 BEST: {best['config']} (score={best['overall']:.3f})")
+    print("=" * 70)
+    return results
+
+
+def print_score_bar(label: str, score: float, max_score: float = 5.0, width: int = 20):
+    """Print a visual score bar."""
+    normalized = score / max_score
+    filled = int(normalized * width)
+    bar = "█" * filled + "░" * (width - filled)
+    print(f"  {label:<18} {bar} {score:.1f}/{max_score:.0f}")
+
+
 def demo_evaluator():
     """Demo the GTM & Acquisition evaluator with clear input/output examples."""
+    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+
     print("=" * 70)
     print("GTM & ACQUISITION AGENT - Evaluator Demo")
     print("=" * 70)
+    print(
+        f"\nMODE: {'MOCK (heuristic rules)' if mock_mode else 'REAL (using OpenAI API)'}"
+    )
 
-    print("""
+    print(
+        """
 WHAT THIS AGENT DOES:
   An SDR (Sales Development Rep) agent that writes personalized outreach
   emails to sales leads. Given info about a lead, it generates a message.
 
-HOW IT'S EVALUATED:
-  The evaluator scores each generated message on quality and compliance.
-  In production, scores are calibrated so the evaluator agrees with human
-  sales experts at least 70% of the time.
-
-MODE: Mock (using heuristic rules, no API calls needed)
-""")
+HOW IT'S EVALUATED:"""
+    )
+    if mock_mode:
+        print("  MOCK MODE: Using rule-based heuristics (fast, free, no API needed)")
+    else:
+        print("  REAL MODE: Using LLM-as-judge to score messages (requires API key)")
+    print()
 
     # Load and show dataset info
     dataset = load_dataset()
@@ -441,13 +719,15 @@ MODE: Mock (using heuristic rules, no API calls needed)
             print(f"  INPUT (lead info):")
             print(f"    Name:        {lead.get('name', 'N/A')}")
             print(f"    Title:       {lead.get('title', 'N/A')}")
-            print(f"    Company:     {lead.get('company', 'N/A')} ({lead.get('industry', 'N/A')})")
+            print(
+                f"    Company:     {lead.get('company', 'N/A')} ({lead.get('industry', 'N/A')})"
+            )
             print(f"    Pain Points: {', '.join(lead.get('pain_points', []))}")
             print(f"    Recent News: {lead.get('recent_news', 'N/A')}")
             print(f"\n  OUTPUT (expected message):")
             # Show first 150 chars of expected output
-            preview = output[:150].replace('\n', ' ')
-            print(f"    \"{preview}...\"")
+            preview = output[:150].replace("\n", " ")
+            print(f'    "{preview}..."')
 
     # Initialize evaluator
     evaluator = MessageQualityEvaluator()
@@ -455,7 +735,8 @@ MODE: Mock (using heuristic rules, no API calls needed)
     print("\n" + "=" * 70)
     print("HOW SCORING WORKS:")
     print("=" * 70)
-    print("""
+    print(
+        """
 The evaluator scores messages on these dimensions (1-5 scale each):
 
   - ICP Fit:          Does the message address the lead's industry/role/challenges?
@@ -467,7 +748,8 @@ Plus a compliance check (pass/fail):
   - No spam phrases like "ACT NOW", "LIMITED TIME", "GUARANTEED"
   - No excessive punctuation (!!!) or ALL CAPS
   - Appropriate message length (30-200 words)
-""")
+"""
+    )
 
     # Sample input for evaluation
     sample_input = {
@@ -508,44 +790,89 @@ Click here to learn more!!!"""
     print("EVALUATION EXAMPLES:")
     print("=" * 70)
 
+    # Example 1: Good message
     print("\n[GOOD MESSAGE] - Personalized, professional, compliant")
     print("-" * 70)
-    print(f"Message:\n  \"{good_message[:120]}...\"")
+    print("Message:")
+    for line in good_message.strip().split("\n"):
+        print(f"  {line}")
     good_result = evaluator.evaluate_message(good_message, sample_input)
     print(f"\nScores:")
-    print(f"  ICP Fit:           {good_result.icp_fit}/5")
-    print(f"  Personalization:   {good_result.personalization}/5")
-    print(f"  Value Proposition: {good_result.value_proposition}/5")
-    print(f"  Tone:              {good_result.tone_appropriateness}/5")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall Quality:   {good_result.overall_quality:.2f}/5")
-    print(f"  Compliance:        {'✓ PASSED' if good_result.compliance_passed else '✗ FAILED'}")
+    print_score_bar("ICP Fit", good_result.icp_fit)
+    print_score_bar("Personalization", good_result.personalization)
+    print_score_bar("Value Proposition", good_result.value_proposition)
+    print_score_bar("Tone", good_result.tone_appropriateness)
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL QUALITY", good_result.overall_quality)
+    print(
+        f"  Compliance:        {'✓ PASSED' if good_result.compliance_passed else '✗ FAILED'}"
+    )
 
+    # Example 2: Borderline message (high quality but compliance issue)
+    borderline_message = """Hi Sarah,
+
+Congratulations on TechCorp's Series B! I know scaling infrastructure while hiring is a challenge.
+
+Our platform has helped similar SaaS companies reduce deployment time by 60%. I'd love to offer you an exclusive discount to try it out.
+
+Quick call this week?
+
+Best,
+Alex"""
+
+    print("\n[BORDERLINE] - Good quality but compliance issue")
+    print("-" * 70)
+    print("Message:")
+    for line in borderline_message.strip().split("\n"):
+        print(f"  {line}")
+    borderline_result = evaluator.evaluate_message(borderline_message, sample_input)
+    print(f"\nScores:")
+    print_score_bar("ICP Fit", borderline_result.icp_fit)
+    print_score_bar("Personalization", borderline_result.personalization)
+    print_score_bar("Value Proposition", borderline_result.value_proposition)
+    print_score_bar("Tone", borderline_result.tone_appropriateness)
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL QUALITY", borderline_result.overall_quality)
+    print(
+        f"  Compliance:        {'✓ PASSED' if borderline_result.compliance_passed else '✗ FAILED'}"
+    )
+    if borderline_result.compliance_issues:
+        print(f"  Issue: {borderline_result.compliance_issues[0]}")
+
+    # Example 3: Bad message
     print("\n[BAD MESSAGE] - Spammy, generic, non-compliant")
     print("-" * 70)
-    print(f"Message:\n  \"{bad_message[:80]}...\"")
+    print("Message:")
+    for line in bad_message.strip().split("\n"):
+        print(f"  {line}")
     bad_result = evaluator.evaluate_message(bad_message, sample_input)
     print(f"\nScores:")
-    print(f"  ICP Fit:           {bad_result.icp_fit}/5")
-    print(f"  Personalization:   {bad_result.personalization}/5")
-    print(f"  Value Proposition: {bad_result.value_proposition}/5")
-    print(f"  Tone:              {bad_result.tone_appropriateness}/5")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall Quality:   {bad_result.overall_quality:.2f}/5")
-    print(f"  Compliance:        {'✓ PASSED' if bad_result.compliance_passed else '✗ FAILED'}")
+    print_score_bar("ICP Fit", bad_result.icp_fit)
+    print_score_bar("Personalization", bad_result.personalization)
+    print_score_bar("Value Proposition", bad_result.value_proposition)
+    print_score_bar("Tone", bad_result.tone_appropriateness)
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL QUALITY", bad_result.overall_quality)
+    print(
+        f"  Compliance:        {'✓ PASSED' if bad_result.compliance_passed else '✗ FAILED'}"
+    )
     if bad_result.compliance_issues:
-        print(f"\n  Why it failed compliance ({len(bad_result.compliance_issues)} issues):")
-        for issue in bad_result.compliance_issues[:5]:
+        print(f"\n  Why it failed ({len(bad_result.compliance_issues)} issues):")
+        for issue in bad_result.compliance_issues[:3]:
             print(f"    - {issue}")
-        if len(bad_result.compliance_issues) > 5:
-            print(f"    ... and {len(bad_result.compliance_issues) - 5} more")
+        if len(bad_result.compliance_issues) > 3:
+            print(f"    ... and {len(bad_result.compliance_issues) - 3} more")
+
+    # In real mode, run optimization
+    if not mock_mode:
+        run_optimization(num_configs=5, num_examples=10)
 
     print("\n" + "=" * 70)
-    print("NEXT STEPS:")
-    print("  To run with real LLM scoring (more accurate, costs money):")
-    print("    export OPENAI_API_KEY=<your-key>")
-    print("    unset TRAIGENT_MOCK_MODE")
-    print("    python use-cases/gtm-acquisition/agent/gtm_agent.py")
+    print("HOW TO RUN:")
+    print("  Mock mode (heuristics): python evaluator.py  (default)")
+    print(
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+    )
     print("=" * 70)
 
 

@@ -7,11 +7,75 @@ This evaluator scores workflow automation responses on:
 2. Escalation Accuracy - Precision/Recall of escalation decisions
 3. Execution Efficiency - Action economy (min steps / actual steps)
 
-Based on the Traigent Agent Optimization Guide specifications.
+Supports two modes:
+- MOCK MODE (default): Uses heuristic rules for fast, free evaluation
+- REAL MODE: Uses actual LLM calls for agent and LLM-as-judge evaluation
+
+Usage:
+  Mock mode: python evaluator.py  (default, uses heuristics)
+  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Any
+
+# ============================================================================
+# PROMPTS FOR REAL LLM MODE
+# ============================================================================
+
+# Prompt for the Operations agent to process tasks
+AGENT_PROMPT = """You are an operations automation agent processing workflow requests.
+
+TASK REQUEST:
+{task}
+
+CONTEXT:
+- Requester: {requester}
+- Department: {department}
+- Amount (if applicable): {amount}
+- Priority: {priority}
+
+Available actions:
+- validate_amount, validate_requester, verify_budget, check_policy
+- auto_approve, approve_with_conditions, grant_access
+- escalate_to_manager, escalate_to_finance, flag_for_review
+- notify_requester, notify_finance, send_confirmation
+- log_decision, create_ticket, update_records
+
+Decide:
+1. What sequence of actions to take
+2. Whether to escalate to a human (for unusual amounts, policy violations, etc.)
+
+Respond in EXACTLY this JSON format:
+{{"actions": ["action1", "action2", ...], "should_escalate": true/false, "reason": "brief explanation"}}
+"""
+
+# Prompt for LLM-as-judge to evaluate action sequences
+JUDGE_PROMPT = """You are evaluating an operations agent's decision.
+
+TASK: {task}
+CONTEXT: Requester={requester}, Amount={amount}, Priority={priority}
+
+AGENT'S RESPONSE:
+Actions: {predicted_actions}
+Escalated: {predicted_escalate}
+
+EXPECTED RESPONSE:
+Actions: {expected_actions}
+Should Escalate: {expected_escalate}
+
+Evaluate:
+1. ACTION_MATCH: How well do the actions match? (0.0-1.0)
+2. ESCALATION_CORRECT: Was the escalation decision correct? (0 or 1)
+3. ORDER_CORRECT: Are actions in logical order (validate before approve)? (0.0-1.0)
+
+Respond in EXACTLY this format:
+ACTION_MATCH: [0.0-1.0]
+ESCALATION_CORRECT: [0 or 1]
+ORDER_CORRECT: [0.0-1.0]
+"""
 
 
 @dataclass
@@ -73,6 +137,7 @@ class OperationsEvaluator:
         if isinstance(prediction, str):
             try:
                 import json
+
                 prediction = json.loads(prediction)
             except (json.JSONDecodeError, TypeError):
                 prediction = {"actions": [], "should_escalate": False}
@@ -91,18 +156,20 @@ class OperationsEvaluator:
         )
 
         # Evaluate step-level accuracy
-        step_accuracy = self._evaluate_step_level(
-            predicted_actions, expected_actions
-        )
+        step_accuracy = self._evaluate_step_level(predicted_actions, expected_actions)
 
         # Evaluate escalation decision
         escalation_correct = predicted_escalate == expected_escalate
 
         # Calculate action economy
         if predicted_actions and expected_actions:
-            action_economy = min(len(expected_actions) / max(len(predicted_actions), 1), 1.0)
+            action_economy = min(
+                len(expected_actions) / max(len(predicted_actions), 1), 1.0
+            )
         else:
-            action_economy = 1.0 if not predicted_actions and not expected_actions else 0.0
+            action_economy = (
+                1.0 if not predicted_actions and not expected_actions else 0.0
+            )
 
         # Calculate overall score
         overall = (
@@ -182,6 +249,7 @@ class OperationsEvaluator:
         Returns:
             Score between 0 and 1
         """
+
         def get_categories(actions: list[str]) -> set[str]:
             categories = set()
             for action in actions:
@@ -278,9 +346,46 @@ class OperationsEvaluator:
         return matches / len(expected_normalized)
 
 
+def is_mock_mode() -> bool:
+    """Check if running in mock mode."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+
+
+def process_task_with_llm(input_data: dict) -> dict:
+    """Process a task using LLM (real mode only)."""
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        prompt = AGENT_PROMPT.format(
+            task=input_data.get("task", "Unknown task"),
+            requester=input_data.get("requester", "Unknown"),
+            department=input_data.get("department", "Unknown"),
+            amount=input_data.get("amount", "N/A"),
+            priority=input_data.get("priority", "normal"),
+        )
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+
+        # Parse JSON response
+        content = response.choices[0].message.content
+        # Extract JSON from response
+        import re
+
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return {"actions": [], "should_escalate": False, "reason": "Parse error"}
+    except Exception as e:
+        return {"actions": [], "should_escalate": False, "reason": f"Error: {e}"}
+
+
 def load_dataset() -> list[dict]:
     """Load the tasks dataset."""
-    import json
     from pathlib import Path
 
     dataset_path = Path(__file__).parent.parent / "datasets" / "tasks_dataset.jsonl"
@@ -295,24 +400,168 @@ def load_dataset() -> list[dict]:
     return entries
 
 
+def run_optimization(num_configs: int = 5, num_examples: int = 10):
+    """Run optimization testing different prompt configurations."""
+    from openai import OpenAI
+
+    client = OpenAI()
+    dataset = load_dataset()[:num_examples]
+    evaluator = OperationsEvaluator()
+
+    configs = [
+        {
+            "name": "baseline",
+            "temperature": 0.3,
+            "instruction": "Process this task efficiently.",
+        },
+        {
+            "name": "cautious",
+            "temperature": 0.1,
+            "instruction": "Be conservative. When in doubt, escalate.",
+        },
+        {
+            "name": "autonomous",
+            "temperature": 0.5,
+            "instruction": "Handle as much as possible autonomously.",
+        },
+        {
+            "name": "detailed",
+            "temperature": 0.2,
+            "instruction": "Include all relevant validation steps.",
+        },
+        {
+            "name": "minimal",
+            "temperature": 0.4,
+            "instruction": "Use minimum necessary steps.",
+        },
+    ][:num_configs]
+
+    print("\n" + "=" * 70)
+    print("OPTIMIZATION RUN: Testing Different Agent Configurations")
+    print("=" * 70)
+    print(
+        f"\nConfigs: {num_configs}, Examples: {num_examples}, Total calls: {num_configs * num_examples}"
+    )
+
+    results = []
+    for config in configs:
+        print(f"\n--- Config: {config['name']} (temp={config['temperature']}) ---")
+        scores = []
+
+        for i, entry in enumerate(dataset):
+            input_data = entry.get("input", {})
+            expected_actions = entry.get("expected_actions", [])
+            should_escalate = entry.get("should_escalate", False)
+
+            prompt = f"""{config['instruction']}
+
+Task: {input_data.get('task', 'Unknown')}
+Amount: {input_data.get('amount', 'N/A')}
+Requester: {input_data.get('requester', 'Unknown')}
+
+Available actions: validate_amount, check_policy, auto_approve, escalate_to_manager, notify_requester
+
+Return JSON: {{"actions": ["action1", ...], "should_escalate": true/false}}"""
+
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=config["temperature"],
+                )
+                content = response.choices[0].message.content
+                import re
+
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                pred = (
+                    json.loads(json_match.group())
+                    if json_match
+                    else {"actions": [], "should_escalate": False}
+                )
+
+                result = evaluator(
+                    pred,
+                    None,
+                    {
+                        "expected_actions": expected_actions,
+                        "should_escalate": should_escalate,
+                    },
+                )
+                scores.append(result)
+                print(
+                    f"  [{i+1}/{num_examples}] action={result['action_accuracy']:.2f} esc={'✓' if result['escalation_accuracy']==1 else '✗'}"
+                )
+            except Exception as e:
+                print(f"  [{i+1}/{num_examples}] Error: {e}")
+                scores.append(
+                    {"action_accuracy": 0, "escalation_accuracy": 0, "overall": 0}
+                )
+
+        avg_action = sum(s["action_accuracy"] for s in scores) / len(scores)
+        avg_esc = sum(s["escalation_accuracy"] for s in scores) / len(scores)
+        results.append(
+            {
+                "config": config["name"],
+                "temp": config["temperature"],
+                "action_acc": avg_action,
+                "esc_acc": avg_esc,
+                "overall": (avg_action + avg_esc) / 2,
+            }
+        )
+
+    print("\n" + "=" * 70)
+    print("RESULTS TABLE")
+    print("=" * 70)
+    print(
+        f"\n{'Config':<12} {'Temp':<6} {'Action Acc':<12} {'Escalation':<12} {'Overall':<10}"
+    )
+    print("-" * 52)
+    for r in sorted(results, key=lambda x: x["overall"], reverse=True):
+        print(
+            f"{r['config']:<12} {r['temp']:<6.1f} {r['action_acc']:.3f}        {r['esc_acc']*100:>5.0f}%       {r['overall']:.3f}"
+        )
+
+    best = max(results, key=lambda x: x["overall"])
+    print("-" * 52)
+    print(f"🏆 BEST: {best['config']} (score={best['overall']:.3f})")
+    print("=" * 70)
+    return results
+
+
+def print_score_bar(label: str, score: float, max_score: float = 1.0, width: int = 20):
+    """Print a visual score bar."""
+    normalized = min(score / max_score, 1.0)
+    filled = int(normalized * width)
+    bar = "█" * filled + "░" * (width - filled)
+    pct = score * 100 if max_score == 1.0 else score
+    print(f"  {label:<20} {bar} {pct:.0f}%")
+
+
 def demo_evaluator():
     """Demo the Operations Agent evaluator with clear input/output examples."""
+    mock_mode = is_mock_mode()
+
     print("=" * 70)
     print("OPERATIONS AGENT - Evaluator Demo")
     print("=" * 70)
+    print(
+        f"\nMODE: {'MOCK (heuristic rules)' if mock_mode else 'REAL (using OpenAI API)'}"
+    )
 
-    print("""
+    print(
+        """
 WHAT THIS AGENT DOES:
   A workflow automation agent that processes operational requests (like
   expense approvals, access requests, etc.) and decides what actions to take.
   It either auto-processes the request or escalates to a human.
 
-HOW IT'S EVALUATED:
-  The evaluator checks if the agent chose the right sequence of actions
-  and made the correct escalation decision (escalate vs auto-process).
-
-MODE: Mock (deterministic comparison, no API calls needed)
-""")
+HOW IT'S EVALUATED:"""
+    )
+    if mock_mode:
+        print("  MOCK MODE: Using deterministic comparison (fast, free, no API needed)")
+    else:
+        print("  REAL MODE: Using LLM agent + evaluation (requires API key)")
+    print()
 
     # Load and show dataset info
     dataset = load_dataset()
@@ -328,13 +577,21 @@ MODE: Mock (deterministic comparison, no API calls needed)
         print("-" * 70)
         for i, entry in enumerate(dataset[:2]):
             input_data = entry.get("input", {})
-            task_desc = input_data.get("task", "N/A") if isinstance(input_data, dict) else str(input_data)
+            task_desc = (
+                input_data.get("task", "N/A")
+                if isinstance(input_data, dict)
+                else str(input_data)
+            )
             should_escalate = entry.get("should_escalate", False)
             expected_actions = entry.get("expected_actions", [])
 
             print(f"\n[Entry {i+1}]")
             print(f"  INPUT (task request):")
-            print(f"    \"{task_desc[:80]}...\"" if len(str(task_desc)) > 80 else f"    \"{task_desc}\"")
+            print(
+                f'    "{task_desc[:80]}..."'
+                if len(str(task_desc)) > 80
+                else f'    "{task_desc}"'
+            )
             print(f"\n  OUTPUT (expected response):")
             print(f"    Actions: {expected_actions}")
             print(f"    Escalate: {'Yes' if should_escalate else 'No'}")
@@ -344,7 +601,8 @@ MODE: Mock (deterministic comparison, no API calls needed)
     print("\n" + "=" * 70)
     print("HOW SCORING WORKS:")
     print("=" * 70)
-    print("""
+    print(
+        """
 The evaluator measures:
 
   - Action Accuracy:     Do the agent's actions match what was expected?
@@ -355,52 +613,157 @@ The evaluator measures:
 
   - Efficiency:          Did the agent use the minimum number of steps?
                          (Fewer steps = better, if still correct)
-""")
+"""
+    )
 
     print("=" * 70)
     print("EVALUATION EXAMPLES:")
     print("=" * 70)
 
-    # Test case 1: Exact match
+    # Test case 1: Perfect match
     print("\n[PERFECT MATCH] - Agent got it exactly right")
     print("-" * 70)
-    pred1 = {"actions": ["validate_amount", "check_budget", "auto_approve", "notify_finance"], "should_escalate": False}
-    exp1 = {"expected_actions": ["validate_amount", "check_budget", "auto_approve", "notify_finance"], "should_escalate": False}
-    result = evaluator(prediction=pred1, expected=None, input_data=exp1)
-    print(f"  Agent's actions:    {pred1['actions']}")
-    print(f"  Expected actions:   {exp1['expected_actions']}")
-    print(f"  Agent escalated:    No")
-    print(f"  Should escalate:    No")
-    print(f"\nScores:")
-    print(f"  Action Accuracy:     {result['action_accuracy']:.2f}")
-    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"  Efficiency:          {result['efficiency']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:             {result['overall']:.2f}")
+    print('Task: "Process expense report #12345 for $2,500 from Marketing"')
+    print("\nAgent Output:")
+    print("  Actions: [validate_amount, check_budget, auto_approve, notify_finance]")
+    print("  Escalate: No")
+    print("\nExpected:")
+    print("  Actions: [validate_amount, check_budget, auto_approve, notify_finance]")
+    print("  Escalate: No")
 
-    # Test case 2: Wrong escalation
-    print("\n[WRONG ESCALATION] - Agent should have escalated but didn't")
+    pred1 = {
+        "actions": [
+            "validate_amount",
+            "check_budget",
+            "auto_approve",
+            "notify_finance",
+        ],
+        "should_escalate": False,
+    }
+    exp1 = {
+        "expected_actions": [
+            "validate_amount",
+            "check_budget",
+            "auto_approve",
+            "notify_finance",
+        ],
+        "should_escalate": False,
+    }
+    result = evaluator(prediction=pred1, expected=None, input_data=exp1)
+    print("\nScores:")
+    print_score_bar("Action Accuracy", result["action_accuracy"])
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 2: Wrong order
+    print("\n[WRONG ORDER] - Right actions but wrong sequence")
     print("-" * 70)
-    pred3 = {"actions": ["validate_amount", "auto_approve", "notify_finance"], "should_escalate": False}
-    exp3 = {"expected_actions": ["validate_amount", "escalate_to_manager"], "should_escalate": True}
+    print('Task: "Process expense for server equipment"')
+    print("\nAgent Output:")
+    print("  Actions: [auto_approve, validate_amount, check_budget]  <- Wrong order!")
+    print("  Escalate: No")
+    print("\nExpected:")
+    print("  Actions: [validate_amount, check_budget, auto_approve]")
+    print("  Escalate: No")
+
+    pred2 = {
+        "actions": ["auto_approve", "validate_amount", "check_budget"],
+        "should_escalate": False,
+    }
+    exp2 = {
+        "expected_actions": ["validate_amount", "check_budget", "auto_approve"],
+        "should_escalate": False,
+    }
+    result = evaluator(prediction=pred2, expected=None, input_data=exp2)
+    print("\nScores:")
+    print_score_bar("Action Accuracy", result["action_accuracy"])
+    print(f"    ^ Same actions but wrong order penalized")
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 3: Missed escalation
+    print("\n[MISSED ESCALATION] - Should have escalated but didn't")
+    print("-" * 70)
+    print('Task: "Process $15,000 equipment purchase (over policy limit)"')
+    print("\nAgent Output:")
+    print("  Actions: [validate_amount, auto_approve, notify_finance]")
+    print("  Escalate: No  <- WRONG!")
+    print("\nExpected:")
+    print("  Actions: [validate_amount, flag_over_limit, escalate_to_manager]")
+    print("  Escalate: Yes")
+
+    pred3 = {
+        "actions": ["validate_amount", "auto_approve", "notify_finance"],
+        "should_escalate": False,
+    }
+    exp3 = {
+        "expected_actions": [
+            "validate_amount",
+            "flag_over_limit",
+            "escalate_to_manager",
+        ],
+        "should_escalate": True,
+    }
     result = evaluator(prediction=pred3, expected=None, input_data=exp3)
-    print(f"  Agent's actions:    {pred3['actions']}")
-    print(f"  Expected actions:   {exp3['expected_actions']}")
-    print(f"  Agent escalated:    No  ← WRONG!")
-    print(f"  Should escalate:    Yes")
-    print(f"\nScores:")
-    print(f"  Action Accuracy:     {result['action_accuracy']:.2f}")
-    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f} ← Failed!")
-    print(f"  Efficiency:          {result['efficiency']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:             {result['overall']:.2f}")
+    print("\nScores:")
+    print_score_bar("Action Accuracy", result["action_accuracy"])
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print(f"    ^ Critical failure! Over-limit request auto-approved!")
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 4: Extra unnecessary actions
+    print("\n[INEFFICIENT] - Correct but too many steps")
+    print("-" * 70)
+    print('Task: "Simple expense report for $50 lunch"')
+    print("\nAgent Output:")
+    print("  Actions: [validate_amount, check_budget, verify_identity,")
+    print("           check_policy_limit, auto_approve, notify_finance, log_action]")
+    print("  Escalate: No")
+    print("\nExpected:")
+    print("  Actions: [validate_amount, auto_approve, notify_finance]")
+    print("  Escalate: No")
+
+    pred4 = {
+        "actions": [
+            "validate_amount",
+            "check_budget",
+            "verify_identity",
+            "check_policy_limit",
+            "auto_approve",
+            "notify_finance",
+            "log_action",
+        ],
+        "should_escalate": False,
+    }
+    exp4 = {
+        "expected_actions": ["validate_amount", "auto_approve", "notify_finance"],
+        "should_escalate": False,
+    }
+    result = evaluator(prediction=pred4, expected=None, input_data=exp4)
+    print("\nScores:")
+    print_score_bar("Action Accuracy", result["action_accuracy"])
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"    ^ Simple task didn't need 7 steps!")
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # In real mode, run optimization
+    if not mock_mode:
+        run_optimization(num_configs=5, num_examples=10)
 
     print("\n" + "=" * 70)
-    print("NEXT STEPS:")
-    print("  To run with real LLM (more accurate, costs money):")
-    print("    export OPENAI_API_KEY=<your-key>")
-    print("    unset TRAIGENT_MOCK_MODE")
-    print("    python use-cases/operations/agent/operations_agent.py")
+    print("HOW TO RUN:")
+    print("  Mock mode (heuristics): python evaluator.py  (default)")
+    print(
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+    )
     print("=" * 70)
 
 

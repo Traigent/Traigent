@@ -7,14 +7,13 @@ This evaluator scores support responses on:
 2. Tone Quality - Empathy, clarity, professionalism
 3. Escalation Accuracy - Correct escalation decisions (precision, recall, F1)
 
-Based on the Traigent Agent Optimization Guide specifications.
+Supports two modes:
+- MOCK MODE (default): Uses heuristic rules for fast, free evaluation
+- REAL MODE: Uses actual LLM calls for agent and LLM-as-judge evaluation
 
-Calibration Notes:
-- CSAT Calibration: Where historical CSAT scores exist, regress LLM tone predictions
-  against actual scores. Adjust rubric until correlation > 0.7.
-- Tone LLM-as-judge should predict real user satisfaction
-- Escalation decisions: Balance false escalation rate vs missed escalation rate
-- Dataset should include customer emotional states: angry, confused, anxious, frustrated
+Usage:
+  Mock mode: python evaluator.py  (default, uses heuristics)
+  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
 import json
@@ -22,6 +21,49 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Any
+
+# ============================================================================
+# PROMPTS FOR REAL LLM MODE
+# ============================================================================
+
+# Prompt for the support agent to respond to customers
+AGENT_PROMPT = """You are a customer support agent for ShopEasy, an e-commerce company.
+
+CUSTOMER MESSAGE:
+{query}
+
+CUSTOMER CONTEXT:
+- Customer Tier: {customer_tier}
+- Sentiment: {sentiment}
+- Order Status: {order_status}
+
+Respond helpfully and professionally. If the customer is very upset or demanding a supervisor,
+you should escalate (set should_escalate=true).
+
+Respond in EXACTLY this JSON format:
+{{"response": "your response here", "should_escalate": true/false, "resolution_type": "refund|replacement|information|escalated"}}
+"""
+
+# Prompt for LLM-as-judge to evaluate support responses
+JUDGE_PROMPT = """You are evaluating a customer support response.
+
+CUSTOMER QUERY: {query}
+CUSTOMER SENTIMENT: {sentiment}
+
+SUPPORT RESPONSE: {response}
+
+Evaluate the response:
+1. RESOLUTION (1-5): Did it address the customer's actual problem?
+2. EMPATHY (1-5): Did it acknowledge customer feelings appropriately?
+3. CLARITY (1-5): Were next steps clearly explained?
+4. PROFESSIONALISM (1-5): Appropriate tone and language?
+
+Respond in EXACTLY this format:
+RESOLUTION: [1-5]
+EMPATHY: [1-5]
+CLARITY: [1-5]
+PROFESSIONALISM: [1-5]
+"""
 
 
 @dataclass
@@ -221,7 +263,7 @@ NEXT_STEPS_CLEAR: [yes/no]
         try:
             from langchain_openai import ChatOpenAI
 
-            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
             if mock_mode:
                 raise ImportError("Mock mode enabled")
 
@@ -235,7 +277,9 @@ NEXT_STEPS_CLEAR: [yes/no]
             )
 
             result = llm.invoke(prompt)
-            return self._parse_resolution_scores(result.content, response, expected_resolution)
+            return self._parse_resolution_scores(
+                result.content, response, expected_resolution
+            )
 
         except (ImportError, Exception):
             # Fallback to heuristic evaluation
@@ -253,16 +297,24 @@ NEXT_STEPS_CLEAR: [yes/no]
         accuracy = int(accuracy_match.group(1)) / 5.0 if accuracy_match else 0.6
 
         # Extract resolution match
-        resolution_match = re.search(r"RESOLUTION_MATCH:\s*(yes|no)", llm_response.lower())
-        resolution_score = 1.0 if resolution_match and resolution_match.group(1) == "yes" else 0.0
+        resolution_match = re.search(
+            r"RESOLUTION_MATCH:\s*(yes|no)", llm_response.lower()
+        )
+        resolution_score = (
+            1.0 if resolution_match and resolution_match.group(1) == "yes" else 0.0
+        )
 
         # Extract policy correct
         policy_match = re.search(r"POLICY_CORRECT:\s*(yes|no)", llm_response.lower())
         policy_score = 1.0 if policy_match and policy_match.group(1) == "yes" else 0.5
 
         # Extract next steps
-        next_steps_match = re.search(r"NEXT_STEPS_CLEAR:\s*(yes|no)", llm_response.lower())
-        next_steps_score = 1.0 if next_steps_match and next_steps_match.group(1) == "yes" else 0.5
+        next_steps_match = re.search(
+            r"NEXT_STEPS_CLEAR:\s*(yes|no)", llm_response.lower()
+        )
+        next_steps_score = (
+            1.0 if next_steps_match and next_steps_match.group(1) == "yes" else 0.5
+        )
 
         return {
             "accuracy": accuracy,
@@ -302,11 +354,16 @@ NEXT_STEPS_CLEAR: [yes/no]
             score += 0.2
 
         # Check for clear next steps
-        if any(w in response_lower for w in ["will be", "within", "please", "let me know"]):
+        if any(
+            w in response_lower for w in ["will be", "within", "please", "let me know"]
+        ):
             score += 0.1
 
         # Check for acknowledgment
-        if any(w in response_lower for w in ["understand", "apologize", "sorry", "thank you"]):
+        if any(
+            w in response_lower
+            for w in ["understand", "apologize", "sorry", "thank you"]
+        ):
             score += 0.1
 
         # Check resolution type match
@@ -324,7 +381,9 @@ NEXT_STEPS_CLEAR: [yes/no]
         """Detect the resolution type from response content."""
         response_lower = response.lower()
 
-        if any(w in response_lower for w in ["escalat", "supervisor", "senior", "manager"]):
+        if any(
+            w in response_lower for w in ["escalat", "supervisor", "senior", "manager"]
+        ):
             return "escalated"
         if any(w in response_lower for w in ["refund", "credited", "money back"]):
             return "refund"
@@ -358,7 +417,7 @@ NEXT_STEPS_CLEAR: [yes/no]
         try:
             from langchain_openai import ChatOpenAI
 
-            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
             if mock_mode:
                 raise ImportError("Mock mode enabled")
 
@@ -381,10 +440,12 @@ NEXT_STEPS_CLEAR: [yes/no]
 
         empathy = int(empathy_match.group(1)) / 5.0 if empathy_match else 0.6
         clarity = int(clarity_match.group(1)) / 5.0 if clarity_match else 0.6
-        professionalism = int(professionalism_match.group(1)) / 5.0 if professionalism_match else 0.6
+        professionalism = (
+            int(professionalism_match.group(1)) / 5.0 if professionalism_match else 0.6
+        )
 
         # Weighted average for overall tone
-        overall = (empathy * 0.35 + clarity * 0.35 + professionalism * 0.30)
+        overall = empathy * 0.35 + clarity * 0.35 + professionalism * 0.30
 
         return {
             "empathy": empathy,
@@ -399,8 +460,14 @@ NEXT_STEPS_CLEAR: [yes/no]
 
         # Empathy indicators
         empathy_words = [
-            "understand", "sorry", "apologize", "appreciate",
-            "frustrating", "inconvenience", "concern", "help"
+            "understand",
+            "sorry",
+            "apologize",
+            "appreciate",
+            "frustrating",
+            "inconvenience",
+            "concern",
+            "help",
         ]
         empathy_count = sum(1 for w in empathy_words if w in response_lower)
         empathy_score = min(1.0, 0.4 + empathy_count * 0.12)
@@ -416,12 +483,16 @@ NEXT_STEPS_CLEAR: [yes/no]
         has_closing = any(
             w in response_lower for w in ["anything else", "further", "additional"]
         )
-        clarity_score = 0.5 + (has_greeting * 0.15) + (has_next_steps * 0.2) + (has_closing * 0.15)
+        clarity_score = (
+            0.5 + (has_greeting * 0.15) + (has_next_steps * 0.2) + (has_closing * 0.15)
+        )
 
         # Professionalism indicators
         unprofessional_words = ["dude", "bro", "lol", "omg", "whatever", "idk"]
         professional_words = ["pleased", "assist", "ensure", "priority", "committed"]
-        unprofessional_count = sum(1 for w in unprofessional_words if w in response_lower)
+        unprofessional_count = sum(
+            1 for w in unprofessional_words if w in response_lower
+        )
         professional_count = sum(1 for w in professional_words if w in response_lower)
         professionalism_score = min(
             1.0, 0.6 + professional_count * 0.1 - unprofessional_count * 0.2
@@ -440,9 +511,176 @@ NEXT_STEPS_CLEAR: [yes/no]
         }
 
 
+def is_mock_mode() -> bool:
+    """Check if running in mock mode."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+
+
+def run_optimization(num_configs: int = 5, num_examples: int = 10):
+    """Run optimization testing different support agent configurations."""
+    from openai import OpenAI
+
+    client = OpenAI()
+    dataset = load_dataset()[:num_examples]
+    evaluator = SupportEvaluator()
+
+    configs = [
+        {
+            "name": "baseline",
+            "temperature": 0.3,
+            "instruction": "Be helpful and professional.",
+        },
+        {
+            "name": "empathetic",
+            "temperature": 0.4,
+            "instruction": "Lead with empathy. Acknowledge feelings first.",
+        },
+        {
+            "name": "efficient",
+            "temperature": 0.2,
+            "instruction": "Be concise and solution-focused.",
+        },
+        {
+            "name": "thorough",
+            "temperature": 0.3,
+            "instruction": "Be detailed. Explain all options thoroughly.",
+        },
+        {
+            "name": "cautious",
+            "temperature": 0.1,
+            "instruction": "Escalate if customer is upset or asks for manager.",
+        },
+    ][:num_configs]
+
+    print("\n" + "=" * 70)
+    print("OPTIMIZATION RUN: Testing Different Support Agent Configs")
+    print("=" * 70)
+    print(
+        f"\nConfigs: {num_configs}, Examples: {num_examples}, Total calls: {num_configs * num_examples}"
+    )
+
+    results = []
+    for config in configs:
+        print(f"\n--- Config: {config['name']} (temp={config['temperature']}) ---")
+        scores = []
+
+        for i, entry in enumerate(dataset):
+            input_data = entry.get("input", {})
+            query = input_data.get("query", "")
+            sentiment = input_data.get("sentiment", "neutral")
+            should_escalate = entry.get("should_escalate", False)
+            expected = entry.get("expected_resolution", "")
+
+            prompt = f"""{config['instruction']}
+
+Customer: {query}
+Sentiment: {sentiment}
+
+Respond helpfully. Return JSON: {{"response": "...", "should_escalate": true/false}}"""
+
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=config["temperature"],
+                )
+                content = response.choices[0].message.content
+                json_match = re.search(r"\{.*\}", content, re.DOTALL)
+                pred = (
+                    json.loads(json_match.group())
+                    if json_match
+                    else {"response": content, "should_escalate": False}
+                )
+
+                result = evaluator(
+                    pred,
+                    expected,
+                    {
+                        "should_escalate": should_escalate,
+                        "expected_resolution": expected,
+                        "sentiment": sentiment,
+                    },
+                )
+                scores.append(result)
+                print(
+                    f"  [{i+1}/{num_examples}] tone={result['tone_quality']:.2f} esc={'✓' if result['escalation_accuracy']==1 else '✗'}"
+                )
+            except Exception as e:
+                print(f"  [{i+1}/{num_examples}] Error: {e}")
+                scores.append(
+                    {"tone_quality": 0, "escalation_accuracy": 0, "overall": 0}
+                )
+
+        avg_tone = sum(s["tone_quality"] for s in scores) / len(scores)
+        avg_esc = sum(s["escalation_accuracy"] for s in scores) / len(scores)
+        results.append(
+            {
+                "config": config["name"],
+                "temp": config["temperature"],
+                "tone": avg_tone,
+                "escalation": avg_esc,
+                "overall": (avg_tone + avg_esc) / 2,
+            }
+        )
+
+    print("\n" + "=" * 70)
+    print("RESULTS TABLE")
+    print("=" * 70)
+    print(
+        f"\n{'Config':<12} {'Temp':<6} {'Tone':<10} {'Escalation':<12} {'Overall':<10}"
+    )
+    print("-" * 50)
+    for r in sorted(results, key=lambda x: x["overall"], reverse=True):
+        print(
+            f"{r['config']:<12} {r['temp']:<6.1f} {r['tone']:.3f}      {r['escalation']*100:>5.0f}%       {r['overall']:.3f}"
+        )
+
+    best = max(results, key=lambda x: x["overall"])
+    print("-" * 50)
+    print(f"🏆 BEST: {best['config']} (score={best['overall']:.3f})")
+    print("=" * 70)
+    return results
+
+
+def respond_with_llm(query: str, context: dict) -> dict:
+    """Generate a support response using LLM (real mode only)."""
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        prompt = AGENT_PROMPT.format(
+            query=query,
+            customer_tier=context.get("customer_tier", "standard"),
+            sentiment=context.get("sentiment", "neutral"),
+            order_status=context.get("order_status", "unknown"),
+        )
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+        )
+
+        # Parse JSON response
+        content = response.choices[0].message.content
+        json_match = re.search(r"\{.*\}", content, re.DOTALL)
+        if json_match:
+            return json.loads(json_match.group())
+        return {
+            "response": content,
+            "should_escalate": False,
+            "resolution_type": "resolved",
+        }
+    except Exception as e:
+        return {
+            "response": f"Error: {e}",
+            "should_escalate": False,
+            "resolution_type": "error",
+        }
+
+
 def load_dataset() -> list[dict]:
     """Load the support tickets dataset."""
-    import json
     from pathlib import Path
 
     dataset_path = Path(__file__).parent.parent / "datasets" / "support_tickets.jsonl"
@@ -457,26 +695,40 @@ def load_dataset() -> list[dict]:
     return entries
 
 
+def print_score_bar(label: str, score: float, max_score: float = 1.0, width: int = 20):
+    """Print a visual score bar."""
+    normalized = min(score / max_score, 1.0)
+    filled = int(normalized * width)
+    bar = "█" * filled + "░" * (width - filled)
+    pct = score * 100 if max_score == 1.0 else score
+    print(f"  {label:<20} {bar} {pct:.0f}%")
+
+
 def demo_evaluator():
     """Demo the Customer Support Agent evaluator with clear input/output examples."""
+    mock_mode = is_mock_mode()
+
     print("=" * 70)
     print("CUSTOMER SUPPORT AGENT - Evaluator Demo")
     print("=" * 70)
+    print(
+        f"\nMODE: {'MOCK (heuristic rules)' if mock_mode else 'REAL (using OpenAI API)'}"
+    )
 
-    print("""
+    print(
+        """
 WHAT THIS AGENT DOES:
   A customer support chatbot that responds to customer inquiries.
   Given a customer message and context (tier, order status, sentiment),
   it generates a helpful response and decides if escalation is needed.
 
-HOW IT'S EVALUATED:
-  The evaluator checks three things:
-  1. Did the response actually solve the customer's problem?
-  2. Was the tone appropriate (empathetic, clear, professional)?
-  3. Did the agent correctly decide when to escalate to a human?
-
-MODE: Mock (heuristic scoring, no API calls needed)
-""")
+HOW IT'S EVALUATED:"""
+    )
+    if mock_mode:
+        print("  MOCK MODE: Using heuristic rules (fast, free, no API needed)")
+    else:
+        print("  REAL MODE: Using LLM for response generation + evaluation")
+    print()
 
     # Load and show dataset info
     dataset = load_dataset()
@@ -499,12 +751,12 @@ MODE: Mock (heuristic scoring, no API calls needed)
 
             print(f"\n[Entry {i+1}]")
             print(f"  INPUT (customer message):")
-            print(f"    \"{query[:70]}...\"" if len(query) > 70 else f"    \"{query}\"")
+            print(f'    "{query[:70]}..."' if len(query) > 70 else f'    "{query}"')
             print(f"    Customer tier: {ctx.get('customer_tier', 'N/A')}")
             print(f"    Sentiment: {ctx.get('sentiment', 'N/A')}")
             print(f"\n  OUTPUT (expected response):")
-            preview = output[:100].replace('\n', ' ')
-            print(f"    \"{preview}...\"")
+            preview = output[:100].replace("\n", " ")
+            print(f'    "{preview}..."')
             print(f"    Should escalate: {'Yes' if escalate else 'No'}")
 
     evaluator = SupportEvaluator()
@@ -512,7 +764,8 @@ MODE: Mock (heuristic scoring, no API calls needed)
     print("\n" + "=" * 70)
     print("HOW SCORING WORKS:")
     print("=" * 70)
-    print("""
+    print(
+        """
 The evaluator measures:
 
   - Resolution Accuracy: Did the response address what the customer asked?
@@ -527,16 +780,15 @@ The evaluator measures:
   - Escalation Accuracy: When customer demanded a supervisor or was very
                          upset, did the agent correctly escalate?
                          (Missing an escalation = very bad for CSAT!)
-""")
+"""
+    )
 
     print("=" * 70)
     print("EVALUATION EXAMPLES:")
     print("=" * 70)
 
     # Test case 1: Good response
-    print("\n[GREAT RESPONSE] - Empathetic, solves the problem")
-    print("-" * 70)
-    good_response = """Thank you for reaching out. I sincerely apologize for the inconvenience with your damaged laptop.
+    good_response = """I sincerely apologize for the inconvenience with your damaged laptop.
 
 I completely understand how frustrating this must be. As a Gold member, your satisfaction is our priority.
 
@@ -544,63 +796,122 @@ I'd be happy to process a full refund immediately - credited within 5-7 business
 
 Please let me know which works best. Is there anything else I can help with?"""
 
+    print("\n[GREAT RESPONSE] - Empathetic, solves the problem")
+    print("-" * 70)
+    print('Customer: "I received a damaged laptop and want a refund"')
+    print("\nAgent Response:")
+    for line in good_response.strip().split("\n"):
+        print(f"  {line}")
+
     result = evaluator(
-        prediction={"response": good_response, "should_escalate": False, "resolution_type": "refund"},
+        prediction={"response": good_response, "should_escalate": False},
         expected={"should_escalate": False, "resolution_type": "refund"},
-        input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
+        input_data={
+            "query": "I received a damaged laptop and want a refund",
+            "customer_context": {"customer_tier": "gold", "sentiment": "negative"},
+        },
     )
-    print(f"  Customer: \"I received a damaged laptop and want a refund\"")
-    print(f"  Response: Apologizes, offers refund OR replacement, asks preference")
-    print(f"\nScores:")
-    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f} (addressed the refund request)")
-    print(f"  Tone Quality:        {result['tone_quality']:.2f}")
-    print(f"    - Empathy:         {result['empathy_score']:.2f}")
-    print(f"    - Clarity:         {result['clarity_score']:.2f}")
-    print(f"    - Professionalism: {result['professionalism_score']:.2f}")
-    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:             {result['overall']:.2f}")
+    print("\nScores:")
+    print_score_bar("Resolution", result["resolution_accuracy"])
+    print_score_bar("Tone Quality", result["tone_quality"])
+    print(f"    Empathy:      {result['empathy_score']:.0%}")
+    print(f"    Clarity:      {result['clarity_score']:.0%}")
+    print(f"    Professional: {result['professionalism_score']:.0%}")
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
 
     # Test case 2: Poor response
+    bad_response = "Ok, we'll look into it. Check back later."
+
     print("\n[BAD RESPONSE] - Dismissive, doesn't help")
     print("-" * 70)
-    result = evaluator(
-        prediction={"response": "Ok, we'll look into it. Check back later.", "should_escalate": False},
-        expected={"should_escalate": False, "resolution_type": "refund"},
-        input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
-    )
-    print(f"  Customer: \"I received a damaged laptop and want a refund\"")
-    print(f"  Response: \"Ok, we'll look into it. Check back later.\"")
-    print(f"\nScores:")
-    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f} ← Didn't address refund!")
-    print(f"  Tone Quality:        {result['tone_quality']:.2f} ← Cold and dismissive!")
-    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:             {result['overall']:.2f}")
+    print('Customer: "I received a damaged laptop and want a refund"')
+    print(f'\nAgent Response:\n  "{bad_response}"')
 
-    # Test case 3: Wrong escalation
+    result = evaluator(
+        prediction={"response": bad_response, "should_escalate": False},
+        expected={"should_escalate": False, "resolution_type": "refund"},
+        input_data={
+            "query": "I received a damaged laptop and want a refund",
+            "customer_context": {"customer_tier": "gold", "sentiment": "negative"},
+        },
+    )
+    print("\nScores:")
+    print_score_bar("Resolution", result["resolution_accuracy"])
+    print(f"    ^ Didn't address the refund request!")
+    print_score_bar("Tone Quality", result["tone_quality"])
+    print(f"    ^ Cold, no empathy, no clear next steps")
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 3: Missed escalation
     print("\n[MISSED ESCALATION] - Should have transferred to supervisor")
     print("-" * 70)
-    result = evaluator(
-        prediction={"response": "I understand. Our standard procedure will resolve this within 24 hours.", "should_escalate": False},
-        expected={"should_escalate": True},
-        input_data={"query": "This is unacceptable! I want to speak to your supervisor!", "customer_context": {"customer_tier": "platinum", "sentiment": "very_negative"}},
+    print('Customer: "This is unacceptable! I want to speak to your supervisor!"')
+    print(
+        '\nAgent Response:\n  "Our standard procedure will resolve this within 24 hours."'
     )
-    print(f"  Customer: \"This is unacceptable! I want to speak to your supervisor!\"")
-    print(f"  Response: \"Our standard procedure will resolve this...\" (didn't escalate)")
-    print(f"\nScores:")
-    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"  Tone Quality:        {result['tone_quality']:.2f}")
-    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f} ← Should have escalated!")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:             {result['overall']:.2f}")
+
+    result = evaluator(
+        prediction={
+            "response": "I understand. Our standard procedure will resolve this within 24 hours.",
+            "should_escalate": False,
+        },
+        expected={"should_escalate": True},
+        input_data={
+            "query": "This is unacceptable! I want to speak to your supervisor!",
+            "customer_context": {
+                "customer_tier": "platinum",
+                "sentiment": "very_negative",
+            },
+        },
+    )
+    print("\nScores:")
+    print_score_bar("Resolution", result["resolution_accuracy"])
+    print_score_bar("Tone Quality", result["tone_quality"])
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print(f"    ^ Customer asked for supervisor - must escalate!")
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 4: False escalation (new example)
+    print("\n[FALSE ESCALATION] - Escalated when not needed")
+    print("-" * 70)
+    print('Customer: "Can you tell me my order status?"')
+    print('\nAgent Response:\n  "Let me transfer you to a supervisor for that."')
+
+    result = evaluator(
+        prediction={
+            "response": "Let me transfer you to a supervisor for that.",
+            "should_escalate": True,
+        },
+        expected={"should_escalate": False},
+        input_data={
+            "query": "Can you tell me my order status?",
+            "customer_context": {"customer_tier": "standard", "sentiment": "neutral"},
+        },
+    )
+    print("\nScores:")
+    print_score_bar("Resolution", result["resolution_accuracy"])
+    print(f"    ^ Didn't answer the simple question!")
+    print_score_bar("Tone Quality", result["tone_quality"])
+    print_score_bar("Escalation", result["escalation_accuracy"])
+    print(f"    ^ Simple query - no escalation needed!")
+    print(f"  {'─' * 42}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # In real mode, run optimization
+    if not mock_mode:
+        run_optimization(num_configs=5, num_examples=10)
 
     print("\n" + "=" * 70)
-    print("NEXT STEPS:")
-    print("  To run with real LLM responses (costs money):")
-    print("    export OPENAI_API_KEY=<your-key>")
-    print("    unset TRAIGENT_MOCK_MODE")
-    print("    python use-cases/customer-support/agent/support_agent.py")
+    print("HOW TO RUN:")
+    print("  Mock mode (heuristics): python evaluator.py  (default)")
+    print(
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+    )
     print("=" * 70)
 
 
