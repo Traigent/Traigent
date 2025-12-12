@@ -91,7 +91,9 @@ class MetricsComputer:
         # Collect successful outputs and corresponding expected outputs
         successful_pairs = [
             (result.output, expected)
-            for result, expected in zip(invocation_results, expected_outputs)
+            for result, expected in zip(
+                invocation_results, expected_outputs, strict=False
+            )
             if result.is_successful and expected is not None
         ]
 
@@ -213,7 +215,9 @@ class MetricsComputer:
         # Only compute for successful invocations with expected outputs
         valid_expected = [
             expected
-            for result, expected in zip(invocation_results, expected_outputs)
+            for result, expected in zip(
+                invocation_results, expected_outputs, strict=False
+            )
             if result.is_successful and expected is not None
         ]
 
@@ -221,7 +225,9 @@ class MetricsComputer:
             # Align the arrays
             successful_outputs = [
                 r.output
-                for r, expected in zip(invocation_results, expected_outputs)
+                for r, expected in zip(
+                    invocation_results, expected_outputs, strict=False
+                )
                 if r.is_successful and expected is not None
             ]
 

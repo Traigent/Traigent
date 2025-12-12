@@ -4,7 +4,7 @@ Fast fixes for the most common issues. Start here, then dive deeper if needed.
 
 ## One-minute fixes
 - Missing API keys: set `TRAIGENT_MOCK_MODE=true`.
-- Import errors: run `pip install -e .` from repo root.
+- Import errors: run `pip install -e ".[examples]"` from repo root.
 - High cost or latency: lower `max_trials` and pick cheaper models.
 - Slow runs: shrink the configuration space; enable caching; reduce concurrency.
 - Empty/poor results: verify dataset paths and that objectives match your goal.
@@ -12,7 +12,7 @@ Fast fixes for the most common issues. Start here, then dive deeper if needed.
 ## Setup and keys
 ```bash
 # Install
-pip install -e .
+pip install -e ".[examples]"
 
 # Mock mode (no keys)
 export TRAIGENT_MOCK_MODE=true
@@ -39,7 +39,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."
 - Reproduce issues: run a single trial with a tiny dataset to isolate bad configs.
 
 ## Integration hiccups
-- LangChain/HF: install extras (`pip install traigent[langchain]` or `[huggingface]`) and keep versions aligned.
+- LangChain/OpenAI/Anthropic: install integrations via `pip install -e ".[integrations]"` (or include with `.[examples]`/`.[all]`).
 - Network: increase `request_timeout`, set proxies if required.
 
 ## Prevention checklist

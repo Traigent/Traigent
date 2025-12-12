@@ -85,10 +85,10 @@ def build_backend_metadata(
     mode_enum = traigent_config.execution_mode_enum
 
     summary_stats_available = (
-        hasattr(trial_result, "summary_stats") and trial_result.summary_stats
+        hasattr(trial_result, "summary_stats") and trial_result.summary_stats  # type: ignore[attr-defined]
     )
     if summary_stats_available and mode_enum is not ExecutionMode.CLOUD:
-        enhanced_summary_stats = trial_result.summary_stats.copy()
+        enhanced_summary_stats = trial_result.summary_stats.copy()  # type: ignore[attr-defined]
         if "metadata" not in enhanced_summary_stats:
             enhanced_summary_stats["metadata"] = {}
         enhanced_summary_stats["metadata"]["aggregation_level"] = "trial"

@@ -41,6 +41,7 @@ class RefactoringValidator:
             from traigent.config import TraigentConfig, get_provider
 
             provider = get_provider("context")
+            # Use the unified get_config method on ConfigurationProvider
             provider.get_config()
 
             OptimizationOrchestrator(

@@ -96,7 +96,7 @@ class AgentInfo:
     @property
     def models(self) -> list[str]:
         """Extract model names from configuration space."""
-        models = []
+        models: list[str] = []
         for key in ["model", "models", "llm_model", "model_name"]:
             if key in self.configuration_space:
                 value = self.configuration_space[key]
@@ -221,8 +221,8 @@ class AgentValidator:
         Returns:
             Tuple of (errors, warnings)
         """
-        errors = []
-        warnings = []
+        errors: list[ValidationIssue] = []
+        warnings: list[ValidationIssue] = []
 
         cost_constraints = self.config.constraints.cost
         estimated_cost = self._estimate_cost_per_query(agent)

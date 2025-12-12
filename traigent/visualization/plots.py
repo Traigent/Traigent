@@ -166,7 +166,7 @@ class PlotGenerator:
         plot_lines = [""] * height
 
         for i, (_trial_num, score, best_score) in enumerate(
-            zip(trial_numbers, scores, best_scores)
+            zip(trial_numbers, scores, best_scores, strict=False)
         ):
             # Calculate positions
             x_pos = (
@@ -310,9 +310,11 @@ class PlotGenerator:
         if len(pareto_x) > 1:
             reverse_sort = orientations.get(obj1, True)
             sorted_pareto = sorted(
-                zip(pareto_x, pareto_y), key=lambda p: p[0], reverse=reverse_sort
+                zip(pareto_x, pareto_y, strict=False),
+                key=lambda p: p[0],
+                reverse=reverse_sort,
             )
-            sorted_x, sorted_y = zip(*sorted_pareto)
+            sorted_x, sorted_y = zip(*sorted_pareto, strict=False)
             ax.plot(sorted_x, sorted_y, "r--", alpha=0.7)
 
         label1 = self._format_objective_label(obj1, orientations.get(obj1, True))
@@ -363,7 +365,7 @@ class PlotGenerator:
         plot_grid = [[" " for _ in range(width)] for _ in range(height)]
 
         # Plot all points
-        for x, y in zip(all_x, all_y):
+        for x, y in zip(all_x, all_y, strict=False):
             plot_x = int(((x - min_x) / range_x) * (width - 1))
             plot_y = int(((y - min_y) / range_y) * (height - 1))
             plot_y = height - 1 - plot_y  # Flip Y axis
@@ -372,7 +374,7 @@ class PlotGenerator:
                 plot_grid[plot_y][plot_x] = "·"
 
         # Plot Pareto points
-        for x, y in zip(pareto_x, pareto_y):
+        for x, y in zip(pareto_x, pareto_y, strict=False):
             plot_x = int(((x - min_x) / range_x) * (width - 1))
             plot_y = int(((y - min_y) / range_y) * (height - 1))
             plot_y = height - 1 - plot_y  # Flip Y axis
@@ -476,15 +478,17 @@ class PlotGenerator:
         fig, ax = self.plt.subplots(figsize=(10, 6))
 
         # Sort by importance
-        sorted_data = sorted(zip(params, scores), key=lambda x: x[1], reverse=True)
-        sorted_params, sorted_scores = zip(*sorted_data)
+        sorted_data = sorted(
+            zip(params, scores, strict=False), key=lambda x: x[1], reverse=True
+        )
+        sorted_params, sorted_scores = zip(*sorted_data, strict=False)
 
         # Create horizontal bar plot
         y_pos = range(len(sorted_params))
         bars = ax.barh(y_pos, sorted_scores, color="skyblue", edgecolor="navy")
 
         # Add value labels on bars
-        for _i, (bar, score) in enumerate(zip(bars, sorted_scores)):
+        for _i, (bar, score) in enumerate(zip(bars, sorted_scores, strict=False)):
             ax.text(
                 bar.get_width() + 0.01,
                 bar.get_y() + bar.get_height() / 2,
@@ -512,7 +516,9 @@ class PlotGenerator:
             return "No data to plot"
 
         # Sort by importance
-        sorted_data = sorted(zip(params, scores), key=lambda x: x[1], reverse=True)
+        sorted_data = sorted(
+            zip(params, scores, strict=False), key=lambda x: x[1], reverse=True
+        )
 
         lines = ["Parameter Importance Analysis"]
         lines.append("=" * 50)
@@ -556,7 +562,7 @@ class PlotGenerator:
         lines.append("")
 
         # Basic information
-        lines.append(f"Function: {result.function_name}")
+        lines.append(f"Function: {getattr(result, 'function_name', 'unknown')}")
         lines.append(f"Algorithm: {result.algorithm}")
         lines.append(f"Objectives: {', '.join(result.objectives)}")
         lines.append(f"Duration: {result.duration:.1f}s")
@@ -586,7 +592,8 @@ class PlotGenerator:
         # Configuration space summary
         lines.append("⚙️ Configuration Space")
         lines.append("-" * 30)
-        for param, values in result.configuration_space.items():
+        config_space = getattr(result, "configuration_space", {})
+        for param, values in config_space.items():
             if isinstance(values, list):
                 lines.append(f"{param}: {len(values)} discrete values")
             elif isinstance(values, tuple):

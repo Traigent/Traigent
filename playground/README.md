@@ -8,7 +8,7 @@ This directory contains the TraiGent Playground - a comprehensive Streamlit appl
 # From the TraigentSDK root directory
 python -m venv .venv
 source .venv/bin/activate
-pip install -e .[playground]  # or: pip install -r playground/requirements_streamlit.txt
+pip install -e ".[playground]"  # or: pip install -r playground/requirements_streamlit.txt
 .venv/bin/streamlit run playground/traigent_control_center.py
 ```
 
@@ -40,7 +40,7 @@ playground/
 
 ### Optimization Execution
 
-- Run optimizations with various strategies (grid, random, adaptive)
+- Run optimizations with various strategies (grid, random, adaptive) in local (`edge_analytics`) mode
 - Real-time progress tracking and visualization
 - Cost tracking and budget management
 - Multi-objective optimization support

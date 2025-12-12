@@ -647,12 +647,12 @@ class BackendSessionManager:
         )
 
         if hasattr(self._backend_client, "finalize_session_sync"):
-            result: dict[str, Any] | None = self._backend_client.finalize_session_sync(
+            result: dict[str, Any] | None = self._backend_client.finalize_session_sync(  # type: ignore[assignment]
                 session_id, final_status == "completed"
             )
             return result
 
-        result = self._backend_client.finalize_session(
+        result = self._backend_client.finalize_session(  # type: ignore[assignment]
             session_id, final_status == "completed"
         )
         return result

@@ -9,14 +9,14 @@ from contextvars import ContextVar, Token
 from types import TracebackType
 from typing import Any, Literal
 
-logger = logging.getLogger(__name__)
-
 from traigent.config.types import TraigentConfig
 
+logger = logging.getLogger(__name__)
+
 # Global context variable for configuration
-# Default to empty TraigentConfig for thread safety (avoids LookupError in new threads)
-config_context: ContextVar[TraigentConfig | dict[str, Any]] = ContextVar(
-    "traigent_config", default=TraigentConfig()
+# Default to None for thread safety; consumers should handle None case
+config_context: ContextVar[TraigentConfig | dict[str, Any] | None] = ContextVar(
+    "traigent_config", default=None
 )
 
 # Track the configuration currently applied to a function invocation (outside trials)
@@ -46,7 +46,11 @@ def get_config() -> TraigentConfig | dict[str, Any]:
         {'model': 'gpt-4', 'temperature': 0.7}
     """
     try:
-        return config_context.get()
+        config = config_context.get()
+        # If context is None (default), return new TraigentConfig
+        if config is None:
+            return TraigentConfig()
+        return config
     except LookupError:
         # If context is not set, return default TraigentConfig
         return TraigentConfig()
@@ -88,7 +92,7 @@ def set_config_space(
 
 def set_config(
     config: TraigentConfig | dict[str, Any],
-) -> Token[TraigentConfig | dict[str, Any]]:
+) -> Token[TraigentConfig | dict[str, Any] | None]:
     """Set configuration in context.
 
     Args:
@@ -158,7 +162,7 @@ class ConfigurationContext:
             config: Configuration to use in context
         """
         self.config = config
-        self._token: Token[TraigentConfig | dict[str, Any]] | None = None
+        self._token: Token[TraigentConfig | dict[str, Any] | None] | None = None
         self._applied_token: Token[TraigentConfig | dict[str, Any] | None] | None = None
 
     def __enter__(self) -> TraigentConfig | dict[str, Any]:
@@ -325,11 +329,11 @@ class ContextRestorer:
             self._tokens.append((trial_context, token))
 
         if self.snapshot.config is not None:
-            token = config_context.set(self.snapshot.config)
+            token = config_context.set(self.snapshot.config)  # type: ignore[assignment]
             self._tokens.append((config_context, token))
 
         if self.snapshot.applied_config is not None:
-            token = applied_config_context.set(self.snapshot.applied_config)
+            token = applied_config_context.set(self.snapshot.applied_config)  # type: ignore[assignment]
             self._tokens.append((applied_config_context, token))
 
         if self.snapshot.config_space is not None:

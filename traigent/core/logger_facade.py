@@ -37,9 +37,11 @@ class LoggerFacade:
 
         try:
             # `OptimizationLogger` is accessed from module scope so tests can patch it.
+            # Session ID defaults to a placeholder for edge_analytics mode
+            effective_session_id = session_id or "local-session"
             self._logger = OptimizationLogger(
                 experiment_name=experiment_name,
-                session_id=session_id,
+                session_id=effective_session_id,
                 execution_mode=execution_mode,
                 **logger_kwargs,
             )

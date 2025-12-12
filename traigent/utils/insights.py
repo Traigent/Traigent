@@ -324,7 +324,7 @@ def _calculate_parameter_impact(values: list[Any], scores: list[float]) -> float
     # For categorical parameters, use variance between groups
     if isinstance(values[0], str):
         value_groups: dict[str, list[float]] = {}
-        for val, score in zip(values, scores):
+        for val, score in zip(values, scores, strict=False):
             if val not in value_groups:
                 value_groups[val] = []
             value_groups[val].append(score)
@@ -357,7 +357,7 @@ def _simple_correlation(x: list[float], y: list[float]) -> float:
     mean_x = statistics.mean(x)
     mean_y = statistics.mean(y)
 
-    numerator = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+    numerator = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y, strict=False))
 
     sum_sq_x = sum((xi - mean_x) ** 2 for xi in x)
     sum_sq_y = sum((yi - mean_y) ** 2 for yi in y)
@@ -381,7 +381,7 @@ def _analyze_value_distribution(
 
     # Group scores by value
     value_performance: dict[Any, list[float]] = {}
-    for val, score in zip(values, scores):
+    for val, score in zip(values, scores, strict=False):
         if val not in value_performance:
             value_performance[val] = []
         value_performance[val].append(score)

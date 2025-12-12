@@ -95,7 +95,7 @@ class DiverseSampling(BaseSubsetSelector):
         """
         self.random_seed = random_seed
 
-    async def select_subset(
+    async def select_subset(  # type: ignore[override]
         self, dataset: Dataset, target_size: int, use_clustering: bool = True
     ) -> SubsetSelectionResult:
         """Select diverse examples using clustering or similarity-based sampling.
@@ -310,7 +310,7 @@ class RepresentativeSampling(BaseSubsetSelector):
         self.random_seed = random_seed
         random.seed(random_seed)
 
-    async def select_subset(
+    async def select_subset(  # type: ignore[override]
         self, dataset: Dataset, target_size: int, balance_outputs: bool = True
     ) -> SubsetSelectionResult:
         """Select representative examples maintaining output distribution.
@@ -412,7 +412,7 @@ class HighConfidenceSampling(BaseSubsetSelector):
         """Initialize high confidence sampling selector."""
         self.random_seed = random_seed
 
-    async def select_subset(
+    async def select_subset(  # type: ignore[override]
         self, dataset: Dataset, target_size: int, prioritize_difficult: bool = True
     ) -> SubsetSelectionResult:
         """Select high-confidence examples for reliable optimization.
@@ -454,7 +454,7 @@ class HighConfidenceSampling(BaseSubsetSelector):
 
         # Sort by score (high to low if prioritizing difficult)
         sorted_examples = sorted(
-            zip(dataset.examples, example_scores),
+            zip(dataset.examples, example_scores, strict=False),
             key=lambda x: x[1],
             reverse=prioritize_difficult,
         )

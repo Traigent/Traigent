@@ -106,8 +106,8 @@ class OptimizedFunctionConfig:
 
         # Validate configuration
         validation = self.validate()
-        if not validation.is_valid:
-            logger.warning(f"Configuration validation issues: {validation.errors}")
+        if not validation["is_valid"]:
+            logger.warning(f"Configuration validation issues: {validation['errors']}")
 
     @classmethod
     def from_legacy_params(cls, **kwargs: Any) -> OptimizedFunctionConfig:
