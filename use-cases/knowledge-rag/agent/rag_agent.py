@@ -25,8 +25,14 @@ sys.path.insert(0, str(project_root))
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
-# Import evaluator
-from use_cases.knowledge_rag.eval.evaluator import RAGEvaluator
+# Import evaluator from sibling directory
+import importlib.util
+
+_evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
+_spec = importlib.util.spec_from_file_location("rag_evaluator", _evaluator_path)
+_evaluator_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_evaluator_module)
+RAGEvaluator = _evaluator_module.RAGEvaluator
 
 
 def load_knowledge_base() -> list[dict]:
