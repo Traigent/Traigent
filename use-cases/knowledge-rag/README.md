@@ -59,7 +59,7 @@ The knowledge base (`datasets/knowledge_base/cloudstack_docs.json`) contains ~40
 
 ## Dataset
 
-The evaluation dataset (`datasets/qa_dataset.jsonl`) contains 75+ questions:
+The evaluation dataset (`datasets/qa_dataset.jsonl`) contains 203 questions:
 - Answerable questions with gold-standard answers and source references
 - Unanswerable questions to test abstention behavior
 
@@ -118,7 +118,7 @@ knowledge-rag/
 ├── datasets/
 │   ├── knowledge_base/
 │   │   └── cloudstack_docs.json        # 40+ doc chunks
-│   └── qa_dataset.jsonl                # 75+ Q&A pairs
+│   └── qa_dataset.jsonl                # 203 Q&A pairs
 ├── eval/
 │   └── evaluator.py                    # RAG evaluator
 └── README.md

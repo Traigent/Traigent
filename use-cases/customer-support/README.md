@@ -47,7 +47,7 @@ python use-cases/customer-support/agent/support_agent.py
 
 ## Dataset
 
-The evaluation dataset (`datasets/support_tickets.jsonl`) contains 50+ support scenarios including:
+The evaluation dataset (`datasets/support_tickets.jsonl`) contains 309 support scenarios including:
 
 - Refund requests (damaged items, wrong items, changed mind)
 - Order tracking inquiries
@@ -121,7 +121,7 @@ customer-support/
 ├── agent/
 │   └── support_agent.py          # Customer support agent
 ├── datasets/
-│   └── support_tickets.jsonl     # 50+ support scenarios
+│   └── support_tickets.jsonl     # 309 support scenarios
 ├── eval/
 │   └── evaluator.py              # Resolution + tone + escalation evaluator
 └── README.md
