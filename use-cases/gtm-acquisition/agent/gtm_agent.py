@@ -25,8 +25,14 @@ sys.path.insert(0, str(project_root))
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
-# LLM-as-judge evaluator for message quality
-from use_cases.gtm_acquisition.eval.evaluator import MessageQualityEvaluator
+# Import evaluator from sibling directory
+import importlib.util
+
+_evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
+_spec = importlib.util.spec_from_file_location("gtm_evaluator", _evaluator_path)
+_evaluator_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_evaluator_module)
+MessageQualityEvaluator = _evaluator_module.MessageQualityEvaluator
 
 
 def format_lead_context(lead: dict[str, Any]) -> str:
