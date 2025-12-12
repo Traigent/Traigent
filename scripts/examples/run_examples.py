@@ -153,6 +153,7 @@ class ExampleRunner:
             print(f"{status} {example.name} ({duration_str})")
 
             if not result["success"] and self.verbose:
+                print(f"   Return code: {result.get('return_code', 'unknown')}")
                 if result["error"]:
                     print(f"   Error: {result['error'][:200]}...")
                 if result["output"]:
