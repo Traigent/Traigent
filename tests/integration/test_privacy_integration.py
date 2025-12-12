@@ -4,7 +4,7 @@ These tests verify the complete flow between the interactive optimizer
 and remote service, ensuring data privacy is maintained at all levels.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -127,8 +127,8 @@ class TestPrivacyIntegration:
 
         # Mock customer support function
         async def handle_customer_support(
-            config: Dict[str, Any], subset_indices: List[int]
-        ) -> Dict[str, float]:
+            config: dict[str, Any], subset_indices: list[int]
+        ) -> dict[str, float]:
             """Simulate handling customer support with privacy."""
             # Only access local data
             [privacy_dataset.examples[i] for i in subset_indices]

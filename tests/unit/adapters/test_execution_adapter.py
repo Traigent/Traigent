@@ -1,7 +1,7 @@
 """Unit tests for LocalExecutionAdapter (TDD: expose current issues)."""
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -16,7 +16,7 @@ class _AgentBuilder:
     def __init__(self, agent: Any):
         self._agent = agent
 
-    def build_agent(self, spec: Dict[str, Any]):
+    def build_agent(self, spec: dict[str, Any]):
         # In tests we just return a prepared agent regardless of spec
         return self._agent
 
@@ -39,7 +39,7 @@ class _HybridAgentBuilder(_AgentBuilder):
         super().__init__(agent)
         self._call_log = call_log
 
-    def build_platform_agent(self, spec: Dict[str, Any], platform_client: Any):
+    def build_platform_agent(self, spec: dict[str, Any], platform_client: Any):
         self._call_log.append(
             ("build_platform_agent", spec.get("platform"), platform_client)
         )

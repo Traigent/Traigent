@@ -1,7 +1,7 @@
 """End-to-end tests for Model 1: Interactive Optimization (Client-side execution)."""
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -422,7 +422,7 @@ class TestInteractiveOptimizationE2E:
         # Create separate mock clients for each session
         sessions_data = []
 
-        async def run_optimization(session_id: str, config_space: Dict[str, Any]):
+        async def run_optimization(session_id: str, config_space: dict[str, Any]):
             # Create independent mock client
             mock_client = AsyncMock()
             mock_client._trial_count = 0

@@ -4,7 +4,7 @@ This module provides consistent mock implementations of all major LLM providers
 used in the TraiGent SDK, with configuration logging capabilities for test validation.
 """
 
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import Mock
 
 
@@ -12,9 +12,9 @@ class ConfigurationLogger:
     """Global configuration logger for test verification."""
 
     def __init__(self):
-        self.logs: List[Dict[str, Any]] = []
+        self.logs: list[dict[str, Any]] = []
 
-    def log(self, framework: str, method: str, config: Dict[str, Any], source: str):
+    def log(self, framework: str, method: str, config: dict[str, Any], source: str):
         """Log a configuration event."""
         self.logs.append(
             {
@@ -38,7 +38,7 @@ class ConfigurationLogger:
         """Check if a specific config key-value pair exists in logs."""
         return self.count_config_occurrences(key, value) > 0
 
-    def get_framework_configs(self, framework: str) -> List[Dict[str, Any]]:
+    def get_framework_configs(self, framework: str) -> list[dict[str, Any]]:
         """Get all configurations for a specific framework."""
         return [log["config"] for log in self.logs if log["framework"] == framework]
 

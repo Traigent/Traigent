@@ -11,7 +11,7 @@ This test suite covers:
 """
 
 import asyncio
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -77,7 +77,7 @@ class MockRemoteService(RemoteOptimizationService):
         self._connected = False
         self._status = ServiceStatus.DISCONNECTED
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         return {
             "status": self._health_status,
             "response_time_ms": self._response_time,
@@ -943,7 +943,7 @@ class TestErrorHandling:
         # Create service that times out on connection
         timeout_service = MockRemoteService("TimeoutService")
         timeout_service.connect = AsyncMock(
-            side_effect=asyncio.TimeoutError("Connection timeout")
+            side_effect=TimeoutError("Connection timeout")
         )
 
         registry.register_service(timeout_service, auto_connect=False)

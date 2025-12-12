@@ -775,7 +775,7 @@ class TestErrorHandling:
                     sample_batch_items[:2], slow_processor, batch_size=2
                 ):
                     results.extend(batch_results)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Expected to timeout
             pass
 

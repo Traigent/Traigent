@@ -8,7 +8,6 @@ Tests cover:
 """
 
 import time
-from datetime import datetime, timedelta, timezone
 
 import pytest
 

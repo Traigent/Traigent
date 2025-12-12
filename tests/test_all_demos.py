@@ -22,7 +22,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -110,8 +109,8 @@ class DemoRunner:
         self.results = DemoTestResults()
 
     def run_demo(
-        self, demo_path: Path, expected_outputs: List[str] = None
-    ) -> Tuple[bool, str, float]:
+        self, demo_path: Path, expected_outputs: list[str] = None
+    ) -> tuple[bool, str, float]:
         """Run a single demo and check for expected outputs."""
         start_time = time.time()
 
@@ -216,7 +215,7 @@ class DemoRunner:
     def test_demo(
         self,
         demo_path: Path,
-        expected_outputs: List[str] = None,
+        expected_outputs: list[str] = None,
         skip_reason: str = None,
     ):
         """Test a single demo with reporting."""
@@ -245,7 +244,7 @@ class DemoRunner:
             print("   📝 Demo output validated successfully")
 
 
-def get_demo_categories() -> Dict[str, List[Tuple[Path, List[str], str]]]:
+def get_demo_categories() -> dict[str, list[tuple[Path, list[str], str]]]:
     """Get organized list of demos by category.
 
     Returns:

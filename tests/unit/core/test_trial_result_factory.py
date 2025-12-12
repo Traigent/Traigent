@@ -5,7 +5,7 @@ Tests cover trial result construction for success, pruned, and failed states.
 
 from __future__ import annotations
 
-from datetime import timezone
+from datetime import UTC
 from unittest.mock import Mock
 
 import pytest
@@ -226,7 +226,7 @@ class TestBuildSuccessResult:
             optuna_trial_id=None,
         )
 
-        assert result.timestamp.tzinfo == timezone.utc
+        assert result.timestamp.tzinfo == UTC
 
     def test_invalid_examples_attempted(self, eval_config, eval_result):
         """Test handling of invalid examples_attempted value."""
@@ -503,7 +503,7 @@ class TestBuildFailedResult:
             optuna_trial_id=None,
         )
 
-        assert result.timestamp.tzinfo == timezone.utc
+        assert result.timestamp.tzinfo == UTC
 
 
 class TestTrialResultFactoryIntegration:

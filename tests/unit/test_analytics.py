@@ -2,7 +2,7 @@
 
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -152,7 +152,7 @@ class TestMetaLearningEngine:
             total_trials=10,
             duration_seconds=120,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         history.add_record(record)
 
@@ -182,7 +182,7 @@ class TestMetaLearningEngine:
             total_trials=20,
             duration_seconds=200,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         history.add_record(record)
 
@@ -213,7 +213,7 @@ class TestMetaLearningEngine:
             total_trials=0,
             duration_seconds=0,
             status=OptimizationStatus.COMPLETED,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         )
         history.add_record(record)
 
@@ -263,7 +263,7 @@ class TestPredictiveAnalytics:
         # Add sample usage data
         for i in range(10):
             metric = UsageMetric(
-                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
+                timestamp=datetime.now(UTC) - timedelta(days=i),
                 optimizations_count=5 + i,
                 total_trials=50 + i * 5,
                 total_duration_seconds=300 + i * 20,
@@ -297,7 +297,7 @@ class TestPredictiveAnalytics:
                 algorithm="random",
                 score=0.8 + i * 0.01,
                 duration=100 + i * 5,
-                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
+                timestamp=datetime.now(UTC) - timedelta(days=i),
             )
 
         forecast = forecaster.forecast_performance_trends(
@@ -317,7 +317,7 @@ class TestPredictiveAnalytics:
             analyzer.add_metric_value(
                 metric_name="optimization_count",
                 value=10 + i * 0.5,
-                timestamp=datetime.now(timezone.utc) - timedelta(days=14 - i),
+                timestamp=datetime.now(UTC) - timedelta(days=14 - i),
             )
 
         analysis = analyzer.analyze_trends("optimization_count", period_days=14)
@@ -344,7 +344,7 @@ class TestPredictiveAnalytics:
                 algorithm="random",
                 score=score,
                 duration=100,
-                timestamp=datetime.now(timezone.utc) - timedelta(days=19 - i),
+                timestamp=datetime.now(UTC) - timedelta(days=19 - i),
             )
 
         degradation = forecaster.detect_performance_degradation(
@@ -469,7 +469,7 @@ class TestAnomalyDetector:
                 algorithm="grid",
                 score=0.85 + i * 0.001,  # Slight improvement
                 duration=100 - i * 0.5,  # Slight speedup
-                timestamp=datetime.now(timezone.utc) - timedelta(hours=20 - i),
+                timestamp=datetime.now(UTC) - timedelta(hours=20 - i),
             )
 
         # Record degraded performance
@@ -479,7 +479,7 @@ class TestAnomalyDetector:
                 algorithm="grid",
                 score=0.7 - i * 0.02,  # Significant degradation
                 duration=150 + i * 10,  # Significant slowdown
-                timestamp=datetime.now(timezone.utc) - timedelta(hours=5 - i),
+                timestamp=datetime.now(UTC) - timedelta(hours=5 - i),
             )
 
         regressions = monitor.detect_performance_regression(
@@ -504,7 +504,7 @@ class TestAnomalyDetector:
             actual_value=100.0,
             expected_value=50.0,
             deviation_score=2.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             description="Test cost spike",
         )
 
@@ -570,7 +570,7 @@ class TestCostOptimizationAI:
                     unit_cost=0.1,
                     total_cost=10.0 + i * 0.2,
                     utilization_percent=60 + i,
-                    timestamp=datetime.now(timezone.utc) - timedelta(days=30 - i),
+                    timestamp=datetime.now(UTC) - timedelta(days=30 - i),
                 )
                 usage_list.append(usage)
 
@@ -596,7 +596,7 @@ class TestCostOptimizationAI:
                 unit_cost=0.1,
                 total_cost=15.0,
                 utilization_percent=40,  # Low utilization for rightsizing opportunity
-                timestamp=datetime.now(timezone.utc) - timedelta(days=i),
+                timestamp=datetime.now(UTC) - timedelta(days=i),
             )
             usage_list.append(usage)
 
@@ -641,7 +641,7 @@ class TestCostOptimizationAI:
                 unit_cost=0.1,
                 total_cost=50.0,
                 utilization_percent=60,
-                timestamp=datetime.now(timezone.utc),
+                timestamp=datetime.now(UTC),
             )
         ]
         self.optimizer.usage_history[ResourceType.COMPUTE] = usage_list
@@ -668,7 +668,7 @@ class TestCostOptimizationAI:
                 unit_cost=0.1,
                 total_cost=10.0 + i * 0.1,  # Slight upward trend
                 utilization_percent=70,
-                timestamp=datetime.now(timezone.utc) - timedelta(days=30 - i),
+                timestamp=datetime.now(UTC) - timedelta(days=30 - i),
             )
             usage_list.append(usage)
 
@@ -890,7 +890,7 @@ class TestSmartScheduler:
         cost_preferences = {"cost_priority": "high"}
 
         time_constraints = {
-            "deadline": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+            "deadline": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
             "max_delay_hours": 12,
         }
 
@@ -911,7 +911,7 @@ class TestSmartScheduler:
 
     def test_balanced_schedule_preserves_critical_jobs(self):
         """Balanced scheduling should keep all jobs in the queue and schedule each one."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         self.scheduler.schedule_windows = [
             ScheduleWindow(
                 start_time=now,

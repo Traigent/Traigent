@@ -10,7 +10,7 @@ This module tests the complete optimization workflow with new platforms:
 """
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -89,7 +89,7 @@ class TestOptimizationWithPlatforms:
             model: str = "gpt-3.5-turbo",
             temperature: float = 0.5,
             max_tokens: int = 500,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task that can run on multiple platforms."""
             # Simulate platform-specific execution
             platform_data = mock_platform_responses.get(platform, {})
@@ -194,9 +194,9 @@ class TestOptimizationWithPlatforms:
             text: str,
             platform: str = "anthropic",
             temperature: float = 0.5,
-            anthropic_metadata: Dict = None,
-            cohere_connectors: List = None,
-        ) -> Dict[str, Any]:
+            anthropic_metadata: dict = None,
+            cohere_connectors: list = None,
+        ) -> dict[str, Any]:
             """Task with platform-specific parameters."""
             result = {"platform": platform, "temperature": temperature}
 
@@ -262,7 +262,7 @@ class TestOptimizationWithPlatforms:
             top_p: float = 0.9,
             frequency_penalty: float = 0.0,
             **kwargs,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task for testing subset selection."""
             config = {
                 "platform": platform,
@@ -320,7 +320,7 @@ class TestOptimizationWithPlatforms:
         )
         async def streaming_task(
             prompt: str, platform: str = "openai", stream: bool = True
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task that tests streaming capabilities."""
             chunks_received = 0
             full_response = ""
@@ -370,7 +370,7 @@ class TestOptimizationWithPlatforms:
             platform: str = "openai",
             use_tools: bool = True,
             temperature: float = 0.5,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task that tests tool calling."""
             result = {
                 "platform": platform,
@@ -432,7 +432,7 @@ class TestOptimizationWithPlatforms:
         )
         async def aggregation_task(
             text: str, platform: str = "openai", temperature: float = 0.5
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task for testing result aggregation."""
             # Simulate platform-specific behavior
             quality = np.random.uniform(0.6, 0.95)
@@ -491,7 +491,7 @@ class TestOptimizationWithPlatforms:
         )
         async def failover_task(
             text: str, platform: str = "openai", retry_on_failure: bool = True
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task that simulates platform failures and failover."""
             # Simulate failures for specific platforms
             if platform == "openai" and np.random.random() < 0.3:
@@ -573,7 +573,7 @@ class TestOptimizationWithPlatforms:
             max_tokens: int = 1000,
             use_cache: bool = True,
             batch_size: int = 1,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Complex task with multiple objectives."""
             optimization_metrics["evaluations"] += 1
 
@@ -735,7 +735,7 @@ class TestOptimizationWithPlatforms:
             platform: str = "openai",
             retry_strategy: str = "exponential_backoff",
             max_retries: int = 3,
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Task that simulates and recovers from platform errors."""
 
             # Simulate random error

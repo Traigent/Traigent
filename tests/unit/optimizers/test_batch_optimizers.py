@@ -3,8 +3,7 @@
 import asyncio
 
 from traigent.config.types import TraigentConfig
-from traigent.evaluators.base import Dataset, EvaluationExample
-from traigent.evaluators.metrics import MetricsEvaluationResult as EvaluationResult
+from traigent.evaluators.base import Dataset, EvaluationExample, EvaluationResult
 from traigent.invokers.base import InvocationResult
 from traigent.optimizers.batch_optimizers import (
     AdaptiveBatchOptimizer,
@@ -51,10 +50,11 @@ class MockEvaluator:
         success_rate = successful_count / max(1, total_count)
 
         return EvaluationResult(
-            total_invocations=total_count,
-            successful_invocations=successful_count,
+            config={},
+            total_examples=total_count,
+            successful_examples=successful_count,
             duration=1.0,
-            metrics={
+            aggregated_metrics={
                 "accuracy": accuracy,
                 "success_rate": success_rate,
                 "avg_execution_time": 0.1,
@@ -248,10 +248,11 @@ class TestMultiObjectiveBatchOptimizer:
                     total_count = len(invocation_results)
 
                     return EvaluationResult(
-                        total_invocations=total_count,
-                        successful_invocations=successful_count,
+                        config={},
+                        total_examples=total_count,
+                        successful_examples=successful_count,
                         duration=1.0,
-                        metrics={
+                        aggregated_metrics={
                             "accuracy": successful_count / max(1, total_count),
                             "success_rate": successful_count / max(1, total_count),
                         },
