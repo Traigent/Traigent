@@ -138,12 +138,13 @@ if __name__ == "__main__":
             df = result.to_aggregated_dataframe()
             print("\nResults Summary:")
             print(
-                df[["model", "temperature", "prompt_style", "accuracy", "cost"]].to_string(
-                    index=False
-                )
+                df[
+                    ["model", "temperature", "prompt_style", "accuracy", "cost"]
+                ].to_string(index=False)
             )
         except Exception as e:
             import traceback
+
             print(f"\n❌ EXAMPLE FAILED WITH ERROR: {e}")
             traceback.print_exc()
             raise
@@ -152,6 +153,7 @@ if __name__ == "__main__":
         asyncio.run(main())
     except Exception as e:
         import traceback
+
         print(f"\n❌ ASYNCIO.RUN FAILED WITH ERROR: {e}")
         traceback.print_exc()
         raise

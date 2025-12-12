@@ -45,18 +45,23 @@ jobs:
     - name: Run core examples smoke test
       env:
         TRAIGENT_MOCK_MODE: "true"
+        TRAIGENT_RUN_APPROVED: "1"
         ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci"
         TRAIGENT_API_KEY: "test-traigent-api-key-for-ci"
       run: |
         python scripts/examples/run_examples.py --base examples/core --pattern "run.py" --timeout 120 --verbose
 
     - name: Test advanced example structure
+      env:
+        TRAIGENT_MOCK_MODE: "true"
+        TRAIGENT_RUN_APPROVED: "1"
       run: |
         python scripts/examples/run_examples.py --base examples/advanced --pattern "run.py" --timeout 60 --no-structure-validation
 
     - name: Run structured output example
       env:
         TRAIGENT_MOCK_MODE: "true"
+        TRAIGENT_RUN_APPROVED: "1"
         ANTHROPIC_API_KEY: "sk-ant-test-mock-key-for-ci"
         TRAIGENT_API_KEY: "test-traigent-api-key-for-ci"
       run: |
