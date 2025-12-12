@@ -11,19 +11,23 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
 from traigent.core.utils import safe_get_nested_attr
 from traigent.evaluators.base import (
     BaseEvaluator,
     Dataset,
+    EvaluationExample,
     EvaluationResult,
     _maybe_restore_trial_context,
 )
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+if TYPE_CHECKING:
+    from traigent.core.sample_budget import SampleBudgetLease
 
 
 class CustomEvaluatorWrapper(BaseEvaluator):
@@ -272,21 +276,21 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 "function_duration", current_execution_time
             )
 
-    def _create_failed_example_result(  # type: ignore[override]
-        self, example_index: int, example: Any, error: Exception
+    def _create_failed_example_result(
+        self, example: EvaluationExample, index: int, error: Exception
     ) -> ExampleResult:
         """Create an ExampleResult for a failed evaluation.
 
         Args:
-            example_index: Index of the example
             example: The example that failed
+            index: Index of the example
             error: The exception that occurred
 
         Returns:
             ExampleResult with failure information
         """
         return ExampleResult(
-            example_id=f"example_{example_index}",
+            example_id=f"example_{index}",
             input_data=example.input_data,
             expected_output=example.expected_output,
             actual_output=None,
@@ -294,6 +298,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             execution_time=0.0,
             success=False,
             error_message=str(error),
+            metadata=example.metadata.copy() if example.metadata else {},
         )
 
     def _aggregate_custom_metrics(
@@ -357,12 +362,13 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
         return aggregated
 
-    async def evaluate(  # type: ignore[override]
+    async def evaluate(
         self,
         func: Callable[..., Any],
         config: dict[str, Any],
         dataset: Dataset,
         *,
+        sample_lease: SampleBudgetLease | None = None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate function using custom evaluator.
@@ -396,9 +402,18 @@ class CustomEvaluatorWrapper(BaseEvaluator):
         example_results = []
         all_metrics = []
         outputs = []
-        errors = []
+        errors: list[str | None] = []
+        consumed_examples = 0
+        budget_exhausted = False
 
         for i, example in enumerate(dataset.examples):
+            if sample_lease and not sample_lease.try_take(1):
+                budget_exhausted = True
+                logger.info(
+                    "Sample budget exhausted before processing example index %s",
+                    i,
+                )
+                break
             try:
                 # Clear any previous captured responses before evaluation
                 if self.capture_llm_metrics and self._metrics_available:
@@ -433,6 +448,7 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 )
 
                 example_results.append(example_result)
+                consumed_examples += 1
                 if progress_callback:
                     progress_callback(
                         i,
@@ -453,8 +469,9 @@ class CustomEvaluatorWrapper(BaseEvaluator):
 
             except Exception as e:
                 logger.warning(f"Custom evaluation failed for example {i}: {e}")
-                failed_result = self._create_failed_example_result(i, example, e)
+                failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)
+                consumed_examples += 1
                 if progress_callback:
                     progress_callback(
                         i,
@@ -497,6 +514,8 @@ class CustomEvaluatorWrapper(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=success_count,
             duration=duration,
+            sample_budget_exhausted=budget_exhausted,
+            examples_consumed=consumed_examples,
             metrics=aggregated_metrics,
             outputs=outputs,
             errors=errors,

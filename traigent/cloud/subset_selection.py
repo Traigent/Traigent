@@ -9,7 +9,7 @@ import json
 import random
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -69,7 +69,7 @@ class BaseSubsetSelector(ABC):
 
     @abstractmethod
     async def select_subset(
-        self, dataset: Dataset, target_size: int, **kwargs
+        self, dataset: Dataset, target_size: int, **kwargs: Any
     ) -> SubsetSelectionResult:
         """Select optimal subset of examples from dataset.
 
@@ -95,19 +95,24 @@ class DiverseSampling(BaseSubsetSelector):
         """
         self.random_seed = random_seed
 
-    async def select_subset(  # type: ignore[override]
-        self, dataset: Dataset, target_size: int, use_clustering: bool = True
+    async def select_subset(
+        self, dataset: Dataset, target_size: int, **kwargs: Any
     ) -> SubsetSelectionResult:
         """Select diverse examples using clustering or similarity-based sampling.
 
         Args:
             dataset: Original dataset
             target_size: Target number of examples
-            use_clustering: Use k-means clustering for diversity
+            **kwargs: Supports ``use_clustering`` (bool) to enable k-means clustering.
 
         Returns:
             SubsetSelectionResult with diverse examples
         """
+        use_clustering_value = kwargs.get("use_clustering", True)
+        if not isinstance(use_clustering_value, bool):
+            raise TypeError("use_clustering must be a boolean") from None
+        use_clustering = use_clustering_value
+
         if not dataset.examples:
             return SubsetSelectionResult(
                 selected_examples=[],
@@ -310,19 +315,24 @@ class RepresentativeSampling(BaseSubsetSelector):
         self.random_seed = random_seed
         random.seed(random_seed)
 
-    async def select_subset(  # type: ignore[override]
-        self, dataset: Dataset, target_size: int, balance_outputs: bool = True
+    async def select_subset(
+        self, dataset: Dataset, target_size: int, **kwargs: Any
     ) -> SubsetSelectionResult:
         """Select representative examples maintaining output distribution.
 
         Args:
             dataset: Original dataset
             target_size: Target number of examples
-            balance_outputs: Maintain proportional output distribution
+            **kwargs: Supports ``balance_outputs`` (bool) to maintain output distribution.
 
         Returns:
             SubsetSelectionResult with representative examples
         """
+        balance_outputs_value = kwargs.get("balance_outputs", True)
+        if not isinstance(balance_outputs_value, bool):
+            raise TypeError("balance_outputs must be a boolean") from None
+        balance_outputs = balance_outputs_value
+
         if not dataset.examples:
             return SubsetSelectionResult(
                 selected_examples=[],
@@ -412,19 +422,24 @@ class HighConfidenceSampling(BaseSubsetSelector):
         """Initialize high confidence sampling selector."""
         self.random_seed = random_seed
 
-    async def select_subset(  # type: ignore[override]
-        self, dataset: Dataset, target_size: int, prioritize_difficult: bool = True
+    async def select_subset(
+        self, dataset: Dataset, target_size: int, **kwargs: Any
     ) -> SubsetSelectionResult:
         """Select high-confidence examples for reliable optimization.
 
         Args:
             dataset: Original dataset
             target_size: Target number of examples
-            prioritize_difficult: Prioritize challenging examples
+            **kwargs: Supports ``prioritize_difficult`` (bool) to prioritize challenging examples.
 
         Returns:
             SubsetSelectionResult with high-confidence examples
         """
+        prioritize_difficult_value = kwargs.get("prioritize_difficult", True)
+        if not isinstance(prioritize_difficult_value, bool):
+            raise TypeError("prioritize_difficult must be a boolean") from None
+        prioritize_difficult = prioritize_difficult_value
+
         if not dataset.examples:
             return SubsetSelectionResult(
                 selected_examples=[],
