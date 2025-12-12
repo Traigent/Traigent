@@ -87,7 +87,8 @@ class BaseTraiGentClient(ABC):
         """
         raise NotImplementedError
 
-    def get_next_trial(
+    @abstractmethod
+    async def get_next_trial(
         self, session_id: str, previous_results: list[Any] | None = None
     ) -> Any | None:
         """Get next trial suggestion.
@@ -102,16 +103,20 @@ class BaseTraiGentClient(ABC):
         Note: This method can be implemented differently by each client.
         Some may return raw suggestion objects, others may return responses.
         """
-        raise NotImplementedError("Subclasses should implement get_next_trial")
+        raise NotImplementedError
 
-    def submit_trial_result(
+    @abstractmethod
+    async def submit_trial_result(
         self,
         session_id: str,
         trial_id: str,
         metrics: dict[str, float],
         duration: float,
+        status: str = "completed",
+        outputs_sample: list[Any] | None = None,
+        error_message: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> Any:
+    ) -> None:
         """Submit trial results.
 
         Args:
@@ -119,15 +124,15 @@ class BaseTraiGentClient(ABC):
             trial_id: Trial ID
             metrics: Evaluation metrics
             duration: Execution duration
+            status: Trial status (completed, failed, skipped)
+            outputs_sample: Optional sample of outputs
+            error_message: Error message if failed
             metadata: Additional metadata
 
-        Returns:
-            Result of submission (format may vary by client)
-
         Note: This method can be implemented differently by each client.
-        Some may return booleans, others may return response objects.
+        Implementations may choose to ignore optional fields.
         """
-        raise NotImplementedError("Subclasses should implement submit_trial_result")
+        raise NotImplementedError
 
     @abstractmethod
     async def finalize_session(
@@ -329,7 +334,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
         headers = await self.auth.get_headers()
         if "Authorization" not in headers and "X-API-Key" not in headers:
             raise AuthenticationError(self._AUTH_FAILURE_MESSAGE)
-        return headers
+        return cast(dict[str, str], headers)
 
     async def _reset_http_session(self, reason: str | None = None) -> None:
         """Close and discard the shared aiohttp session after failures."""
@@ -727,7 +732,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
 
     async def get_usage_stats(self) -> dict[str, Any]:
         """Get usage statistics for current billing period."""
-        return await self.usage_tracker.get_usage_stats()
+        return cast(dict[str, Any], await self.usage_tracker.get_usage_stats())
 
     async def check_service_status(self) -> dict[str, Any]:
         """Check TraiGent Cloud Service status."""
@@ -845,7 +850,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
                 dataset_metadata=metadata or {},
                 max_trials=max_trials,
             )
-            return response.session_id
+            return cast(str, response.session_id)
         except Exception as e:
             raise StandardizedClientError(
                 f"Failed to create session: {e}", "session_creation", e
@@ -1041,7 +1046,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
             await self._reset_http_session("next_trial network error")
             raise CloudServiceError(f"Network error getting next trial: {e}") from None
 
-    async def submit_trial_result(  # type: ignore[override]
+    async def submit_trial_result(
         self,
         session_id: str,
         trial_id: str,

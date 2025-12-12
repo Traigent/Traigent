@@ -40,7 +40,7 @@ except ImportError:
 
 # Re-export existing platforms from parent module
 try:
-    from ..platforms import (  # type: ignore[attr-defined]
+    from traigent.agents.platforms import (
         LangChainAgentExecutor,
         OpenAIAgentExecutor,
     )

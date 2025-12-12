@@ -30,7 +30,7 @@ def optimize(
 ) -> OptimizedFunction
 ```
 
-> **New in 1.1** – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the `legacy` parameter or directly in `**runtime_overrides`. Conflicting values between a bundle and a direct keyword raise `TypeError`.
+> **New in 0.8.0** – The decorator now uses keyword-only arguments with grouped option bundles. Legacy arguments are supported via the `legacy` parameter or directly in `**runtime_overrides`. Conflicting values between a bundle and a direct keyword raise `TypeError`.
 
 **Core Parameters**
 

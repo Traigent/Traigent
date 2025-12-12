@@ -12,13 +12,31 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 
 from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+class PlatformConfigValidationResult(TypedDict, total=False):
+    """Result payload for platform configuration validation."""
+
+    valid: bool
+    errors: list[str]
+    warnings: list[str]
+
+
+class CostEstimate(TypedDict, total=False):
+    """Result payload for cost estimation."""
+
+    estimated_cost: float
+    estimated_input_cost: float
+    estimated_output_cost: float
+    estimated_tokens: int
+    confidence: float
 
 
 @dataclass
@@ -254,7 +272,7 @@ class AgentExecutor(ABC):
         agent_spec: AgentSpecification,
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, float]:
+    ) -> CostEstimate:
         """Estimate execution cost for given input.
 
         Args:
@@ -292,6 +310,6 @@ class AgentExecutor(ABC):
     @abstractmethod
     async def _validate_platform_config(
         self, config: dict[str, Any]
-    ) -> dict[str, list[str]]:
+    ) -> PlatformConfigValidationResult:
         """Platform-specific configuration validation."""
         raise NotImplementedError

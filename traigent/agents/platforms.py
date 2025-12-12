@@ -12,7 +12,11 @@ from __future__ import annotations
 import importlib.util
 from typing import Any, cast
 
-from traigent.agents.executor import AgentExecutor
+from traigent.agents.executor import (
+    AgentExecutor,
+    CostEstimate,
+    PlatformConfigValidationResult,
+)
 from traigent.cloud.auth import (
     AuthCredentials,
     AuthMode,
@@ -226,7 +230,9 @@ class LangChainAgentExecutor(AgentExecutor):
         ):
             raise ValueError("LangChain agents require 'model' parameter")
 
-    async def _validate_platform_config(self, config: dict[str, Any]) -> dict[str, Any]:
+    async def _validate_platform_config(
+        self, config: dict[str, Any]
+    ) -> PlatformConfigValidationResult:
         """Validate LangChain configuration using unified validators."""
         from traigent.utils.validation import ValidationResult
 
@@ -599,7 +605,9 @@ class OpenAIAgentExecutor(AgentExecutor):
             CoreValidators.validate_choices(model, "model", supported_models)
         )
 
-    async def _validate_platform_config(self, config: dict[str, Any]) -> dict[str, Any]:
+    async def _validate_platform_config(
+        self, config: dict[str, Any]
+    ) -> PlatformConfigValidationResult:
         """Validate OpenAI configuration."""
         errors = []
         warnings = []
@@ -673,7 +681,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         except Exception:
             # Fallback to naive replacement if formatting fails
             logger.debug(
-                "format_map failed in Anthropic executor, using naive replacement"
+                "format_map failed in OpenAI executor, using naive replacement"
             )
             prompt = template or ""
             for key, value in input_data.items():
@@ -702,7 +710,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         agent_spec: AgentSpecification,
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
-    ) -> dict[str, float]:
+    ) -> CostEstimate:
         """Estimate execution cost using tokencost library."""
         config = self._merge_configurations(
             agent_spec.model_parameters or {}, config_overrides
