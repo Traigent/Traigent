@@ -41,7 +41,7 @@ python use-cases/gtm-acquisition/agent/gtm_agent.py
 
 ## Dataset
 
-The evaluation dataset (`datasets/leads_dataset.jsonl`) contains 100+ lead profiles with:
+The evaluation dataset (`datasets/leads_dataset.jsonl`) contains 218 lead profiles with:
 
 - Lead information (name, title, company, industry, etc.)
 - Recent company news for personalization
@@ -97,7 +97,7 @@ gtm-acquisition/
 ├── agent/
 │   └── gtm_agent.py      # Main agent with @traigent.optimize decorator
 ├── datasets/
-│   └── leads_dataset.jsonl   # 100+ lead profiles
+│   └── leads_dataset.jsonl   # 218 lead profiles
 ├── eval/
 │   └── evaluator.py      # LLM-as-judge implementation
 └── README.md
