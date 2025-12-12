@@ -17,8 +17,9 @@ Tests cover:
 import asyncio
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -46,7 +47,7 @@ from traigent.utils.file_versioning import FileVersionManager
 class MockOptimizer(BaseOptimizer):
     """Mock optimizer for testing."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self.suggested_configs = []
         self.trial_results = []
@@ -61,7 +62,7 @@ class MockOptimizer(BaseOptimizer):
         if max_suggestions == 0:
             self._should_stop = True
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
         config = {
             "param1": self._suggest_count,
@@ -76,15 +77,15 @@ class MockOptimizer(BaseOptimizer):
 
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
         return self._should_stop
 
-    def suggest(self) -> Dict[str, Any]:
+    def suggest(self) -> dict[str, Any]:
         """Legacy method for backward compatibility."""
         return self.suggest_next_trial([])
 
-    def tell(self, config: Dict[str, Any], result: TrialResult) -> None:
+    def tell(self, config: dict[str, Any], result: TrialResult) -> None:
         """Record trial result."""
         self.trial_results.append((config, result))
 
@@ -109,11 +110,11 @@ class MockEvaluator(BaseEvaluator):
     async def evaluate(
         self,
         func: Callable,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         dataset: Dataset,
         *,
         sample_lease=None,
-        progress_callback: Callable[[int, Dict[str, Any]], Any] | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
         **_kwargs,
     ) -> EvaluationResult:
         """Evaluate configuration for testing."""
@@ -168,7 +169,7 @@ class MockEvaluator(BaseEvaluator):
         """Set evaluation delay for timeout testing."""
         self.evaluation_delay = delay
 
-    def set_metrics(self, metrics: Dict[str, float]):
+    def set_metrics(self, metrics: dict[str, float]):
         """Set metrics to return."""
         self.metrics_to_return = metrics
 
@@ -241,7 +242,7 @@ class TestOptimizationOrchestrator:
     def mock_function(self):
         """Create a mock function to optimize."""
 
-        async def test_function(input_data: Dict[str, Any], **config) -> Any:
+        async def test_function(input_data: dict[str, Any], **config) -> Any:
             """Mock function that returns based on config."""
             # Simple mock behavior - just return the input query
             return input_data.get("query", "default response")
@@ -478,11 +479,11 @@ class TestOptimizationOrchestrator:
             async def evaluate(
                 self,
                 func: Callable,
-                config: Dict[str, Any],
+                config: dict[str, Any],
                 dataset: Dataset,
                 *,
                 sample_lease=None,
-                progress_callback: Callable[[int, Dict[str, Any]], Any] | None = None,
+                progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
                 **kwargs,
             ) -> EvaluationResult:
                 if not self._pruned_once:
@@ -924,7 +925,7 @@ class TestOptimizationOrchestrator:
 
         # Run optimizations concurrently
         # Create a mock function for each orchestrator to use
-        async def mock_func(input_data: Dict[str, Any], **config) -> Any:
+        async def mock_func(input_data: dict[str, Any], **config) -> Any:
             return input_data.get("query", "default")
 
         tasks = [orch.optimize(mock_func, sample_dataset) for orch in orchestrators]

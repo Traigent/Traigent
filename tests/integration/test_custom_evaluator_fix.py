@@ -5,7 +5,8 @@ import asyncio
 import json
 import logging
 import tempfile
-from typing import Any, Callable, Dict
+from collections.abc import Callable
+from typing import Any
 
 import traigent
 from traigent.api.types import ExampleResult
@@ -33,7 +34,7 @@ def create_test_dataset() -> str:
 
 
 def custom_evaluator(
-    func: Callable, config: Dict[str, Any], example: EvaluationExample
+    func: Callable, config: dict[str, Any], example: EvaluationExample
 ) -> ExampleResult:
     """Custom evaluator that calculates accuracy based on how close the result is."""
     x = example.input_data["x"]

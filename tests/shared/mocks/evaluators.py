@@ -5,7 +5,8 @@ for testing evaluation workflows without running actual evaluations.
 """
 
 import random
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 
@@ -19,7 +20,7 @@ class MockEvaluator(BaseEvaluator):
         self.fixed_metrics = {}
         self.metric_noise = 0.1
 
-    def set_metrics(self, metrics: Dict[str, float]):
+    def set_metrics(self, metrics: dict[str, float]):
         """Set fixed metrics to return (for predictable testing)."""
         self.fixed_metrics = metrics
 
@@ -31,7 +32,7 @@ class MockEvaluator(BaseEvaluator):
         self,
         function: Callable,
         dataset: Dataset,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate function with mock metrics."""
         self.evaluation_count += 1
@@ -92,7 +93,7 @@ class MockAsyncEvaluator(MockEvaluator):
         self,
         function: Callable,
         dataset: Dataset,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> EvaluationResult:
         """Async version of evaluate."""
         return self.evaluate(function, dataset, config)
@@ -105,7 +106,7 @@ class MockDetailedEvaluator(MockEvaluator):
         self,
         function: Callable,
         dataset: Dataset,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate with detailed per-example metrics."""
         result = super().evaluate(function, dataset, config)
@@ -150,7 +151,7 @@ class MockStreamingEvaluator(MockEvaluator):
         self,
         function: Callable,
         dataset: Dataset,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ):
         """Generator that yields evaluation results in batches."""
         examples = dataset.examples
@@ -176,7 +177,7 @@ class MockStreamingEvaluator(MockEvaluator):
 class MockMultiObjectiveEvaluator(MockEvaluator):
     """Mock evaluator that supports multiple objectives."""
 
-    def __init__(self, objectives: List[str], **kwargs):
+    def __init__(self, objectives: list[str], **kwargs):
         super().__init__(**kwargs)
         self.objectives = objectives
 
@@ -184,7 +185,7 @@ class MockMultiObjectiveEvaluator(MockEvaluator):
         self,
         function: Callable,
         dataset: Dataset,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> EvaluationResult:
         """Evaluate with multiple objectives."""
         # Generate metrics for all objectives
@@ -237,7 +238,7 @@ class MockMultiObjectiveEvaluator(MockEvaluator):
 
 
 def create_mock_evaluator(
-    evaluator_type: str = "standard", objectives: Optional[List[str]] = None, **kwargs
+    evaluator_type: str = "standard", objectives: list[str] | None = None, **kwargs
 ) -> MockEvaluator:
     """Factory function to create mock evaluators."""
     if evaluator_type == "standard":
@@ -257,8 +258,8 @@ def create_mock_evaluator(
 
 
 def create_realistic_evaluation_sequence(
-    evaluator: MockEvaluator, config_sequence: List[Dict[str, Any]], dataset: Dataset
-) -> List[EvaluationResult]:
+    evaluator: MockEvaluator, config_sequence: list[dict[str, Any]], dataset: Dataset
+) -> list[EvaluationResult]:
     """Create a sequence of realistic evaluation results."""
     results = []
 

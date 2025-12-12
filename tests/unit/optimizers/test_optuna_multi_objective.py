@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import optuna
@@ -188,7 +188,7 @@ class TestOptunaMultiObjective:
                     },
                     status=TrialStatus.COMPLETED,
                     duration=0.0,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
             )
 
@@ -230,7 +230,7 @@ class TestOptunaMultiObjective:
                     metrics={"accuracy": accuracy, "cost": cost},
                     status=TrialStatus.COMPLETED,
                     duration=0.0,
-                    timestamp=datetime.now(timezone.utc),
+                    timestamp=datetime.now(UTC),
                 )
             )
 

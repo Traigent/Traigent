@@ -144,7 +144,7 @@ async def test_formats():
                         error = await response.text()
                         print(f"❌ Failed: {response.status} - {error[:200]}")
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("\n⚠️  Test timed out after 5 seconds")
         print("   The backend server is likely not running at http://localhost:5000")
         print("   To run the backend: cd backend && python app.py")

@@ -80,16 +80,17 @@ class TestLoggerFacadeInitialization:
         )
 
     def test_initialization_with_none_session_id(self, mock_optimization_logger):
-        """Test initialization with None session_id for local-only mode."""
+        """Test initialization with None session_id uses default local-session."""
         LoggerFacade(
             experiment_name="local_exp",
             session_id=None,
             execution_mode="edge_analytics",
         )
 
+        # When session_id is None, LoggerFacade defaults to "local-session"
         mock_optimization_logger.assert_called_once_with(
             experiment_name="local_exp",
-            session_id=None,
+            session_id="local-session",
             execution_mode="edge_analytics",
         )
 

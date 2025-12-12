@@ -18,7 +18,7 @@ import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any
 
 import pytest
 
@@ -32,9 +32,9 @@ class Parameter:
     """Represents a test parameter with its possible values and constraints."""
 
     name: str
-    values: List[Any]
+    values: list[Any]
     type: str = "string"
-    constraints: List[str] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
     coverage_level: int = 2  # Default to pairwise coverage
 
     def __hash__(self):
@@ -50,14 +50,14 @@ class TestSpecification:
     description: str
     scenario_notes: str
     execution_mode: str
-    objectives: List[str]
+    objectives: list[str]
     algorithm: str
     max_trials: int
-    configuration_space: Dict[str, List[Any]]
+    configuration_space: dict[str, list[Any]]
     evaluator: str
     scoring_function: str
     injection_mode: str
-    framework_targets: List[str]
+    framework_targets: list[str]
     dataset: str
     parallel_trials: int
     batch_size: int
@@ -67,9 +67,9 @@ class TestSpecification:
     notes: str
 
     # CTD specific attributes
-    parameters: List[Parameter] = field(default_factory=list)
-    constraints: List[str] = field(default_factory=list)
-    coverage_requirements: Dict[str, int] = field(default_factory=dict)
+    parameters: list[Parameter] = field(default_factory=list)
+    constraints: list[str] = field(default_factory=list)
+    coverage_requirements: dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self):
         """Extract parameters and constraints from configuration space."""
@@ -150,9 +150,9 @@ class CTDTestGenerator:
     def __init__(self, csv_path: str):
         """Initialize with CSV specification path."""
         self.csv_path = Path(csv_path)
-        self.specifications: List[TestSpecification] = []
-        self.test_cases: List[Dict[str, Any]] = []
-        self.coverage_matrix: Dict[str, Set[Tuple]] = defaultdict(set)
+        self.specifications: list[TestSpecification] = []
+        self.test_cases: list[dict[str, Any]] = []
+        self.coverage_matrix: dict[str, set[tuple]] = defaultdict(set)
 
     def load_specifications(self):
         """Load test specifications from CSV."""
@@ -166,7 +166,7 @@ class CTDTestGenerator:
                 parallel_trials = 1
                 batch_size = 1
                 parallel_config_raw = row.get("parallel_config", "")
-                parallel_config: Dict[str, Any] = {}
+                parallel_config: dict[str, Any] = {}
                 if parallel_config_raw:
                     try:
                         parallel_config = json.loads(parallel_config_raw)
@@ -228,8 +228,8 @@ class CTDTestGenerator:
                 self.specifications.append(spec)
 
     def generate_n_wise_combinations(
-        self, parameters: List[Parameter], n: int
-    ) -> List[Dict[str, Any]]:
+        self, parameters: list[Parameter], n: int
+    ) -> list[dict[str, Any]]:
         """Generate n-wise parameter combinations."""
         if not parameters or n <= 0:
             return []
@@ -274,8 +274,8 @@ class CTDTestGenerator:
         return all_combinations
 
     def apply_constraints(
-        self, test_cases: List[Dict[str, Any]], constraints: List[str]
-    ) -> List[Dict[str, Any]]:
+        self, test_cases: list[dict[str, Any]], constraints: list[str]
+    ) -> list[dict[str, Any]]:
         """Filter test cases based on constraints."""
         valid_cases = []
 
@@ -301,7 +301,7 @@ class CTDTestGenerator:
 
         return valid_cases
 
-    def _evaluate_condition(self, condition: str, case: Dict[str, Any]) -> bool:
+    def _evaluate_condition(self, condition: str, case: dict[str, Any]) -> bool:
         """Simple condition evaluator."""
         # This is a simplified evaluator - can be extended with proper parsing
         try:
@@ -348,7 +348,7 @@ class CTDTestGenerator:
         except Exception:
             return True  # Default to true on evaluation error
 
-    def generate_test_suite(self) -> List[Tuple[TestSpecification, Dict[str, Any]]]:
+    def generate_test_suite(self) -> list[tuple[TestSpecification, dict[str, Any]]]:
         """Generate complete test suite with CTD coverage."""
         test_suite = []
 
@@ -380,8 +380,8 @@ class CTDTestGenerator:
         return test_suite
 
     def calculate_coverage(
-        self, test_suite: List[Tuple[TestSpecification, Dict[str, Any]]]
-    ) -> Dict[str, float]:
+        self, test_suite: list[tuple[TestSpecification, dict[str, Any]]]
+    ) -> dict[str, float]:
         """Calculate coverage metrics for the test suite."""
         coverage_stats = {}
 

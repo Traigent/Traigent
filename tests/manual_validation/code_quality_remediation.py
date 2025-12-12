@@ -3,9 +3,9 @@
 
 import json
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 class CodeQualityRemediator:
@@ -16,14 +16,14 @@ class CodeQualityRemediator:
         self.venv_path = self.project_root / "traigent_test_env" / "bin"
         self.tracker_data = self.load_tracker()
 
-    def load_tracker(self) -> Dict[str, Any]:
+    def load_tracker(self) -> dict[str, Any]:
         """Load or initialize the tracking file"""
         if self.tracker_file.exists():
             with open(self.tracker_file) as f:
                 return json.load(f)
         else:
             return {
-                "remediation_started": datetime.now(timezone.utc).isoformat(),
+                "remediation_started": datetime.now(UTC).isoformat(),
                 "total_files": 0,
                 "processed_files": 0,
                 "files": {},
@@ -34,7 +34,7 @@ class CodeQualityRemediator:
         with open(self.tracker_file, "w") as f:
             json.dump(self.tracker_data, f, indent=2)
 
-    def run_command(self, cmd: List[str]) -> tuple[int, str, str]:
+    def run_command(self, cmd: list[str]) -> tuple[int, str, str]:
         """Run a command and return exit code, stdout, stderr"""
         try:
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
@@ -44,7 +44,7 @@ class CodeQualityRemediator:
         except Exception as e:
             return 1, "", str(e)
 
-    def detect_issues(self, file_path: str) -> Dict[str, List[str]]:
+    def detect_issues(self, file_path: str) -> dict[str, list[str]]:
         """Run all static analysis tools and collect issues"""
         issues = {"flake8": [], "ruff": [], "mypy": [], "black": [], "isort": []}
 
@@ -177,11 +177,11 @@ class CodeQualityRemediator:
         # No tests found, consider it a pass
         return True, "No tests found for this file"
 
-    def process_file(self, file_path: str) -> Dict[str, Any]:
+    def process_file(self, file_path: str) -> dict[str, Any]:
         """Process a single file through the remediation pipeline"""
         file_info = {
             "status": "in_progress",
-            "started_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(UTC).isoformat(),
             "completed_at": None,
             "issues_found": {},
             "issues_resolved": {},
@@ -237,10 +237,10 @@ class CodeQualityRemediator:
                     f"Max attempts reached. Remaining issues: {remaining_issues}"
                 )
 
-        file_info["completed_at"] = datetime.now(timezone.utc).isoformat()
+        file_info["completed_at"] = datetime.now(UTC).isoformat()
         return file_info
 
-    def enumerate_files(self) -> List[str]:
+    def enumerate_files(self) -> list[str]:
         """Enumerate all Python files in target directories"""
         target_dirs = [
             "traigent",
@@ -352,7 +352,7 @@ class CodeQualityRemediator:
 
 ## Overview
 - Start Time: {self.tracker_data['remediation_started']}
-- End Time: {datetime.now(timezone.utc).isoformat()}
+- End Time: {datetime.now(UTC).isoformat()}
 - Files Processed: {len(self.tracker_data['files'])}
 - Success Rate: {success_rate:.1f}%
 

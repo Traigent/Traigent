@@ -3,7 +3,7 @@
 Focused test suite for @traigent.optimize decorator with framework override functionality.
 """
 
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -112,7 +112,7 @@ class TestDecoratorWithFrameworkOverride:
             injection_mode="parameter",
             config_param="llm_config",
         )
-        def param_function(question: str, llm_config: Dict[str, Any] = None) -> str:
+        def param_function(question: str, llm_config: dict[str, Any] = None) -> str:
             # When called by the framework, llm_config should be injected
             # Check if it's a TraigentConfig object
             if hasattr(llm_config, "model"):
@@ -189,7 +189,7 @@ class TestDecoratorWithFrameworkOverride:
             injection_mode="parameter",
             config_param="config",
         )
-        def param_func(text: str, config: Dict = None) -> str:
+        def param_func(text: str, config: dict = None) -> str:
             if hasattr(config, "model"):
                 return f"Param: {config.model}"
             elif isinstance(config, dict) and "model" in config:

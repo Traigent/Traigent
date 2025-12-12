@@ -5,7 +5,7 @@ This file contains functions decorated with @traigent.optimize for testing.
 """
 
 import os
-from typing import Any, Dict
+from typing import Any
 
 # Enable mock mode for testing
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
@@ -23,7 +23,7 @@ import traigent
 )
 def analyze_sentiment(
     text: str, temperature: float = 0.7, model: str = "gpt-3.5-turbo"
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Analyze sentiment with configurable parameters."""
     # Simulate sentiment analysis
     import time

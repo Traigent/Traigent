@@ -290,8 +290,7 @@ class TestStreamingInvokerFunctionDetection:
 
     def test_is_streaming_function_by_annotation(self):
         """Test detection by return type annotation."""
-        from collections.abc import AsyncIterator
-        from typing import Iterator
+        from collections.abc import AsyncIterator, Iterator
 
         invoker = StreamingInvoker()
 

@@ -1,6 +1,7 @@
 """Tests for TraiGent Cloud Backend Client."""
 
 import time
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -886,12 +887,12 @@ class TestUtilityMethods:
     def test_submit_result_updates_session(self, backend_client):
         """submit_result should increment trial count and refresh timestamps."""
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from traigent.cloud.models import OptimizationSession
 
         session_id = "session_submit"
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
 
         backend_client._active_sessions[session_id] = OptimizationSession(
             session_id=session_id,
@@ -918,7 +919,7 @@ class TestUtilityMethods:
     def test_submit_result_local_storage_fallback(self, backend_client):
         """submit_result should persist results to local storage when enabled."""
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from traigent.cloud.models import OptimizationSession
 
@@ -933,8 +934,8 @@ class TestUtilityMethods:
             objectives=["accuracy"],
             max_trials=5,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         backend_client.submit_result(

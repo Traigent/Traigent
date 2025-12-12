@@ -1,6 +1,6 @@
 """Unit tests for session management."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -53,8 +53,8 @@ class TestInMemorySessionStorage:
             objectives=["accuracy"],
             max_trials=10,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         await storage.create(session)
@@ -76,8 +76,8 @@ class TestInMemorySessionStorage:
             objectives=["accuracy"],
             max_trials=10,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         await storage.create(session)
@@ -97,8 +97,8 @@ class TestInMemorySessionStorage:
             objectives=["accuracy"],
             max_trials=10,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         await storage.create(session)
@@ -124,8 +124,8 @@ class TestInMemorySessionStorage:
             objectives=["accuracy"],
             max_trials=10,
             status=OptimizationSessionStatus.ACTIVE,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
         )
 
         await storage.create(session)
@@ -152,8 +152,8 @@ class TestInMemorySessionStorage:
                     if i < 2
                     else OptimizationSessionStatus.COMPLETED
                 ),
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
                 metadata={"user_id": "user1" if i == 0 else "user2"},
             )
             await storage.create(session)
@@ -239,7 +239,7 @@ class TestSessionManager:
         # Directly modify the session in storage to bypass the update method
         # which always sets updated_at to now
         stored_session = await session_manager.storage.get(session.session_id)
-        stored_session.updated_at = datetime.now(timezone.utc) - timedelta(hours=25)
+        stored_session.updated_at = datetime.now(UTC) - timedelta(hours=25)
 
         # Directly update the storage without going through update() method
         async with session_manager.storage._lock:

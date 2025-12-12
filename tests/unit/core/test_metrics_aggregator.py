@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -39,7 +39,7 @@ def make_trial(
         metrics=metrics,
         status=status,
         duration=duration,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         metadata=metadata or {},
     )
 

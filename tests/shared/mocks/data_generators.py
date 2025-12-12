@@ -4,7 +4,7 @@ This module provides functions to generate common test data structures
 used across the TraiGent SDK test suite.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -125,7 +125,7 @@ def create_test_dataset(
 
 def create_config_space(
     complexity: str = "simple", include_advanced: bool = False
-) -> Dict[str, List[Any]]:
+) -> dict[str, list[Any]]:
     """Create a configuration space for optimization testing.
 
     Args:
@@ -178,8 +178,8 @@ def create_config_space(
 
 
 def create_evaluation_examples(
-    count: int = 3, input_keys: Optional[List[str]] = None, output_type: str = "string"
-) -> List[EvaluationExample]:
+    count: int = 3, input_keys: list[str] | None = None, output_type: str = "string"
+) -> list[EvaluationExample]:
     """Create evaluation examples with specified structure.
 
     Args:
@@ -220,8 +220,8 @@ def create_evaluation_examples(
 def create_mock_trial_results(
     count: int = 5,
     status: TrialStatus = TrialStatus.COMPLETED,
-    config_space: Optional[Dict[str, List[Any]]] = None,
-) -> List[TrialResult]:
+    config_space: dict[str, list[Any]] | None = None,
+) -> list[TrialResult]:
     """Create mock trial results for testing.
 
     Args:

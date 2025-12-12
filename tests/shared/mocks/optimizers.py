@@ -5,7 +5,7 @@ for testing optimization workflows without running actual optimization.
 """
 
 import random
-from typing import Any, Dict, List
+from typing import Any
 
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.optimizers.base import BaseOptimizer
@@ -14,7 +14,7 @@ from traigent.optimizers.base import BaseOptimizer
 class MockOptimizer(BaseOptimizer):
     """Mock optimizer for testing orchestration workflows."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self.suggested_configs = []
         self.trial_results = []
@@ -29,7 +29,7 @@ class MockOptimizer(BaseOptimizer):
         if max_suggestions == 0:
             self._should_stop = True
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration to evaluate."""
         # Create realistic configs from the config space
         config = {}
@@ -51,15 +51,15 @@ class MockOptimizer(BaseOptimizer):
 
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
         return self._should_stop
 
-    def suggest(self) -> Dict[str, Any]:
+    def suggest(self) -> dict[str, Any]:
         """Legacy method for backward compatibility."""
         return self.suggest_next_trial([])
 
-    def tell(self, config: Dict[str, Any], result: TrialResult) -> None:
+    def tell(self, config: dict[str, Any], result: TrialResult) -> None:
         """Record trial result."""
         self.trial_results.append((config, result))
 
@@ -76,12 +76,12 @@ class MockAsyncOptimizer(MockOptimizer):
     """Mock async optimizer for testing async workflows."""
 
     async def suggest_next_trial_async(
-        self, history: List[TrialResult]
-    ) -> Dict[str, Any]:
+        self, history: list[TrialResult]
+    ) -> dict[str, Any]:
         """Async version of suggest_next_trial."""
         return self.suggest_next_trial(history)
 
-    async def tell_async(self, config: Dict[str, Any], result: TrialResult) -> None:
+    async def tell_async(self, config: dict[str, Any], result: TrialResult) -> None:
         """Async version of tell."""
         self.tell(config, result)
 
@@ -89,7 +89,7 @@ class MockAsyncOptimizer(MockOptimizer):
 class MockBayesianOptimizer(MockOptimizer):
     """Mock Bayesian optimizer with realistic behavior."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self.acquisition_function = kwargs.get(
             "acquisition_function", "expected_improvement"
@@ -97,7 +97,7 @@ class MockBayesianOptimizer(MockOptimizer):
         self.initial_random_samples = kwargs.get("initial_random_samples", 3)
         self._exploration_phase = True
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next trial with Bayesian-like behavior."""
         if self._suggest_count < self.initial_random_samples:
             # Random exploration phase
@@ -117,7 +117,7 @@ class MockBayesianOptimizer(MockOptimizer):
 
         return config
 
-    def _random_config(self) -> Dict[str, Any]:
+    def _random_config(self) -> dict[str, Any]:
         """Generate random configuration."""
         config = {}
         for param, values in self.config_space.items():
@@ -127,7 +127,7 @@ class MockBayesianOptimizer(MockOptimizer):
                 config[param] = values
         return config
 
-    def _exploitative_config(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def _exploitative_config(self, history: list[TrialResult]) -> dict[str, Any]:
         """Generate exploitative configuration based on history."""
         if not history:
             return self._random_config()
@@ -151,12 +151,12 @@ class MockBayesianOptimizer(MockOptimizer):
 class MockGridOptimizer(MockOptimizer):
     """Mock grid search optimizer."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self._grid_configs = self._generate_grid()
         self._max_suggestions = len(self._grid_configs)
 
-    def _generate_grid(self) -> List[Dict[str, Any]]:
+    def _generate_grid(self) -> list[dict[str, Any]]:
         """Generate all combinations in the grid."""
         import itertools
 
@@ -176,7 +176,7 @@ class MockGridOptimizer(MockOptimizer):
 
         return grid_configs
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next grid point."""
         if self._suggest_count >= len(self._grid_configs):
             self._should_stop = True
@@ -198,12 +198,12 @@ class MockGridOptimizer(MockOptimizer):
 class MockRandomOptimizer(MockOptimizer):
     """Mock random search optimizer."""
 
-    def __init__(self, config_space: Dict[str, Any], objectives: List[str], **kwargs):
+    def __init__(self, config_space: dict[str, Any], objectives: list[str], **kwargs):
         super().__init__(config_space, objectives, **kwargs)
         self.random_seed = kwargs.get("random_seed", 42)
         random.seed(self.random_seed)
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest random configuration."""
         config = {}
         for param, values in self.config_space.items():
@@ -228,7 +228,7 @@ class MockRandomOptimizer(MockOptimizer):
 
 
 def create_mock_optimizer(
-    optimizer_type: str, config_space: Dict[str, Any], objectives: List[str], **kwargs
+    optimizer_type: str, config_space: dict[str, Any], objectives: list[str], **kwargs
 ) -> MockOptimizer:
     """Factory function to create mock optimizers."""
     optimizers = {
@@ -247,7 +247,7 @@ def create_mock_optimizer(
 
 def create_realistic_optimizer_results(
     optimizer: MockOptimizer, num_trials: int = 5
-) -> List[TrialResult]:
+) -> list[TrialResult]:
     """Create realistic trial results for a mock optimizer."""
     results = []
 

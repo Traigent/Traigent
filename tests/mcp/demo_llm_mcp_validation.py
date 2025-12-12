@@ -13,7 +13,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # Add TraiGent to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
@@ -80,7 +80,7 @@ class MockLLMInterpreter:
             "execute.*python.*q.*a.*agent": {"action": "execute_agent"},
         }
 
-    async def interpret_task(self, description: str) -> Dict[str, Any]:
+    async def interpret_task(self, description: str) -> dict[str, Any]:
         """Interpret natural language task description."""
         import re
 
@@ -120,7 +120,7 @@ class MockMCPService:
         self.sessions = {}
         self.call_history = []
 
-    async def create_agent(self, spec: AgentSpecification) -> Dict[str, Any]:
+    async def create_agent(self, spec: AgentSpecification) -> dict[str, Any]:
         """Mock agent creation."""
         self.call_history.append(("create_agent", spec))
         agent_id = f"agent-{len(self.agents) + 1}"
@@ -210,7 +210,7 @@ class LLMMCPValidator:
 
     async def validate_task_interpretation(
         self, task_description: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Validate that a task description is correctly interpreted and executed.
 
@@ -255,7 +255,7 @@ class LLMMCPValidator:
         return validation_result
 
     async def _handle_agent_creation(
-        self, interpretation: Dict[str, Any], result: Dict[str, Any]
+        self, interpretation: dict[str, Any], result: dict[str, Any]
     ):
         """Handle agent creation tasks."""
         agent_spec = generate_test_agent_spec(
@@ -273,7 +273,7 @@ class LLMMCPValidator:
         result["execution_success"] = True
 
     async def _handle_agent_optimization(
-        self, interpretation: Dict[str, Any], result: Dict[str, Any]
+        self, interpretation: dict[str, Any], result: dict[str, Any]
     ):
         """Handle agent optimization tasks."""
         from traigent.cloud.models import AgentOptimizationRequest
@@ -304,7 +304,7 @@ class LLMMCPValidator:
         result["execution_success"] = True
 
     async def _handle_agent_execution(
-        self, interpretation: Dict[str, Any], result: Dict[str, Any]
+        self, interpretation: dict[str, Any], result: dict[str, Any]
     ):
         """Handle agent execution tasks."""
         from traigent.cloud.models import AgentExecutionRequest
@@ -324,7 +324,7 @@ class LLMMCPValidator:
         result["mcp_calls"].append(("execute_agent", exec_response))
         result["execution_success"] = True
 
-    async def _verify_cleanup(self, result: Dict[str, Any]):
+    async def _verify_cleanup(self, result: dict[str, Any]):
         """Verify that all resources can be cleaned up."""
         cleanup_errors = []
 
