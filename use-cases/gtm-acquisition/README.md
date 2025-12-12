@@ -1,5 +1,13 @@
 # GTM & Acquisition Agent Use Case
 
+> **Cold outreach → high-quality emails, auto-optimized**
+
+<p align="center">
+  <a href="demo/demo.cast">
+    <img src="demo/demo.svg" alt="GTM Demo" width="600">
+  </a>
+</p>
+
 This use case demonstrates optimizing a **Sales Development Representative (SDR) outbound message generator** using TraiGent.
 
 ## Overview

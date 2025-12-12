@@ -1,5 +1,13 @@
 # Customer Support Agent Use Case
 
+> **Support bots that resolve - and escalate only when needed**
+
+<p align="center">
+  <a href="demo/demo.cast">
+    <img src="demo/demo.svg" alt="Customer Support Demo" width="600">
+  </a>
+</p>
+
 This use case demonstrates optimizing a **customer support agent** for ShopEasy, an e-commerce platform.
 
 ## Overview
