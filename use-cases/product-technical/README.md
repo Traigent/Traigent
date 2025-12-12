@@ -46,7 +46,7 @@ python use-cases/product-technical/agent/code_agent.py
 
 ## Dataset
 
-The evaluation dataset (`datasets/coding_tasks.jsonl`) contains 50+ coding tasks including:
+The evaluation dataset (`datasets/coding_tasks.jsonl`) contains 126 coding tasks including:
 
 - Basic algorithms (prime, factorial, fibonacci)
 - String manipulation (reverse, palindrome, anagram)
@@ -102,7 +102,7 @@ product-technical/
 ├── agent/
 │   └── code_agent.py             # Code generation agent
 ├── datasets/
-│   └── coding_tasks.jsonl        # 50+ coding tasks
+│   └── coding_tasks.jsonl        # 126 coding tasks
 ├── eval/
 │   └── evaluator.py              # Test runner + quality analyzer
 └── README.md

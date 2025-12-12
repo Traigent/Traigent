@@ -46,7 +46,7 @@ python use-cases/operations/agent/operations_agent.py
 
 ## Dataset
 
-The evaluation dataset (`datasets/tasks_dataset.jsonl`) contains 70+ operational task scenarios including:
+The evaluation dataset (`datasets/tasks_dataset.jsonl`) contains 209 task scenarios including:
 
 - Expense approvals
 - Purchase requests
@@ -115,7 +115,7 @@ operations/
 ├── agent/
 │   └── operations_agent.py   # Main agent with @traigent.optimize
 ├── datasets/
-│   └── tasks_dataset.jsonl   # 70+ operational task scenarios
+│   └── tasks_dataset.jsonl   # 209 task scenarios
 ├── eval/
 │   └── evaluator.py          # Action sequence and escalation evaluator
 └── README.md
