@@ -440,122 +440,150 @@ NEXT_STEPS_CLEAR: [yes/no]
         }
 
 
-def evaluate_sample():
-    """Test the evaluator with sample responses."""
+def load_dataset() -> list[dict]:
+    """Load the support tickets dataset."""
+    import json
+    from pathlib import Path
+
+    dataset_path = Path(__file__).parent.parent / "datasets" / "support_tickets.jsonl"
+    if not dataset_path.exists():
+        return []
+
+    entries = []
+    with open(dataset_path) as f:
+        for line in f:
+            if line.strip():
+                entries.append(json.loads(line))
+    return entries
+
+
+def demo_evaluator():
+    """
+    Demo the Customer Support Agent evaluator.
+
+    This runs in MOCK MODE - no API calls are made.
+    The evaluator uses heuristic rules to score support responses on:
+    - Resolution Accuracy: Did it address the customer's actual issue?
+    - Tone Quality: Empathy, clarity, professionalism (CSAT proxy)
+    - Escalation Accuracy: Correct routing decisions
+    """
+    print("=" * 60)
+    print("CUSTOMER SUPPORT AGENT - Evaluator Demo")
+    print("=" * 60)
+    print("\nMODE: Mock (heuristic scoring, no API calls)")
+    print("\nEVALUATOR: SupportEvaluator")
+    print("  - Evaluates resolution accuracy (addresses customer issue)")
+    print("  - Measures tone quality (empathy, clarity, professionalism)")
+    print("  - Tracks escalation accuracy (precision/recall/F1)")
+    print("\nCALIBRATION NOTE: Tone scores should correlate with CSAT > 0.7")
+
+    # Load and show dataset info
+    dataset = load_dataset()
+    print(f"\nDATASET: support_tickets.jsonl ({len(dataset)} support scenarios)")
+
+    if dataset:
+        # Count escalations and sentiments
+        escalation_count = sum(1 for e in dataset if e.get("should_escalate", False))
+        sentiments = {}
+        for e in dataset:
+            input_data = e.get("input", {})
+            ctx = input_data.get("customer_context", {})
+            sent = ctx.get("sentiment", "unknown")
+            sentiments[sent] = sentiments.get(sent, 0) + 1
+
+        print(f"  - Requiring escalation: {escalation_count}")
+        print(f"  - Self-resolvable: {len(dataset) - escalation_count}")
+        print(f"  - Sentiment distribution: {sentiments}")
+
+        print("\n" + "-" * 60)
+        print("FIRST 3 SUPPORT TICKETS FROM DATASET:")
+        print("-" * 60)
+        for i, entry in enumerate(dataset[:3]):
+            input_data = entry.get("input", {})
+            query = input_data.get("query", "")[:50]
+            ctx = input_data.get("customer_context", {})
+            tier = ctx.get("customer_tier", "unknown")
+            sentiment = ctx.get("sentiment", "unknown")
+            escalate = entry.get("should_escalate", False)
+            print(f"\n  [{i+1}] \"{query}...\"")
+            print(f"      Customer: {tier} tier | Sentiment: {sentiment}")
+            print(f"      Should escalate: {'Yes' if escalate else 'No'}")
+
     evaluator = SupportEvaluator()
 
+    print("\n" + "=" * 60)
+    print("EVALUATION EXAMPLES")
+    print("=" * 60)
+
     # Test case 1: Good response
-    print("Test 1: Good Support Response")
-    print("-" * 40)
+    print("\n[EXAMPLE 1] High-quality empathetic response")
+    print("-" * 60)
+    good_response = """Thank you for reaching out. I sincerely apologize for the inconvenience with your damaged laptop.
+
+I completely understand how frustrating this must be. As a Gold member, your satisfaction is our priority.
+
+I'd be happy to process a full refund immediately - credited within 5-7 business days. Or I can arrange express replacement shipping at no cost.
+
+Please let me know which works best. Is there anything else I can help with?"""
+
     result = evaluator(
-        prediction={
-            "response": """Thank you for reaching out to ShopEasy support, and I sincerely apologize for the inconvenience you've experienced with your damaged laptop.
-
-I completely understand how frustrating this must be. As a Gold member, your satisfaction is our top priority.
-
-I'd be happy to process a full refund for you immediately. The amount will be credited to your original payment method within 5-7 business days.
-
-Alternatively, if you'd prefer, I can arrange for a replacement laptop to be shipped to you with express delivery at no additional cost.
-
-Please let me know which option works best for you, and I'll take care of it right away. Is there anything else I can assist you with today?""",
-            "should_escalate": False,
-            "resolution_type": "refund",
-        },
-        expected={
-            "gold_response": "Process refund or replacement for damaged item",
-            "should_escalate": False,
-            "resolution_type": "refund",
-        },
-        input_data={
-            "query": "I received a damaged laptop and want a refund",
-            "customer_context": {"customer_tier": "gold", "sentiment": "negative"},
-        },
+        prediction={"response": good_response, "should_escalate": False, "resolution_type": "refund"},
+        expected={"should_escalate": False, "resolution_type": "refund"},
+        input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
     )
-    print(f"Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"Tone Quality: {result['tone_quality']:.2f}")
-    print(f"  - Empathy: {result['empathy_score']:.2f}")
-    print(f"  - Clarity: {result['clarity_score']:.2f}")
-    print(f"  - Professionalism: {result['professionalism_score']:.2f}")
-    print(f"Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Query: \"I received a damaged laptop and want a refund\"")
+    print(f"  Response: Offers refund OR replacement, empathetic tone")
+    print(f"\n  Scores:")
+    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f}")
+    print(f"    Tone Quality:        {result['tone_quality']:.2f}")
+    print(f"      - Empathy:         {result['empathy_score']:.2f}")
+    print(f"      - Clarity:         {result['clarity_score']:.2f}")
+    print(f"      - Professionalism: {result['professionalism_score']:.2f}")
+    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:             {result['overall']:.2f}")
 
     # Test case 2: Poor response
-    print("\nTest 2: Poor Support Response")
-    print("-" * 40)
+    print("\n[EXAMPLE 2] Low-quality dismissive response")
+    print("-" * 60)
     result = evaluator(
-        prediction={
-            "response": "Ok, we'll look into it. Check back later.",
-            "should_escalate": False,
-            "resolution_type": "resolved",
-        },
-        expected={
-            "gold_response": "Process refund for damaged item",
-            "should_escalate": False,
-            "resolution_type": "refund",
-        },
-        input_data={
-            "query": "I received a damaged laptop and want a refund",
-            "customer_context": {"customer_tier": "gold", "sentiment": "negative"},
-        },
+        prediction={"response": "Ok, we'll look into it. Check back later.", "should_escalate": False},
+        expected={"should_escalate": False, "resolution_type": "refund"},
+        input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
     )
-    print(f"Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"Tone Quality: {result['tone_quality']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Query: \"I received a damaged laptop and want a refund\"")
+    print(f"  Response: \"Ok, we'll look into it. Check back later.\"")
+    print(f"\n  Scores:")
+    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f} ← Doesn't address issue!")
+    print(f"    Tone Quality:        {result['tone_quality']:.2f} ← No empathy!")
+    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:             {result['overall']:.2f}")
 
-    # Test case 3: Wrong escalation decision
-    print("\nTest 3: Wrong Escalation Decision")
-    print("-" * 40)
+    # Test case 3: Wrong escalation
+    print("\n[EXAMPLE 3] Wrong escalation decision (should have escalated)")
+    print("-" * 60)
     result = evaluator(
-        prediction={
-            "response": """I understand your frustration. Let me help you with that.
-
-I can process your request right away. Our standard procedure will resolve this within 24 hours.
-
-Is there anything else I can help you with?""",
-            "should_escalate": False,  # Agent didn't escalate
-            "resolution_type": "resolved",
-        },
-        expected={
-            "should_escalate": True,  # But should have escalated
-            "resolution_type": "escalated",
-        },
-        input_data={
-            "query": "This is unacceptable! I want to speak to your supervisor immediately. I've been a customer for 10 years!",
-            "customer_context": {"customer_tier": "platinum", "sentiment": "very_negative"},
-        },
+        prediction={"response": "I understand. Our standard procedure will resolve this within 24 hours.", "should_escalate": False},
+        expected={"should_escalate": True},
+        input_data={"query": "This is unacceptable! I want to speak to your supervisor!", "customer_context": {"customer_tier": "platinum", "sentiment": "very_negative"}},
     )
-    print(f"Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"Tone Quality: {result['tone_quality']:.2f}")
-    print(f"Escalation Accuracy: {result['escalation_accuracy']:.2f} (should be 0 - wrong decision)")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Query: \"I want to speak to your supervisor!\"")
+    print(f"  Agent chose: NOT to escalate | Expected: ESCALATE")
+    print(f"\n  Scores:")
+    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f}")
+    print(f"    Tone Quality:        {result['tone_quality']:.2f}")
+    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f} ← WRONG DECISION!")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:             {result['overall']:.2f}")
 
-    # Test case 4: Correct escalation
-    print("\nTest 4: Correct Escalation")
-    print("-" * 40)
-    result = evaluator(
-        prediction={
-            "response": """I sincerely apologize for your experience, and I completely understand your frustration. As a valued Platinum customer of 10 years, you deserve better.
-
-I'm immediately escalating this to our senior support team. A supervisor will contact you within the next 2 hours to personally address your concerns and ensure we make this right.
-
-Your case has been marked as priority. Is there anything I can do for you in the meantime?""",
-            "should_escalate": True,
-            "resolution_type": "escalated",
-        },
-        expected={
-            "should_escalate": True,
-            "resolution_type": "escalated",
-        },
-        input_data={
-            "query": "This is unacceptable! I want to speak to your supervisor immediately.",
-            "customer_context": {"customer_tier": "platinum", "sentiment": "very_negative"},
-        },
-    )
-    print(f"Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"Tone Quality: {result['tone_quality']:.2f}")
-    print(f"Escalation Accuracy: {result['escalation_accuracy']:.2f} (should be 1 - correct)")
-    print(f"Overall: {result['overall']:.2f}")
+    print("\n" + "=" * 60)
+    print("To run optimization with real API calls:")
+    print("  export OPENAI_API_KEY=<your-key>")
+    print("  unset TRAIGENT_MOCK_MODE")
+    print("  python use-cases/customer-support/agent/support_agent.py")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    evaluate_sample()
+    demo_evaluator()
