@@ -99,7 +99,7 @@ class GridSearchOptimizer(BaseOptimizer):
         # Convert to list of dictionaries
         grid_points = []
         for combination in combinations:
-            config = dict(zip(param_names, combination))
+            config = dict(zip(param_names, combination, strict=False))
             grid_points.append(config)
 
         if not grid_points:

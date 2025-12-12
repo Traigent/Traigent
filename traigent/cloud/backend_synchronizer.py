@@ -567,7 +567,7 @@ class BackendSynchronizer:
             results = await asyncio.gather(*tasks, return_exceptions=True)
             # S4 fix: Include payload in zip to preserve data for requeue
             for session_id, result, payload in zip(
-                task_sessions, results, task_payloads
+                task_sessions, results, task_payloads, strict=False
             ):
                 self._sync_tasks.pop(session_id, None)
 

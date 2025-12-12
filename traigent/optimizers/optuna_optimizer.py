@@ -255,7 +255,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
 
         if isinstance(values, list):
             self._study.tell(trial, values=values)
-            metrics = dict(zip(self.objectives, values))
+            metrics = dict(zip(self.objectives, values, strict=False))
         else:
             self._study.tell(trial, values)
             metrics = {self.objectives[0]: values}
@@ -438,7 +438,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
         elif isinstance(metrics_obj, (list, tuple)):
             metrics = {
                 objective: float(value)
-                for objective, value in zip(self.objectives, metrics_obj)
+                for objective, value in zip(self.objectives, metrics_obj, strict=False)
             }
         elif metrics_obj is None:
             metrics = {}

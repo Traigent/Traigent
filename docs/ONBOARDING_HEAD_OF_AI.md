@@ -9,8 +9,8 @@ TraiGent is a **zero-code LLM optimization SDK**. We allow developers to optimiz
 
 **Core Value Proposition:**
 - **Decorate & Forget:** `@traigent.optimize` handles the complexity.
-- **Multi-Objective:** Optimize for Accuracy, Cost, and Latency simultaneously.
-- **Hybrid Execution:** Run locally (`edge_analytics`) or sync with our cloud platform.
+- **Multi-Objective:** Optimize for accuracy, cost, and latency simultaneously.
+- **Local-First Execution:** Run locally (`edge_analytics`) with mock mode for demos; cloud/hybrid orchestration is a roadmap item.
 
 ## 2. Architecture Overview
 The SDK is built on a few key pillars:
@@ -53,12 +53,15 @@ Here is a technical breakdown of our current optimization capabilities:
 ## 6. Getting Started Guide (Step-by-Step)
 
 ### Phase 1: Environment Setup
-1.  **Prerequisites**: Ensure you have Python 3.8+ installed.
+1.  **Prerequisites**: Python 3.11+ (matches SDK target).
 2.  **Installation**:
     ```bash
-    make install-dev
+    git clone https://github.com/Traigent/Traigent.git
+    cd Traigent
+    python3 -m venv .venv && source .venv/bin/activate
+    pip install -e ".[dev,integrations]"
     ```
-    *   *Success Criteria*: Command completes without error. You can run `python -c "import traigent; print('✅ Installed')"` and see the success message.
+    *   *Success Criteria*: `python -c "import traigent; print('✅ Installed')"` prints the success message.
 3.  **Verification**:
     ```bash
     make test-unit

@@ -25,19 +25,11 @@ from traigent.evaluators.dataset_registry import (
     resolve_dataset_reference,
 )
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
-from traigent.utils.error_handler import (
-    APIKeyError,
-    ErrorHandler,
-)
+from traigent.utils.error_handler import APIKeyError, ErrorHandler
 from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
-from traigent.utils.exceptions import (
-    ConfigurationError,
-    EvaluationError,
-)
+from traigent.utils.exceptions import ConfigurationError, EvaluationError
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import (
-    ValidationError,
-)
+from traigent.utils.exceptions import ValidationError
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -64,8 +56,8 @@ except Exception:  # pragma: no cover - executed only when module missing
         llm: Any | None = None
         embeddings: Any | None = None
 
-    RagasConfig = _FallbackRagasConfig  # type: ignore[misc]
-    RagasConfigurationError = RuntimeError  # type: ignore[misc]
+    RagasConfig = _FallbackRagasConfig  # type: ignore[misc, assignment]
+    RagasConfigurationError = RuntimeError  # type: ignore[misc, assignment]
     compute_ragas_metrics = None  # type: ignore[assignment]
 
 
@@ -722,7 +714,7 @@ class BaseEvaluator(ABC):
         correct = 0
         total = 0
 
-        for output, exp, error in zip(outputs, expected, errors):
+        for output, exp, error in zip(outputs, expected, errors, strict=False):
             # Skip if error occurred or expected output is missing/empty
             if error is None and not _is_empty_expected_output(exp):
                 if output == exp:
@@ -808,7 +800,9 @@ class BaseEvaluator(ABC):
     ) -> float:
         """Default average output length metric."""
         valid_outputs = [
-            out for out, err in zip(outputs, errors) if err is None and out is not None
+            out
+            for out, err in zip(outputs, errors, strict=False)
+            if err is None and out is not None
         ]
 
         if not valid_outputs:
@@ -838,7 +832,9 @@ class BaseEvaluator(ABC):
                 # Calculate average cost from successful examples
                 total_cost = 0.0
                 count = 0
-                for _i, (error, metrics) in enumerate(zip(errors, example_metrics)):
+                for _i, (error, metrics) in enumerate(
+                    zip(errors, example_metrics, strict=False)
+                ):
                     if error is None and metrics and hasattr(metrics, "cost"):
                         total_cost += metrics.cost.total_cost
                         count += 1
@@ -872,7 +868,7 @@ class BaseEvaluator(ABC):
                     if hasattr(r, "execution_time") and r.execution_time > 0
                 ]
                 if response_times:
-                    return sum(response_times) / len(response_times)
+                    return float(sum(response_times) / len(response_times))
 
         # Fallback: look for latency in context directly
         if "latency" in context:
@@ -1227,7 +1223,7 @@ class BaseEvaluator(ABC):
 
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        for i, result in zip(indices, results):
+        for i, result in zip(indices, results, strict=False):
             if isinstance(result, Exception):
                 if self._process_concurrent_exception(
                     result,

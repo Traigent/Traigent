@@ -9,7 +9,7 @@ code clarity throughout the system.
 
 from __future__ import annotations
 
-from typing import Any, TypedDict, Union
+from typing import Any, TypedDict
 
 # =============================================================================
 # LLM AND METRICS TYPES
@@ -309,9 +309,9 @@ ParameterDict = dict[str, ParameterBounds | CategoricalChoices]
 ValidationErrors = list[ValidationError]
 
 # Union types for flexibility
-NumericType = Union[int, float]
-BoundsType = Union[tuple[NumericType, NumericType], list[Any]]
-ConfigValue = Union[str, int, float, bool, list[Any], dict[str, Any]]
+NumericType = int | float
+BoundsType = tuple[NumericType, NumericType] | list[Any]
+ConfigValue = str | int | float | bool | list[Any] | dict[str, Any]
 
 
 # Protocol-like types for better type checking

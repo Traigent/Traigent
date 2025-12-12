@@ -28,7 +28,7 @@ Feature matrices provide:
 
 ### Module Coverage
 
-> These counts were last generated in December 2025 and do not reflect recent refactors. Regenerate matrices before using coverage numbers.
+> Matrices are stale—regenerate before relying on coverage numbers.
 
 ### Critical Issues Found
 
@@ -48,7 +48,7 @@ Feature matrices provide:
 3. ~~Add missing async methods to cloud_optimizer.py~~ ✅
 
 ### Phase 3: Medium Priority (Next Sprint)
-1. ~~Create contract_extractor.py tool~~ ✅ CREATED (2025-12-02)
+1. ~~Create contract_extractor.py tool~~ ✅ CREATED
 2. Add streaming support to invokers
 3. Standardize memory limits
 
@@ -93,5 +93,4 @@ for module in matrix['modules']:
 - [Integration Feature Matrix](../../reports/refactoring/integration_feature_matrix.md)
 
 ---
-*Generated: 2025-12-01*
-*Last Updated: 2025-12-03*
+*Generated: stale; regenerate before use*

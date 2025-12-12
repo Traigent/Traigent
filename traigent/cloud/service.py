@@ -305,7 +305,7 @@ class TraiGentCloudService:
         evaluator = LocalEvaluator()
 
         # Run optimization
-        optimization_result = await optimizer.optimize(
+        optimization_result = await optimizer.optimize(  # type: ignore[attr-defined]
             configuration_space=configuration_space,
             evaluator=evaluator,
             dataset=dataset,

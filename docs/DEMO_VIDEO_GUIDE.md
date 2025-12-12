@@ -92,9 +92,9 @@ echo ""
 sleep 0.5
 
 cat << 'JSONL'
-{"input": {"question": "What is Python?"}, "expected": "A programming language"}
-{"input": {"question": "What is 2+2?"}, "expected": "4"}
-{"input": {"question": "Capital of France?"}, "expected": "Paris"}
+{"input": {"question": "What is Python?"}, "output": "A programming language"}
+{"input": {"question": "What is 2+2?"}, "output": "4"}
+{"input": {"question": "Capital of France?"}, "output": "Paris"}
 JSONL
 sleep 2
 

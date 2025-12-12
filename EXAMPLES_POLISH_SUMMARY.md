@@ -17,7 +17,7 @@ The examples directory and all related documentation have been comprehensively r
 ### Core Documentation Files Updated
 
 1. **`examples/README.md`** - Complete rewrite ✅
-   - Accurately reflects actual directory structure (9 core examples, 5 advanced categories)
+   - Accurately reflects actual directory structure (12 core examples, 5 advanced categories)
    - Professional table format with example descriptions
    - Added "Runtime" column for time estimates
    - Comprehensive sections for advanced examples and integrations
@@ -86,7 +86,7 @@ The examples directory and all related documentation have been comprehensively r
 
 ```text
 examples/
-├── core/ (9 examples) ✅
+├── core/ (12 examples) ✅
 │   ├── hello-world/
 │   ├── few-shot-classification/
 │   ├── multi-objective-tradeoff/
@@ -96,7 +96,8 @@ examples/
 │   ├── prompt-style-optimization/
 │   ├── chunking-long-context/
 │   ├── safety-guardrails/
-│   └── prompt-ab-test/
+│   ├── prompt-ab-test/
+│   └── simple-prompt/
 │
 ├── advanced/ (5 categories) ✅
 │   ├── execution-modes/ (6 examples)

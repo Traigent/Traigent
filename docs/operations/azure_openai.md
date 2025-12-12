@@ -17,6 +17,11 @@ export AZURE_OPENAI_API_KEY="<key>"
 # export AZURE_OPENAI_MOCK=true
 ```
 
+## Dependencies
+```bash
+pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
+```
+
 ## Smoke Tests
 ```bash
 python paper_experiments/case_study_kilt/run_case_study.py \
@@ -34,4 +39,3 @@ python paper_experiments/case_study_spider/run_case_study.py \
 ```
 
 Note: In Azure, "model" is treated as the deployment name.
-

@@ -88,7 +88,7 @@ def build_success_result(
             )
 
     if getattr(eval_result, "summary_stats", None):
-        trial_result.summary_stats = eval_result.summary_stats
+        trial_result.summary_stats = eval_result.summary_stats  # type: ignore[attr-defined]
 
     logger.debug(
         "Trial %s completed: %s, duration: %.2fs",

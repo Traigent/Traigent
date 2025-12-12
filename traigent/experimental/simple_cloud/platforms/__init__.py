@@ -40,7 +40,10 @@ except ImportError:
 
 # Re-export existing platforms from parent module
 try:
-    from ..platforms import LangChainAgentExecutor, OpenAIAgentExecutor
+    from ..platforms import (  # type: ignore[attr-defined]
+        LangChainAgentExecutor,
+        OpenAIAgentExecutor,
+    )
 
     LANGCHAIN_AVAILABLE = True
     OPENAI_AVAILABLE = True

@@ -211,75 +211,29 @@ and an optional `--tvl-environment staging` flag.
 
 ## 📦 Quick Installation
 
-**Requirements**: Python 3.11 or higher
+**Requirements**: Python 3.11+
 
-Get started with TraiGent in under 2 minutes:
-
-### Method 1: From Source (Recommended for Examples)
-
-#### Using pip (Traditional)
+**Recommended (pip):**
 
 ```bash
-# Clone the repository
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
-
-# Create virtual environment (requires Python 3.11+)
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install TraiGent in development mode with all dependencies
-pip install -e ".[dev,integrations,analytics]"
-
-# Or install everything
-pip install -e ".[all]"
-
-# Verify installation
-python -c "import traigent; print('✅ TraiGent installed successfully')"
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[integrations]"   # Core + LangChain/OpenAI/Anthropic
+python -c "import traigent; print('✅ TraiGent ready')"
 ```
 
-#### Using uv (Faster - Recommended)
-
-> **First time?** Install uv: `pip install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`
+**Faster (uv):**
 
 ```bash
-# Clone the repository
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
-
-# Create virtual environment with uv
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Install TraiGent in development mode (10-100x faster!)
-uv pip install -e ".[dev,integrations,analytics]"
-
-# Or install everything
-uv pip install -e ".[all]"
-
-# Verify installation
-python -c "import traigent; print('✅ TraiGent installed successfully')"
+uv venv && source .venv/bin/activate
+uv pip install -e ".[integrations]"
+python -c "import traigent; print('✅ TraiGent ready')"
 ```
 
-**Why use uv?**
-
-- ⚡ 10-100x faster dependency resolution
-- 🎯 Drop-in replacement for pip
-- 📦 Works with existing `pyproject.toml`
-- 🔒 More reliable dependency resolution
-
-### Method 2: From PyPI (Coming Soon)
-
-> ⚠️ **Note**: TraiGent is not yet published to PyPI. Please use **Method 1 (From Source)** above for now.
-
-<!--
-Once available on PyPI, you can install with:
-```bash
-pip install traigent
-# or
-uv pip install traigent
-```
--->
+> Not on PyPI yet—install from source using the commands above.
 
 ### Environment Configuration
 
@@ -475,6 +429,8 @@ TraiGent supports local execution with cloud modes planned:
 | **Local** (`edge_analytics`) | ✅ Available   | ✅ Complete        | Random/Grid/Bayesian | All use cases     |
 | **Cloud**                    | 🚧 Coming Soon | ⚠️ Metadata        | Bayesian             | Production, teams |
 | **Hybrid**                   | 🚧 Coming Soon | ✅ Execution local | Bayesian             | Balanced approach |
+
+> Open-source builds run in `edge_analytics` today. Keep `execution_mode` at its default unless you're on a managed backend.
 
 **Quick Start - Local Mode (Recommended):**
 

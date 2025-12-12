@@ -107,7 +107,7 @@ class ParameterValidator:
             return False
         return all(
             ParameterValidator._check_type_compatibility(item, subtype)
-            for item, subtype in zip(value, args)
+            for item, subtype in zip(value, args, strict=False)
         )
 
     @staticmethod
