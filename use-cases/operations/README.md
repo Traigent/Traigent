@@ -1,5 +1,13 @@
 # Operations Agent Use Case
 
+> **Ops workflows that match ground truth - hands-off**
+
+<p align="center">
+  <a href="demo/demo.cast">
+    <img src="demo/demo.svg" alt="Operations Demo" width="600">
+  </a>
+</p>
+
 This use case demonstrates optimizing a **workflow automation agent** that processes operational tasks and generates appropriate action sequences.
 
 ## Overview
