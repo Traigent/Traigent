@@ -570,8 +570,8 @@ class TestCIApproval:
             with open(token_file, "w") as f:
                 json.dump(token_data, f)
 
-            # Test with CI environment and expired token
-            with patch.dict(os.environ, {"CI": "true"}):
+            # Test with CI environment and expired token (disable mock mode to test CI approval)
+            with patch.dict(os.environ, {"CI": "true", "TRAIGENT_MOCK_MODE": "false"}):
                 with pytest.raises(OptimizationError) as exc:
                     func._check_ci_approval()
 
@@ -647,9 +647,9 @@ class TestCIApproval:
         with open(token_file, "w") as f:
             json.dump(token_data, f)
 
-        # Test with CI environment and invalid signature
+        # Test with CI environment and invalid signature (disable mock mode to test CI approval)
         with patch.dict(
-            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret"}
+            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret", "TRAIGENT_MOCK_MODE": "false"}
         ):
             with pytest.raises(OptimizationError):
                 func._check_ci_approval()
