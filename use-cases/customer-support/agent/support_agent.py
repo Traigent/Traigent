@@ -11,7 +11,6 @@ Usage:
 """
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -21,11 +20,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
 # Import evaluator from sibling directory
 import importlib.util
+
+import traigent
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("support_evaluator", _evaluator_path)
@@ -249,7 +248,7 @@ Is there anything else I can assist you with today?"""
         resolution_type = "refund"
 
     elif "track" in query_lower or "where is" in query_lower:
-        response = f"""Hello and thank you for contacting ShopEasy!
+        response = """Hello and thank you for contacting ShopEasy!
 
 I can help you track your order. Based on the latest shipping update, your package is currently in transit and should arrive within 2-3 business days.
 
@@ -259,7 +258,7 @@ Please let me know if you need any additional assistance!"""
         resolution_type = "information"
 
     elif "cancel" in query_lower:
-        response = f"""Thank you for reaching out to ShopEasy support.
+        response = """Thank you for reaching out to ShopEasy support.
 
 I understand you'd like to cancel your order. I've checked your order status, and I'm happy to help process this cancellation for you.
 
@@ -289,7 +288,7 @@ Is there anything immediate I can assist with while we arrange this?"""
         resolution_type = "escalated"
 
     else:
-        response = f"""Thank you for contacting ShopEasy support!
+        response = """Thank you for contacting ShopEasy support!
 
 I'm happy to help you with your inquiry. I've reviewed your account and order history to better assist you.
 
@@ -368,7 +367,7 @@ async def run_optimization():
     )
 
     print(f"\nResponse:\n{result['response']}")
-    print(f"\nMetadata:")
+    print("\nMetadata:")
     print(f"  Should Escalate: {result['should_escalate']}")
     print(f"  Resolution Type: {result['resolution_type']}")
     print(f"  Model: {result['model']}")

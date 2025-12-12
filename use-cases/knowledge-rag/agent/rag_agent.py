@@ -22,11 +22,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
 # Import evaluator from sibling directory
 import importlib.util
+
+import traigent
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("rag_evaluator", _evaluator_path)
@@ -37,7 +37,12 @@ RAGEvaluator = _evaluator_module.RAGEvaluator
 
 def load_knowledge_base() -> list[dict]:
     """Load the CloudStack documentation knowledge base."""
-    kb_path = Path(__file__).parent.parent / "datasets" / "knowledge_base" / "cloudstack_docs.json"
+    kb_path = (
+        Path(__file__).parent.parent
+        / "datasets"
+        / "knowledge_base"
+        / "cloudstack_docs.json"
+    )
     try:
         with open(kb_path) as f:
             data = json.load(f)
@@ -114,7 +119,12 @@ Provide a helpful answer based on the documentation above. If you cannot find th
         "top_k": [3, 5, 7, 10],
         "confidence_threshold": [0.5, 0.7, 0.85],
     },
-    objectives=["grounded_accuracy", "retrieval_quality", "abstention_accuracy", "cost"],
+    objectives=[
+        "grounded_accuracy",
+        "retrieval_quality",
+        "abstention_accuracy",
+        "cost",
+    ],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/knowledge-rag/datasets/qa_dataset.jsonl",
         custom_evaluator=RAGEvaluator(),
@@ -247,12 +257,14 @@ async def run_optimization():
         print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
 
     print("\nStarting optimization...")
-    print(f"Configuration Space:")
-    print(f"  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
-    print(f"  - Temperature: 0.0, 0.1, 0.3")
-    print(f"  - Top-K Retrieval: 3, 5, 7, 10")
-    print(f"  - Confidence Threshold: 0.5, 0.7, 0.85")
-    print(f"\nObjectives: grounded_accuracy, retrieval_quality, abstention_accuracy, cost")
+    print("Configuration Space:")
+    print("  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
+    print("  - Temperature: 0.0, 0.1, 0.3")
+    print("  - Top-K Retrieval: 3, 5, 7, 10")
+    print("  - Confidence Threshold: 0.5, 0.7, 0.85")
+    print(
+        "\nObjectives: grounded_accuracy, retrieval_quality, abstention_accuracy, cost"
+    )
     print("-" * 60)
 
     # Run optimization
@@ -265,7 +277,7 @@ async def run_optimization():
     print("\n" + "=" * 60)
     print("OPTIMIZATION RESULTS")
     print("=" * 60)
-    print(f"\nBest Configuration:")
+    print("\nBest Configuration:")
     for key, value in results.best_config.items():
         print(f"  {key}: {value}")
     print(f"\nBest Score: {results.best_score:.4f}")
