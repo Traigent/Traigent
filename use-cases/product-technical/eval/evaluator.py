@@ -347,24 +347,85 @@ class CodeEvaluator:
         return max(0.0, min(1.0, score))
 
 
-def evaluate_sample():
-    """Test the evaluator with sample code."""
+def load_dataset() -> list[dict]:
+    """Load the coding tasks dataset."""
+    import json
+    from pathlib import Path
+
+    dataset_path = Path(__file__).parent.parent / "datasets" / "coding_tasks.jsonl"
+    if not dataset_path.exists():
+        return []
+
+    entries = []
+    with open(dataset_path) as f:
+        for line in f:
+            if line.strip():
+                entries.append(json.loads(line))
+    return entries
+
+
+def demo_evaluator():
+    """
+    Demo the Product & Technical Agent evaluator.
+
+    This runs in MOCK MODE - no API calls are made.
+    The evaluator uses ACTUAL CODE EXECUTION to score generated code:
+    - Test Pass Rate: Runs test cases against generated code
+    - Code Quality: AST analysis for style, complexity, best practices
+    - Efficiency: Code conciseness vs reference solution
+    """
+    print("=" * 60)
+    print("PRODUCT & TECHNICAL AGENT - Evaluator Demo")
+    print("=" * 60)
+    print("\nMODE: Mock (actual code execution, no API calls)")
+    print("\nEVALUATOR: CodeEvaluator")
+    print("  - Executes generated code against test cases")
+    print("  - Analyzes code quality via AST parsing")
+    print("  - Compares solution length to reference")
+    print("\nNOTE: This evaluator runs actual Python code in a sandbox!")
+
+    # Load and show dataset info
+    dataset = load_dataset()
+    print(f"\nDATASET: coding_tasks.jsonl ({len(dataset)} coding tasks)")
+
+    if dataset:
+        # Categorize by difficulty
+        difficulties = {}
+        for e in dataset:
+            diff = e.get("difficulty", "unknown")
+            difficulties[diff] = difficulties.get(diff, 0) + 1
+        print(f"  - Difficulty distribution: {difficulties}")
+
+        print("\n" + "-" * 60)
+        print("FIRST 3 CODING TASKS FROM DATASET:")
+        print("-" * 60)
+        for i, entry in enumerate(dataset[:3]):
+            input_data = entry.get("input", {})
+            func_name = input_data.get("function_name", "unknown")
+            task_desc = input_data.get("task", "")[:40]
+            test_count = len(entry.get("test_cases", []))
+            print(f"\n  [{i+1}] Function: {func_name}()")
+            print(f"      Task: \"{task_desc}...\"")
+            print(f"      Test cases: {test_count}")
+
     evaluator = CodeEvaluator()
 
+    print("\n" + "=" * 60)
+    print("EVALUATION EXAMPLES")
+    print("=" * 60)
+
     # Test case 1: Correct solution
-    print("Test 1: Correct Solution")
-    print("-" * 40)
-    result = evaluator(
-        prediction={
-            "code": '''def is_prime(n: int) -> bool:
+    print("\n[EXAMPLE 1] Correct implementation (all tests pass)")
+    print("-" * 60)
+    code1 = '''def is_prime(n: int) -> bool:
     if n < 2:
         return False
     for i in range(2, int(n ** 0.5) + 1):
         if n % i == 0:
             return False
-    return True''',
-            "function_name": "is_prime",
-        },
+    return True'''
+    result = evaluator(
+        prediction={"code": code1, "function_name": "is_prime"},
         expected=None,
         input_data={
             "function_name": "is_prime",
@@ -377,103 +438,68 @@ def evaluate_sample():
             ],
         },
     )
-    print(f"Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"Code Quality: {result['code_quality']:.2f}")
-    print(f"Efficiency: {result['efficiency']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Code: is_prime() with sqrt optimization")
+    print(f"  Tests: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
+    print(f"\n  Scores:")
+    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f}")
+    print(f"    Code Quality:   {result['code_quality']:.2f}")
+    print(f"    Efficiency:     {result['efficiency']:.2f}")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:        {result['overall']:.2f}")
 
     # Test case 2: Incorrect solution
-    print("\nTest 2: Incorrect Solution")
-    print("-" * 40)
+    print("\n[EXAMPLE 2] Buggy implementation (tests fail)")
+    print("-" * 60)
+    code2 = '''def is_prime(n: int) -> bool:
+    return n > 1  # Wrong! 4 is > 1 but not prime'''
     result = evaluator(
-        prediction={
-            "code": '''def is_prime(n: int) -> bool:
-    return n > 1  # Wrong!''',
-            "function_name": "is_prime",
-        },
+        prediction={"code": code2, "function_name": "is_prime"},
         expected=None,
         input_data={
             "function_name": "is_prime",
             "test_cases": [
                 {"input": [2], "expected": True},
-                {"input": [3], "expected": True},
                 {"input": [4], "expected": False},
                 {"input": [17], "expected": True},
             ],
         },
     )
-    print(f"Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"Code Quality: {result['code_quality']:.2f}")
-    print(f"Efficiency: {result['efficiency']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Code: is_prime() → returns n > 1 (BUGGY)")
+    print(f"  Tests: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
+    print(f"\n  Scores:")
+    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f} ← Tests failing!")
+    print(f"    Code Quality:   {result['code_quality']:.2f}")
+    print(f"    Efficiency:     {result['efficiency']:.2f}")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:        {result['overall']:.2f}")
 
     # Test case 3: Syntax error
-    print("\nTest 3: Syntax Error")
-    print("-" * 40)
+    print("\n[EXAMPLE 3] Syntax error (code doesn't compile)")
+    print("-" * 60)
+    code3 = '''def is_prime(n: int) -> bool
+    return n > 1'''  # Missing colon
     result = evaluator(
-        prediction={
-            "code": '''def is_prime(n: int) -> bool
-    return n > 1''',  # Missing colon
-            "function_name": "is_prime",
-        },
+        prediction={"code": code3, "function_name": "is_prime"},
         expected=None,
         input_data={
             "function_name": "is_prime",
             "test_cases": [{"input": [2], "expected": True}],
         },
     )
-    print(f"Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"Code Quality: {result['code_quality']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print(f"  Code: Missing colon after function signature")
+    print(f"\n  Scores:")
+    print(f"    Test Pass Rate: {result['test_pass_rate']:.2f} ← Can't run tests!")
+    print(f"    Code Quality:   {result['code_quality']:.2f} ← Syntax error")
+    print(f"    ─────────────────────────")
+    print(f"    Overall:        {result['overall']:.2f}")
 
-    # Test case 4: Verbose but correct
-    print("\nTest 4: Verbose Solution")
-    print("-" * 40)
-    result = evaluator(
-        prediction={
-            "code": '''def factorial(n: int) -> int:
-    """
-    Calculate the factorial of a non-negative integer.
-
-    Args:
-        n: A non-negative integer
-
-    Returns:
-        The factorial of n
-    """
-    # Handle base cases
-    if n == 0:
-        return 1
-    if n == 1:
-        return 1
-
-    # Initialize result
-    result = 1
-
-    # Calculate factorial iteratively
-    current = 2
-    while current <= n:
-        result = result * current
-        current = current + 1
-
-    return result''',
-            "function_name": "factorial",
-        },
-        expected="def factorial(n: int) -> int:\n    return 1 if n <= 1 else n * factorial(n - 1)",
-        input_data={
-            "function_name": "factorial",
-            "test_cases": [
-                {"input": [0], "expected": 1},
-                {"input": [5], "expected": 120},
-            ],
-            "reference_solution": "def factorial(n: int) -> int:\n    return 1 if n <= 1 else n * factorial(n - 1)",
-        },
-    )
-    print(f"Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"Code Quality: {result['code_quality']:.2f}")
-    print(f"Efficiency: {result['efficiency']:.2f}")
-    print(f"Overall: {result['overall']:.2f}")
+    print("\n" + "=" * 60)
+    print("To run optimization with real API calls:")
+    print("  export OPENAI_API_KEY=<your-key>")
+    print("  unset TRAIGENT_MOCK_MODE")
+    print("  python use-cases/product-technical/agent/code_agent.py")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
-    evaluate_sample()
+    demo_evaluator()
