@@ -1,5 +1,13 @@
 # Knowledge & RAG Agent Use Case
 
+> **RAG you can trust: grounded answers or clean abstain**
+
+<p align="center">
+  <a href="demo/demo.cast">
+    <img src="demo/demo.svg" alt="Knowledge RAG Demo" width="600">
+  </a>
+</p>
+
 This use case demonstrates optimizing a **Retrieval-Augmented Generation (RAG)** agent that answers questions about technical documentation.
 
 ## Overview

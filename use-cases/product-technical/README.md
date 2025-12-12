@@ -1,5 +1,13 @@
 # Product & Technical Agent Use Case
 
+> **Codegen that passes tests - then optimizes for elegance**
+
+<p align="center">
+  <a href="demo/demo.cast">
+    <img src="demo/demo.svg" alt="Product Technical Demo" width="600">
+  </a>
+</p>
+
 This use case demonstrates optimizing a **code generation agent** that writes Python functions based on specifications.
 
 ## Overview
