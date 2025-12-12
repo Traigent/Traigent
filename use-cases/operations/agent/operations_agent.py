@@ -22,11 +22,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
 # Import evaluator from sibling directory
 import importlib.util
+
+import traigent
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("operations_evaluator", _evaluator_path)
@@ -35,7 +35,9 @@ _spec.loader.exec_module(_evaluator_module)
 OperationsEvaluator = _evaluator_module.OperationsEvaluator
 
 
-def format_task_context(task_type: str, description: str, context: dict[str, Any]) -> str:
+def format_task_context(
+    task_type: str, description: str, context: dict[str, Any]
+) -> str:
     """Format task information for the prompt."""
     context_str = "\n".join(f"  - {k}: {v}" for k, v in context.items())
     return f"""
@@ -173,11 +175,19 @@ def generate_rule_based_response(
     base_actions = {
         "expense_approval": ["validate_amount", "check_policy_limit", "check_budget"],
         "purchase_request": ["validate_request", "check_threshold", "check_budget"],
-        "access_request": ["validate_request", "check_role_permissions", "verify_manager_approval"],
+        "access_request": [
+            "validate_request",
+            "check_role_permissions",
+            "verify_manager_approval",
+        ],
         "time_off_request": ["validate_dates", "check_balance", "check_coverage"],
         "vendor_onboarding": ["create_vendor_profile", "initiate_risk_assessment"],
         "incident_response": ["create_incident_ticket", "notify_stakeholders"],
-        "employee_onboarding": ["create_employee_record", "setup_email", "provision_equipment"],
+        "employee_onboarding": [
+            "create_employee_record",
+            "setup_email",
+            "provision_equipment",
+        ],
         "contract_renewal": ["flag_renewal_due", "pull_usage_report"],
         "refund_request": ["verify_order", "check_refund_eligibility"],
         "data_request": ["validate_request", "verify_authorization"],
@@ -202,7 +212,9 @@ def generate_rule_based_response(
                 amount = float(amount_str)
                 if amount > threshold["amount"]:
                     should_escalate = True
-                    escalation_reason = f"Amount ${amount} exceeds threshold ${threshold['amount']}"
+                    escalation_reason = (
+                        f"Amount ${amount} exceeds threshold ${threshold['amount']}"
+                    )
             except ValueError:
                 pass
 
@@ -211,13 +223,18 @@ def generate_rule_based_response(
         should_escalate = True
         escalation_reason = "Risk assessment requires human review"
 
-    if context.get("compliance_required") and len(context.get("compliance_required", [])) > 0:
+    if (
+        context.get("compliance_required")
+        and len(context.get("compliance_required", [])) > 0
+    ):
         should_escalate = True
         escalation_reason = "Compliance requirements need verification"
 
     if context.get("severity") in ["P1", "P2"]:
         should_escalate = True
-        escalation_reason = f"Severity {context.get('severity')} requires immediate attention"
+        escalation_reason = (
+            f"Severity {context.get('severity')} requires immediate attention"
+        )
 
     # Add appropriate ending actions
     if should_escalate:
@@ -249,12 +266,12 @@ async def run_optimization():
         print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
 
     print("\nStarting optimization...")
-    print(f"Configuration Space:")
-    print(f"  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
-    print(f"  - Temperature: 0.1, 0.3, 0.5")
-    print(f"  - Autonomy Level: conservative, moderate, aggressive")
-    print(f"  - Validation Strictness: lenient, standard, strict")
-    print(f"\nObjectives: action_accuracy, escalation_accuracy, efficiency, cost")
+    print("Configuration Space:")
+    print("  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
+    print("  - Temperature: 0.1, 0.3, 0.5")
+    print("  - Autonomy Level: conservative, moderate, aggressive")
+    print("  - Validation Strictness: lenient, standard, strict")
+    print("\nObjectives: action_accuracy, escalation_accuracy, efficiency, cost")
     print("-" * 60)
 
     # Run optimization
@@ -267,7 +284,7 @@ async def run_optimization():
     print("\n" + "=" * 60)
     print("OPTIMIZATION RESULTS")
     print("=" * 60)
-    print(f"\nBest Configuration:")
+    print("\nBest Configuration:")
     for key, value in results.best_config.items():
         print(f"  {key}: {value}")
     print(f"\nBest Score: {results.best_score:.4f}")
@@ -293,10 +310,10 @@ async def run_optimization():
         },
     )
 
-    print(f"\nGenerated Response:")
+    print("\nGenerated Response:")
     print(f"  Actions: {sample_result['actions']}")
     print(f"  Should Escalate: {sample_result['should_escalate']}")
-    if sample_result.get('escalation_reason'):
+    if sample_result.get("escalation_reason"):
         print(f"  Reason: {sample_result['escalation_reason']}")
 
     return results

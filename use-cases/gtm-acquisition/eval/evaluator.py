@@ -716,7 +716,7 @@ HOW IT'S EVALUATED:"""
             output = entry.get("output", "")
 
             print(f"\n[Entry {i+1}]")
-            print(f"  INPUT (lead info):")
+            print("  INPUT (lead info):")
             print(f"    Name:        {lead.get('name', 'N/A')}")
             print(f"    Title:       {lead.get('title', 'N/A')}")
             print(
@@ -724,7 +724,7 @@ HOW IT'S EVALUATED:"""
             )
             print(f"    Pain Points: {', '.join(lead.get('pain_points', []))}")
             print(f"    Recent News: {lead.get('recent_news', 'N/A')}")
-            print(f"\n  OUTPUT (expected message):")
+            print("\n  OUTPUT (expected message):")
             # Show first 150 chars of expected output
             preview = output[:150].replace("\n", " ")
             print(f'    "{preview}..."')
@@ -797,7 +797,7 @@ Click here to learn more!!!"""
     for line in good_message.strip().split("\n"):
         print(f"  {line}")
     good_result = evaluator.evaluate_message(good_message, sample_input)
-    print(f"\nScores:")
+    print("\nScores:")
     print_score_bar("ICP Fit", good_result.icp_fit)
     print_score_bar("Personalization", good_result.personalization)
     print_score_bar("Value Proposition", good_result.value_proposition)
@@ -826,7 +826,7 @@ Alex"""
     for line in borderline_message.strip().split("\n"):
         print(f"  {line}")
     borderline_result = evaluator.evaluate_message(borderline_message, sample_input)
-    print(f"\nScores:")
+    print("\nScores:")
     print_score_bar("ICP Fit", borderline_result.icp_fit)
     print_score_bar("Personalization", borderline_result.personalization)
     print_score_bar("Value Proposition", borderline_result.value_proposition)
@@ -846,7 +846,7 @@ Alex"""
     for line in bad_message.strip().split("\n"):
         print(f"  {line}")
     bad_result = evaluator.evaluate_message(bad_message, sample_input)
-    print(f"\nScores:")
+    print("\nScores:")
     print_score_bar("ICP Fit", bad_result.icp_fit)
     print_score_bar("Personalization", bad_result.personalization)
     print_score_bar("Value Proposition", bad_result.value_proposition)
