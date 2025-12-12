@@ -296,101 +296,112 @@ def load_dataset() -> list[dict]:
 
 
 def demo_evaluator():
-    """
-    Demo the Operations Agent evaluator.
-
-    This runs in MOCK MODE - no API calls are made.
-    The evaluator uses deterministic rules to score workflow automation on:
-    - Action Sequence Accuracy: Match rate against ground truth actions
-    - Escalation Accuracy: Correct routing decisions (escalate vs auto-process)
-    - Efficiency: Action economy (fewer steps = better, if correct)
-    """
-    print("=" * 60)
+    """Demo the Operations Agent evaluator with clear input/output examples."""
+    print("=" * 70)
     print("OPERATIONS AGENT - Evaluator Demo")
-    print("=" * 60)
-    print("\nMODE: Mock (deterministic scoring, no API calls)")
-    print("\nEVALUATOR: OperationsEvaluator")
-    print("  - Compares predicted action sequences to ground truth")
-    print("  - Evaluates escalation decisions (binary classification)")
-    print("  - Measures action economy (min_steps / actual_steps)")
+    print("=" * 70)
+
+    print("""
+WHAT THIS AGENT DOES:
+  A workflow automation agent that processes operational requests (like
+  expense approvals, access requests, etc.) and decides what actions to take.
+  It either auto-processes the request or escalates to a human.
+
+HOW IT'S EVALUATED:
+  The evaluator checks if the agent chose the right sequence of actions
+  and made the correct escalation decision (escalate vs auto-process).
+
+MODE: Mock (deterministic comparison, no API calls needed)
+""")
 
     # Load and show dataset info
     dataset = load_dataset()
-    print(f"\nDATASET: tasks_dataset.jsonl ({len(dataset)} task scenarios)")
+    print(f"DATASET: {len(dataset)} task scenarios in tasks_dataset.jsonl")
 
     if dataset:
-        # Count escalations
         escalation_count = sum(1 for e in dataset if e.get("should_escalate", False))
-        print(f"  - Tasks requiring escalation: {escalation_count}")
-        print(f"  - Tasks for auto-processing: {len(dataset) - escalation_count}")
+        print(f"  - {escalation_count} tasks require human escalation")
+        print(f"  - {len(dataset) - escalation_count} tasks can be auto-processed")
 
-        print("\n" + "-" * 60)
-        print("FIRST 3 TASKS FROM DATASET:")
-        print("-" * 60)
-        for i, entry in enumerate(dataset[:3]):
-            task_type = entry.get("task_type", "unknown")
+        print("\n" + "-" * 70)
+        print("SAMPLE DATA (first 2 entries):")
+        print("-" * 70)
+        for i, entry in enumerate(dataset[:2]):
+            input_data = entry.get("input", {})
+            task_desc = input_data.get("task", "N/A") if isinstance(input_data, dict) else str(input_data)
             should_escalate = entry.get("should_escalate", False)
             expected_actions = entry.get("expected_actions", [])
-            print(f"\n  [{i+1}] Type: {task_type}")
-            print(f"      Escalate: {'Yes' if should_escalate else 'No'}")
-            print(f"      Expected Actions: {', '.join(expected_actions[:3])}{'...' if len(expected_actions) > 3 else ''}")
+
+            print(f"\n[Entry {i+1}]")
+            print(f"  INPUT (task request):")
+            print(f"    \"{task_desc[:80]}...\"" if len(str(task_desc)) > 80 else f"    \"{task_desc}\"")
+            print(f"\n  OUTPUT (expected response):")
+            print(f"    Actions: {expected_actions}")
+            print(f"    Escalate: {'Yes' if should_escalate else 'No'}")
 
     evaluator = OperationsEvaluator()
 
-    print("\n" + "=" * 60)
-    print("EVALUATION EXAMPLES")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("HOW SCORING WORKS:")
+    print("=" * 70)
+    print("""
+The evaluator measures:
+
+  - Action Accuracy:     Do the agent's actions match what was expected?
+                         (Checked using overlap + order of actions)
+
+  - Escalation Accuracy: Did the agent correctly decide to escalate or not?
+                         (Binary: right or wrong)
+
+  - Efficiency:          Did the agent use the minimum number of steps?
+                         (Fewer steps = better, if still correct)
+""")
+
+    print("=" * 70)
+    print("EVALUATION EXAMPLES:")
+    print("=" * 70)
 
     # Test case 1: Exact match
-    print("\n[EXAMPLE 1] Perfect action sequence match")
-    print("-" * 60)
+    print("\n[PERFECT MATCH] - Agent got it exactly right")
+    print("-" * 70)
     pred1 = {"actions": ["validate_amount", "check_budget", "auto_approve", "notify_finance"], "should_escalate": False}
     exp1 = {"expected_actions": ["validate_amount", "check_budget", "auto_approve", "notify_finance"], "should_escalate": False}
     result = evaluator(prediction=pred1, expected=None, input_data=exp1)
-    print(f"  Predicted: {pred1['actions']}")
-    print(f"  Expected:  {exp1['expected_actions']}")
-    print(f"\n  Scores:")
-    print(f"    Action Accuracy:     {result['action_accuracy']:.2f}")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"    Efficiency:          {result['efficiency']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Agent's actions:    {pred1['actions']}")
+    print(f"  Expected actions:   {exp1['expected_actions']}")
+    print(f"  Agent escalated:    No")
+    print(f"  Should escalate:    No")
+    print(f"\nScores:")
+    print(f"  Action Accuracy:     {result['action_accuracy']:.2f}")
+    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
+    print(f"  Efficiency:          {result['efficiency']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
-    # Test case 2: Partial match
-    print("\n[EXAMPLE 2] Partial match (similar but not exact)")
-    print("-" * 60)
-    pred2 = {"actions": ["validate_amount", "check_policy", "escalate_to_manager"], "should_escalate": True}
-    exp2 = {"expected_actions": ["validate_amount", "check_policy_limit", "flag_over_limit", "escalate_to_manager"], "should_escalate": True}
-    result = evaluator(prediction=pred2, expected=None, input_data=exp2)
-    print(f"  Predicted: {pred2['actions']}")
-    print(f"  Expected:  {exp2['expected_actions']}")
-    print(f"\n  Scores:")
-    print(f"    Action Accuracy:     {result['action_accuracy']:.2f}")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"    Efficiency:          {result['efficiency']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
-
-    # Test case 3: Wrong escalation
-    print("\n[EXAMPLE 3] Wrong escalation decision")
-    print("-" * 60)
+    # Test case 2: Wrong escalation
+    print("\n[WRONG ESCALATION] - Agent should have escalated but didn't")
+    print("-" * 70)
     pred3 = {"actions": ["validate_amount", "auto_approve", "notify_finance"], "should_escalate": False}
     exp3 = {"expected_actions": ["validate_amount", "escalate_to_manager"], "should_escalate": True}
     result = evaluator(prediction=pred3, expected=None, input_data=exp3)
-    print(f"  Predicted escalate: {pred3['should_escalate']} | Expected: {exp3['should_escalate']}")
-    print(f"\n  Scores:")
-    print(f"    Action Accuracy:     {result['action_accuracy']:.2f}")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f} ← WRONG!")
-    print(f"    Efficiency:          {result['efficiency']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Agent's actions:    {pred3['actions']}")
+    print(f"  Expected actions:   {exp3['expected_actions']}")
+    print(f"  Agent escalated:    No  ← WRONG!")
+    print(f"  Should escalate:    Yes")
+    print(f"\nScores:")
+    print(f"  Action Accuracy:     {result['action_accuracy']:.2f}")
+    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f} ← Failed!")
+    print(f"  Efficiency:          {result['efficiency']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
-    print("\n" + "=" * 60)
-    print("To run optimization with real API calls:")
-    print("  export OPENAI_API_KEY=<your-key>")
-    print("  unset TRAIGENT_MOCK_MODE")
-    print("  python use-cases/operations/agent/operations_agent.py")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("NEXT STEPS:")
+    print("  To run with real LLM (more accurate, costs money):")
+    print("    export OPENAI_API_KEY=<your-key>")
+    print("    unset TRAIGENT_MOCK_MODE")
+    print("    python use-cases/operations/agent/operations_agent.py")
+    print("=" * 70)
 
 
 if __name__ == "__main__":

@@ -458,66 +458,84 @@ def load_dataset() -> list[dict]:
 
 
 def demo_evaluator():
-    """
-    Demo the Customer Support Agent evaluator.
-
-    This runs in MOCK MODE - no API calls are made.
-    The evaluator uses heuristic rules to score support responses on:
-    - Resolution Accuracy: Did it address the customer's actual issue?
-    - Tone Quality: Empathy, clarity, professionalism (CSAT proxy)
-    - Escalation Accuracy: Correct routing decisions
-    """
-    print("=" * 60)
+    """Demo the Customer Support Agent evaluator with clear input/output examples."""
+    print("=" * 70)
     print("CUSTOMER SUPPORT AGENT - Evaluator Demo")
-    print("=" * 60)
-    print("\nMODE: Mock (heuristic scoring, no API calls)")
-    print("\nEVALUATOR: SupportEvaluator")
-    print("  - Evaluates resolution accuracy (addresses customer issue)")
-    print("  - Measures tone quality (empathy, clarity, professionalism)")
-    print("  - Tracks escalation accuracy (precision/recall/F1)")
-    print("\nCALIBRATION NOTE: Tone scores should correlate with CSAT > 0.7")
+    print("=" * 70)
+
+    print("""
+WHAT THIS AGENT DOES:
+  A customer support chatbot that responds to customer inquiries.
+  Given a customer message and context (tier, order status, sentiment),
+  it generates a helpful response and decides if escalation is needed.
+
+HOW IT'S EVALUATED:
+  The evaluator checks three things:
+  1. Did the response actually solve the customer's problem?
+  2. Was the tone appropriate (empathetic, clear, professional)?
+  3. Did the agent correctly decide when to escalate to a human?
+
+MODE: Mock (heuristic scoring, no API calls needed)
+""")
 
     # Load and show dataset info
     dataset = load_dataset()
-    print(f"\nDATASET: support_tickets.jsonl ({len(dataset)} support scenarios)")
+    print(f"DATASET: {len(dataset)} support scenarios in support_tickets.jsonl")
 
     if dataset:
-        # Count escalations and sentiments
         escalation_count = sum(1 for e in dataset if e.get("should_escalate", False))
-        sentiments = {}
-        for e in dataset:
-            input_data = e.get("input", {})
-            ctx = input_data.get("customer_context", {})
-            sent = ctx.get("sentiment", "unknown")
-            sentiments[sent] = sentiments.get(sent, 0) + 1
+        print(f"  - {len(dataset) - escalation_count} can be resolved by the bot")
+        print(f"  - {escalation_count} require escalation to a human")
 
-        print(f"  - Requiring escalation: {escalation_count}")
-        print(f"  - Self-resolvable: {len(dataset) - escalation_count}")
-        print(f"  - Sentiment distribution: {sentiments}")
-
-        print("\n" + "-" * 60)
-        print("FIRST 3 SUPPORT TICKETS FROM DATASET:")
-        print("-" * 60)
-        for i, entry in enumerate(dataset[:3]):
+        print("\n" + "-" * 70)
+        print("SAMPLE DATA (first 2 entries):")
+        print("-" * 70)
+        for i, entry in enumerate(dataset[:2]):
             input_data = entry.get("input", {})
-            query = input_data.get("query", "")[:50]
+            query = input_data.get("query", "")
             ctx = input_data.get("customer_context", {})
-            tier = ctx.get("customer_tier", "unknown")
-            sentiment = ctx.get("sentiment", "unknown")
+            output = entry.get("output", "")
             escalate = entry.get("should_escalate", False)
-            print(f"\n  [{i+1}] \"{query}...\"")
-            print(f"      Customer: {tier} tier | Sentiment: {sentiment}")
-            print(f"      Should escalate: {'Yes' if escalate else 'No'}")
+
+            print(f"\n[Entry {i+1}]")
+            print(f"  INPUT (customer message):")
+            print(f"    \"{query[:70]}...\"" if len(query) > 70 else f"    \"{query}\"")
+            print(f"    Customer tier: {ctx.get('customer_tier', 'N/A')}")
+            print(f"    Sentiment: {ctx.get('sentiment', 'N/A')}")
+            print(f"\n  OUTPUT (expected response):")
+            preview = output[:100].replace('\n', ' ')
+            print(f"    \"{preview}...\"")
+            print(f"    Should escalate: {'Yes' if escalate else 'No'}")
 
     evaluator = SupportEvaluator()
 
-    print("\n" + "=" * 60)
-    print("EVALUATION EXAMPLES")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("HOW SCORING WORKS:")
+    print("=" * 70)
+    print("""
+The evaluator measures:
+
+  - Resolution Accuracy: Did the response address what the customer asked?
+                         (e.g., if they asked for refund, did we offer one?)
+
+  - Tone Quality:        Was the response appropriately empathetic and clear?
+                         Broken down into:
+                         - Empathy: Did we acknowledge their frustration?
+                         - Clarity: Were next steps clearly explained?
+                         - Professionalism: Appropriate language and tone?
+
+  - Escalation Accuracy: When customer demanded a supervisor or was very
+                         upset, did the agent correctly escalate?
+                         (Missing an escalation = very bad for CSAT!)
+""")
+
+    print("=" * 70)
+    print("EVALUATION EXAMPLES:")
+    print("=" * 70)
 
     # Test case 1: Good response
-    print("\n[EXAMPLE 1] High-quality empathetic response")
-    print("-" * 60)
+    print("\n[GREAT RESPONSE] - Empathetic, solves the problem")
+    print("-" * 70)
     good_response = """Thank you for reaching out. I sincerely apologize for the inconvenience with your damaged laptop.
 
 I completely understand how frustrating this must be. As a Gold member, your satisfaction is our priority.
@@ -531,58 +549,59 @@ Please let me know which works best. Is there anything else I can help with?"""
         expected={"should_escalate": False, "resolution_type": "refund"},
         input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
     )
-    print(f"  Query: \"I received a damaged laptop and want a refund\"")
-    print(f"  Response: Offers refund OR replacement, empathetic tone")
-    print(f"\n  Scores:")
-    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"    Tone Quality:        {result['tone_quality']:.2f}")
-    print(f"      - Empathy:         {result['empathy_score']:.2f}")
-    print(f"      - Clarity:         {result['clarity_score']:.2f}")
-    print(f"      - Professionalism: {result['professionalism_score']:.2f}")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Customer: \"I received a damaged laptop and want a refund\"")
+    print(f"  Response: Apologizes, offers refund OR replacement, asks preference")
+    print(f"\nScores:")
+    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f} (addressed the refund request)")
+    print(f"  Tone Quality:        {result['tone_quality']:.2f}")
+    print(f"    - Empathy:         {result['empathy_score']:.2f}")
+    print(f"    - Clarity:         {result['clarity_score']:.2f}")
+    print(f"    - Professionalism: {result['professionalism_score']:.2f}")
+    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
     # Test case 2: Poor response
-    print("\n[EXAMPLE 2] Low-quality dismissive response")
-    print("-" * 60)
+    print("\n[BAD RESPONSE] - Dismissive, doesn't help")
+    print("-" * 70)
     result = evaluator(
         prediction={"response": "Ok, we'll look into it. Check back later.", "should_escalate": False},
         expected={"should_escalate": False, "resolution_type": "refund"},
         input_data={"query": "I received a damaged laptop and want a refund", "customer_context": {"customer_tier": "gold", "sentiment": "negative"}},
     )
-    print(f"  Query: \"I received a damaged laptop and want a refund\"")
+    print(f"  Customer: \"I received a damaged laptop and want a refund\"")
     print(f"  Response: \"Ok, we'll look into it. Check back later.\"")
-    print(f"\n  Scores:")
-    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f} ← Doesn't address issue!")
-    print(f"    Tone Quality:        {result['tone_quality']:.2f} ← No empathy!")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f}")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"\nScores:")
+    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f} ← Didn't address refund!")
+    print(f"  Tone Quality:        {result['tone_quality']:.2f} ← Cold and dismissive!")
+    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f}")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
     # Test case 3: Wrong escalation
-    print("\n[EXAMPLE 3] Wrong escalation decision (should have escalated)")
-    print("-" * 60)
+    print("\n[MISSED ESCALATION] - Should have transferred to supervisor")
+    print("-" * 70)
     result = evaluator(
         prediction={"response": "I understand. Our standard procedure will resolve this within 24 hours.", "should_escalate": False},
         expected={"should_escalate": True},
         input_data={"query": "This is unacceptable! I want to speak to your supervisor!", "customer_context": {"customer_tier": "platinum", "sentiment": "very_negative"}},
     )
-    print(f"  Query: \"I want to speak to your supervisor!\"")
-    print(f"  Agent chose: NOT to escalate | Expected: ESCALATE")
-    print(f"\n  Scores:")
-    print(f"    Resolution Accuracy: {result['resolution_accuracy']:.2f}")
-    print(f"    Tone Quality:        {result['tone_quality']:.2f}")
-    print(f"    Escalation Accuracy: {result['escalation_accuracy']:.2f} ← WRONG DECISION!")
-    print(f"    ─────────────────────────")
-    print(f"    Overall:             {result['overall']:.2f}")
+    print(f"  Customer: \"This is unacceptable! I want to speak to your supervisor!\"")
+    print(f"  Response: \"Our standard procedure will resolve this...\" (didn't escalate)")
+    print(f"\nScores:")
+    print(f"  Resolution Accuracy: {result['resolution_accuracy']:.2f}")
+    print(f"  Tone Quality:        {result['tone_quality']:.2f}")
+    print(f"  Escalation Accuracy: {result['escalation_accuracy']:.2f} ← Should have escalated!")
+    print(f"  ─────────────────────────────")
+    print(f"  Overall:             {result['overall']:.2f}")
 
-    print("\n" + "=" * 60)
-    print("To run optimization with real API calls:")
-    print("  export OPENAI_API_KEY=<your-key>")
-    print("  unset TRAIGENT_MOCK_MODE")
-    print("  python use-cases/customer-support/agent/support_agent.py")
-    print("=" * 60)
+    print("\n" + "=" * 70)
+    print("NEXT STEPS:")
+    print("  To run with real LLM responses (costs money):")
+    print("    export OPENAI_API_KEY=<your-key>")
+    print("    unset TRAIGENT_MOCK_MODE")
+    print("    python use-cases/customer-support/agent/support_agent.py")
+    print("=" * 70)
 
 
 if __name__ == "__main__":
