@@ -74,6 +74,7 @@ from traigent.utils.exceptions import (
     TVLValidationError,
     ValidationError,
 )
+from traigent.utils.env_config import is_mock_mode, is_production
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import (
@@ -1530,6 +1531,16 @@ class OptimizedFunction:
         """
         # Only check in Edge Analytics mode
         if not self.traigent_config.is_edge_analytics_mode():
+            return
+
+        # Allow mock mode to run without CI approval since no real calls occur
+        if is_mock_mode():
+            if is_production():
+                logger.warning(
+                    "Skipping CI approval in mock mode while ENVIRONMENT=production."
+                )
+            else:
+                logger.info("Skipping CI approval in mock mode.")
             return
 
         # Detect CI environment (robust detection - 10 providers)
