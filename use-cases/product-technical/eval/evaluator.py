@@ -7,14 +7,43 @@ This evaluator scores generated code on:
 2. Code Quality - Readability, efficiency, style
 3. Solution Efficiency - Token economy and code conciseness
 
-Based on the Traigent Agent Optimization Guide specifications.
+Supports two modes:
+- MOCK MODE (default): Uses test execution for objective evaluation
+- REAL MODE: Uses LLM to generate code, then tests it
+
+Usage:
+  Mock mode: python evaluator.py  (default, uses heuristics)
+  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
 import ast
+import os
 import re
-import traceback
 from dataclasses import dataclass
 from typing import Any
+
+# ============================================================================
+# PROMPTS FOR REAL LLM MODE
+# ============================================================================
+
+# Prompt for the code generation agent
+AGENT_PROMPT = """You are a Python code generator. Write a function that solves the given task.
+
+TASK: {task}
+FUNCTION NAME: {function_name}
+
+Requirements:
+1. Write clean, efficient Python code
+2. Use type hints where appropriate
+3. Handle edge cases
+4. The function should be self-contained (no external dependencies except standard library)
+
+Return ONLY the Python function code, nothing else. No explanations, no markdown.
+Example output:
+def {function_name}(n: int) -> bool:
+    # implementation here
+    return result
+"""
 
 
 @dataclass
@@ -70,7 +99,9 @@ class CodeEvaluator:
             function_name = input_data.get("function_name", "solution")
         else:
             code = prediction.get("code", "")
-            function_name = prediction.get("function_name", input_data.get("function_name", "solution"))
+            function_name = prediction.get(
+                "function_name", input_data.get("function_name", "solution")
+            )
 
         # Get test cases
         test_cases = input_data.get("test_cases", [])
@@ -201,8 +232,7 @@ class CodeEvaluator:
             if set(actual.keys()) != set(expected.keys()):
                 return False
             return all(
-                self._compare_results(actual[k], expected[k])
-                for k in actual.keys()
+                self._compare_results(actual[k], expected[k]) for k in actual.keys()
             )
 
         # Handle float comparison with tolerance
@@ -259,19 +289,20 @@ class CodeEvaluator:
 
         # Check for common anti-patterns
         # Excessive nesting
-        max_indent = max(
-            (len(line) - len(line.lstrip())) // 4
-            for line in lines if line.strip()
-        ) if lines else 0
+        max_indent = (
+            max((len(line) - len(line.lstrip())) // 4 for line in lines if line.strip())
+            if lines
+            else 0
+        )
         if max_indent <= 3:
             score += 0.05
         elif max_indent > 5:
             score -= 0.1
 
         # Magic numbers (excluding 0, 1, 2)
-        magic_numbers = re.findall(r'\b[3-9]\d*\b', code)
+        magic_numbers = re.findall(r"\b[3-9]\d*\b", code)
         # Filter out common acceptable numbers
-        magic_numbers = [n for n in magic_numbers if n not in ['10', '100', '1000']]
+        magic_numbers = [n for n in magic_numbers if n not in ["10", "100", "1000"]]
         if len(magic_numbers) <= 2:
             score += 0.05
 
@@ -299,7 +330,8 @@ class CodeEvaluator:
 
         # Count lines of actual code (not comments/blanks)
         code_lines = [
-            line for line in code.split("\n")
+            line
+            for line in code.split("\n")
             if line.strip() and not line.strip().startswith("#")
         ]
         num_lines = len(code_lines)
@@ -315,7 +347,8 @@ class CodeEvaluator:
         # Compare to reference if available
         if reference:
             ref_lines = [
-                line for line in reference.split("\n")
+                line
+                for line in reference.split("\n")
                 if line.strip() and not line.strip().startswith("#")
             ]
             ref_num = len(ref_lines)
@@ -340,11 +373,167 @@ class CodeEvaluator:
             score += 0.05
 
         # Built-in functions usage
-        builtins_used = ["sum(", "max(", "min(", "len(", "sorted(", "zip(", "enumerate("]
+        builtins_used = [
+            "sum(",
+            "max(",
+            "min(",
+            "len(",
+            "sorted(",
+            "zip(",
+            "enumerate(",
+        ]
         if any(b in code for b in builtins_used):
             score += 0.05
 
         return max(0.0, min(1.0, score))
+
+
+def is_mock_mode() -> bool:
+    """Check if running in mock mode."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+
+
+def run_optimization(num_configs: int = 5, num_examples: int = 10):
+    """Run optimization testing different code generation configurations."""
+    from openai import OpenAI
+
+    client = OpenAI()
+    dataset = load_dataset()[:num_examples]
+    evaluator = CodeEvaluator()
+
+    configs = [
+        {
+            "name": "baseline",
+            "temperature": 0.0,
+            "instruction": "Write clean Python code.",
+        },
+        {
+            "name": "creative",
+            "temperature": 0.7,
+            "instruction": "Write elegant, creative Python code.",
+        },
+        {
+            "name": "explicit",
+            "temperature": 0.0,
+            "instruction": "Write explicit, well-documented Python code with type hints.",
+        },
+        {
+            "name": "minimal",
+            "temperature": 0.2,
+            "instruction": "Write minimal, concise Python code.",
+        },
+        {
+            "name": "defensive",
+            "temperature": 0.1,
+            "instruction": "Write defensive Python code handling edge cases.",
+        },
+    ][:num_configs]
+
+    print("\n" + "=" * 70)
+    print("OPTIMIZATION RUN: Testing Different Code Generation Configs")
+    print("=" * 70)
+    print(
+        f"\nConfigs: {num_configs}, Examples: {num_examples}, Total calls: {num_configs * num_examples}"
+    )
+
+    results = []
+    for config in configs:
+        print(f"\n--- Config: {config['name']} (temp={config['temperature']}) ---")
+        scores = []
+
+        for i, entry in enumerate(dataset):
+            input_data = entry.get("input", {})
+            task = input_data.get("task", "")
+            func_name = input_data.get("function_name", "solution")
+            test_cases = entry.get("test_cases", [])
+
+            prompt = f"""{config['instruction']}
+
+Task: {task}
+Function name: {func_name}
+
+Return ONLY the Python function code, no explanations."""
+
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=config["temperature"],
+                )
+                code = response.choices[0].message.content
+                # Strip markdown
+                if "```" in code:
+                    code = re.sub(r"```python\n?", "", code)
+                    code = re.sub(r"```\n?", "", code)
+
+                result = evaluator(
+                    {"code": code, "function_name": func_name},
+                    None,
+                    {"function_name": func_name, "test_cases": test_cases},
+                )
+                scores.append(result)
+                passed = int(result.get("tests_passed", 0))
+                total = int(result.get("tests_total", 0))
+                print(
+                    f"  [{i+1}/{num_examples}] tests={passed}/{total} quality={result['code_quality']:.2f}"
+                )
+            except Exception as e:
+                print(f"  [{i+1}/{num_examples}] Error: {e}")
+                scores.append({"test_pass_rate": 0, "code_quality": 0, "overall": 0})
+
+        avg_pass = sum(s["test_pass_rate"] for s in scores) / len(scores)
+        avg_quality = sum(s["code_quality"] for s in scores) / len(scores)
+        results.append(
+            {
+                "config": config["name"],
+                "temp": config["temperature"],
+                "pass_rate": avg_pass,
+                "quality": avg_quality,
+                "overall": (avg_pass * 0.7 + avg_quality * 0.3),
+            }
+        )
+
+    print("\n" + "=" * 70)
+    print("RESULTS TABLE")
+    print("=" * 70)
+    print(
+        f"\n{'Config':<12} {'Temp':<6} {'Pass Rate':<10} {'Quality':<10} {'Overall':<10}"
+    )
+    print("-" * 48)
+    for r in sorted(results, key=lambda x: x["overall"], reverse=True):
+        print(
+            f"{r['config']:<12} {r['temp']:<6.1f} {r['pass_rate']*100:>5.0f}%      {r['quality']:.3f}      {r['overall']:.3f}"
+        )
+
+    best = max(results, key=lambda x: x["overall"])
+    print("-" * 48)
+    print(f"🏆 BEST: {best['config']} (score={best['overall']:.3f})")
+    print("=" * 70)
+    return results
+
+
+def generate_code_with_llm(task: str, function_name: str) -> str:
+    """Generate code using LLM (real mode only)."""
+    try:
+        from openai import OpenAI
+
+        client = OpenAI()
+        prompt = AGENT_PROMPT.format(task=task, function_name=function_name)
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.0,
+        )
+
+        code = response.choices[0].message.content
+        # Strip markdown code blocks if present
+        if code.startswith("```"):
+            code = re.sub(r"^```\w*\n", "", code)
+            code = re.sub(r"\n```$", "", code)
+        return code.strip()
+    except Exception as e:
+        return f"# Error generating code: {e}"
 
 
 def load_dataset() -> list[dict]:
@@ -364,13 +553,28 @@ def load_dataset() -> list[dict]:
     return entries
 
 
+def print_score_bar(label: str, score: float, max_score: float = 1.0, width: int = 20):
+    """Print a visual score bar."""
+    normalized = min(score / max_score, 1.0)
+    filled = int(normalized * width)
+    bar = "█" * filled + "░" * (width - filled)
+    pct = score * 100 if max_score == 1.0 else score
+    print(f"  {label:<18} {bar} {pct:.0f}%")
+
+
 def demo_evaluator():
     """Demo the Product & Technical Agent evaluator with clear input/output examples."""
+    mock_mode = is_mock_mode()
+
     print("=" * 70)
     print("PRODUCT & TECHNICAL AGENT - Evaluator Demo")
     print("=" * 70)
+    print(
+        f"\nMODE: {'MOCK (test execution)' if mock_mode else 'REAL (LLM code generation)'}"
+    )
 
-    print("""
+    print(
+        """
 WHAT THIS AGENT DOES:
   A code generation agent that writes Python functions based on task
   descriptions. Given a task like "write a function to check if prime",
@@ -378,10 +582,11 @@ WHAT THIS AGENT DOES:
 
 HOW IT'S EVALUATED:
   The evaluator ACTUALLY RUNS the generated code against test cases!
-  This is the most objective evaluation - either the code works or it doesn't.
-
-MODE: Mock (actual code execution, no API calls needed)
-""")
+  This is the most objective evaluation - either the code works or it doesn't."""
+    )
+    if not mock_mode:
+        print("  REAL MODE: LLM generates code, then we run tests against it.")
+    print()
 
     # Load and show dataset info
     dataset = load_dataset()
@@ -400,11 +605,11 @@ MODE: Mock (actual code execution, no API calls needed)
 
             print(f"\n[Entry {i+1}]")
             print(f"  INPUT (task description):")
-            print(f"    Task: \"{task}\"")
+            print(f'    Task: "{task}"')
             print(f"    Function name: {func_name}()")
             print(f"\n  OUTPUT (expected code):")
             # Show first line of reference solution
-            first_line = ref_solution.split('\n')[0] if ref_solution else "N/A"
+            first_line = ref_solution.split("\n")[0] if ref_solution else "N/A"
             print(f"    {first_line}")
             print(f"    ... (full solution in dataset)")
             print(f"\n  TEST CASES ({len(test_cases)} tests):")
@@ -418,7 +623,8 @@ MODE: Mock (actual code execution, no API calls needed)
     print("\n" + "=" * 70)
     print("HOW SCORING WORKS:")
     print("=" * 70)
-    print("""
+    print(
+        """
 The evaluator measures:
 
   - Test Pass Rate:  How many test cases pass? (0-100%)
@@ -431,22 +637,29 @@ The evaluator measures:
 
   - Efficiency:      Is the solution concise vs the reference solution?
                      (Fewer lines is better, if tests still pass)
-""")
+"""
+    )
 
     print("=" * 70)
     print("EVALUATION EXAMPLES:")
     print("=" * 70)
 
     # Test case 1: Correct solution
-    print("\n[CORRECT CODE] - All tests pass")
-    print("-" * 70)
-    code1 = '''def is_prime(n: int) -> bool:
+    code1 = """def is_prime(n: int) -> bool:
     if n < 2:
         return False
     for i in range(2, int(n ** 0.5) + 1):
         if n % i == 0:
             return False
-    return True'''
+    return True"""
+
+    print("\n[CORRECT CODE] - All tests pass")
+    print("-" * 70)
+    print('Task: "Write a function to check if a number is prime"')
+    print("\nGenerated Code:")
+    for line in code1.strip().split("\n"):
+        print(f"  {line}")
+
     result = evaluator(
         prediction={"code": code1, "function_name": "is_prime"},
         expected=None,
@@ -461,23 +674,29 @@ The evaluator measures:
             ],
         },
     )
-    print(f"  Task: \"Write a function to check if a number is prime\"")
-    print(f"  Generated code:")
-    print(f"    def is_prime(n): ...")
-    print(f"    (uses sqrt optimization)")
-    print(f"\n  Test Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed ✓")
-    print(f"\nScores:")
-    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f}")
-    print(f"  Code Quality:   {result['code_quality']:.2f}")
-    print(f"  Efficiency:     {result['efficiency']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:        {result['overall']:.2f}")
+    print(
+        f"\nTest Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed"
+    )
+    print("  is_prime(2) = True  ✓")
+    print("  is_prime(4) = False ✓")
+    print("  is_prime(17) = True ✓")
+    print("\nScores:")
+    print_score_bar("Test Pass Rate", result["test_pass_rate"])
+    print_score_bar("Code Quality", result["code_quality"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 40}")
+    print_score_bar("OVERALL", result["overall"])
 
     # Test case 2: Buggy solution
-    print("\n[BUGGY CODE] - Some tests fail")
+    code2 = "def is_prime(n: int) -> bool:\n    return n > 1  # Bug!"
+
+    print("\n[BUGGY CODE] - Looks simple but fails edge cases")
     print("-" * 70)
-    code2 = '''def is_prime(n: int) -> bool:
-    return n > 1  # Bug: 4 > 1 but 4 is not prime!'''
+    print('Task: "Write a function to check if a number is prime"')
+    print("\nGenerated Code:")
+    print("  def is_prime(n: int) -> bool:")
+    print("      return n > 1  # Naive implementation!")
+
     result = evaluator(
         prediction={"code": code2, "function_name": "is_prime"},
         expected=None,
@@ -490,23 +709,31 @@ The evaluator measures:
             ],
         },
     )
-    print(f"  Task: \"Write a function to check if a number is prime\"")
-    print(f"  Generated code:")
-    print(f"    def is_prime(n): return n > 1  # BUGGY!")
-    print(f"\n  Test Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed")
-    print(f"    is_prime(4) returned True, expected False ✗")
-    print(f"\nScores:")
-    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f} ← Tests failing!")
-    print(f"  Code Quality:   {result['code_quality']:.2f}")
-    print(f"  Efficiency:     {result['efficiency']:.2f}")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:        {result['overall']:.2f}")
+    print(
+        f"\nTest Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed"
+    )
+    print("  is_prime(2) = True  ✓")
+    print("  is_prime(4) = True  ✗ Expected: False")
+    print("  is_prime(17) = True ✓")
+    print("\nScores:")
+    print_score_bar("Test Pass Rate", result["test_pass_rate"])
+    print(f"    ^ Test failures are the main issue!")
+    print_score_bar("Code Quality", result["code_quality"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 40}")
+    print_score_bar("OVERALL", result["overall"])
 
     # Test case 3: Syntax error
-    print("\n[SYNTAX ERROR] - Code won't even run")
+    code3 = """def is_prime(n: int) -> bool
+    return n > 1"""
+
+    print("\n[SYNTAX ERROR] - Code won't compile")
     print("-" * 70)
-    code3 = '''def is_prime(n: int) -> bool
-    return n > 1'''  # Missing colon
+    print('Task: "Write a function to check if a number is prime"')
+    print("\nGenerated Code:")
+    print("  def is_prime(n: int) -> bool    <- Missing colon!")
+    print("      return n > 1")
+
     result = evaluator(
         prediction={"code": code3, "function_name": "is_prime"},
         expected=None,
@@ -515,23 +742,85 @@ The evaluator measures:
             "test_cases": [{"input": [2], "expected": True}],
         },
     )
-    print(f"  Task: \"Write a function to check if a number is prime\"")
-    print(f"  Generated code:")
-    print(f"    def is_prime(n: int) -> bool  # Missing colon!")
-    print(f"        return n > 1")
-    print(f"\n  Test Results: Can't run - syntax error!")
-    print(f"\nScores:")
-    print(f"  Test Pass Rate: {result['test_pass_rate']:.2f} ← Code doesn't compile!")
-    print(f"  Code Quality:   {result['code_quality']:.2f} ← Syntax error")
-    print(f"  ─────────────────────────────")
-    print(f"  Overall:        {result['overall']:.2f}")
+    print("\nTest Results: FAILED - SyntaxError!")
+    print("\nScores:")
+    print_score_bar("Test Pass Rate", result["test_pass_rate"])
+    print(f"    ^ Can't run tests on broken code")
+    print_score_bar("Code Quality", result["code_quality"])
+    print(f"    ^ Syntax error detected")
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"  {'─' * 40}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # Test case 4: Verbose but correct
+    code4 = """def is_prime(n: int) -> bool:
+    \"\"\"Check if n is prime.\"\"\"
+    if n is None:
+        raise ValueError("Input cannot be None")
+    if not isinstance(n, int):
+        raise TypeError("Input must be integer")
+    if n < 0:
+        return False
+    if n == 0:
+        return False
+    if n == 1:
+        return False
+    if n == 2:
+        return True
+    if n == 3:
+        return True
+    if n % 2 == 0:
+        return False
+    for i in range(3, n, 2):
+        if n % i == 0:
+            return False
+    return True"""
+
+    print("\n[VERBOSE CODE] - Works but inefficient")
+    print("-" * 70)
+    print('Task: "Write a function to check if a number is prime"')
+    print("\nGenerated Code: (20+ lines of overly defensive code)")
+    print("  def is_prime(n: int) -> bool:")
+    print('      """Check if n is prime."""')
+    print("      if n is None: raise ValueError(...)")
+    print("      if not isinstance(n, int): raise TypeError(...)")
+    print("      ... (many more lines)")
+
+    result = evaluator(
+        prediction={"code": code4, "function_name": "is_prime"},
+        expected=None,
+        input_data={
+            "function_name": "is_prime",
+            "test_cases": [
+                {"input": [2], "expected": True},
+                {"input": [4], "expected": False},
+                {"input": [17], "expected": True},
+                {"input": [1], "expected": False},
+            ],
+        },
+    )
+    print(
+        f"\nTest Results: {int(result['tests_passed'])}/{int(result['tests_total'])} passed"
+    )
+    print("\nScores:")
+    print_score_bar("Test Pass Rate", result["test_pass_rate"])
+    print(f"    ^ Tests pass - it works!")
+    print_score_bar("Code Quality", result["code_quality"])
+    print_score_bar("Efficiency", result["efficiency"])
+    print(f"    ^ But it's way more code than needed")
+    print(f"  {'─' * 40}")
+    print_score_bar("OVERALL", result["overall"])
+
+    # In real mode, run optimization
+    if not mock_mode:
+        run_optimization(num_configs=5, num_examples=10)
 
     print("\n" + "=" * 70)
-    print("NEXT STEPS:")
-    print("  To run with real LLM code generation (costs money):")
-    print("    export OPENAI_API_KEY=<your-key>")
-    print("    unset TRAIGENT_MOCK_MODE")
-    print("    python use-cases/product-technical/agent/code_agent.py")
+    print("HOW TO RUN:")
+    print("  Mock mode (heuristics): python evaluator.py  (default)")
+    print(
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+    )
     print("=" * 70)
 
 
