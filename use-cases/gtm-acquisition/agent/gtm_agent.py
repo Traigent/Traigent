@@ -12,7 +12,6 @@ Usage:
 """
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -22,11 +21,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
 # Import evaluator from sibling directory
 import importlib.util
+
+import traigent
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("gtm_evaluator", _evaluator_path)
@@ -158,12 +157,12 @@ async def run_optimization():
         print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
 
     print("\nStarting optimization...")
-    print(f"Configuration Space:")
-    print(f"  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
-    print(f"  - Temperature: 0.3, 0.5, 0.7, 0.9")
-    print(f"  - Personalization: basic, moderate, deep")
-    print(f"  - Tone: professional, friendly, consultative")
-    print(f"\nObjectives: message_quality, compliance, cost")
+    print("Configuration Space:")
+    print("  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
+    print("  - Temperature: 0.3, 0.5, 0.7, 0.9")
+    print("  - Personalization: basic, moderate, deep")
+    print("  - Tone: professional, friendly, consultative")
+    print("\nObjectives: message_quality, compliance, cost")
     print("-" * 60)
 
     # Run optimization
@@ -176,7 +175,7 @@ async def run_optimization():
     print("\n" + "=" * 60)
     print("OPTIMIZATION RESULTS")
     print("=" * 60)
-    print(f"\nBest Configuration:")
+    print("\nBest Configuration:")
     for key, value in results.best_config.items():
         print(f"  {key}: {value}")
     print(f"\nBest Score: {results.best_score:.4f}")

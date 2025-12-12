@@ -11,7 +11,6 @@ Usage:
 """
 
 import asyncio
-import json
 import os
 import sys
 from pathlib import Path
@@ -21,11 +20,11 @@ from typing import Any
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
 # Import evaluator from sibling directory
 import importlib.util
+
+import traigent
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("code_evaluator", _evaluator_path)
@@ -166,29 +165,29 @@ def generate_mock_code(
     """Generate mock code for testing without LLM."""
     # Simple mock implementations for common tasks
     mock_implementations = {
-        "is_prime": '''def is_prime(n: int) -> bool:
+        "is_prime": """def is_prime(n: int) -> bool:
     if n < 2:
         return False
     for i in range(2, int(n ** 0.5) + 1):
         if n % i == 0:
             return False
-    return True''',
-        "factorial": '''def factorial(n: int) -> int:
+    return True""",
+        "factorial": """def factorial(n: int) -> int:
     if n <= 1:
         return 1
     result = 1
     for i in range(2, n + 1):
         result *= i
-    return result''',
-        "reverse_string": '''def reverse_string(s: str) -> str:
-    return s[::-1]''',
-        "fibonacci": '''def fibonacci(n: int) -> int:
+    return result""",
+        "reverse_string": """def reverse_string(s: str) -> str:
+    return s[::-1]""",
+        "fibonacci": """def fibonacci(n: int) -> int:
     if n <= 1:
         return n
     a, b = 0, 1
     for _ in range(2, n + 1):
         a, b = b, a + b
-    return b''',
+    return b""",
     }
 
     # Return mock implementation if available, otherwise generic
@@ -196,7 +195,7 @@ def generate_mock_code(
         function_name,
         f'''{signature}:
     """Mock implementation for {task}"""
-    pass  # TODO: Implement'''
+    pass  # TODO: Implement''',
     )
 
     return {
@@ -224,12 +223,12 @@ async def run_optimization():
         print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
 
     print("\nStarting optimization...")
-    print(f"Configuration Space:")
-    print(f"  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
-    print(f"  - Temperature: 0.0, 0.2, 0.4")
-    print(f"  - Coding Style: concise, verbose, documented")
-    print(f"  - Approach: direct, test_first")
-    print(f"\nObjectives: test_pass_rate, code_quality, efficiency, cost")
+    print("Configuration Space:")
+    print("  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
+    print("  - Temperature: 0.0, 0.2, 0.4")
+    print("  - Coding Style: concise, verbose, documented")
+    print("  - Approach: direct, test_first")
+    print("\nObjectives: test_pass_rate, code_quality, efficiency, cost")
     print("-" * 60)
 
     # Run optimization
@@ -242,7 +241,7 @@ async def run_optimization():
     print("\n" + "=" * 60)
     print("OPTIMIZATION RESULTS")
     print("=" * 60)
-    print(f"\nBest Configuration:")
+    print("\nBest Configuration:")
     for key, value in results.best_config.items():
         print(f"  {key}: {value}")
     print(f"\nBest Score: {results.best_score:.4f}")
@@ -263,7 +262,7 @@ async def run_optimization():
     )
 
     print(f"\nGenerated Code:\n{result['code']}")
-    print(f"\nMetadata:")
+    print("\nMetadata:")
     print(f"  Model: {result['model']}")
     print(f"  Style: {result['style']}")
     print(f"  Approach: {result['approach']}")

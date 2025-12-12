@@ -586,13 +586,13 @@ HOW IT'S EVALUATED:"""
             expected_actions = entry.get("expected_actions", [])
 
             print(f"\n[Entry {i+1}]")
-            print(f"  INPUT (task request):")
+            print("  INPUT (task request):")
             print(
                 f'    "{task_desc[:80]}..."'
                 if len(str(task_desc)) > 80
                 else f'    "{task_desc}"'
             )
-            print(f"\n  OUTPUT (expected response):")
+            print("\n  OUTPUT (expected response):")
             print(f"    Actions: {expected_actions}")
             print(f"    Escalate: {'Yes' if should_escalate else 'No'}")
 
@@ -679,7 +679,7 @@ The evaluator measures:
     result = evaluator(prediction=pred2, expected=None, input_data=exp2)
     print("\nScores:")
     print_score_bar("Action Accuracy", result["action_accuracy"])
-    print(f"    ^ Same actions but wrong order penalized")
+    print("    ^ Same actions but wrong order penalized")
     print_score_bar("Escalation", result["escalation_accuracy"])
     print_score_bar("Efficiency", result["efficiency"])
     print(f"  {'─' * 42}")
@@ -712,7 +712,7 @@ The evaluator measures:
     print("\nScores:")
     print_score_bar("Action Accuracy", result["action_accuracy"])
     print_score_bar("Escalation", result["escalation_accuracy"])
-    print(f"    ^ Critical failure! Over-limit request auto-approved!")
+    print("    ^ Critical failure! Over-limit request auto-approved!")
     print_score_bar("Efficiency", result["efficiency"])
     print(f"  {'─' * 42}")
     print_score_bar("OVERALL", result["overall"])
@@ -750,7 +750,7 @@ The evaluator measures:
     print_score_bar("Action Accuracy", result["action_accuracy"])
     print_score_bar("Escalation", result["escalation_accuracy"])
     print_score_bar("Efficiency", result["efficiency"])
-    print(f"    ^ Simple task didn't need 7 steps!")
+    print("    ^ Simple task didn't need 7 steps!")
     print(f"  {'─' * 42}")
     print_score_bar("OVERALL", result["overall"])
 
