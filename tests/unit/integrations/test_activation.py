@@ -10,8 +10,6 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import pytest
-
 from traigent.integrations.activation import ActivationState, create_activation_state
 
 

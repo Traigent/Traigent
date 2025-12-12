@@ -1,6 +1,6 @@
 """Tests for visualization plots."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 from traigent.api.types import (
@@ -20,7 +20,7 @@ def _make_trial(trial_id: str, accuracy: float, cost: float) -> TrialResult:
         metrics={"accuracy": accuracy, "cost": cost},
         status=TrialStatus.COMPLETED,
         duration=1.0,
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         metadata={},
     )
 
@@ -41,7 +41,7 @@ def _make_result(
         status=OptimizationStatus.COMPLETED,
         objectives=objectives or ["accuracy", "cost"],
         algorithm="test_algo",
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
         metadata={"objective_orientations": orientations},
     )
 
@@ -97,7 +97,7 @@ def test_progress_plot_respects_minimize_orientation(monkeypatch):
             metrics={"loss": 0.5},
             status=TrialStatus.COMPLETED,
             duration=1.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         ),
         TrialResult(
             trial_id="t2",
@@ -105,7 +105,7 @@ def test_progress_plot_respects_minimize_orientation(monkeypatch):
             metrics={"loss": 0.3},
             status=TrialStatus.COMPLETED,
             duration=1.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         ),
         TrialResult(
             trial_id="t3",
@@ -113,7 +113,7 @@ def test_progress_plot_respects_minimize_orientation(monkeypatch):
             metrics={"loss": 0.4},
             status=TrialStatus.COMPLETED,
             duration=1.0,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
         ),
     ]
 

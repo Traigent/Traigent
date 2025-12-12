@@ -5,9 +5,10 @@ global state pollution between tests.
 """
 
 import warnings
+from collections.abc import Callable
 from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Callable, Dict
+from typing import Any
 
 
 class GlobalStateManager:
@@ -18,7 +19,7 @@ class GlobalStateManager:
     """
 
     @staticmethod
-    def capture_state() -> Dict[str, Any]:
+    def capture_state() -> dict[str, Any]:
         """Capture current global state from all known global objects.
 
         Returns:
@@ -37,7 +38,7 @@ class GlobalStateManager:
         }
 
     @staticmethod
-    def restore_state(state: Dict[str, Any]) -> None:
+    def restore_state(state: dict[str, Any]) -> None:
         """Restore global state from a captured snapshot.
 
         Args:
@@ -126,8 +127,8 @@ class GlobalStateManager:
 
     @staticmethod
     def get_state_diff(
-        state1: Dict[str, Any], state2: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        state1: dict[str, Any], state2: dict[str, Any]
+    ) -> dict[str, Any]:
         """Compare two state snapshots and return differences.
 
         Args:

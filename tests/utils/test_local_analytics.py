@@ -3,7 +3,7 @@
 import json
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -225,7 +225,7 @@ class TestLocalAnalytics:
         # Create recent submission file
         last_submission_file = Path(self.storage.storage_path) / ".last_analytics"
         last_submission_file.parent.mkdir(parents=True, exist_ok=True)
-        recent_time = datetime.now(timezone.utc) - timedelta(hours=1)
+        recent_time = datetime.now(UTC) - timedelta(hours=1)
         last_submission_file.write_text(recent_time.isoformat())
 
         assert not self.analytics._is_submission_due()
@@ -235,7 +235,7 @@ class TestLocalAnalytics:
         # Create old submission file
         last_submission_file = Path(self.storage.storage_path) / ".last_analytics"
         last_submission_file.parent.mkdir(parents=True, exist_ok=True)
-        old_time = datetime.now(timezone.utc) - timedelta(days=2)
+        old_time = datetime.now(UTC) - timedelta(days=2)
         last_submission_file.write_text(old_time.isoformat())
 
         assert self.analytics._is_submission_due()
@@ -250,7 +250,7 @@ class TestLocalAnalytics:
         # Should be recent timestamp
         timestamp_str = last_submission_file.read_text().strip()
         timestamp = datetime.fromisoformat(timestamp_str)
-        assert (datetime.now(timezone.utc) - timestamp).total_seconds() < 10
+        assert (datetime.now(UTC) - timestamp).total_seconds() < 10
 
     def test_get_cloud_incentive_data_empty(self):
         """Test cloud incentive data with no sessions."""

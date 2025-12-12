@@ -8,7 +8,7 @@ This test file covers the actual implemented authentication components:
 """
 
 import warnings
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -35,8 +35,8 @@ class TestAPIKey:
         api_key = APIKey(
             key="sk-test123",
             name="Test Key",
-            created_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            created_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=30),
         )
 
         assert api_key.key == "sk-test123"
@@ -50,8 +50,8 @@ class TestAPIKey:
         api_key = APIKey(
             key="sk-expired123",
             name="Expired Key",
-            created_at=datetime.now(timezone.utc) - timedelta(days=2),
-            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            created_at=datetime.now(UTC) - timedelta(days=2),
+            expires_at=datetime.now(UTC) - timedelta(days=1),
         )
 
         assert not api_key.is_valid()  # Should be invalid due to expiration
@@ -61,7 +61,7 @@ class TestAPIKey:
         api_key = APIKey(
             key="sk-test123",
             name="Test Key",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             permissions={"optimize": True, "analytics": False},
         )
 
@@ -74,7 +74,7 @@ class TestAPIKey:
         api_key = APIKey(
             key="sk-limited123",
             name="Limited Key",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             usage_limit=100,
         )
 
@@ -86,7 +86,7 @@ class TestAPIKey:
         api_key = APIKey(
             key="sk-noexpire123",
             name="No Expire Key",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             expires_at=None,  # No expiration
         )
 

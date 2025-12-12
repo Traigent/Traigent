@@ -1,6 +1,5 @@
 """Comprehensive unit tests for MCP production client."""
 
-import asyncio
 import json
 import time
 import uuid
@@ -290,7 +289,7 @@ class TestMCPRequestHandling:
         """Test request timeout handling."""
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+            mock_session.call_tool = AsyncMock(side_effect=TimeoutError())
 
             if hasattr(self.client, "_session"):
                 self.client._session = mock_session
@@ -298,7 +297,7 @@ class TestMCPRequestHandling:
                 if hasattr(self.client, "call_tool"):
                     try:
                         await self.client.call_tool("test_tool", {})
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         pass  # Expected
 
 

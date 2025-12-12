@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -23,7 +23,7 @@ class TestAPIKey:
 
     def test_api_key_creation(self):
         """Test APIKey creation with all parameters."""
-        created_at = datetime.now(timezone.utc)
+        created_at = datetime.now(UTC)
         expires_at = created_at + timedelta(days=365)
 
         api_key = APIKey(
@@ -44,9 +44,7 @@ class TestAPIKey:
 
     def test_api_key_default_permissions(self):
         """Test APIKey with default permissions."""
-        api_key = APIKey(
-            key="test_key", name="test", created_at=datetime.now(timezone.utc)
-        )
+        api_key = APIKey(key="test_key", name="test", created_at=datetime.now(UTC))
 
         expected_permissions = {"optimize": True, "analytics": True, "billing": False}
         assert api_key.permissions == expected_permissions
@@ -56,8 +54,8 @@ class TestAPIKey:
         api_key = APIKey(
             key="valid_key",
             name="test",
-            created_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+            created_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=1),
         )
 
         assert api_key.is_valid() is True
@@ -67,8 +65,8 @@ class TestAPIKey:
         api_key = APIKey(
             key="expired_key",
             name="test",
-            created_at=datetime.now(timezone.utc) - timedelta(days=2),
-            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            created_at=datetime.now(UTC) - timedelta(days=2),
+            expires_at=datetime.now(UTC) - timedelta(days=1),
         )
 
         assert api_key.is_valid() is False
@@ -78,7 +76,7 @@ class TestAPIKey:
         api_key = APIKey(
             key="no_expiry_key",
             name="test",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             expires_at=None,
         )
 
@@ -86,7 +84,7 @@ class TestAPIKey:
 
     def test_api_key_is_valid_empty_key(self):
         """Test API key validity with empty key."""
-        api_key = APIKey(key="", name="test", created_at=datetime.now(timezone.utc))
+        api_key = APIKey(key="", name="test", created_at=datetime.now(UTC))
 
         assert api_key.is_valid() is False
 
@@ -95,7 +93,7 @@ class TestAPIKey:
         api_key = APIKey(
             key="test_key",
             name="test",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
             permissions={"optimize": True, "analytics": False},
         )
 
@@ -205,8 +203,8 @@ class TestAuthManager:
         manager._api_key = APIKey(
             key="tg_" + "x" * 61,
             name="test_key",
-            created_at=datetime.now(timezone.utc),
-            expires_at=datetime.now(timezone.utc) + timedelta(days=30),
+            created_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(days=30),
         )
 
         info = manager.get_api_key_info()
@@ -290,7 +288,7 @@ class TestAuthManager:
         manager = AuthManager(config)
 
         # Set key expiring in five days -> warning
-        warning_expiry = datetime.now(timezone.utc) + timedelta(days=5)
+        warning_expiry = datetime.now(UTC) + timedelta(days=5)
         manager.set_api_key("tg_" + "w" * 61, expires_at=warning_expiry)
 
         status = manager.get_api_key_status()
@@ -298,7 +296,7 @@ class TestAuthManager:
         assert manager.check_api_key_rotation() is False
 
         # Rotate with key expiring in one day -> critical
-        critical_expiry = datetime.now(timezone.utc) + timedelta(days=1)
+        critical_expiry = datetime.now(UTC) + timedelta(days=1)
         manager.rotate_api_key("tg_" + "c" * 61, expires_at=critical_expiry)
 
         status = manager.get_api_key_status()
@@ -306,7 +304,7 @@ class TestAuthManager:
         assert manager.check_api_key_rotation() is False
 
         # Rotate with already expired key -> expired
-        expired_expiry = datetime.now(timezone.utc) - timedelta(days=1)
+        expired_expiry = datetime.now(UTC) - timedelta(days=1)
         manager.rotate_api_key("tg_" + "e" * 61, expires_at=expired_expiry)
 
         status = manager.get_api_key_status()

@@ -58,6 +58,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> GeminiChatResponse:
         if os.getenv("GEMINI_MOCK", "").strip().lower() == "true":
@@ -94,6 +95,8 @@ class GeminiChatClient:
             "temperature": float(temperature),
             "max_output_tokens": max_tokens,
         }
+        if top_p is not None:
+            gen_config["top_p"] = float(top_p)
         if extra_params:
             gen_config.update(dict(extra_params))
         # Join content for basic chats
@@ -119,6 +122,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> Generator[str, None, GeminiChatResponse]:
         if os.getenv("GEMINI_MOCK", "").strip().lower() == "true":
@@ -161,6 +165,8 @@ class GeminiChatClient:
             "temperature": float(temperature),
             "max_output_tokens": max_tokens,
         }
+        if top_p is not None:
+            gen_config["top_p"] = float(top_p)
         if extra_params:
             gen_config.update(dict(extra_params))
 
@@ -193,6 +199,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> GeminiChatResponse:
         """Perform an async non-streaming chat invocation using Gemini."""
@@ -231,6 +238,8 @@ class GeminiChatClient:
             "temperature": float(temperature),
             "max_output_tokens": max_tokens,
         }
+        if top_p is not None:
+            gen_config["top_p"] = float(top_p)
         if extra_params:
             gen_config.update(dict(extra_params))
 
@@ -258,6 +267,7 @@ class GeminiChatClient:
         messages: list[Mapping[str, Any]] | str | Iterable[str],
         max_tokens: int = 512,
         temperature: float = 0.5,
+        top_p: float | None = None,
         extra_params: Mapping[str, Any] | None = None,
     ) -> AsyncGenerator[str, None]:
         """Perform an async streaming chat invocation; yields text chunks."""
@@ -288,6 +298,8 @@ class GeminiChatClient:
             "temperature": float(temperature),
             "max_output_tokens": max_tokens,
         }
+        if top_p is not None:
+            gen_config["top_p"] = float(top_p)
         if extra_params:
             gen_config.update(dict(extra_params))
 

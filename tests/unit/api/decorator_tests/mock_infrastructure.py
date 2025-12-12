@@ -7,7 +7,7 @@ tracking rather than realistic behavior simulation.
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, Mock
 
 
@@ -18,7 +18,7 @@ class ConfigurationLog:
     timestamp: float
     framework: str
     method: str
-    config: Dict[str, Any]
+    config: dict[str, Any]
     source: str  # 'init' or 'call'
 
 
@@ -26,9 +26,9 @@ class ConfigurationLogger:
     """Simple configuration logger for test verification."""
 
     def __init__(self):
-        self.logs: List[ConfigurationLog] = []
+        self.logs: list[ConfigurationLog] = []
 
-    def log(self, framework: str, method: str, config: Dict[str, Any], source: str):
+    def log(self, framework: str, method: str, config: dict[str, Any], source: str):
         """Log a configuration event."""
         self.logs.append(
             ConfigurationLog(
@@ -40,7 +40,7 @@ class ConfigurationLogger:
             )
         )
 
-    def get_logs_for_framework(self, framework: str) -> List[ConfigurationLog]:
+    def get_logs_for_framework(self, framework: str) -> list[ConfigurationLog]:
         """Get all logs for a specific framework."""
         return [log for log in self.logs if log.framework == framework]
 

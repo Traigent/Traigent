@@ -390,7 +390,7 @@ class TestCloudSubmission:
     ):
         """Test analytics submission timeout."""
         with patch("aiohttp.ClientSession.post") as mock_post:
-            mock_post.side_effect = asyncio.TimeoutError("Request timeout")
+            mock_post.side_effect = TimeoutError("Request timeout")
 
             if hasattr(analytics_instance, "submit_analytics"):
                 result = await analytics_instance.submit_analytics(sample_usage_data)
@@ -879,7 +879,7 @@ class TestCTDScenarios:
             "network_error": aiohttp.ClientConnectionError("Network error"),
             "server_error": aiohttp.ClientResponseError(None, None, status=500),
             "client_error": aiohttp.ClientResponseError(None, None, status=400),
-            "timeout_error": asyncio.TimeoutError("Request timeout"),
+            "timeout_error": TimeoutError("Request timeout"),
         }
 
         with patch(
@@ -895,9 +895,9 @@ class TestCTDScenarios:
                     # Should handle error according to strategy
                     assert isinstance(result, (bool, dict, type(None)))
                 except (
+                    TimeoutError,
                     NotImplementedError,
                     aiohttp.ClientError,
-                    asyncio.TimeoutError,
                     ConnectionError,
                     RuntimeError,
                 ):

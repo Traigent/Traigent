@@ -407,7 +407,7 @@ class TestInvokerInterface:
             await asyncio.wait_for(
                 invoker.invoke(mock_sync_function, 1, 2), timeout=0.2
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             pass  # Expected for this test
 
         elapsed = time.time() - start_time

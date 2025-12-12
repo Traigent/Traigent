@@ -1,7 +1,7 @@
 """Comprehensive tests for base optimizer class."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 from unittest.mock import Mock
 
 import pytest
@@ -16,9 +16,9 @@ class ConcreteOptimizer(BaseOptimizer):
 
     def __init__(
         self,
-        config_space: Dict[str, Any],
-        objectives: List[str],
-        context: Optional[TraigentConfig] = None,
+        config_space: dict[str, Any],
+        objectives: list[str],
+        context: TraigentConfig | None = None,
         **kwargs: Any,
     ):
         super().__init__(config_space, objectives, context, **kwargs)
@@ -26,7 +26,7 @@ class ConcreteOptimizer(BaseOptimizer):
         self.stop_after = kwargs.get("stop_after", None)
         self.force_exception = kwargs.get("force_exception", False)
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Suggest next configuration."""
         if self.force_exception:
             raise Exception("Forced exception in suggest_next_trial")
@@ -47,7 +47,7 @@ class ConcreteOptimizer(BaseOptimizer):
 
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop."""
         if self.stop_after is not None:
             return len(history) >= self.stop_after
@@ -59,9 +59,9 @@ class AsyncOptimizer(ConcreteOptimizer):
 
     async def suggest_next_trial_async(
         self,
-        history: List[TrialResult],
-        remote_context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Custom async implementation."""
         # Simulate async behavior
         import asyncio
@@ -77,8 +77,8 @@ class AsyncOptimizer(ConcreteOptimizer):
 
     async def should_stop_async(
         self,
-        history: List[TrialResult],
-        remote_context: Optional[Dict[str, Any]] = None,
+        history: list[TrialResult],
+        remote_context: dict[str, Any] | None = None,
     ) -> bool:
         """Custom async stop check."""
         import asyncio

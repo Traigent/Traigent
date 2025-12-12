@@ -7,7 +7,7 @@ import json
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -295,7 +295,7 @@ class TestLocalStorageManager:
 
         # Manually modify creation time for old session
         old_session = self.storage.load_session(old_session_id)
-        old_time = (datetime.now(timezone.utc) - timedelta(days=35)).isoformat()
+        old_time = (datetime.now(UTC) - timedelta(days=35)).isoformat()
         old_session.created_at = old_time
         self.storage._save_session(old_session)
 
@@ -446,8 +446,8 @@ class TestOptimizationSession:
         session = OptimizationSession(
             session_id="test_id",
             function_name="test_func",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
             status="pending",
             total_trials=0,
             completed_trials=0,
@@ -467,8 +467,8 @@ class TestOptimizationSession:
         original_session = OptimizationSession(
             session_id="serialize_test",
             function_name="serialize_func",
-            created_at=datetime.now(timezone.utc).isoformat(),
-            updated_at=datetime.now(timezone.utc).isoformat(),
+            created_at=datetime.now(UTC).isoformat(),
+            updated_at=datetime.now(UTC).isoformat(),
             status="pending",
             total_trials=0,
             completed_trials=0,
@@ -499,7 +499,7 @@ class TestTrialResult:
             trial_id="trial_123",
             config={"param": "value"},
             score=0.85,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             metadata={"duration": 1.5},
         )
 
@@ -515,7 +515,7 @@ class TestTrialResult:
             trial_id="error_trial",
             config={"param": "bad_value"},
             score=0.0,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             error="Configuration validation failed",
         )
 
@@ -528,7 +528,7 @@ class TestTrialResult:
             trial_id="serialize_trial",
             config={"test": "config"},
             score=0.75,
-            timestamp=datetime.now(timezone.utc).isoformat(),
+            timestamp=datetime.now(UTC).isoformat(),
             metadata={"test": "metadata"},
         )
 

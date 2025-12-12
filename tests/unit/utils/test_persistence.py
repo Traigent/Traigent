@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.utils.persistence import PersistenceManager, ResumableOptimization
@@ -12,7 +12,7 @@ from traigent.utils.persistence import PersistenceManager, ResumableOptimization
 
 def _make_optimization_result() -> OptimizationResult:
     """Helper to build a minimal optimization result."""
-    timestamp = datetime.now(timezone.utc)
+    timestamp = datetime.now(UTC)
     return OptimizationResult(
         trials=[],
         best_config={"param": 1},

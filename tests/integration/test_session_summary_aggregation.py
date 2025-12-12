@@ -9,7 +9,7 @@ Tests cover:
 - Edge cases for aggregation
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -36,7 +36,7 @@ class DeterministicOptimizer(BaseOptimizer):
         self.n_trials = n_trials
         self.current_trial = 0
 
-    def suggest_next_trial(self, history: List[TrialResult]) -> Dict[str, Any]:
+    def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
         """Generate deterministic configurations."""
         self.current_trial += 1
         self._trial_count += 1
@@ -49,7 +49,7 @@ class DeterministicOptimizer(BaseOptimizer):
                 config[key] = values
         return config
 
-    def should_stop(self, history: List[TrialResult]) -> bool:
+    def should_stop(self, history: list[TrialResult]) -> bool:
         """Stop after n_trials."""
         return len(history) >= self.n_trials
 
@@ -68,7 +68,7 @@ class ConfigurableEvaluator(BaseEvaluator):
         self.trial_index = 0
 
     async def evaluate(
-        self, func, config: Dict[str, Any], dataset: Dataset
+        self, func, config: dict[str, Any], dataset: Dataset
     ) -> EvaluationResult:
         """Return predetermined metrics based on trial index."""
         # Get metrics for this trial
@@ -170,7 +170,7 @@ class MockBackendClient:
         return True
 
 
-def dummy_func(input_data: Dict[str, Any]) -> str:
+def dummy_func(input_data: dict[str, Any]) -> str:
     """Dummy function for testing."""
     return f"response_for_{input_data.get('text', 'unknown')}"
 
