@@ -63,7 +63,7 @@ examples/
 ## Run instructions
 ```bash
 cd /path/to/Traigent
-pip install -e .
+pip install -e ".[examples]"
 export TRAIGENT_MOCK_MODE=true
 python examples/core/simple-prompt/run.py
 ```

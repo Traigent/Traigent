@@ -129,9 +129,9 @@ class SeamlessInjectionConfigurator:
             def wrapper(*args: Any, **kwargs: Any) -> Any:
                 return runtime_shim(*args, **kwargs)
 
-        wrapper.__traigent_trial_id__ = trial_id
-        wrapper.__runtime_shim__ = shim
-        wrapper.__seamless_metadata__ = combined_metadata
+        wrapper.__traigent_trial_id__ = trial_id  # type: ignore[attr-defined]
+        wrapper.__runtime_shim__ = shim  # type: ignore[attr-defined]
+        wrapper.__seamless_metadata__ = combined_metadata  # type: ignore[attr-defined]
 
         return wrapper
 

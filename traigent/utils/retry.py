@@ -596,5 +596,5 @@ class RetryWithCircuitBreaker:
             return await self.handler.execute_async(func, *args, **kwargs)
 
         if asyncio.iscoroutinefunction(func):
-            return async_wrapper
+            return async_wrapper  # type: ignore[return-value]
         return wrapper

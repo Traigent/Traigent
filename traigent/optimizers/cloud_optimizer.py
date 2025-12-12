@@ -470,7 +470,7 @@ class CloudOptimizer(BaseOptimizer):
                     logger.debug(
                         f"Generated {len(candidates)} candidates via remote batch"
                     )
-                    return candidates
+                    return list(candidates)  # type: ignore[return-value]
 
             # Fall back to sequential suggestions
             return await self._generate_candidates_sequential(

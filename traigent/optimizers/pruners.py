@@ -65,7 +65,7 @@ class CeilingPruner(optuna.pruners.BasePruner):
                 # only apply the threshold to minimisation objectives (typically cost).
                 directions = getattr(study, "directions", None)
                 if directions:
-                    for direction, value in zip(directions, latest):
+                    for direction, value in zip(directions, latest, strict=False):
                         if (
                             direction == optuna.study.StudyDirection.MINIMIZE
                             and value is not None

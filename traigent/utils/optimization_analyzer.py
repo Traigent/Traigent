@@ -37,7 +37,7 @@ class OptimizationAnalyzer:
             base_path: Base directory for logs (defaults to ~/.traigent/optimization_logs)
             file_version: Preferred file naming version to look for when loading runs
         """
-        self.base_path = base_path or OptimizationLogger.DEFAULT_BASE_PATH
+        self.base_path = base_path or OptimizationLogger._resolve_default_base_path()
         self.file_manager = FileVersionManager(version=file_version)
         self.legacy_file_manager = FileVersionManager(use_legacy=True)
 
@@ -577,7 +577,7 @@ class OptimizationAnalyzer:
             return None
 
         # Compute Pareto front
-        points = np.array(list(zip(obj1_values, obj2_values)))
+        points = np.array(list(zip(obj1_values, obj2_values, strict=False)))
         pareto_points = []
 
         for i, point in enumerate(points):

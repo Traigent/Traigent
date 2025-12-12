@@ -55,7 +55,7 @@ class CostAnalysisEngine:
 
     def analyze_current_state(self) -> dict[str, Any]:
         """Analyze current cost and usage state."""
-        state = {
+        state: dict[str, Any] = {
             "resource_analysis": {},
             "cost_summary": {},
             "trends": {},
@@ -312,7 +312,9 @@ class CostOptimizationAI:
         x_mean = sum(x_values) / n
         y_mean = sum(values) / n
 
-        numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_values, values))
+        numerator = sum(
+            (x - x_mean) * (y - y_mean) for x, y in zip(x_values, values, strict=False)
+        )
         denominator = sum((x - x_mean) ** 2 for x in x_values)
 
         if denominator == 0:
@@ -466,9 +468,11 @@ class CostOptimizationAI:
             for v in current_state["resource_analysis"].values()
         )
 
-        return self.budget_allocator.allocate_budget(
+        allocations = self.budget_allocator.allocate_budget(
             total_budget, priorities, historical_usage
         )
+        # Convert to dict[str, Any] for return type compatibility
+        return {k.value: v for k, v in allocations.items()}  # type: ignore[misc]
 
     def _create_implementation_timeline(
         self, actions: list[CostOptimizationAction]
@@ -484,7 +488,7 @@ class CostOptimizationAI:
 
     def _generate_scheduling_recommendations(self) -> dict[str, Any]:
         """Generate job scheduling recommendations."""
-        recommendations = {
+        recommendations: dict[str, Any] = {
             "optimal_schedule_type": ScheduleType.ADAPTIVE.value,
             "policy_adjustments": {},
             "cost_saving_windows": [],

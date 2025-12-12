@@ -147,7 +147,7 @@ class BatchOptimizationHelper:
 
         logger.info(f"Batch evaluation completed: {self.stats}")
 
-        return results
+        return results  # type: ignore[return-value]
 
     def _validate_batch_inputs(
         self,
@@ -221,7 +221,7 @@ class BatchOptimizationHelper:
                 all_invocation_results, expected_outputs, dataset  # type: ignore[arg-type]
             )
 
-            return evaluation_result
+            return evaluation_result  # type: ignore[return-value]
 
         except Exception as e:
             logger.error(f"Configuration evaluation failed: {e}")

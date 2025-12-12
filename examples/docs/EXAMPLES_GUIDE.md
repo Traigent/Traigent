@@ -48,8 +48,8 @@ examples/
 
 ## How to run
 ```bash
-# Install from repo root
-pip install -e .
+# Install from repo root (includes example deps)
+pip install -e ".[examples]"
 
 # Mock mode (recommended)
 export TRAIGENT_MOCK_MODE=true

@@ -8,23 +8,20 @@
 
 ```python
 import traigent
+from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
     eval_dataset="examples/datasets/hello-world/evaluation_set.jsonl",
-    objectives=["accuracy"],
-    configuration_space={
-        "model": ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"],
-        "temperature": [0.0, 0.3]
-    }
+    objectives=["accuracy", "cost"],
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.0, 0.7]},
 )
 def answer_question(question: str) -> str:
-    # Your existing logic; TraiGent reads the active config internally
-    cfg = traigent.get_config()  # Get config for current optimization trial
-    # ... call your LLM with cfg["model"], cfg["temperature"] ...
-    return "example"
+    cfg = traigent.get_config()  # Active trial/applied config
+    llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
+    return llm.invoke(question).content
 
-# Find the best configuration (async-safe in TraiGent)
-# results = await answer_question.optimize()
+# Async-safe in TraiGent
+# results = await answer_question.optimize(max_trials=5)
 ```
 
 ## 📚 Documentation
@@ -88,7 +85,7 @@ TraiGent is a **zero-code optimization platform** that automatically finds the b
 
 ## 🧪 Mock Mode (No API Keys)
 
-- Enable: `TRAIGENT_MOCK_MODE=true`
+- Enable: `TRAIGENT_MOCK_MODE=true` (no API keys needed)
 - Benefits: realistic scores, zero cost, quick iteration
 - Example:
   - `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py`

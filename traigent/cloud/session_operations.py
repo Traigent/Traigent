@@ -651,7 +651,9 @@ class SessionOperations:
         if session:
             session.status = OptimizationSessionStatus.COMPLETED
             session.updated_at = datetime.now(UTC)
-            session.completed_at = time.time()
+            session.metadata["completed_at"] = (
+                time.time()
+            )  # Store in metadata since no dedicated attr
             completed_trials = getattr(session, "completed_trials", 0)
 
         # Revoke security session

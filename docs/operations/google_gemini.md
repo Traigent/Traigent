@@ -14,6 +14,11 @@ export GOOGLE_API_KEY="<key>"
 # export GEMINI_MOCK=true
 ```
 
+## Dependencies
+```bash
+pip install -e ".[integrations]"  # or: pip install -r requirements/requirements-integrations.txt
+```
+
 ## Smoke Tests
 ```bash
 python paper_experiments/case_study_kilt/run_case_study.py \
@@ -29,4 +34,3 @@ python paper_experiments/case_study_spider/run_case_study.py \
   --mock-mode off --provider google \
   --trials 1 --parallel-trials 1
 ```
-

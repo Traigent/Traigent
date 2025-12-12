@@ -11,6 +11,8 @@ on:
 env:
   TRAIGENT_MOCK_MODE: "true"
   CI: "true"
+  TRAIGENT_RUN_APPROVED: "1"  # Auto-approve CI runs for testing
+  TRAIGENT_APPROVED_BY: "github-actions"
   REGRESSION_THRESHOLD: "-0.01"  # 1% regression blocks
   IMPROVEMENT_MIN_PCT: "0.03"    # 3% improvement triggers warning
 
@@ -45,6 +47,14 @@ jobs:
         run: |
           pip install -e ".[dev,analytics,integrations]"
 
+      - name: Copy dataset to baseline if missing
+        run: |
+          # Copy dataset from PR branch if baseline is missing it (for when dataset is newly added)
+          if [ ! -f "baseline/examples/integrations/ci-cd/math-qa/math_qa.jsonl" ]; then
+            echo "Dataset missing in baseline, copying from PR branch..."
+            cp work/examples/integrations/ci-cd/math-qa/math_qa.jsonl baseline/examples/integrations/ci-cd/math-qa/
+          fi
+
       - name: Evaluate baseline configuration
         working-directory: baseline/examples/integrations/ci-cd/math-qa
         run: |
@@ -53,8 +63,8 @@ jobs:
 
       - name: Copy baseline results
         run: |
-          mkdir -p work/results-ci/baseline
-          cp -r baseline/examples/integrations/ci-cd/math-qa/results-ci/math/* work/results-ci/baseline/
+          mkdir -p work/examples/integrations/ci-cd/math-qa/results-ci/baseline
+          cp -r baseline/examples/integrations/ci-cd/math-qa/results-ci/math/* work/examples/integrations/ci-cd/math-qa/results-ci/baseline/
 
       - name: Evaluate PR configuration
         working-directory: work/examples/integrations/ci-cd/math-qa
@@ -150,6 +160,7 @@ jobs:
 
       - name: Comment on PR
         if: failure()
+        continue-on-error: true  # Don't fail the workflow if PR comment fails (permissions issue on forks)
         uses: actions/github-script@v6
         with:
           script: |
