@@ -19,8 +19,8 @@ try:
 except ImportError:
     COHERE_AVAILABLE = False
 
-from traigent.agents.platforms.base_platform import BasePlatformExecutor
-from traigent.agents.platforms.parameter_mapping import ParameterMapper
+from .base_platform import BasePlatformExecutor
+from .parameter_mapping import ParameterMapper
 from traigent.utils.exceptions import (
     AgentExecutionError,
     ConfigurationError,
@@ -275,7 +275,9 @@ class CohereAgentExecutor(BasePlatformExecutor):
 
     # ===== Cost Estimation =====
 
-    def estimate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+    def estimate_completion_cost(
+        self, input_tokens: int, output_tokens: int, model: str
+    ) -> float:
         """Estimate cost for Cohere completion.
 
         Args:
@@ -298,7 +300,7 @@ class CohereAgentExecutor(BasePlatformExecutor):
         # Default pricing for unknown models
         if model in self.SUPPORTED_MODELS:
             # Use command pricing as default
-            return self.estimate_cost(input_tokens, output_tokens, "command")
+            return self.estimate_completion_cost(input_tokens, output_tokens, "command")
 
         return 0.0
 

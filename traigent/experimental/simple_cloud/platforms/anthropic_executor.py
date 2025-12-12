@@ -28,8 +28,8 @@ try:
 except ImportError:
     ANTHROPIC_AVAILABLE = False
 
-from traigent.agents.platforms.base_platform import BasePlatformExecutor
-from traigent.agents.platforms.parameter_mapping import ParameterMapper
+from .base_platform import BasePlatformExecutor
+from .parameter_mapping import ParameterMapper
 from traigent.utils.exceptions import (
     AgentExecutionError,
     ConfigurationError,
@@ -295,7 +295,9 @@ class AnthropicAgentExecutor(BasePlatformExecutor):
 
     # ===== Cost Estimation =====
 
-    def estimate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+    def estimate_completion_cost(
+        self, input_tokens: int, output_tokens: int, model: str
+    ) -> float:
         """Estimate cost for Claude completion.
 
         Args:
