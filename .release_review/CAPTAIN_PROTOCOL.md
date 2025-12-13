@@ -14,7 +14,31 @@ Configure the tools to use these models/settings for consistency:
 - **Codex CLI**: **ChatGPT 5.2 (GPT-5.2)** with **reasoning/effort = `xhigh`**
 - **GitHub Copilot CLI**: **Gemini 3.0**
 
-If a CLI cannot explicitly select the requested model, the captain must note the actual model used in the component’s **Evidence** field in `.release_review/PRE_RELEASE_REVIEW_TRACKING.md`.
+If a CLI cannot explicitly select the requested model, the captain must note the actual model used in the component's **Evidence** field in `.release_review/PRE_RELEASE_REVIEW_TRACKING.md`.
+
+### Model Capability Tiers (for task assignment)
+
+| Tier | Models | Strengths | Best For |
+|------|--------|-----------|----------|
+| **Tier 1** | Claude Opus 4.5, ChatGPT 5.2 (xhigh) | Deep reasoning, complex analysis, thoroughness | Security-critical code, complex orchestration, cross-cutting concerns, P0 components |
+| **Tier 2** | Gemini 3.0 | Fast, good at targeted edits, solid comprehension | Config files, docs, simpler components, P2/P3 items |
+
+**Assignment Guidelines**:
+- **ChatGPT 5.2**: Most thorough but slowest. Use for complex/large components where depth matters more than speed.
+- **Claude Opus 4.5**: Excellent balance of depth and speed. Good for security analysis, orchestration review, captain duties.
+- **Gemini 3.0**: Faster, slightly less thorough. Good for packaging, docs, smaller scopes.
+
+### Cross-Model Review Policy
+
+For P0/P1 components, the **secondary reviewer MUST be a different model** than the lead:
+
+| Lead Model | Secondary Reviewer |
+|------------|-------------------|
+| ChatGPT 5.2 (Codex) | Claude Opus 4.5 |
+| Claude Opus 4.5 | ChatGPT 5.2 (Codex) |
+| Gemini 3.0 (Copilot) | Claude Opus 4.5 or ChatGPT 5.2 |
+
+This ensures diverse perspectives catch issues a single model might miss.
 
 ## Canonical Inputs / Artifacts
 
@@ -60,6 +84,40 @@ Suggested setup:
    - A component-scoped commit(s)
    - Evidence recorded in tracking (commit SHA, tests run, notes)
 5. The captain does **not** assume first-pass success: iterate, re-run agents, or assign a second reviewer.
+
+## Parallel Execution Model (Single Branch, Multiple Terminals)
+
+**Preferred approach**: All agents work on the same `release-review/<version>` branch in the same repo folder, using separate terminal sessions.
+
+### Why single-branch parallel?
+- No need to clone the repo multiple times
+- No complex branch merging
+- Simpler conflict avoidance via strict scope discipline
+- Easier to coordinate and track progress
+
+### Setup for parallel execution:
+
+```
+Terminal 1 (Captain - Claude Code):     Works on Component A
+Terminal 2 (Codex CLI):                  Works on Component B
+Terminal 3 (Copilot CLI):                Works on Component C
+```
+
+All terminals point to the same directory: `/path/to/repo`
+All terminals are on the same branch: `release-review/v0.8.0`
+
+### Scope discipline (CRITICAL):
+- Assign **strictly non-overlapping file scopes** to each agent
+- If Component A touches `traigent/security/`, no other agent touches those files
+- Captain coordinates commits to avoid conflicts
+
+### Example parallel assignment:
+
+| Agent | Scope | Files (exclusive) |
+|-------|-------|-------------------|
+| Claude (Captain) | Release blockers | `traigent/cloud/resilient_client.py`, `traigent/storage/local_storage.py`, `traigent/utils/batch_processing.py` |
+| Codex CLI | Integrations | `traigent/integrations/**` |
+| Copilot CLI | Packaging | `pyproject.toml`, `requirements/`, `MANIFEST.in` |
 
 ## Merge Strategy (Recommended)
 
