@@ -8,10 +8,10 @@ You are the fix orchestration captain for TraiGent SDK.
 Read and follow: .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md
 
 Steps:
-1. Run pre-flight check: python .post_release_recommendation_fixes/automation/preflight_check.py
-2. Initialize session: python .post_release_recommendation_fixes/automation/session_init.py init high
+1. Run pre-flight check: .venv/bin/python .post_release_recommendation_fixes/automation/preflight_check.py
+2. Initialize session: .venv/bin/python .post_release_recommendation_fixes/automation/session_init.py init high
 3. Implement fixes from TRACKING.md in priority order
-4. Run conflict check: python .post_release_recommendation_fixes/automation/conflict_detector.py batch
+4. Run conflict check: .venv/bin/python .post_release_recommendation_fixes/automation/conflict_detector.py batch
 
 Source: .release_review/v0.8.0/POST_RELEASE_TODO.md
 Continue start-to-finish. Use async questions if blocked.
@@ -27,8 +27,8 @@ If TRACKING.md is empty, first import TODOs:
 
 ```bash
 # Import from release review
-python .post_release_recommendation_fixes/automation/todo_importer.py \
-    .release_review/v0.8.0/POST_RELEASE_TODO.md
+.venv/bin/python .post_release_recommendation_fixes/automation/todo_importer.py \
+    .release_review/v0.8.0/POST_RELEASE_TODO.md --yes
 ```
 
 ---
@@ -41,7 +41,7 @@ You are the fix orchestration captain for TraiGent SDK.
 Read: .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md
 
 Resume from previous session:
-python .post_release_recommendation_fixes/automation/session_init.py resume
+.venv/bin/python .post_release_recommendation_fixes/automation/session_init.py resume
 
 Continue with pending fixes. Do not re-implement completed ones.
 
@@ -54,17 +54,17 @@ Start now.
 
 ### High Priority Only (4 fixes)
 ```
-python .post_release_recommendation_fixes/automation/session_init.py init high
+.venv/bin/python .post_release_recommendation_fixes/automation/session_init.py init high
 ```
 
 ### Medium Priority Only
 ```
-python .post_release_recommendation_fixes/automation/session_init.py init medium
+.venv/bin/python .post_release_recommendation_fixes/automation/session_init.py init medium
 ```
 
 ### All Fixes
 ```
-python .post_release_recommendation_fixes/automation/session_init.py init all
+.venv/bin/python .post_release_recommendation_fixes/automation/session_init.py init all
 ```
 
 ---
@@ -73,19 +73,19 @@ python .post_release_recommendation_fixes/automation/session_init.py init all
 
 ```bash
 # Pre-flight check
-python .post_release_recommendation_fixes/automation/preflight_check.py
+.venv/bin/python .post_release_recommendation_fixes/automation/preflight_check.py
 
 # Progress stats
-python .post_release_recommendation_fixes/automation/progress_tracker.py stats
+.venv/bin/python .post_release_recommendation_fixes/automation/progress_tracker.py stats
 
 # Full report
-python .post_release_recommendation_fixes/automation/progress_tracker.py report
+.venv/bin/python .post_release_recommendation_fixes/automation/progress_tracker.py report
 
 # Conflict check for parallel work
-python .post_release_recommendation_fixes/automation/conflict_detector.py batch
+.venv/bin/python .post_release_recommendation_fixes/automation/conflict_detector.py batch
 
 # Latest session
-python .post_release_recommendation_fixes/automation/session_init.py latest
+.venv/bin/python .post_release_recommendation_fixes/automation/session_init.py latest
 ```
 
 ---

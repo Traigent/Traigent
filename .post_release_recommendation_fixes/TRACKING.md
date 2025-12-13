@@ -51,7 +51,7 @@
 
 - **Priority**: High
 - **Component**: Storage & Persistence
-- **Location**: [traigent/utils/persistence.py](../../traigent/utils/persistence.py), [traigent/storage/local_storage.py](../../traigent/storage/local_storage.py)
+- **Location**: `traigent/utils/persistence.py`, `traigent/storage/local_storage.py`
 - **Issue**: Direct file writes without temp+rename pattern
 - **Effort**: Small (1-2 hours)
 - **Status**: Pending
@@ -77,7 +77,7 @@
 
 - **Priority**: High
 - **Component**: CI Workflows
-- **Location**: [.github/workflows/tests.yml](../../.github/workflows/tests.yml)
+- **Location**: `.github/workflows/tests.yml`
 - **Issue**: Only tests Python 3.11, missing 3.8-3.10, 3.12
 - **Effort**: Small (30 min)
 - **Status**: Pending
@@ -94,7 +94,7 @@ Expand matrix to cover all supported versions per pyproject.toml
 
 - **Priority**: High
 - **Component**: Metrics
-- **Location**: [traigent/metrics/ragas_metrics.py](../../traigent/metrics/ragas_metrics.py)
+- **Location**: `traigent/metrics/ragas_metrics.py`
 - **Issue**: `configure_ragas_defaults()` modifies global `_GLOBAL_RAGAS_CONFIG` without lock
 - **Effort**: Small (30 min)
 - **Status**: Pending
@@ -118,7 +118,7 @@ Expand matrix to cover all supported versions per pyproject.toml
 
 - **Priority**: High
 - **Component**: Telemetry
-- **Location**: [traigent/telemetry/optuna_metrics.py](../../traigent/telemetry/optuna_metrics.py)
+- **Location**: `traigent/telemetry/optuna_metrics.py`
 - **Issue**: No environment variable to disable Optuna telemetry
 - **Effort**: Small (30 min)
 - **Status**: Pending
@@ -135,7 +135,7 @@ Add `TRAIGENT_DISABLE_TELEMETRY` or `DISABLE_OPTUNA_TELEMETRY` env var
 
 - **Priority**: Medium
 - **Component**: Utilities
-- **Location**: [traigent/utils/error_handler.py:155](../../traigent/utils/error_handler.py)
+- **Location**: `traigent/utils/error_handler.py:155`
 - **Issue**: `cls.IMPORT_FIXES[module_name]` retrieved but not used
 - **Effort**: Small (15 min)
 - **Status**: Pending
@@ -152,7 +152,7 @@ Add `TRAIGENT_DISABLE_TELEMETRY` or `DISABLE_OPTUNA_TELEMETRY` env var
 
 - **Priority**: Medium
 - **Component**: Adapters
-- **Location**: [traigent/adapters/execution_adapter.py](../../traigent/adapters/execution_adapter.py)
+- **Location**: `traigent/adapters/execution_adapter.py`
 - **Issue**: RemoteExecutionAdapter and HybridPlatformAdapter return plain strings instead of ExecutionMode enum
 - **Effort**: Medium (1-2 hours)
 - **Status**: Pending
@@ -169,7 +169,7 @@ Harmonize to use enum values
 
 - **Priority**: Medium
 - **Component**: Agents
-- **Location**: [traigent/agents/executor.py](../../traigent/agents/executor.py)
+- **Location**: `traigent/agents/executor.py`
 - **Issue**: No explicit cleanup/shutdown method for executors
 - **Effort**: Medium (2-3 hours)
 - **Status**: Pending

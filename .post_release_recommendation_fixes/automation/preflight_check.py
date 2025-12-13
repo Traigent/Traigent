@@ -57,6 +57,7 @@ class PreflightChecker:
             self.check_git_clean(),
             self.check_git_branch(),
             self.check_python_version(),
+            self.check_venv(),
             self.check_pytest(),
             self.check_make_commands(),
             self.check_tracking_file(),
@@ -175,40 +176,97 @@ class PreflightChecker:
             message=f"Python {version.major}.{version.minor} (need 3.8+)",
         )
 
+    def check_venv(self) -> CheckResult:
+        """Check if virtual environment exists and has python."""
+        venv_paths = [
+            Path(".venv/bin/python"),       # Unix
+            Path(".venv/Scripts/python"),   # Windows
+            Path("venv/bin/python"),        # Alternative name
+        ]
+
+        for venv_python in venv_paths:
+            if venv_python.exists():
+                try:
+                    result = subprocess.run(
+                        [str(venv_python), "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        version = result.stdout.strip()
+                        return CheckResult(
+                            name="Virtual Environment",
+                            passed=True,
+                            message=f"{venv_python.parent.parent}: {version}",
+                        )
+                except (subprocess.TimeoutExpired, OSError):
+                    continue
+
+        return CheckResult(
+            name="Virtual Environment",
+            passed=False,
+            message="No venv found. Use: .venv/bin/python for scripts",
+            severity="warning",
+        )
+
     def check_pytest(self) -> CheckResult:
-        """Check if pytest is available."""
-        try:
-            result = subprocess.run(
-                ["pytest", "--version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                # Extract version from output
-                version_line = result.stdout.strip().split("\n")[0]
-                return CheckResult(
-                    name="Pytest",
-                    passed=True,
-                    message=version_line,
+        """Check if pytest is available (checks venv first via python -m)."""
+        # Try venv python with -m pytest first (more reliable than scripts)
+        # IMPORTANT: Don't resolve() - keep using venv path to use venv packages
+        python_locations = [
+            ".venv/bin/python",       # Local venv (Unix)
+            ".venv/Scripts/python",   # Local venv (Windows)
+            "venv/bin/python",        # Alternative venv name
+        ]
+
+        for python_cmd in python_locations:
+            python_path = Path(python_cmd)
+            if python_path.exists():
+                try:
+                    # Use the venv path directly, not resolved
+                    result = subprocess.run(
+                        [python_cmd, "-m", "pytest", "--version"],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                    )
+                    if result.returncode == 0:
+                        version_line = result.stdout.strip().split("\n")[0]
+                        return CheckResult(
+                            name="Pytest",
+                            passed=True,
+                            message=f"{version_line} (venv)",
+                        )
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    continue
+
+        # Try system pytest via shutil.which
+        pytest_system = shutil.which("pytest")
+        if pytest_system:
+            try:
+                result = subprocess.run(
+                    [pytest_system, "--version"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
-            return CheckResult(
-                name="Pytest",
-                passed=False,
-                message="pytest not working properly",
-            )
-        except FileNotFoundError:
-            return CheckResult(
-                name="Pytest",
-                passed=False,
-                message="pytest not found. Run: pip install pytest",
-            )
-        except subprocess.TimeoutExpired:
-            return CheckResult(
-                name="Pytest",
-                passed=False,
-                message="pytest timed out",
-            )
+                if result.returncode == 0:
+                    version_line = result.stdout.strip().split("\n")[0]
+                    return CheckResult(
+                        name="Pytest",
+                        passed=True,
+                        message=f"{version_line} (system)",
+                    )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                pass
+
+        # None found
+        return CheckResult(
+            name="Pytest",
+            passed=False,
+            message="pytest not found. Run: pip install pytest",
+        )
 
     def check_make_commands(self) -> CheckResult:
         """Check if make format and make lint are available."""
