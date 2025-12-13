@@ -121,6 +121,11 @@ class ProgressBarCallback(OptimizationCallback):
         # Format time
         elapsed = time.strftime("%M:%S", time.gmtime(progress.elapsed_time))
 
+        # Format best score - handle None case properly
+        best_score_str = (
+            f"{progress.best_score:.3f}" if progress.best_score is not None else "N/A"
+        )
+
         # Print progress line - using print for interactive console output
         print(
             f"\r[{bar}] {progress.progress_percent:5.1f}% "
@@ -128,7 +133,7 @@ class ProgressBarCallback(OptimizationCallback):
             f"✅ {progress.successful_trials} "
             f"❌ {progress.failed_trials} "
             f"⏱️  {elapsed} "
-            f"🏆 {progress.best_score:.3f if progress.best_score else 'N/A'}",
+            f"🏆 {best_score_str}",
             end="",
             flush=True,
         )
