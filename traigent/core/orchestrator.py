@@ -807,6 +807,13 @@ class OptimizationOrchestrator:
                     "Skipping parallel trial due to zero sample ceiling (config=%s)",
                     cfg,
                 )
+                self._trials_prevented += 1
+                self._abandon_optuna_trial(
+                    optuna_id,
+                    reason="trial_skipped_zero_sample_ceiling",
+                    status=TrialStatus.CANCELLED,
+                    pruned_step=0,
+                )
                 continue
 
             trial_index = trial_count + len(scheduled_configs)
@@ -967,18 +974,51 @@ class OptimizationOrchestrator:
         # Phase 3: Apply caps and prevent excess trials
         original_count = len(configs)
         slice_cap = self.parallel_trials if infinite_budget else remaining_cap
+        prevented_configs = configs[slice_cap:]
         configs = configs[:slice_cap]
         if original_count > len(configs):
             self._trials_prevented += original_count - len(configs)
             logger.info("Prevented %s trials due to cap", original_count - len(configs))
+            for cfg in prevented_configs:
+                optuna_id = (
+                    cfg.get("_optuna_trial_id") if isinstance(cfg, dict) else None
+                )
+                self._abandon_optuna_trial(
+                    optuna_id,
+                    reason="trial_prevented_by_cap",
+                    status=TrialStatus.PRUNED,
+                    pruned_step=0,
+                )
 
         # Phase 4: Apply cache policy
         cache_policy = self.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
+            before_ids = {
+                cfg.get("_optuna_trial_id")
+                for cfg in configs
+                if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
+            }
             configs = self.cache_policy_handler.apply_policy(
                 configs, cache_policy, function_name or "unknown_function", dataset_name
             )
+            after_ids = {
+                cfg.get("_optuna_trial_id")
+                for cfg in configs
+                if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
+            }
+            dropped_ids = before_ids - after_ids
+            if dropped_ids:
+                self._trials_prevented += len(dropped_ids)
+                for optuna_id in dropped_ids:
+                    if not isinstance(optuna_id, int):
+                        continue
+                    self._abandon_optuna_trial(
+                        optuna_id,
+                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        status=TrialStatus.PRUNED,
+                        pruned_step=0,
+                    )
 
         if not configs:
             return trial_count, "break"
@@ -1331,6 +1371,36 @@ class OptimizationOrchestrator:
         finally:
             await self._cleanup_backend_client()
 
+    def _abandon_optuna_trial(
+        self,
+        optuna_trial_id: int | None,
+        *,
+        reason: str,
+        status: TrialStatus = TrialStatus.PRUNED,
+        pruned_step: int = 0,
+    ) -> None:
+        """Finalize an asked Optuna trial that will never be executed."""
+
+        if optuna_trial_id is None:
+            return
+        if not isinstance(optuna_trial_id, int):
+            logger.debug(
+                "Skipping abandon for non-int optuna_trial_id=%r", optuna_trial_id
+            )
+            return
+
+        trial_result = TrialResult(
+            trial_id=f"optuna_{optuna_trial_id}",
+            config={},
+            metrics={},
+            status=status,
+            duration=0.0,
+            timestamp=datetime.now(UTC),
+            error_message=reason,
+            metadata={"pruned_step": pruned_step, "stop_reason": reason},
+        )
+        self._notify_optimizer_of_result(trial_result, optuna_trial_id)
+
     def _notify_optimizer_of_result(
         self, trial_result: TrialResult, optuna_trial_id: int | None
     ) -> None:
@@ -1338,6 +1408,52 @@ class OptimizationOrchestrator:
 
         if optuna_trial_id is None:
             return
+        if not isinstance(optuna_trial_id, int):
+            logger.debug(
+                "Skipping optimizer notification for non-int optuna_trial_id=%r",
+                optuna_trial_id,
+            )
+            return
+
+        if trial_result.status in {TrialStatus.PRUNED, TrialStatus.CANCELLED}:
+            metadata = trial_result.metadata or {}
+            prune_step = 0
+            for key in ("pruned_step", "pruned_at_step", "step"):
+                raw_value = metadata.get(key)
+                if raw_value is None:
+                    continue
+                try:
+                    prune_step = int(raw_value)
+                    break
+                except (TypeError, ValueError):
+                    continue
+
+            if hasattr(self.optimizer, "report_trial_pruned"):
+                self.optimizer.report_trial_pruned(optuna_trial_id, prune_step)  # type: ignore[attr-defined]
+                return
+
+            if hasattr(self.optimizer, "report_trial_result"):
+                self.optimizer.report_trial_result(  # type: ignore[arg-type, attr-defined]
+                    optuna_trial_id,
+                    None,
+                    metadata={
+                        "state": "pruned",
+                        "pruned_at_step": prune_step,
+                        "reason": trial_result.error_message
+                        or metadata.get("stop_reason")
+                        or "trial_pruned",
+                    },
+                )
+                return
+
+            if hasattr(self.optimizer, "report_trial_failure"):
+                self.optimizer.report_trial_failure(  # type: ignore[attr-defined]
+                    optuna_trial_id,
+                    trial_result.error_message
+                    or metadata.get("stop_reason")
+                    or "trial_pruned",
+                )
+                return
 
         if (
             hasattr(self.optimizer, "report_trial_result")

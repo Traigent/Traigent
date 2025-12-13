@@ -19,13 +19,14 @@ try:
 except ImportError:
     COHERE_AVAILABLE = False
 
-from .base_platform import BasePlatformExecutor
-from .parameter_mapping import ParameterMapper
 from traigent.utils.exceptions import (
     AgentExecutionError,
     ConfigurationError,
 )
 from traigent.utils.logging import get_logger
+
+from .base_platform import BasePlatformExecutor
+from .parameter_mapping import ParameterMapper
 
 logger = get_logger(__name__)
 

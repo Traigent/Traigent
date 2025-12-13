@@ -446,10 +446,27 @@ class SecureJWTValidator:
         return self._validate_production(token)
 
     def _validate_development(self, token: str) -> JWTValidationResult:
-        """Development validation - legacy compatibility method with less strict validation."""
+        """Development validation - legacy compatibility method with less strict validation.
+
+        SECURITY WARNING: This method does NOT verify the JWT signature. It should only
+        be used for local development and testing. Never use in production.
+
+        The signature bypass is intentional for development convenience but provides
+        no security guarantee about the token's authenticity.
+        """
+        import warnings as py_warnings
+
+        py_warnings.warn(
+            "JWT validation with verify_signature=False is insecure. "
+            "Use ValidationMode.PRODUCTION for production deployments.",
+            UserWarning,
+            stacklevel=3,
+        )
+
         warnings = [
             "Development mode - reduced security validation",
             "NOT suitable for production use",
+            "SECURITY: Signature verification is DISABLED",
         ]
 
         try:
@@ -463,10 +480,11 @@ class SecureJWTValidator:
                 )
 
             # Decode without verification for compatibility
+            # SECURITY NOTE: This is intentionally insecure for development only
             unverified_payload = jwt.decode(
                 token,
                 options={
-                    "verify_signature": False,
+                    "verify_signature": False,  # nosec B105 - intentional for dev mode
                     "verify_exp": True,
                     "verify_iat": True,
                     "verify_nbf": True,
@@ -503,12 +521,27 @@ class SecureJWTValidator:
     def _validate_structure_only(self, token: str) -> JWTValidationResult:
         """Structure-only validation - minimal validation for testing only.
 
-        WARNING: This mode provides no security validation and should only be used for testing.
+        SECURITY WARNING: This mode provides NO security validation whatsoever.
+        It only checks that the token has valid JWT structure.
+
+        NEVER use this in production. This mode is DEPRECATED and will be removed
+        in a future version.
         """
+        import warnings as py_warnings
+
+        py_warnings.warn(
+            "STRUCTURE_ONLY validation mode is DEPRECATED and provides NO security. "
+            "It will be removed in a future version. Use ValidationMode.DEVELOPMENT "
+            "or ValidationMode.PRODUCTION instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
         warnings = [
             "NO SECURITY VERIFICATION - Structure-only validation mode",
             "NOT suitable for production use",
             "Use only for testing purposes",
+            "DEPRECATED: This mode will be removed in a future version",
         ]
 
         try:
@@ -535,10 +568,11 @@ class SecureJWTValidator:
                 )
 
             # Decode without any verification - UNSAFE but needed for compatibility
+            # SECURITY NOTE: This is intentionally insecure for testing only
             unverified_payload = jwt.decode(
                 token,
                 options={
-                    "verify_signature": False,
+                    "verify_signature": False,  # nosec B105 - intentional for test mode
                     "verify_exp": False,
                 },
             )

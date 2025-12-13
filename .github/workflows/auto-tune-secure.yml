@@ -71,7 +71,7 @@ jobs:
           safety check || true
 
       - name: Run Semgrep
-        uses: returntocorp/semgrep-action@v1
+        uses: returntocorp/semgrep-action@713efdd345f3035192eaa63f56867b88e63e4e5d  # v1
         with:
           config: >-
             p/security-audit
@@ -186,10 +186,10 @@ jobs:
           pip install dvc[s3] cml dvclive
 
       - name: Setup CML
-        uses: iterative/setup-cml@v2
+        uses: iterative/setup-cml@f12ea7685438c1fc438d50f77519b3860cf5fa98  # v2.0.1
 
       - name: Setup DVC
-        uses: iterative/setup-dvc@v1
+        uses: iterative/setup-dvc@175771be1dc3d119268e00a896b52a4b77decb5e  # v1.2.0
 
       - name: Configure AWS credentials
         if: github.event_name == 'push' && github.ref == 'refs/heads/staging'
@@ -372,7 +372,7 @@ jobs:
 
       - name: Create PR with improvements
         if: success() && steps.env.outputs.environment == 'staging' && !contains(github.ref, 'auto-tune/')
-        uses: peter-evans/create-pull-request@v5
+        uses: peter-evans/create-pull-request@4e1beaa7521e8b457b572c090b25bd3db56bf1c5  # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "feat: Apply auto-tuning improvements"
@@ -436,7 +436,7 @@ jobs:
           fi
 
       - name: Notify rollback
-        uses: 8398a7/action-slack@v3
+        uses: 8398a7/action-slack@047b09b154480ed39076984b64f324fff010d703  # v3.9.3
         if: always()
         with:
           status: custom
@@ -459,7 +459,7 @@ jobs:
     steps:
       - name: Send success notification
         if: success()
-        uses: 8398a7/action-slack@v3
+        uses: 8398a7/action-slack@047b09b154480ed39076984b64f324fff010d703  # v3.9.3
         with:
           status: custom
           custom_payload: |
@@ -474,7 +474,7 @@ jobs:
 
       - name: Send failure notification
         if: failure()
-        uses: 8398a7/action-slack@v3
+        uses: 8398a7/action-slack@047b09b154480ed39076984b64f324fff010d703  # v3.9.3
         with:
           status: custom
           custom_payload: |

@@ -72,7 +72,7 @@ jobs:
     # Publish to Test PyPI first for manual verification
     - name: Publish to Test PyPI
       if: github.event.inputs.environment == 'testpypi' || github.event_name == 'workflow_dispatch'
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
         repository-url: https://test.pypi.org/legacy/
         password: ${{ secrets.TEST_PYPI_API_TOKEN }}
@@ -81,7 +81,7 @@ jobs:
     # Publish to production PyPI only on actual releases
     - name: Publish to PyPI
       if: github.event_name == 'release' || github.event.inputs.environment == 'pypi'
-      uses: pypa/gh-action-pypi-publish@release/v1
+      uses: pypa/gh-action-pypi-publish@76f52bc884231f62b9a034ebfe128415bbaabdfc  # v1.12.4
       with:
         password: ${{ secrets.PYPI_API_TOKEN }}
         verbose: true

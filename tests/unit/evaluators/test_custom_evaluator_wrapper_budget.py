@@ -48,4 +48,3 @@ async def test_custom_evaluator_wrapper_respects_sample_budget() -> None:
     assert closure.consumed == 2
     assert closure.exhausted is True
     assert manager.remaining() == 0
-

@@ -27,9 +27,15 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.error_handler import APIKeyError, ErrorHandler
 from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
-from traigent.utils.exceptions import ConfigurationError, EvaluationError
+from traigent.utils.exceptions import (
+    ConfigurationError,
+    EvaluationError,
+)
 from traigent.utils.exceptions import TraigentError as CoreTraigentError
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import (
+    TrialPrunedError,
+    ValidationError,
+)
 from traigent.utils.langchain_interceptor import get_captured_response_by_key
 from traigent.utils.logging import get_logger
 
@@ -1185,12 +1191,14 @@ class BaseEvaluator(ABC):
             )
 
         # Concurrent evaluation
-        outputs: list[Any] = []
-        errors: list[str | None] = []
-        example_results: list[ExampleResult | None] = [] if detailed else []
+        outputs_by_index: dict[int, Any] = {}
+        errors_by_index: dict[int, str | None] = {}
+        example_results_by_index: dict[int, ExampleResult | None] = {}
         consumed = 0
         exhausted = False
         semaphore = asyncio.Semaphore(self.max_workers)
+
+        examples = list(dataset.examples)
 
         async def evaluate_with_semaphore(
             example: EvaluationExample, index: int
@@ -1209,45 +1217,132 @@ class BaseEvaluator(ABC):
                     func, config, example.input_data, executor=None
                 )
 
-        tasks: list[asyncio.Task[Any]] = []
-        indices: list[int] = []
-        for i, example in enumerate(dataset.examples):
-            if sample_lease and not sample_lease.try_take(1):
-                exhausted = True
-                break
-            indices.append(i)
-            tasks.append(asyncio.create_task(evaluate_with_semaphore(example, i)))
+        async def cancel_pending(
+            pending: dict[asyncio.Task[Any], int],
+        ) -> None:
+            if not pending:
+                return
 
-        if not tasks:
-            return outputs, errors, example_results, consumed, exhausted
+            tasks_list = list(pending.keys())
+            indices_list = list(pending.values())
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+            for task in tasks_list:
+                task.cancel()
 
-        for i, result in zip(indices, results, strict=False):
-            if isinstance(result, Exception):
-                if self._process_concurrent_exception(
-                    result,
-                    i,
-                    dataset,
-                    sample_lease,
-                    detailed,
-                    progress_callback,
-                    outputs,
-                    errors,
-                    example_results,
-                ):
+            results = await asyncio.gather(*tasks_list, return_exceptions=True)
+            if sample_lease:
+                for _index, result in zip(indices_list, results, strict=False):
+                    if isinstance(result, asyncio.CancelledError):
+                        sample_lease.rollback(1)
+
+        pending_tasks: dict[asyncio.Task[Any], int] = {}
+        next_index = 0
+
+        def schedule_more() -> None:
+            nonlocal next_index, exhausted
+            while next_index < len(examples) and len(pending_tasks) < self.max_workers:
+                if sample_lease and not sample_lease.try_take(1):
+                    exhausted = True
+                    return
+
+                example = examples[next_index]
+                pending_tasks[
+                    asyncio.create_task(evaluate_with_semaphore(example, next_index))
+                ] = next_index
+                next_index += 1
+
+        schedule_more()
+
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks.keys(),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            for task in done:
+                index = pending_tasks.pop(task)
+
+                try:
+                    result = task.result()
+                except TrialPrunedError:
+                    await cancel_pending(pending_tasks)
+                    raise
+                except asyncio.CancelledError:
+                    if sample_lease:
+                        sample_lease.rollback(1)
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                index,
+                                {"success": False, "error": "sample_budget_cancelled"},
+                            )
+                        except TrialPrunedError:
+                            await cancel_pending(pending_tasks)
+                            raise
+                        except Exception:
+                            await cancel_pending(pending_tasks)
+                            raise
                     continue
-            else:
-                self._process_concurrent_success(
-                    result,
-                    detailed,
-                    progress_callback,
-                    i,
-                    outputs,
-                    errors,
-                    example_results,
-                )
-            consumed += 1
+                except (APIKeyError, FriendlyTraiGentError, CoreTraigentError):
+                    await cancel_pending(pending_tasks)
+                    raise
+                except Exception as exc:
+                    if detailed:
+                        example = examples[index]
+                        example_results_by_index[index] = (
+                            self._create_failed_example_result(example, index, exc)
+                        )
+                    outputs_by_index[index] = None
+                    errors_by_index[index] = str(exc)
+                    if progress_callback:
+                        try:
+                            progress_callback(
+                                index, {"success": False, "error": str(exc)}
+                            )
+                        except TrialPrunedError:
+                            await cancel_pending(pending_tasks)
+                            raise
+                        except Exception:
+                            await cancel_pending(pending_tasks)
+                            raise
+                else:
+                    if detailed:
+                        example_results_by_index[index] = result
+                        outputs_by_index[index] = result.actual_output
+                        errors_by_index[index] = result.error_message
+                    else:
+                        output, error = result
+                        outputs_by_index[index] = output
+                        errors_by_index[index] = error
+                        if progress_callback:
+                            try:
+                                progress_callback(
+                                    index,
+                                    {
+                                        "success": error is None,
+                                        "output": output,
+                                        "error": error,
+                                    },
+                                )
+                            except TrialPrunedError:
+                                await cancel_pending(pending_tasks)
+                                raise
+                            except Exception:
+                                await cancel_pending(pending_tasks)
+                                raise
+
+                consumed += 1
+
+            if not exhausted:
+                schedule_more()
+
+        ordered_indices = sorted(outputs_by_index.keys())
+        outputs = [outputs_by_index[i] for i in ordered_indices]
+        errors = [errors_by_index[i] for i in ordered_indices]
+        if detailed:
+            example_results = [example_results_by_index.get(i) for i in ordered_indices]
+        else:
+            example_results = []
 
         if exhausted and progress_callback:
             progress_callback(
@@ -1467,6 +1562,17 @@ class BaseEvaluator(ABC):
                         },
                     )
                 return result
+            except TrialPrunedError:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except (
+                APIKeyError,
+                FriendlyTraiGentError,
+                CoreTraigentError,
+                ConfigurationError,
+            ):
+                raise
             except Exception as e:
                 execution_time = time.time() - start_time
                 logger.warning(

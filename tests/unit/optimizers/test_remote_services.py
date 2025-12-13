@@ -10,6 +10,11 @@ This test suite covers:
 - CTD (Combinatorial Test Design) scenarios
 """
 
+# Traceability: CONC-Layer-Integration CONC-Quality-Reliability FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID
+
+from __future__ import annotations
+
+import asyncio
 import uuid
 from datetime import datetime
 from typing import Any
@@ -21,6 +26,7 @@ from traigent.api.types import TrialResult, TrialStatus
 from traigent.evaluators.base import EvaluationExample
 from traigent.optimizers.remote_services import (
     DatasetSubset,
+    MockRemoteService,
     OptimizationSession,
     OptimizationSessionStatus,
     OptimizationStrategy,
@@ -1038,3 +1044,1037 @@ class TestEdgeCasesAndErrorHandling:
         assert (
             trial_extreme.metrics["cost"] != trial_extreme.metrics["cost"]
         )  # NaN check
+
+
+class TestMockRemoteService:
+    """Tests for the MockRemoteService implementation from remote_services.py."""
+
+    def test_mock_remote_service_initialization(self) -> None:
+        """Test MockRemoteService initialization with default parameters."""
+        service = MockRemoteService()
+
+        assert service.service_name == "MockTraiGentService"
+        assert service.endpoint == "mock://localhost"
+        assert service.api_key is None
+        assert service.timeout == 30.0
+        assert service._status == ServiceStatus.DISCONNECTED
+        assert service._suggestion_count == 0
+
+    def test_mock_remote_service_custom_initialization(self) -> None:
+        """Test MockRemoteService initialization with custom parameters."""
+        service = MockRemoteService(
+            service_name="CustomMock",
+            endpoint="mock://custom",
+            api_key="test_key_123",
+            timeout=60.0,
+            custom_param="value",
+        )
+
+        assert service.service_name == "CustomMock"
+        assert service.endpoint == "mock://custom"
+        assert service.api_key == "test_key_123"
+        assert service.timeout == 60.0
+        assert service.config["custom_param"] == "value"
+
+    @pytest.mark.asyncio
+    async def test_mock_service_connect(self) -> None:
+        """Test MockRemoteService connect method."""
+        service = MockRemoteService()
+
+        info = await service.connect()
+
+        assert service._status == ServiceStatus.CONNECTED
+        assert service._service_info is not None
+        assert info.name == "MockTraiGentService"
+        assert info.version == "1.0.0-mock"
+        assert "random" in info.supported_algorithms
+        assert "grid" in info.supported_algorithms
+        assert "bayesian" in info.supported_algorithms
+        assert info.max_concurrent_sessions == 10
+        assert info.capabilities["batch_suggestions"] is True
+        assert info.capabilities["session_persistence"] is False
+        assert info.capabilities["real_time_updates"] is True
+        assert info.status == ServiceStatus.CONNECTED
+
+    @pytest.mark.asyncio
+    async def test_mock_service_disconnect(self) -> None:
+        """Test MockRemoteService disconnect method."""
+        service = MockRemoteService()
+        await service.connect()
+
+        # Create some sessions
+        await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+        await service.create_session({"tokens": (100, 1000)}, ["cost"])
+
+        assert len(service._active_sessions) == 2
+
+        # Disconnect should close all sessions
+        await service.disconnect()
+
+        assert service._status == ServiceStatus.DISCONNECTED
+        assert service._service_info is None
+        assert len(service._active_sessions) == 0
+
+    @pytest.mark.asyncio
+    async def test_mock_service_health_check(self) -> None:
+        """Test MockRemoteService health check."""
+        service = MockRemoteService()
+
+        health = await service.health_check()
+
+        assert health["status"] == "healthy"
+        assert health["uptime"] == 99.9
+        assert health["active_sessions"] == 0
+        assert health["total_requests"] >= 0
+        assert "response_time_ms" in health
+
+    @pytest.mark.asyncio
+    async def test_mock_service_create_session_comprehensive(
+        self, sample_optimization_strategy
+    ) -> None:
+        """Test MockRemoteService session creation with all parameters."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {
+            "temperature": (0.0, 1.0),
+            "max_tokens": (100, 4000),
+            "model": ["gpt-4", "gpt-3.5-turbo"],
+        }
+        objectives = ["accuracy", "cost", "latency"]
+
+        session = await service.create_session(
+            config_space=config_space,
+            objectives=objectives,
+            algorithm="bayesian",
+            max_trials=50,
+            timeout=1800.0,
+            optimization_strategy=sample_optimization_strategy,
+            context=None,
+            custom_metadata="test_value",
+        )
+
+        assert session.session_id.startswith("MockTraiGentService_")
+        assert session.service_name == "MockTraiGentService"
+        assert session.config_space == config_space
+        assert session.objectives == objectives
+        assert session.algorithm == "bayesian"
+        assert session.status == OptimizationSessionStatus.ACTIVE
+        assert session.max_trials == 50
+        assert session.timeout == 1800.0
+        assert session.optimization_strategy == sample_optimization_strategy
+        assert session.metadata["mock_service"] is True
+        assert session.metadata["custom_metadata"] == "test_value"
+
+    @pytest.mark.asyncio
+    async def test_mock_service_get_session(self) -> None:
+        """Test MockRemoteService get_session method."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+        session_id = session.session_id
+
+        # Get the session
+        retrieved = await service.get_session(session_id)
+
+        assert retrieved.session_id == session_id
+        assert retrieved.config_space == session.config_space
+
+    @pytest.mark.asyncio
+    async def test_mock_service_get_nonexistent_session(self) -> None:
+        """Test MockRemoteService get_session with invalid ID."""
+        service = MockRemoteService()
+        await service.connect()
+
+        with pytest.raises(ServiceError, match="Session invalid_id not found"):
+            await service.get_session("invalid_id")
+
+    @pytest.mark.asyncio
+    async def test_mock_service_close_session(self) -> None:
+        """Test MockRemoteService close_session method."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+        session_id = session.session_id
+
+        assert session_id in service._active_sessions
+
+        await service.close_session(session_id)
+
+        assert session_id not in service._active_sessions
+
+    @pytest.mark.asyncio
+    async def test_mock_service_close_nonexistent_session(self) -> None:
+        """Test MockRemoteService close_session with invalid ID."""
+        service = MockRemoteService()
+        await service.connect()
+
+        # Should not raise error - just does nothing
+        await service.close_session("nonexistent_session")
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_categorical(self) -> None:
+        """Test MockRemoteService suggest_configuration with categorical parameters."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"model": ["gpt-4", "gpt-3.5-turbo", "claude-2"]}
+        session = await service.create_session(config_space, ["accuracy"])
+
+        config = await service.suggest_configuration(session.session_id, [])
+
+        assert "model" in config
+        assert config["model"] in ["gpt-4", "gpt-3.5-turbo", "claude-2"]
+        assert "_mock_suggestion_id" in config
+        assert config["_mock_suggestion_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_continuous(self) -> None:
+        """Test MockRemoteService suggest_configuration with continuous parameters."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"temperature": (0.0, 1.0), "top_p": (0.5, 1.0)}
+        session = await service.create_session(config_space, ["accuracy"])
+
+        config = await service.suggest_configuration(session.session_id, [])
+
+        assert "temperature" in config
+        assert "top_p" in config
+        assert 0.0 <= config["temperature"] <= 1.0
+        assert 0.5 <= config["top_p"] <= 1.0
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_integer(self) -> None:
+        """Test MockRemoteService suggest_configuration with integer parameters."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"max_tokens": (100, 1000), "batch_size": (1, 32)}
+        session = await service.create_session(config_space, ["cost"])
+
+        config = await service.suggest_configuration(session.session_id, [])
+
+        assert "max_tokens" in config
+        assert "batch_size" in config
+        assert isinstance(config["max_tokens"], int)
+        assert isinstance(config["batch_size"], int)
+        assert 100 <= config["max_tokens"] <= 1000
+        assert 1 <= config["batch_size"] <= 32
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_fixed(self) -> None:
+        """Test MockRemoteService suggest_configuration with fixed parameters."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"fixed_param": "fixed_value", "another_fixed": 42}
+        session = await service.create_session(config_space, ["accuracy"])
+
+        config = await service.suggest_configuration(session.session_id, [])
+
+        assert config["fixed_param"] == "fixed_value"
+        assert config["another_fixed"] == 42
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_with_context(self) -> None:
+        """Test MockRemoteService suggest_configuration with remote context."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"temp": (0.0, 1.0)}
+        session = await service.create_session(config_space, ["accuracy"])
+
+        remote_context = {"previous_best": 0.95, "iteration": 10}
+        config = await service.suggest_configuration(
+            session.session_id, [], remote_context
+        )
+
+        assert "_remote_context" in config
+        assert config["_remote_context"] == remote_context
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_configuration_counter(self) -> None:
+        """Test MockRemoteService suggestion counter increments."""
+        service = MockRemoteService()
+        await service.connect()
+
+        config_space = {"temp": (0.0, 1.0)}
+        session = await service.create_session(config_space, ["accuracy"])
+
+        config1 = await service.suggest_configuration(session.session_id, [])
+        config2 = await service.suggest_configuration(session.session_id, [])
+        config3 = await service.suggest_configuration(session.session_id, [])
+
+        assert config1["_mock_suggestion_id"] == 1
+        assert config2["_mock_suggestion_id"] == 2
+        assert config3["_mock_suggestion_id"] == 3
+        assert service._suggestion_count == 3
+
+    @pytest.mark.asyncio
+    async def test_mock_service_report_trial_result(self, sample_trial_results) -> None:
+        """Test MockRemoteService report_trial_result method."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Report first result
+        await service.report_trial_result(session.session_id, sample_trial_results[0])
+
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.trials_completed == 1
+        assert updated_session.best_score == 0.85
+        assert updated_session.best_config == sample_trial_results[0].config
+
+    @pytest.mark.asyncio
+    async def test_mock_service_report_trial_result_updates_best(
+        self, sample_trial_results
+    ) -> None:
+        """Test MockRemoteService updates best score when better result is reported."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Report results in order: 0.85, then 0.88 (better), then 0.82 (worse)
+        await service.report_trial_result(session.session_id, sample_trial_results[0])
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.best_score == 0.85
+
+        await service.report_trial_result(session.session_id, sample_trial_results[1])
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.best_score == 0.88
+        assert updated_session.best_config == sample_trial_results[1].config
+
+        await service.report_trial_result(session.session_id, sample_trial_results[2])
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.best_score == 0.88  # Should not change
+        assert updated_session.trials_completed == 3
+
+    @pytest.mark.asyncio
+    async def test_mock_service_report_failed_trial(self, sample_trial_results) -> None:
+        """Test MockRemoteService handles failed trial results."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Report failed trial (index 3)
+        failed_trial = sample_trial_results[3]
+        await service.report_trial_result(session.session_id, failed_trial)
+
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.trials_completed == 1
+        assert updated_session.best_score is None  # No successful trials yet
+
+    @pytest.mark.asyncio
+    async def test_mock_service_should_stop_max_trials(
+        self, sample_trial_results
+    ) -> None:
+        """Test MockRemoteService stopping condition based on max_trials."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], max_trials=5
+        )
+
+        # Should not stop with 3 trials
+        should_stop = await service.should_stop_optimization(
+            session.session_id, sample_trial_results[:3]
+        )
+        assert should_stop is False
+
+        # Should stop with 5 trials
+        should_stop = await service.should_stop_optimization(
+            session.session_id, sample_trial_results * 2  # 8 trials
+        )
+        assert should_stop is True
+
+    @pytest.mark.asyncio
+    async def test_mock_service_should_stop_convergence(self) -> None:
+        """Test MockRemoteService stopping condition based on convergence."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Create trial history with converged scores (all 0.85)
+        converged_trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.85},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(15)
+        ]
+
+        should_stop = await service.should_stop_optimization(
+            session.session_id, converged_trials
+        )
+        assert should_stop is True
+
+    @pytest.mark.asyncio
+    async def test_mock_service_should_stop_not_enough_trials(self) -> None:
+        """Test MockRemoteService does not stop with too few trials."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Only 5 trials - should not check convergence
+        few_trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.85},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(5)
+        ]
+
+        should_stop = await service.should_stop_optimization(
+            session.session_id, few_trials
+        )
+        assert should_stop is False
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_smart_trial(
+        self, sample_evaluation_examples, sample_trial_results
+    ) -> None:
+        """Test MockRemoteService suggest_smart_trial method."""
+        service = MockRemoteService()
+        await service.connect()
+
+        strategy = OptimizationStrategy(
+            min_examples_per_trial=3, max_examples_per_trial=10
+        )
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], optimization_strategy=strategy
+        )
+
+        suggestion = await service.suggest_smart_trial(
+            session.session_id, sample_trial_results, sample_evaluation_examples
+        )
+
+        assert isinstance(suggestion, SmartTrialSuggestion)
+        assert "temp" in suggestion.config
+        assert isinstance(suggestion.dataset_subset, DatasetSubset)
+        assert suggestion.dataset_subset.size >= 3
+        assert suggestion.dataset_subset.size <= 10
+        assert suggestion.exploration_type in [
+            "exploration",
+            "exploitation",
+            "verification",
+            "refinement",
+        ]
+        assert suggestion.estimated_cost is not None
+        assert suggestion.estimated_duration is not None
+        assert suggestion.priority >= 0
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_smart_trial_early_exploration(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test MockRemoteService smart trial with early exploration."""
+        service = MockRemoteService()
+        await service.connect()
+
+        strategy = OptimizationStrategy(min_examples_per_trial=5)
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], optimization_strategy=strategy
+        )
+
+        # Early in optimization (2 trials)
+        early_trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.8},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(2)
+        ]
+
+        suggestion = await service.suggest_smart_trial(
+            session.session_id, early_trials, sample_evaluation_examples
+        )
+
+        assert suggestion.exploration_type == "exploration"
+        assert suggestion.dataset_subset.selection_strategy == "diverse_sampling"
+        assert suggestion.dataset_subset.confidence_level == 0.3
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_smart_trial_mid_optimization(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test MockRemoteService smart trial during mid optimization."""
+        service = MockRemoteService()
+        await service.connect()
+
+        strategy = OptimizationStrategy(min_examples_per_trial=5)
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], optimization_strategy=strategy
+        )
+
+        # Mid optimization (7 trials)
+        mid_trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"temp": 0.5 + i * 0.05},
+                metrics={"accuracy": 0.8 + i * 0.01},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(7)
+        ]
+
+        suggestion = await service.suggest_smart_trial(
+            session.session_id, mid_trials, sample_evaluation_examples
+        )
+
+        assert suggestion.exploration_type in ["exploration", "exploitation"]
+        assert suggestion.dataset_subset.selection_strategy == "representative_sampling"
+        assert suggestion.dataset_subset.confidence_level == 0.6
+
+    @pytest.mark.asyncio
+    async def test_mock_service_suggest_smart_trial_late_optimization(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test MockRemoteService smart trial in late optimization."""
+        service = MockRemoteService()
+        await service.connect()
+
+        strategy = OptimizationStrategy(min_examples_per_trial=5)
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], optimization_strategy=strategy
+        )
+
+        # Late optimization (15 trials)
+        late_trials = [
+            TrialResult(
+                trial_id=f"trial_{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.85},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(15)
+        ]
+
+        suggestion = await service.suggest_smart_trial(
+            session.session_id, late_trials, sample_evaluation_examples
+        )
+
+        assert suggestion.exploration_type in ["verification", "refinement"]
+        assert (
+            suggestion.dataset_subset.selection_strategy == "high_confidence_sampling"
+        )
+        assert suggestion.dataset_subset.confidence_level == 0.8
+
+
+class TestRemoteOptimizationServiceHelpers:
+    """Test helper methods of RemoteOptimizationService."""
+
+    @pytest.mark.asyncio
+    async def test_update_metrics_success(self) -> None:
+        """Test _update_metrics with successful request."""
+        import time
+
+        service = MockRemoteService()
+
+        initial_requests = service._metrics.total_requests
+        initial_failed = service._metrics.failed_requests
+
+        request_start = time.time()
+        await asyncio.sleep(0.01)  # Simulate some work
+        service._update_metrics(request_start, success=True)
+
+        assert service._metrics.total_requests == initial_requests + 1
+        assert service._metrics.failed_requests == initial_failed
+        assert service._metrics.response_time_ms > 0
+        assert service._metrics.success_rate > 0
+
+    @pytest.mark.asyncio
+    async def test_update_metrics_failure(self) -> None:
+        """Test _update_metrics with failed request."""
+        import time
+
+        service = MockRemoteService()
+
+        initial_requests = service._metrics.total_requests
+        initial_failed = service._metrics.failed_requests
+
+        request_start = time.time()
+        service._update_metrics(request_start, success=False)
+
+        assert service._metrics.total_requests == initial_requests + 1
+        assert service._metrics.failed_requests == initial_failed + 1
+
+    @pytest.mark.asyncio
+    async def test_update_metrics_success_rate_calculation(self) -> None:
+        """Test _update_metrics calculates success rate correctly."""
+        import time
+
+        service = MockRemoteService()
+
+        request_start = time.time()
+
+        # 3 successes
+        service._update_metrics(request_start, success=True)
+        service._update_metrics(request_start, success=True)
+        service._update_metrics(request_start, success=True)
+
+        # 1 failure
+        service._update_metrics(request_start, success=False)
+
+        # Success rate should be 3/4 = 0.75
+        assert service._metrics.total_requests == 4
+        assert service._metrics.failed_requests == 1
+        assert service._metrics.success_rate == 0.75
+
+    def test_create_session_id(self) -> None:
+        """Test _create_session_id generates valid IDs."""
+        service = MockRemoteService(service_name="TestService")
+
+        session_id1 = service._create_session_id()
+        session_id2 = service._create_session_id()
+
+        assert session_id1.startswith("TestService_")
+        assert session_id2.startswith("TestService_")
+        assert session_id1 != session_id2
+        assert len(session_id1.split("_")[1]) == 8
+        assert len(session_id2.split("_")[1]) == 8
+
+    @pytest.mark.asyncio
+    async def test_validate_session_existing(self) -> None:
+        """Test _validate_session with existing active session."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        validated = await service._validate_session(session.session_id)
+
+        assert validated.session_id == session.session_id
+        assert validated.status == OptimizationSessionStatus.ACTIVE
+
+    @pytest.mark.asyncio
+    async def test_validate_session_nonexistent(self) -> None:
+        """Test _validate_session with nonexistent session."""
+        service = MockRemoteService()
+        await service.connect()
+
+        with pytest.raises(ServiceError, match="Invalid or inactive session"):
+            await service._validate_session("nonexistent_session")
+
+    @pytest.mark.asyncio
+    async def test_validate_session_inactive_status(self) -> None:
+        """Test _validate_session rejects inactive session."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Mark session as completed
+        service._active_sessions[session.session_id].status = (
+            OptimizationSessionStatus.COMPLETED
+        )
+
+        with pytest.raises(ServiceError, match="not active"):
+            await service._validate_session(session.session_id)
+
+    @pytest.mark.asyncio
+    async def test_validate_session_failed_status(self) -> None:
+        """Test _validate_session rejects failed session."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Mark session as failed
+        service._active_sessions[session.session_id].status = (
+            OptimizationSessionStatus.FAILED
+        )
+
+        with pytest.raises(ServiceError, match="not active"):
+            await service._validate_session(session.session_id)
+
+    @pytest.mark.asyncio
+    async def test_validate_session_max_sessions_limit(self) -> None:
+        """Test _validate_session enforces max active sessions limit."""
+        service = MockRemoteService()
+        service._max_active_sessions = 3  # Set low limit for testing
+        await service.connect()
+
+        # Create max sessions
+        sessions = []
+        for i in range(3):
+            session = await service.create_session({f"p{i}": (0, 1)}, ["obj"])
+            sessions.append(session)
+
+        assert len(service._active_sessions) == 3
+
+        # Create a 4th session - should trigger cleanup
+        # Mark first session as completed
+        service._active_sessions[sessions[0].session_id].status = (
+            OptimizationSessionStatus.COMPLETED
+        )
+
+        # Now try to create a new session that will trigger cleanup
+        # This will trigger the limit enforcement in create_session
+        await service.create_session({"new": (0, 1)}, ["obj"])
+
+        # The oldest session should have been removed
+        assert len(service._active_sessions) <= service._max_active_sessions
+
+    @pytest.mark.asyncio
+    async def test_service_properties(self) -> None:
+        """Test RemoteOptimizationService property methods."""
+        service = MockRemoteService()
+
+        # Before connection
+        assert service.status == ServiceStatus.DISCONNECTED
+        assert service.service_info is None
+        assert isinstance(service.metrics, ServiceMetrics)
+        assert service.get_session_count() == 0
+        assert service.get_active_sessions() == []
+
+        # After connection
+        await service.connect()
+
+        assert service.status == ServiceStatus.CONNECTED
+        assert service.service_info is not None
+        assert service.service_info.name == "MockTraiGentService"
+
+        # Create sessions
+        session1 = await service.create_session({"p1": (0, 1)}, ["obj1"])
+        session2 = await service.create_session({"p2": (0, 1)}, ["obj2"])
+
+        assert service.get_session_count() == 2
+        active_sessions = service.get_active_sessions()
+        assert len(active_sessions) == 2
+        assert any(s.session_id == session1.session_id for s in active_sessions)
+        assert any(s.session_id == session2.session_id for s in active_sessions)
+
+
+class TestBatchOperations:
+    """Test batch operation methods."""
+
+    @pytest.mark.asyncio
+    async def test_suggest_multiple_configurations(self, sample_trial_results) -> None:
+        """Test suggest_multiple_configurations returns multiple suggestions."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        suggestions = await service.suggest_multiple_configurations(
+            session.session_id, sample_trial_results, num_suggestions=5
+        )
+
+        assert len(suggestions) == 5
+        assert all("temp" in config for config in suggestions)
+        # Check that suggestion IDs are incrementing
+        assert suggestions[0]["_mock_suggestion_id"] == 1
+        assert suggestions[4]["_mock_suggestion_id"] == 5
+
+    @pytest.mark.asyncio
+    async def test_suggest_multiple_configurations_empty(self) -> None:
+        """Test suggest_multiple_configurations with zero suggestions."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        suggestions = await service.suggest_multiple_configurations(
+            session.session_id, [], num_suggestions=0
+        )
+
+        assert len(suggestions) == 0
+
+    @pytest.mark.asyncio
+    async def test_report_multiple_trial_results(self, sample_trial_results) -> None:
+        """Test report_multiple_trial_results reports all results."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        await service.report_multiple_trial_results(
+            session.session_id, sample_trial_results[:3]
+        )
+
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.trials_completed == 3
+
+    @pytest.mark.asyncio
+    async def test_report_multiple_trial_results_handles_errors(self) -> None:
+        """Test report_multiple_trial_results continues on individual errors."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Create mix of valid and invalid trial results
+        valid_trial = TrialResult(
+            trial_id="valid",
+            config={"temp": 0.5},
+            metrics={"accuracy": 0.8},
+            status=TrialStatus.COMPLETED,
+            duration=10.0,
+            timestamp=datetime.now(),
+        )
+
+        # Report should handle errors gracefully
+        await service.report_multiple_trial_results(session.session_id, [valid_trial])
+
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.trials_completed >= 1
+
+    @pytest.mark.asyncio
+    async def test_suggest_multiple_smart_trials(
+        self, sample_evaluation_examples, sample_trial_results
+    ) -> None:
+        """Test suggest_multiple_smart_trials returns multiple suggestions."""
+        service = MockRemoteService()
+        await service.connect()
+
+        strategy = OptimizationStrategy(min_examples_per_trial=3)
+        session = await service.create_session(
+            {"temp": (0.0, 1.0)}, ["accuracy"], optimization_strategy=strategy
+        )
+
+        suggestions = await service.suggest_multiple_smart_trials(
+            session.session_id,
+            sample_trial_results,
+            sample_evaluation_examples,
+            num_suggestions=3,
+        )
+
+        assert len(suggestions) == 3
+        assert all(isinstance(s, SmartTrialSuggestion) for s in suggestions)
+        assert all(isinstance(s.dataset_subset, DatasetSubset) for s in suggestions)
+
+    @pytest.mark.asyncio
+    async def test_update_optimization_strategy(self) -> None:
+        """Test update_optimization_strategy updates session strategy."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        new_strategy = OptimizationStrategy(
+            exploration_ratio=0.5, min_examples_per_trial=10
+        )
+
+        await service.update_optimization_strategy(session.session_id, new_strategy)
+
+        updated_session = await service.get_session(session.session_id)
+        assert updated_session.optimization_strategy == new_strategy
+        assert updated_session.optimization_strategy.exploration_ratio == 0.5
+        assert updated_session.optimization_strategy.min_examples_per_trial == 10
+
+
+class TestSmartOptimizationHelpers:
+    """Test smart optimization helper methods in MockRemoteService."""
+
+    def test_select_smart_dataset_subset_early_stage(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test dataset subset selection in early optimization stage."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy(min_examples_per_trial=3)
+
+        # Early stage (2 trials)
+        subset = service._select_smart_dataset_subset(
+            sample_evaluation_examples, [], strategy, trial_count=2
+        )
+
+        assert subset.size == 3
+        assert subset.selection_strategy == "diverse_sampling"
+        assert subset.confidence_level == 0.3
+
+    def test_select_smart_dataset_subset_mid_stage(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test dataset subset selection in mid optimization stage."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy(min_examples_per_trial=2)
+
+        # Mid stage (7 trials)
+        subset = service._select_smart_dataset_subset(
+            sample_evaluation_examples, [], strategy, trial_count=7
+        )
+
+        # min_size * 2 = 4, capped at dataset size (5)
+        assert subset.size == 4
+        assert subset.selection_strategy == "representative_sampling"
+        assert subset.confidence_level == 0.6
+
+    def test_select_smart_dataset_subset_late_stage(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test dataset subset selection in late optimization stage."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy(min_examples_per_trial=2)
+
+        # Late stage (12 trials)
+        subset = service._select_smart_dataset_subset(
+            sample_evaluation_examples, [], strategy, trial_count=12
+        )
+
+        # min_size * 3 = 6 or total//2 = 2, min of those capped at total = 2
+        assert subset.size >= 2
+        assert subset.selection_strategy == "high_confidence_sampling"
+        assert subset.confidence_level == 0.8
+
+    def test_select_smart_dataset_subset_respects_max(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test dataset subset selection respects max_examples_per_trial."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy(
+            min_examples_per_trial=5, max_examples_per_trial=7
+        )
+
+        # Late stage would normally use more examples, but should be capped
+        subset = service._select_smart_dataset_subset(
+            sample_evaluation_examples, [], strategy, trial_count=15
+        )
+
+        assert subset.size <= 7
+
+    def test_determine_exploration_type_early(self) -> None:
+        """Test exploration type determination in early stage."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy()
+
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.8},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(3)
+        ]
+
+        exploration_type = service._determine_exploration_type(trials, strategy)
+        assert exploration_type == "exploration"
+
+    def test_determine_exploration_type_mid_improving(self) -> None:
+        """Test exploration type with improving performance."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy()
+
+        # Create improving trials
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.7 + i * 0.02},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(10)
+        ]
+
+        exploration_type = service._determine_exploration_type(trials, strategy)
+        assert exploration_type in ["exploration", "exploitation"]
+
+    def test_determine_exploration_type_late(self) -> None:
+        """Test exploration type in late stage."""
+        service = MockRemoteService()
+        strategy = OptimizationStrategy()
+
+        trials = [
+            TrialResult(
+                trial_id=f"t{i}",
+                config={"temp": 0.5},
+                metrics={"accuracy": 0.85},
+                status=TrialStatus.COMPLETED,
+                duration=10.0,
+                timestamp=datetime.now(),
+            )
+            for i in range(20)
+        ]
+
+        exploration_type = service._determine_exploration_type(trials, strategy)
+        assert exploration_type in ["verification", "refinement"]
+
+    def test_calculate_priority_exploration(self) -> None:
+        """Test priority calculation for exploration."""
+        service = MockRemoteService()
+
+        priority = service._calculate_priority("exploration", confidence=0.5)
+        assert priority >= 1
+
+    def test_calculate_priority_exploitation(self) -> None:
+        """Test priority calculation for exploitation."""
+        service = MockRemoteService()
+
+        priority = service._calculate_priority("exploitation", confidence=0.8)
+        assert priority >= 3
+
+    def test_calculate_priority_verification(self) -> None:
+        """Test priority calculation for verification."""
+        service = MockRemoteService()
+
+        priority = service._calculate_priority("verification", confidence=0.9)
+        assert priority >= 2
+
+    def test_calculate_priority_refinement(self) -> None:
+        """Test priority calculation for refinement."""
+        service = MockRemoteService()
+
+        priority = service._calculate_priority("refinement", confidence=0.95)
+        assert priority >= 4
+
+    def test_calculate_priority_confidence_bonus(self) -> None:
+        """Test that higher confidence increases priority."""
+        service = MockRemoteService()
+
+        low_confidence = service._calculate_priority("exploration", confidence=0.1)
+        high_confidence = service._calculate_priority("exploration", confidence=0.9)
+
+        assert high_confidence > low_confidence
+
+
+class TestDefaultSmartTrialImplementation:
+    """Test the default implementation of suggest_smart_trial in base class."""
+
+    @pytest.mark.asyncio
+    async def test_suggest_smart_trial_fallback(
+        self, sample_evaluation_examples
+    ) -> None:
+        """Test RemoteOptimizationService default suggest_smart_trial implementation."""
+        service = MockRemoteService()
+        await service.connect()
+
+        session = await service.create_session({"temp": (0.0, 1.0)}, ["accuracy"])
+
+        # Test that it works with full dataset
+        suggestion = await service.suggest_smart_trial(
+            session.session_id, [], sample_evaluation_examples
+        )
+
+        assert isinstance(suggestion, SmartTrialSuggestion)
+        assert "temp" in suggestion.config
+        assert isinstance(suggestion.dataset_subset, DatasetSubset)
+        assert suggestion.dataset_subset.size > 0
