@@ -1097,6 +1097,11 @@ class OptimizationOrchestrator:
         # Reset stop conditions for fresh optimization run
         self._stop_condition_manager.reset()
 
+        # Reset cost enforcer to prevent cost accumulation across multiple optimize() calls
+        # on the same orchestrator instance (defensive programming)
+        if self.cost_enforcer is not None:
+            self.cost_enforcer.reset()
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
 
