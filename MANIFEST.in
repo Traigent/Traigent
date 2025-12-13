@@ -3,6 +3,7 @@
 # Core documentation files
 include README.md
 include LICENSE
+include NOTICE
 include CHANGELOG.md
 include INSTALLATION.md
 include CONTRIBUTING.md
