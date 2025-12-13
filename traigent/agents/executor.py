@@ -56,6 +56,10 @@ class AgentExecutor(ABC):
 
     This abstract class defines the interface for executing agents
     with different platforms and configurations.
+
+    Supports async context manager protocol for automatic cleanup:
+        async with executor:
+            await executor.execute(...)
     """
 
     def __init__(self, platform_config: dict[str, Any] | None = None) -> None:
@@ -66,6 +70,7 @@ class AgentExecutor(ABC):
         """
         self.platform_config = platform_config or {}
         self._initialized = False
+        self._cleanup_done = False
 
     async def initialize(self) -> None:
         """Initialize the executor with platform-specific setup."""
@@ -313,3 +318,73 @@ class AgentExecutor(ABC):
     ) -> PlatformConfigValidationResult:
         """Platform-specific configuration validation."""
         raise NotImplementedError
+
+    async def cleanup(self) -> None:
+        """Cleanup resources and shutdown executor gracefully.
+
+        This method ensures all resources are properly released, including:
+        - Platform-specific resources (API clients, connections, etc.)
+        - Running tasks (with cancellation)
+        - Cached state
+
+        Safe to call multiple times - subsequent calls are no-ops.
+        """
+        if self._cleanup_done:
+            logger.debug("Cleanup already performed, skipping")
+            return
+
+        logger.info(f"Cleaning up {self.__class__.__name__}")
+
+        try:
+            # Platform-specific cleanup
+            await self._platform_cleanup()
+
+            # Mark as not initialized to prevent further usage
+            self._initialized = False
+            self._cleanup_done = True
+
+            logger.info(f"Cleanup completed for {self.__class__.__name__}")
+
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+            # Mark as done even if cleanup fails to prevent retries
+            self._cleanup_done = True
+            raise
+
+    async def _platform_cleanup(self) -> None:
+        """Platform-specific cleanup implementation.
+
+        Override this method to cleanup platform-specific resources like:
+        - API clients
+        - Network connections
+        - Background tasks
+        - Temporary files or caches
+
+        Default implementation is a no-op.
+        """
+        # Default: no cleanup needed
+        await asyncio.sleep(0)  # Make it properly async
+
+    async def __aenter__(self) -> AgentExecutor:
+        """Enter async context manager - initialize executor.
+
+        Returns:
+            Self for use in async with statement
+        """
+        await self.initialize()
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: Any,
+    ) -> None:
+        """Exit async context manager - cleanup resources.
+
+        Args:
+            exc_type: Exception type if raised
+            exc_val: Exception value if raised
+            exc_tb: Exception traceback if raised
+        """
+        await self.cleanup()

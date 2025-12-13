@@ -152,7 +152,6 @@ class ErrorHandler:
                 module_name = parts[1].split(".")[0]
 
                 if module_name in cls.IMPORT_FIXES:
-                    cls.IMPORT_FIXES[module_name]
                     raise DependencyError(module_name) from error
                 else:
                     raise TraiGentError(
