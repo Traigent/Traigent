@@ -300,6 +300,75 @@ class TestAgentExecutor:
         assert estimate["estimated_tokens"] == 0
         assert estimate["confidence"] == 0.0
 
+    @pytest.mark.asyncio
+    async def test_cleanup(self, mock_executor):
+        """Test executor cleanup."""
+        # Initialize executor
+        await mock_executor.initialize()
+        assert mock_executor._initialized is True
+        assert mock_executor._cleanup_done is False
+
+        # Cleanup
+        await mock_executor.cleanup()
+
+        assert mock_executor._initialized is False
+        assert mock_executor._cleanup_done is True
+
+        # Second cleanup should be a no-op
+        await mock_executor.cleanup()
+        assert mock_executor._cleanup_done is True
+
+    @pytest.mark.asyncio
+    async def test_cleanup_without_initialization(self, mock_executor):
+        """Test cleanup works even without prior initialization."""
+        assert mock_executor._initialized is False
+
+        # Should not raise an error
+        await mock_executor.cleanup()
+
+        assert mock_executor._cleanup_done is True
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager(self, mock_executor, sample_agent_spec):
+        """Test executor as async context manager."""
+        input_data = {"query": "context test"}
+
+        async with mock_executor as executor:
+            # Executor should be initialized
+            assert executor._initialized is True
+
+            # Execute operation
+            result = await executor.execute(sample_agent_spec, input_data)
+            assert result.output == "Mock output for context test"
+
+        # After exiting context, cleanup should have been called
+        assert mock_executor._cleanup_done is True
+        assert mock_executor._initialized is False
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager_with_exception(
+        self, mock_executor, sample_agent_spec
+    ):
+        """Test cleanup happens even when exception is raised."""
+        input_data = {"query": "error test"}
+
+        # Make execute raise an exception
+        async def failing_execute(*args, **kwargs):
+            raise ValueError("Intentional test error")
+
+        mock_executor._execute_agent = failing_execute
+
+        try:
+            async with mock_executor as executor:
+                # This should raise ValueError
+                await executor.execute(sample_agent_spec, input_data)
+        except ValueError:
+            pass  # Expected
+
+        # Cleanup should still have been called
+        assert mock_executor._cleanup_done is True
+        assert mock_executor._initialized is False
+
 
 class TestAgentExecutionResult:
     """Test AgentExecutionResult dataclass."""
