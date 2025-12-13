@@ -344,13 +344,9 @@ class LangChainPlugin(LLMPlugin):
             except Exception:
                 custom_params = {}
 
-        # Handle model_name vs model parameter confusion
-        if "model" in custom_params and "model_name" not in overridden:
-            overridden["model_name"] = custom_params["model"]
-
-        # Handle streaming vs stream parameter naming
-        if "stream" in custom_params and "streaming" not in overridden:
-            overridden["streaming"] = custom_params["stream"]
+        # Note: model→model_name and stream→streaming mappings are handled
+        # declaratively by the plugin's mapping pipeline (ParameterNormalizer +
+        # LLMPlugin._get_default_mappings). No manual handling needed here.
 
         # Handle retriever-specific parameters
         if "search_type" in custom_params:

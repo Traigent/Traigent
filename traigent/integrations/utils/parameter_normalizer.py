@@ -30,6 +30,7 @@ class Framework(Enum):
     AZURE_OPENAI = "azure_openai"
     COHERE = "cohere"
     HUGGINGFACE = "huggingface"
+    MISTRAL = "mistral"
 
 
 @dataclass
