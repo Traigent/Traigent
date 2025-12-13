@@ -9,9 +9,9 @@
 | Priority | Total | Pending | In Progress | Complete |
 |----------|-------|---------|-------------|----------|
 | High (P0) | 4 | 0 | 0 | 4 |
-| Medium (P1) | 3 | 3 | 0 | 0 |
+| Medium (P1) | 3 | 0 | 0 | 3 |
 | Low (P2) | 2 | 2 | 0 | 0 |
-| **Total** | **9** | **5** | **0** | **4** |
+| **Total** | **9** | **2** | **0** | **7** |
 
 ---
 
@@ -30,9 +30,9 @@
 
 | ID | Title | Component | Status | Owner | Evidence |
 |----|-------|-----------|--------|-------|----------|
-| 005 | Unused Statement in Error Handler | Utilities | Pending |  |  |
-| 006 | ExecutionMode Enum Consistency | Adapters | Pending |  |  |
-| 007 | Agent Resource Cleanup | Agents | Pending |  |  |
+| 005 | Unused Statement in Error Handler | Utilities | Complete | Claude | Removed dead code |
+| 006 | ExecutionMode Enum Consistency | Adapters | Complete | Claude | Enum values used |
+| 007 | Agent Resource Cleanup | Agents | Complete | Claude | cleanup() + context mgr |
 
 ---
 
