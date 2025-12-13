@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
@@ -33,6 +34,11 @@ class OptunaMetricsEmitter:
         self._metrics_collector = metrics_collector
         self._listeners = list(listeners or [])
         self._lock = threading.RLock()
+        self._disabled = os.getenv("TRAIGENT_DISABLE_TELEMETRY", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     def subscribe(self, listener: Callable[[dict[str, Any]], None]) -> None:
         with self._lock:
@@ -52,6 +58,9 @@ class OptunaMetricsEmitter:
         payload: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Emit a structured telemetry payload to collectors and listeners."""
+
+        if self._disabled:
+            return {}
 
         message: dict[str, Any] = {
             "event": event,
