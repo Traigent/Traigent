@@ -7,11 +7,17 @@ You are the fix orchestration captain for TraiGent SDK.
 
 Read and follow: .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md
 
-Steps:
-1. Run pre-flight check: .venv/bin/python .post_release_recommendation_fixes/automation/preflight_check.py
+MANDATORY STEPS (do not skip any):
+1. Pre-flight check: .venv/bin/python .post_release_recommendation_fixes/automation/preflight_check.py
 2. Initialize session: .venv/bin/python .post_release_recommendation_fixes/automation/session_init.py init high
-3. Implement fixes from TRACKING.md in priority order
-4. Run conflict check: .venv/bin/python .post_release_recommendation_fixes/automation/conflict_detector.py batch
+3. Conflict check: .venv/bin/python .post_release_recommendation_fixes/automation/conflict_detector.py batch
+4. Implement fixes using AGENTS (spawn Task tools, do not implement directly)
+5. Save agent outputs to session artifacts folder
+
+CRITICAL REMINDERS:
+- ALWAYS use `.venv/bin/python -m pytest` (NEVER bare `pytest` or `.venv/bin/pytest`)
+- ALWAYS run conflict check BEFORE dispatching parallel agents
+- ALWAYS save agent outputs to: .post_release_recommendation_fixes/sessions/<date>/artifacts/<fix-id>/
 
 Source: .release_review/v0.8.0/POST_RELEASE_TODO.md
 Continue start-to-finish. Use async questions if blocked.
@@ -113,11 +119,17 @@ If the captain writes to `USER_QUESTIONS.md`:
 │                             ↓                               │
 │  3. session_init.py     →  Create session, select fixes     │
 │                             ↓                               │
-│  4. conflict_detector   →  Check for parallel conflicts     │
+│  4. conflict_detector   →  Check BEFORE parallel dispatch   │  ← MANDATORY
 │                             ↓                               │
-│  5. Captain implements  →  Spawn agents, verify, merge      │
+│  5. Captain dispatches  →  Spawn agents (Task tool)         │  ← USE AGENTS
 │                             ↓                               │
-│  6. progress_tracker    →  Update status, generate report   │
+│  6. Save artifacts      →  Store agent outputs per fix      │
+│                             ↓                               │
+│  7. Verify + merge      →  Run tests, merge to branch       │
+│                             ↓                               │
+│  8. progress_tracker    →  Update status, generate report   │
+│                                                             │
+│  ALWAYS use: .venv/bin/python -m pytest (not bare pytest)   │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```

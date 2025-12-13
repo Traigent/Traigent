@@ -2,6 +2,13 @@
 
 Authoritative reference for TraiGent SDK **v0.8.0 (Beta)**.
 
+## Quick Navigation
+
+- **[Decorator Reference](./decorator-reference.md)** - Detailed `@traigent.optimize()` decorator documentation with all parameters and examples
+- **[Telemetry Documentation](./telemetry.md)** - What data is collected, retention policies, and how to opt-out
+- **[Thread Pool Examples](./thread-pool-examples.md)** - Using thread pools with proper context propagation
+- **[Complete API Specification](#core-decorator)** - Full API reference (this document)
+
 ## Core Decorator
 
 ### `@traigent.optimize()`
