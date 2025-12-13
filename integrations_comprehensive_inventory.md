@@ -627,51 +627,9 @@ log_override_details: bool = False
 
 ---
 
-### 16. **azure_openai_client.py** (84 lines)
-**Purpose**: Azure OpenAI deployment wrapper
-
-**Key Classes**:
-- `AzureOpenAIChatResponse` - Response dataclass
-- `AzureOpenAIChatClient` - Azure OpenAI wrapper
-
-**Methods**:
-```
-- __init__(endpoint, api_key, api_version)
-- invoke(deployment, messages, max_tokens, temperature, extra_params)
-```
-
-**Features**:
-- Azure endpoint configuration
-- Deployment-specific model routing
-- Mock mode support (AZURE_OPENAI_MOCK=true)
-- Usage tracking
-
----
-
-### 17. **google_gemini_client.py** (90 lines)
-**Purpose**: Google Generative AI (Gemini) wrapper
-
-**Key Classes**:
-- `GeminiChatResponse` - Response dataclass
-- `GeminiChatClient` - Gemini client wrapper
-
-**Methods**:
-```
-- __init__(api_key)
-- invoke(model, messages, max_tokens, temperature, extra_params)
-```
-
-**Features**:
-- Google Generative AI integration
-- Model-specific configuration
-- Mock mode support (GEMINI_MOCK=true)
-- Flexible message format handling
-
----
-
 ## LangChain Sub-integrations
 
-### 18. **llms/langchain/base.py** (263 lines)
+### 16. **llms/langchain/base.py** (263 lines)
 **Purpose**: LangChain base integration utilities
 
 **Key Classes**:

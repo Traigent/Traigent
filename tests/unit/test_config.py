@@ -217,18 +217,16 @@ class TestFrameworkConstraintsOpenAI:
             assert openai[param_name] == common[param_name]
 
     def test_openai_model_constraint(self):
-        """Test OpenAI model parameter constraint."""
+        """Test OpenAI model parameter constraint.
+
+        Note: Model validation now uses the model discovery service (dynamic),
+        not hardcoded allowed_values. The constraint type should be str.
+        """
         model_constraint = FrameworkConstraints.OPENAI_CONSTRAINTS["model"]
 
         assert model_constraint.type is str
-        assert model_constraint.allowed_values is not None
-
-        # Check for expected OpenAI models
-        allowed_models = model_constraint.allowed_values
-        assert "gpt-4o" in allowed_models
-        assert "gpt-4" in allowed_models
-        assert "gpt-3.5-turbo" in allowed_models
-        assert "text-davinci-003" in allowed_models
+        # allowed_values is now None - validation is done via model discovery service
+        assert model_constraint.allowed_values is None
 
     def test_openai_specific_constraints(self):
         """Test OpenAI-specific constraints."""
@@ -255,26 +253,27 @@ class TestFrameworkConstraintsAnthropic:
             assert param_name in anthropic
 
     def test_anthropic_model_constraint(self):
-        """Test Anthropic model parameter constraint."""
+        """Test Anthropic model parameter constraint.
+
+        Note: Model validation now uses the model discovery service (dynamic),
+        not hardcoded allowed_values. The constraint type should be str.
+        """
         model_constraint = FrameworkConstraints.ANTHROPIC_CONSTRAINTS["model"]
 
         assert model_constraint.type is str
-        assert model_constraint.allowed_values is not None
-
-        # Check for expected Anthropic models
-        allowed_models = model_constraint.allowed_values
-        assert "claude-3-opus-20240229" in allowed_models
-        assert "claude-3-sonnet-20240229" in allowed_models
-        assert "claude-2.1" in allowed_models
-        assert "claude-instant-1.2" in allowed_models
+        # allowed_values is now None - validation is done via model discovery service
+        assert model_constraint.allowed_values is None
 
     def test_anthropic_max_tokens_override(self):
-        """Test Anthropic max_tokens constraint override."""
+        """Test Anthropic max_tokens constraint.
+
+        Note: Anthropic's current API supports up to 200000 tokens for Claude 3.5 models.
+        """
         max_tokens_constraint = FrameworkConstraints.ANTHROPIC_CONSTRAINTS["max_tokens"]
 
         assert max_tokens_constraint.type is int
         assert max_tokens_constraint.min_value == 1
-        assert max_tokens_constraint.max_value == 4096  # Anthropic-specific limit
+        assert max_tokens_constraint.max_value == 200000  # Current Anthropic API limit
         assert "max_tokens_to_sample" in max_tokens_constraint.aliases
 
 
@@ -287,7 +286,9 @@ class TestFrameworkConstraintsRetrieval:
 
         assert constraints == FrameworkConstraints.OPENAI_CONSTRAINTS
         assert "model" in constraints
-        assert "gpt-4" in constraints["model"].allowed_values
+        # Model validation is now done via discovery service, not allowed_values
+        assert constraints["model"].type is str
+        assert constraints["model"].allowed_values is None
 
     def test_get_constraints_for_anthropic(self):
         """Test getting constraints for Anthropic framework."""
@@ -295,7 +296,9 @@ class TestFrameworkConstraintsRetrieval:
 
         assert constraints == FrameworkConstraints.ANTHROPIC_CONSTRAINTS
         assert "model" in constraints
-        assert "claude-3-opus-20240229" in constraints["model"].allowed_values
+        # Model validation is now done via discovery service, not allowed_values
+        assert constraints["model"].type is str
+        assert constraints["model"].allowed_values is None
 
     def test_get_constraints_case_insensitive(self):
         """Test that framework name matching is case-insensitive."""
@@ -370,13 +373,18 @@ class TestParameterValidation:
         assert "below minimum" in issues[0]
 
     def test_validate_parameter_allowed_values_error(self):
-        """Test validation with disallowed values."""
-        # Invalid model
+        """Test validation with disallowed values.
+
+        Note: Model validation is now done via the model discovery service,
+        not hardcoded allowed_values. Since allowed_values is None,
+        any string model value passes basic FrameworkConstraints validation.
+        The actual model validation happens at the plugin level.
+        """
+        # With dynamic model validation, FrameworkConstraints doesn't validate model names
         issues = FrameworkConstraints.validate_parameter(
             "openai", "model", "invalid-model"
         )
-        assert len(issues) == 1
-        assert "not in allowed values" in issues[0]
+        assert len(issues) == 0
 
     def test_validate_parameter_with_aliases(self):
         """Test validation using parameter aliases."""

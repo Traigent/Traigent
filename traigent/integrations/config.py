@@ -167,20 +167,13 @@ class FrameworkConstraints:
     }
 
     # OpenAI-specific constraints
+    # Note: Model validation uses dynamic discovery instead of hardcoded allowed_values.
+    # The model_discovery module handles SDK-based discovery + config fallback + pattern.
     OPENAI_CONSTRAINTS = {
         **COMMON_CONSTRAINTS,
         "model": ParameterConstraints(
             type=str,
-            allowed_values={
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4",
-                "gpt-4-turbo",
-                "gpt-3.5-turbo",
-                "gpt-3.5-turbo-16k",
-                "text-davinci-003",
-                "text-davinci-002",
-            },
+            # No allowed_values - validation delegated to model_discovery module
         ),
         "logit_bias": ParameterConstraints(
             type=dict,
@@ -191,23 +184,17 @@ class FrameworkConstraints:
     }
 
     # Anthropic-specific constraints
+    # Note: Model validation uses dynamic discovery instead of hardcoded allowed_values.
     ANTHROPIC_CONSTRAINTS = {
         **COMMON_CONSTRAINTS,
         "model": ParameterConstraints(
             type=str,
-            allowed_values={
-                "claude-3-opus-20240229",
-                "claude-3-sonnet-20240229",
-                "claude-3-5-haiku-latest",
-                "claude-2.1",
-                "claude-2.0",
-                "claude-instant-1.2",
-            },
+            # No allowed_values - validation delegated to model_discovery module
         ),
         "max_tokens": ParameterConstraints(
             type=int,
             min_value=1,
-            max_value=4096,
+            max_value=200000,  # Claude 3 max tokens
             aliases=["max_tokens_to_sample"],
         ),
     }

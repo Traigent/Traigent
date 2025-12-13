@@ -235,13 +235,16 @@ class TestFrameworkConstraintsOpenAI:
         assert "max_tokens" in FrameworkConstraints.OPENAI_CONSTRAINTS
 
     def test_openai_model_constraint(self):
-        """Test OpenAI model constraint with allowed values."""
+        """Test OpenAI model constraint.
+
+        Note: Model validation now uses the model discovery service (dynamic),
+        not hardcoded allowed_values. The constraint type should be str.
+        """
         constraint = FrameworkConstraints.OPENAI_CONSTRAINTS["model"]
 
         assert constraint.type is str
-        assert "gpt-4o" in constraint.allowed_values
-        assert "gpt-4" in constraint.allowed_values
-        assert "gpt-3.5-turbo" in constraint.allowed_values
+        # allowed_values is now None - validation is done via model discovery service
+        assert constraint.allowed_values is None
 
     def test_openai_specific_parameters(self):
         """Test OpenAI-specific parameters."""
@@ -261,21 +264,27 @@ class TestFrameworkConstraintsAnthropic:
         assert "top_p" in FrameworkConstraints.ANTHROPIC_CONSTRAINTS
 
     def test_anthropic_model_constraint(self):
-        """Test Anthropic model constraint with allowed values."""
+        """Test Anthropic model constraint.
+
+        Note: Model validation now uses the model discovery service (dynamic),
+        not hardcoded allowed_values. The constraint type should be str.
+        """
         constraint = FrameworkConstraints.ANTHROPIC_CONSTRAINTS["model"]
 
         assert constraint.type is str
-        assert "claude-3-opus-20240229" in constraint.allowed_values
-        assert "claude-3-sonnet-20240229" in constraint.allowed_values
-        assert "claude-2.1" in constraint.allowed_values
+        # allowed_values is now None - validation is done via model discovery service
+        assert constraint.allowed_values is None
 
     def test_anthropic_max_tokens_override(self):
-        """Test Anthropic max_tokens has stricter limits."""
+        """Test Anthropic max_tokens constraint.
+
+        Note: Anthropic's current API supports up to 200000 tokens for Claude 3.5 models.
+        """
         constraint = FrameworkConstraints.ANTHROPIC_CONSTRAINTS["max_tokens"]
 
         assert constraint.type is int
         assert constraint.min_value == 1
-        assert constraint.max_value == 4096
+        assert constraint.max_value == 200000  # Current Anthropic API limit
         assert "max_tokens_to_sample" in constraint.aliases
 
 
@@ -357,13 +366,20 @@ class TestValidateParameter:
         assert issues == []
 
     def test_validate_model_disallowed_value(self):
-        """Test model with disallowed value."""
+        """Test model validation.
+
+        Note: Model validation is now done via the model discovery service,
+        not hardcoded allowed_values. Since allowed_values is None,
+        any string model value passes basic FrameworkConstraints validation.
+        The actual model validation happens at the plugin level via custom_validator.
+        """
         issues = FrameworkConstraints.validate_parameter(
             "openai", "model", "invalid-model"
         )
 
-        assert len(issues) == 1
-        assert "not in allowed values" in issues[0]
+        # With dynamic model validation, FrameworkConstraints doesn't validate model names
+        # (that's done by the plugin's model discovery service)
+        assert len(issues) == 0
 
     def test_validate_parameter_alias(self):
         """Test validating parameter by alias."""
@@ -404,9 +420,12 @@ class TestValidateParameter:
         assert "below minimum" in issues[0]
 
     def test_validate_anthropic_max_tokens_above_limit(self):
-        """Test Anthropic max_tokens above limit."""
+        """Test Anthropic max_tokens above limit.
+
+        Note: Anthropic's current API supports up to 200000 tokens for Claude 3.5 models.
+        """
         issues = FrameworkConstraints.validate_parameter(
-            "anthropic", "max_tokens", 5000
+            "anthropic", "max_tokens", 250000  # Above the 200000 limit
         )
 
         assert len(issues) == 1
