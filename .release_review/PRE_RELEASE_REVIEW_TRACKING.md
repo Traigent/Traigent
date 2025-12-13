@@ -61,7 +61,7 @@ Scale: `1` (low) -> `5` (very high).
 
 | Component | Priority | L/S/C | Scope | Owner | Approver | Status | Review | Tests | Docs | Evidence |
 |-----------|----------|-------|-------|-------|----------|--------|--------|-------|------|----------|
-| Integrations (LLMs/frameworks/vector stores/observability) | 100 | 5/5/5 | `traigent/integrations/` | Codex (GPT-5.2) | Claude (Captain) | In progress | [ ] | [ ] | [ ] | |
+| Integrations (LLMs/frameworks/vector stores/observability) | 100 | 5/5/5 | `traigent/integrations/` | Agent (thorough) | Claude (Captain) | **Approved** | [x] | [x] | [x] | Tests: 1197/1197 passed | Linting: clean | Types: clean | No blocking issues. Minor P2/P3 DRY suggestions for post-release. SHIP AS-IS. |
 | Configuration & injection | 95 | 4/5/5 | `traigent/config/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Core orchestration | 95 | 4/5/5 | `traigent/core/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Optimizers | 95 | 4/5/5 | `traigent/optimizers/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
@@ -101,7 +101,7 @@ Scale: `1` (low) -> `5` (very high).
 | Component | Priority | L/S/C | Scope | Owner | Approver | Status | Review | Tests | Docs | Evidence |
 |-----------|----------|-------|-------|-------|----------|--------|--------|-------|------|----------|
 | Release blockers | 100 | 5/5/5 | `RELEASE_BLOCKERS_TODO.md` | Claude (Opus 4.5) | Codex (GPT-5.2) | **Review done** | [x] | [x] | [x] | Commits: 17ac9ea | Tests: `TRAIGENT_MOCK_MODE=true pytest tests/security/ tests/unit/test_security_fixes_simple.py` -> PASS (97/97) | Model: Claude/Opus4.5 | Timestamp: 2025-12-13T19:45:00Z | All Critical+High items verified fixed. Accepted risk: in-memory token revocation (SDK use case) |
-| Packaging + deps | 90 | 3/5/5 | `pyproject.toml`, `requirements/`, `uv.lock`, `MANIFEST.in` | Copilot (Gemini 3.0) | Claude (Captain) | In progress | [ ] | [ ] | [ ] | |
+| Packaging + deps | 90 | 3/5/5 | `pyproject.toml`, `requirements/`, `uv.lock`, `MANIFEST.in` | Agent | Claude (Captain) | **Approved** | [x] | [x] | [x] | Commits: b06b2bc | Fixed: typing-extensions marker, missing security deps, missing NOTICE in MANIFEST.in | CLI verified: `traigent --version` -> 0.8.0 |
 | CI workflows | 75 | 3/4/4 | `.github/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Test suite health | 75 | 3/4/4 | `tests/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Scripts (setup/test/analysis) | 45 | 3/2/2 | `scripts/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
@@ -111,3 +111,8 @@ Scale: `1` (low) -> `5` (very high).
 
 - 2025-12-13T19:20:00Z: **Session start** — Captain (Claude Code/Opus 4.5) initialized release-review/v0.8.0 branch from main@52baff0. Tagged baseline as v0.8.0-rc1. Phase 0 hardening in progress.
 - 2025-12-13T19:35:00Z: **Phase 1 start** — Dispatching first 3 parallel reviews: (1) Release blockers [Claude lead], (2) Integrations [Codex lead], (3) Packaging [Copilot lead]. Cross-model review policy active.
+- 2025-12-13T19:50:00Z: **Phase 1 batch 1 complete** — All 3 P0 components reviewed:
+  - Release blockers: APPROVED (97/97 security tests pass, all Critical/High fixed)
+  - Integrations: APPROVED (1197/1197 tests pass, no blocking issues)
+  - Packaging: APPROVED (4 fixes committed in b06b2bc, CLI verified working)
+  - Next: Continue with P1 components (Config, Core, Optimizers, Invokers)
