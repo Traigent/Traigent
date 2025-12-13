@@ -6,6 +6,7 @@ parameter mappings and framework overrides.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +20,8 @@ from traigent.integrations.utils import Framework
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicPlugin(LLMPlugin):
@@ -51,19 +54,16 @@ class AnthropicPlugin(LLMPlugin):
         }
 
     def _get_provider_specific_rules(self) -> dict[str, ValidationRule]:
-        """Return Anthropic-specific validation rules."""
+        """Return Anthropic-specific validation rules.
+
+        Note: Model validation uses custom_validator with dynamic discovery
+        instead of hardcoded allowed_values list. This ensures new Claude
+        models are automatically supported via config file updates.
+        """
         return {
             "model": ValidationRule(
                 required=True,
-                allowed_values=[
-                    "claude-3-opus-20240229",
-                    "claude-3-sonnet-20240229",
-                    "claude-3-haiku-20240307",
-                    "claude-2.1",
-                    "claude-2.0",
-                    "claude-instant-1.2",
-                    "claude-instant-1.1",
-                ],
+                custom_validator="_validate_model",
             ),
             "max_tokens": ValidationRule(
                 required=True,
@@ -77,6 +77,44 @@ class AnthropicPlugin(LLMPlugin):
             "timeout": ValidationRule(min_value=1, max_value=600),
             "max_retries": ValidationRule(min_value=0, max_value=10),
         }
+
+    def _validate_model(self, param_name: str, value: Any) -> list[str]:
+        """Validate model ID using dynamic discovery.
+
+        Uses the model discovery service which:
+        1. Falls back to config file known models (Anthropic has no SDK list API)
+        2. Falls back to regex pattern validation (claude-*)
+        """
+        errors = []
+        if not isinstance(value, str):
+            errors.append(f"Parameter '{param_name}' must be a string")
+            return errors
+
+        if not value:
+            errors.append(f"Parameter '{param_name}' cannot be empty")
+            return errors
+
+        try:
+            from traigent.integrations.model_discovery import get_model_discovery
+
+            discovery = get_model_discovery(self.FRAMEWORK)
+            if discovery and not discovery.is_valid_model(value):
+                errors.append(
+                    f"Model '{value}' is not recognized as a valid Anthropic model. "
+                    f"If this is a new model, it may still work."
+                )
+                # Log as warning but don't block - model might be valid
+                logger.warning(
+                    f"Unrecognized Anthropic model: {value}. "
+                    f"Proceeding anyway as it may be a new model."
+                )
+                # Clear errors - we warn but don't block
+                errors.clear()
+        except ImportError:
+            # Discovery module not available, skip validation
+            logger.debug("Model discovery not available, skipping model validation")
+
+        return errors
 
     def get_target_classes(self) -> list[str]:
         """Return list of Anthropic classes to override."""

@@ -6,6 +6,7 @@ parameter mappings and framework overrides.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,8 @@ from traigent.integrations.utils import Framework
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
 
+logger = logging.getLogger(__name__)
+
 
 class GeminiPlugin(LLMPlugin):
     """Plugin for Google Gemini SDK integration."""
@@ -31,8 +34,18 @@ class GeminiPlugin(LLMPlugin):
 
         Params like frequency_penalty, presence_penalty, etc. are not
         supported and would cause TypeError in generate_content().
+
+        Note: 'stream' is included to support streaming responses.
         """
-        return {"model", "max_tokens", "temperature", "top_p", "top_k", "stop"}
+        return {
+            "model",
+            "max_tokens",
+            "temperature",
+            "top_p",
+            "top_k",
+            "stop",
+            "stream",
+        }
 
     def _get_metadata(self) -> PluginMetadata:
         """Return Gemini plugin metadata."""
@@ -54,14 +67,60 @@ class GeminiPlugin(LLMPlugin):
         }
 
     def _get_provider_specific_rules(self) -> dict[str, ValidationRule]:
-        """Return validation rules for Gemini parameters."""
+        """Return validation rules for Gemini parameters.
+
+        Note: Model validation uses custom_validator with dynamic discovery
+        for future-proofing as Google releases new Gemini models.
+        """
         return {
-            "model": ValidationRule(required=True),
+            "model": ValidationRule(
+                required=True,
+                custom_validator="_validate_model",
+            ),
             "temperature": ValidationRule(min_value=0.0, max_value=1.0),
             "top_p": ValidationRule(min_value=0.0, max_value=1.0),
             "top_k": ValidationRule(min_value=1),
             "candidate_count": ValidationRule(min_value=1, max_value=8),
         }
+
+    def _validate_model(self, param_name: str, value: Any) -> list[str]:
+        """Validate model ID using dynamic discovery.
+
+        Uses the model discovery service which:
+        1. Tries SDK-based discovery (genai.list_models())
+        2. Falls back to config file known models
+        3. Falls back to regex pattern validation (gemini-*)
+        """
+        errors = []
+        if not isinstance(value, str):
+            errors.append(f"Parameter '{param_name}' must be a string")
+            return errors
+
+        if not value:
+            errors.append(f"Parameter '{param_name}' cannot be empty")
+            return errors
+
+        try:
+            from traigent.integrations.model_discovery import get_model_discovery
+
+            discovery = get_model_discovery(self.FRAMEWORK)
+            if discovery and not discovery.is_valid_model(value):
+                errors.append(
+                    f"Model '{value}' is not recognized as a valid Gemini model. "
+                    f"If this is a new model, it may still work."
+                )
+                # Log as warning but don't block - model might be valid
+                logger.warning(
+                    f"Unrecognized Gemini model: {value}. "
+                    f"Proceeding anyway as it may be a new model."
+                )
+                # Clear errors - we warn but don't block
+                errors.clear()
+        except ImportError:
+            # Discovery module not available, skip validation
+            logger.debug("Model discovery not available, skipping model validation")
+
+        return errors
 
     def get_target_classes(self) -> list[str]:
         """Return list of Gemini classes to override."""

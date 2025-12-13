@@ -7,10 +7,11 @@ and diversity tracking to create large-scale, diverse problem sets.
 
 import json
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from ..problem_management.example_generator import ExampleGenerator, GeneratedExample
-from ..problem_management.intelligence import ProblemInsights, ProblemIntelligence
+from playground.problem_management.example_generator import ExampleGenerator, GeneratedExample
+from playground.problem_management.intelligence import ProblemInsights, ProblemIntelligence
+
 from .diversity_analyzer import DiversityAnalyzer, DiversityMetrics
 from .example_memory import ExampleMemory, ExampleSummary
 
@@ -20,9 +21,9 @@ class GenerationBatch:
     """Represents a batch of generated examples."""
 
     batch_id: int
-    examples: List[GeneratedExample]
+    examples: list[GeneratedExample]
     diversity_metrics: DiversityMetrics
-    memory_summaries: List[ExampleSummary]
+    memory_summaries: list[ExampleSummary]
     generation_time: float
 
 
@@ -49,7 +50,7 @@ class EnhancedExampleGenerator:
     - Adaptive difficulty distribution
     """
 
-    def __init__(self, config: Optional[GenerationConfig] = None):
+    def __init__(self, config: GenerationConfig | None = None):
         """
         Initialize enhanced generator.
 
@@ -59,9 +60,7 @@ class EnhancedExampleGenerator:
         self.config = config or GenerationConfig()
         self.base_generator = ExampleGenerator()
         self.intelligence = ProblemIntelligence()
-        self.memory = ExampleMemory(
-            max_summaries_per_batch=config.memory_summaries_per_batch
-        )
+        self.memory = ExampleMemory(max_summaries_per_batch=config.memory_summaries_per_batch)
         self.diversity_analyzer = DiversityAnalyzer()
         self.total_generated = 0
 
@@ -72,8 +71,8 @@ class EnhancedExampleGenerator:
         domain: str,
         problem_type: str,
         target_count: int = 1000,
-        insights: Optional[ProblemInsights] = None,
-    ) -> List[GenerationBatch]:
+        insights: ProblemInsights | None = None,
+    ) -> list[GenerationBatch]:
         """
         Generate all examples for a problem with diversity optimization.
 
@@ -92,9 +91,7 @@ class EnhancedExampleGenerator:
         generated_count = 0
 
         # Calculate number of batches
-        num_batches = (
-            target_count + self.config.batch_size - 1
-        ) // self.config.batch_size
+        num_batches = (target_count + self.config.batch_size - 1) // self.config.batch_size
 
         print(f"🎯 Generating {target_count} examples in {num_batches} batches")
 
@@ -123,16 +120,12 @@ class EnhancedExampleGenerator:
             # Check diversity trends
             if batch_id > 0 and batch_id % 5 == 0:
                 overall_metrics = self._calculate_overall_metrics(batches)
-                print(
-                    f"📈 Overall diversity score: {overall_metrics.overall_diversity_score:.1f}"
-                )
+                print(f"📈 Overall diversity score: {overall_metrics.overall_diversity_score:.1f}")
 
                 # Suggest improvements if needed
                 if overall_metrics.overall_diversity_score < 70:
-                    suggestions = (
-                        self.diversity_analyzer.suggest_diversity_improvements(
-                            self._flatten_examples(batches)
-                        )
+                    suggestions = self.diversity_analyzer.suggest_diversity_improvements(
+                        self._flatten_examples(batches)
                     )
                     print("⚠️  Diversity suggestions:")
                     for suggestion in suggestions:
@@ -148,7 +141,7 @@ class EnhancedExampleGenerator:
         description: str,
         domain: str,
         problem_type: str,
-        insights: Optional[ProblemInsights],
+        insights: ProblemInsights | None,
     ) -> GenerationBatch:
         """Generate a single batch with diversity optimization."""
         import time
@@ -197,10 +190,7 @@ class EnhancedExampleGenerator:
                 best_diversity = diversity_metrics.overall_diversity_score
 
             # Check if diversity is acceptable
-            if (
-                diversity_metrics.overall_diversity_score
-                >= self.config.diversity_threshold * 100
-            ):
+            if diversity_metrics.overall_diversity_score >= self.config.diversity_threshold * 100:
                 break
             else:
                 print(
@@ -211,9 +201,7 @@ class EnhancedExampleGenerator:
         memory_summaries = []
         for i, example in enumerate(best_examples):
             example_id = self.total_generated + i
-            summary = self.memory.add_example(
-                self._example_to_dict(example), example_id
-            )
+            summary = self.memory.add_example(self._example_to_dict(example), example_id)
             memory_summaries.append(summary)
 
         self.total_generated += len(best_examples)
@@ -239,8 +227,8 @@ class EnhancedExampleGenerator:
         domain: str,
         problem_type: str,
         batch_size: int,
-        memory_context: List[Dict[str, Any]],
-        insights: Optional[ProblemInsights],
+        memory_context: list[dict[str, Any]],
+        insights: ProblemInsights | None,
     ) -> str:
         """Create enhanced prompt with memory context."""
         prompt_parts = [
@@ -305,8 +293,8 @@ class EnhancedExampleGenerator:
         domain: str,
         enhanced_prompt: str,
         batch_size: int,
-        insights: Optional[ProblemInsights],
-    ) -> List[GeneratedExample]:
+        insights: ProblemInsights | None,
+    ) -> list[GeneratedExample]:
         """Generate batch using enhanced prompt."""
         # This is where we would normally call Claude API
         # For now, use the base generator with the enhanced context
@@ -326,7 +314,7 @@ class EnhancedExampleGenerator:
 
         return examples
 
-    def _determine_target_difficulty(self, batch_id: int) -> Optional[str]:
+    def _determine_target_difficulty(self, batch_id: int) -> str | None:
         """Determine target difficulty for current batch."""
         if not self.config.adaptive_difficulty:
             return None
@@ -364,7 +352,7 @@ class EnhancedExampleGenerator:
 
         return target_difficulty
 
-    def _extract_difficulty_guidance(self, enhanced_prompt: str) -> List[str]:
+    def _extract_difficulty_guidance(self, enhanced_prompt: str) -> list[str]:
         """Extract difficulty guidance from enhanced prompt."""
         # Simple extraction - in real implementation would be more sophisticated
         difficulties = ["easy", "medium", "hard", "very_hard", "expert"]
@@ -376,7 +364,7 @@ class EnhancedExampleGenerator:
 
         return mentioned if mentioned else ["easy", "medium", "hard"]
 
-    def _example_to_dict(self, example: GeneratedExample) -> Dict[str, Any]:
+    def _example_to_dict(self, example: GeneratedExample) -> dict[str, Any]:
         """Convert GeneratedExample to dictionary for analysis."""
         return {
             "input_data": example.input_data,
@@ -385,21 +373,19 @@ class EnhancedExampleGenerator:
             "metadata": example.metadata,
         }
 
-    def _calculate_overall_metrics(
-        self, batches: List[GenerationBatch]
-    ) -> DiversityMetrics:
+    def _calculate_overall_metrics(self, batches: list[GenerationBatch]) -> DiversityMetrics:
         """Calculate overall diversity metrics across all batches."""
         all_examples = self._flatten_examples(batches)
         return self.diversity_analyzer.analyze_diversity(all_examples)
 
-    def _flatten_examples(self, batches: List[GenerationBatch]) -> List[Dict[str, Any]]:
+    def _flatten_examples(self, batches: list[GenerationBatch]) -> list[dict[str, Any]]:
         """Flatten all examples from batches."""
         all_examples = []
         for batch in batches:
             all_examples.extend([self._example_to_dict(ex) for ex in batch.examples])
         return all_examples
 
-    def save_generation_report(self, batches: List[GenerationBatch], output_file: str):
+    def save_generation_report(self, batches: list[GenerationBatch], output_file: str):
         """Save detailed generation report."""
         report = {
             "summary": {
@@ -407,8 +393,7 @@ class EnhancedExampleGenerator:
                 "total_examples": sum(len(b.examples) for b in batches),
                 "total_generation_time": sum(b.generation_time for b in batches),
                 "average_diversity_score": (
-                    sum(b.diversity_metrics.overall_diversity_score for b in batches)
-                    / len(batches)
+                    sum(b.diversity_metrics.overall_diversity_score for b in batches) / len(batches)
                     if batches
                     else 0
                 ),
@@ -455,9 +440,7 @@ class EnhancedExampleGenerator:
 
         # Add improvement suggestions
         final_metrics = self._calculate_overall_metrics(batches)
-        suggestions = self.diversity_analyzer.suggest_diversity_improvements(
-            all_examples
-        )
+        suggestions = self.diversity_analyzer.suggest_diversity_improvements(all_examples)
         report["final_analysis"] = {
             "overall_diversity_score": final_metrics.overall_diversity_score,
             "suggestions": suggestions,
