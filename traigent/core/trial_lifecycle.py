@@ -31,7 +31,7 @@ from traigent.core.trial_result_factory import (
     build_pruned_result,
     build_success_result,
 )
-from traigent.core.types import TrialResult
+from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import (
     OptimizationError,
@@ -112,6 +112,10 @@ class TrialLifecycle:
             logger.exception("Optimizer failed to suggest the next trial: %s", e)
             return trial_count, "break"
 
+        optuna_trial_id = (
+            config.get("_optuna_trial_id") if isinstance(config, dict) else None
+        )
+
         cache_policy = orchestrator.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
@@ -123,12 +127,18 @@ class TrialLifecycle:
             )
             if not filtered_configs:
                 logger.info("Configuration already evaluated, skipping")
+                if hasattr(orchestrator, "_abandon_optuna_trial"):
+                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
+                        optuna_trial_id,
+                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        status=TrialStatus.PRUNED,
+                        pruned_step=0,
+                    )
                 return trial_count, "continue"
             config = filtered_configs[0]
-
-        optuna_trial_id = (
-            config.get("_optuna_trial_id") if isinstance(config, dict) else None
-        )
+            optuna_trial_id = (
+                config.get("_optuna_trial_id") if isinstance(config, dict) else None
+            )
 
         config_for_run = prepare_evaluation_config(config)
 
@@ -150,6 +160,13 @@ class TrialLifecycle:
                     config_for_run,
                 )
                 orchestrator._stop_reason = "cost_limit_reached"
+                if hasattr(orchestrator, "_abandon_optuna_trial"):
+                    orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
+                        optuna_trial_id,
+                        reason="trial_cancelled_by_cost_limit",
+                        status=TrialStatus.CANCELLED,
+                        pruned_step=0,
+                    )
                 return trial_count, "break"
 
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)

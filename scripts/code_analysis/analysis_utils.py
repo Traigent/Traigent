@@ -5,15 +5,12 @@ from __future__ import annotations
 import ast
 import csv
 import json
-import math
-import os
 import statistics
 import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Set, Tuple
+from collections.abc import Iterable, Iterator, Sequence
 
 LANGUAGE_MAP = {
     ".py": "Python",
@@ -87,7 +84,7 @@ def to_module_name(source_root: Path, path: Path) -> str:
     return prefix
 
 
-def load_ast(path: Path) -> Optional[ast.AST]:
+def load_ast(path: Path) -> ast.AST | None:
     try:
         with path.open("r", encoding="utf-8", errors="ignore") as handle:
             content = handle.read()
@@ -137,7 +134,9 @@ class CyclomaticVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def generic_visit(self, node: ast.AST) -> None:
-        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)):
+        if isinstance(
+            node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)
+        ):
             self.complexity += 1
         elif isinstance(node, ast.IfExp):
             self.complexity += 1
@@ -187,9 +186,15 @@ def iter_functions(module_ast: ast.AST, module_name: str) -> Iterator[FunctionIn
         yield from _extract_functions(node, module_name, parent_name="")
 
 
-def _extract_functions(node: ast.AST, module_name: str, parent_name: str) -> Iterator[FunctionInfo]:
+def _extract_functions(
+    node: ast.AST, module_name: str, parent_name: str
+) -> Iterator[FunctionInfo]:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        qualified_name = f"{module_name}.{node.name}" if not parent_name else f"{module_name}.{parent_name}.{node.name}"
+        qualified_name = (
+            f"{module_name}.{node.name}"
+            if not parent_name
+            else f"{module_name}.{parent_name}.{node.name}"
+        )
         cyclo = CyclomaticVisitor()
         cyclo.visit(node)
         cognitive = CognitiveVisitor()
@@ -203,15 +208,19 @@ def _extract_functions(node: ast.AST, module_name: str, parent_name: str) -> Ite
             cognitive_complexity=cognitive.score,
         )
         for child in node.body:
-            yield from _extract_functions(child, module_name, parent_name=f"{parent_name}.{node.name}" if parent_name else node.name)
+            yield from _extract_functions(
+                child,
+                module_name,
+                parent_name=f"{parent_name}.{node.name}" if parent_name else node.name,
+            )
     elif isinstance(node, ast.ClassDef):
         class_name = f"{parent_name}.{node.name}" if parent_name else node.name
         for child in node.body:
             yield from _extract_functions(child, module_name, class_name)
 
 
-def get_public_symbols(module_ast: ast.AST) -> Set[str]:
-    names: Set[str] = set()
+def get_public_symbols(module_ast: ast.AST) -> set[str]:
+    names: set[str] = set()
     if not isinstance(module_ast, ast.Module):
         return names
     for node in module_ast.body:
@@ -253,7 +262,9 @@ def run_command(args: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[s
         )
 
 
-def write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
+def write_csv(
+    path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -262,7 +273,9 @@ def write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]
             writer.writerow(row)
 
 
-def quantiles(data: Sequence[int]) -> Tuple[Optional[float], Optional[float], Optional[float]]:
+def quantiles(
+    data: Sequence[int],
+) -> tuple[float | None, float | None, float | None]:
     if not data:
         return None, None, None
     if len(data) == 1:
@@ -276,8 +289,20 @@ def quantiles(data: Sequence[int]) -> Tuple[Optional[float], Optional[float], Op
         return value, value, value
 
 
-def load_coverage_map(coverage_xml: Path, project_root: Path) -> Dict[str, float]:
-    from xml.etree import ElementTree as ET
+def load_coverage_map(coverage_xml: Path, project_root: Path) -> dict[str, float]:
+    # Use defusedxml to prevent XXE attacks
+    try:
+        import defusedxml.ElementTree as ET
+    except ImportError:
+        # Fallback with security warning
+        import warnings
+        from xml.etree import ElementTree as ET
+
+        warnings.warn(
+            "defusedxml not installed. Install it to prevent XXE attacks: pip install defusedxml",
+            UserWarning,
+            stacklevel=2,
+        )
 
     if not coverage_xml.exists():
         return {}
@@ -286,7 +311,7 @@ def load_coverage_map(coverage_xml: Path, project_root: Path) -> Dict[str, float
     except ET.ParseError:
         return {}
     root = tree.getroot()
-    coverage: Dict[str, float] = {}
+    coverage: dict[str, float] = {}
     for cls in root.iter("class"):
         filename = cls.attrib.get("filename")
         line_rate = cls.attrib.get("line-rate")
@@ -301,7 +326,7 @@ def load_coverage_map(coverage_xml: Path, project_root: Path) -> Dict[str, float
     return coverage
 
 
-def load_lint_map(lint_json: Path, project_root: Path) -> Dict[str, int]:
+def load_lint_map(lint_json: Path, project_root: Path) -> dict[str, int]:
     if not lint_json.exists():
         return {}
     try:
@@ -309,7 +334,7 @@ def load_lint_map(lint_json: Path, project_root: Path) -> Dict[str, int]:
     except (json.JSONDecodeError, OSError):
         return {}
     results = data if isinstance(data, list) else data.get("files", [])
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for entry in results:
         filename = entry.get("filename") if isinstance(entry, dict) else None
         if not filename:

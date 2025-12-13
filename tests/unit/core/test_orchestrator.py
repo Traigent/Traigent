@@ -1467,6 +1467,13 @@ class TestOptimizationOrchestrator:
         assert total_cost >= 0.15
         assert len(result.trials) <= 4
 
+    def test_abandon_optuna_trial_prunes_when_supported(self, orchestrator):
+        orchestrator.optimizer.report_trial_pruned = MagicMock()
+
+        orchestrator._abandon_optuna_trial(123, reason="trial_skipped_for_test")
+
+        orchestrator.optimizer.report_trial_pruned.assert_called_once_with(123, 0)
+
 
 class TestOrchestratorCodeQuality:
     """Test code quality aspects of orchestrator.py."""

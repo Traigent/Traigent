@@ -132,6 +132,68 @@ class CodeEvaluator:
             "overall": overall,
         }
 
+    # Safe builtins for sandboxed code execution (no file/network/system access)
+    SAFE_BUILTINS = {
+        # Safe types and constructors
+        "True": True,
+        "False": False,
+        "None": None,
+        "int": int,
+        "float": float,
+        "str": str,
+        "bool": bool,
+        "list": list,
+        "dict": dict,
+        "set": set,
+        "frozenset": frozenset,
+        "tuple": tuple,
+        "bytes": bytes,
+        "bytearray": bytearray,
+        "complex": complex,
+        # Safe functions
+        "abs": abs,
+        "all": all,
+        "any": any,
+        "bin": bin,
+        "callable": callable,
+        "chr": chr,
+        "divmod": divmod,
+        "enumerate": enumerate,
+        "filter": filter,
+        "format": format,
+        "hash": hash,
+        "hex": hex,
+        "isinstance": isinstance,
+        "issubclass": issubclass,
+        "iter": iter,
+        "len": len,
+        "map": map,
+        "max": max,
+        "min": min,
+        "next": next,
+        "oct": oct,
+        "ord": ord,
+        "pow": pow,
+        "range": range,
+        "repr": repr,
+        "reversed": reversed,
+        "round": round,
+        "slice": slice,
+        "sorted": sorted,
+        "sum": sum,
+        "zip": zip,
+        # Exceptions (for try/except in generated code)
+        "Exception": Exception,
+        "ValueError": ValueError,
+        "TypeError": TypeError,
+        "IndexError": IndexError,
+        "KeyError": KeyError,
+        "AttributeError": AttributeError,
+        "ZeroDivisionError": ZeroDivisionError,
+        "RuntimeError": RuntimeError,
+        "StopIteration": StopIteration,
+    }
+
     def _run_tests(
         self,
         code: str,
@@ -139,7 +201,10 @@ class CodeEvaluator:
         test_cases: list[dict],
     ) -> dict[str, Any]:
         """
-        Execute test cases against the generated code.
+        Execute test cases against the generated code in a sandboxed environment.
+
+        Security: Uses restricted builtins to prevent file/network/system access.
+        The code cannot import modules, access files, or execute system commands.
 
         Returns:
             Dictionary with pass_rate, passed, total, and errors
@@ -147,13 +212,14 @@ class CodeEvaluator:
         if not test_cases:
             return {"pass_rate": 1.0, "passed": 0, "total": 0, "errors": []}
 
-        # Create execution namespace
-        namespace = {}
+        # Create sandboxed execution namespace with restricted builtins
+        # This prevents access to: open, exec, eval, __import__, compile, globals, locals, etc.
+        namespace = {"__builtins__": self.SAFE_BUILTINS}
         errors = []
 
-        # Try to execute the code
+        # Try to execute the code in sandboxed environment
         try:
-            exec(code, namespace)
+            exec(code, namespace)  # noqa: S102 - sandboxed with restricted builtins
         except SyntaxError as e:
             return {
                 "pass_rate": 0.0,

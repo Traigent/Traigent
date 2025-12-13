@@ -323,3 +323,10 @@ reports/
 
 # Backup environments
 .venv.bkp/
+
+# Test coverage sprint coordination (multi-agent test writing)
+.test-coverage-sprint/
+
+# Workspace-specific GitHub CLI config
+.gh/
+.envrc

@@ -1,948 +1,1263 @@
-"""Comprehensive tests for privacy-safe local analytics (local_analytics.py).
+"""Unit tests for local_analytics.py.
 
-This test suite covers:
-- Analytics collection and storage
-- Privacy-safe data aggregation
-- Usage pattern analysis
-- Cloud adoption incentives
-- Anonymous user tracking
-- Error handling and edge cases
-- CTD (Combinatorial Test Design) scenarios
+Tests for privacy-safe analytics collection and cloud incentive generation.
+This module collects aggregated, non-sensitive usage statistics in Edge Analytics mode.
 """
 
-import asyncio
-import tempfile
-from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+# Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Performance FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 
-import aiohttp
+from __future__ import annotations
+
+import tempfile
+import uuid
+from collections.abc import Generator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from unittest.mock import patch
+
 import pytest
 
-from traigent.config.types import TraigentConfig
-from traigent.storage.local_storage import LocalStorageManager
-from traigent.utils.local_analytics import LocalAnalytics
-
-# Test fixtures
-
-
-@pytest.fixture
-def temp_storage_path():
-    """Temporary directory for analytics storage."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        yield temp_dir
-
-
-@pytest.fixture
-def sample_config(temp_storage_path):
-    """Sample TraiGent configuration for testing."""
-    return TraigentConfig(
-        execution_mode="edge_analytics",
-        enable_usage_analytics=True,
-        local_storage_path=temp_storage_path,
-        analytics_endpoint="https://test-analytics.traigent.ai/v1/local-usage",
-        anonymous_user_id=None,
-    )
-
-
-@pytest.fixture
-def disabled_analytics_config(temp_storage_path):
-    """Configuration with analytics disabled."""
-    return TraigentConfig(
-        execution_mode="edge_analytics",
-        enable_usage_analytics=False,
-        local_storage_path=temp_storage_path,
-    )
-
-
-@pytest.fixture
-def cloud_mode_config(temp_storage_path):
-    """Configuration in cloud mode."""
-    return TraigentConfig(
-        execution_mode="cloud",
-        enable_usage_analytics=True,
-        local_storage_path=temp_storage_path,
-    )
-
-
-@pytest.fixture
-def analytics_instance(sample_config):
-    """LocalAnalytics instance for testing."""
-    return LocalAnalytics(sample_config)
-
-
-@pytest.fixture
-def mock_storage_manager():
-    """Mock LocalStorageManager for testing."""
-    return Mock(spec=LocalStorageManager)
-
-
-@pytest.fixture
-def sample_usage_data():
-    """Sample usage data for testing."""
-    return {
-        "optimization_runs": 5,
-        "total_trials": 150,
-        "avg_trials_per_run": 30,
-        "optimization_time_seconds": 1200,
-        "successful_runs": 4,
-        "models_used": ["gpt-4", "claude-3"],
-        "features_used": ["grid_search", "bayesian_optimization"],
-        "error_types": ["timeout", "api_error"],
-        "performance_metrics": {
-            "avg_response_time": 2.5,
-            "cache_hit_rate": 0.85,
-            "memory_usage_mb": 512,
-        },
-    }
-
-
-# Test Classes
+from traigent.api.types import OptimizationStatus
+from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.storage.local_storage import LocalStorageManager, OptimizationSession
+from traigent.utils.local_analytics import (
+    DEFAULT_ANALYTICS_ENDPOINT,
+    LocalAnalytics,
+    collect_and_submit_analytics,
+    get_enhanced_cloud_incentives,
+)
 
 
 class TestLocalAnalyticsInitialization:
-    """Test LocalAnalytics initialization."""
+    """Tests for LocalAnalytics initialization."""
 
-    def test_initialization_enabled(self, sample_config, temp_storage_path):
-        """Test initialization with analytics enabled."""
-        analytics = LocalAnalytics(sample_config)
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
 
-        assert analytics.config == sample_config
-        assert analytics.enabled is True
-        assert (
-            analytics.analytics_endpoint
-            == "https://test-analytics.traigent.ai/v1/local-usage"
+    @pytest.fixture
+    def edge_analytics_config(self, temp_storage_path: str) -> TraigentConfig:
+        """Create edge analytics configuration."""
+        return TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            analytics_endpoint="https://test.traigent.ai/analytics",
+            anonymous_user_id=None,
         )
+
+    def test_initialization_with_edge_analytics_enabled(
+        self, edge_analytics_config: TraigentConfig
+    ) -> None:
+        """Test initialization with edge analytics mode enabled."""
+        analytics = LocalAnalytics(edge_analytics_config)
+
+        assert analytics.config == edge_analytics_config
+        assert analytics.enabled is True
+        assert analytics.analytics_endpoint == "https://test.traigent.ai/analytics"
         assert isinstance(analytics.storage, LocalStorageManager)
         assert analytics.user_id is not None
-        assert len(analytics.user_id) > 10  # Should be a proper UUID or hash
+        assert len(analytics.user_id) > 0
 
-    def test_initialization_disabled(self, disabled_analytics_config):
+    def test_initialization_with_analytics_disabled(
+        self, temp_storage_path: str
+    ) -> None:
         """Test initialization with analytics disabled."""
-        analytics = LocalAnalytics(disabled_analytics_config)
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=False,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
 
         assert analytics.enabled is False
-        assert analytics.user_id is not None  # Still creates user ID
 
-    def test_initialization_cloud_mode(self, cloud_mode_config):
-        """Test initialization in cloud mode."""
-        analytics = LocalAnalytics(cloud_mode_config)
-
-        assert analytics.enabled is False  # Should be disabled in cloud mode
-
-    def test_initialization_default_endpoint(self, temp_storage_path):
-        """Test initialization with default analytics endpoint."""
+    def test_initialization_with_cloud_mode(self, temp_storage_path: str) -> None:
+        """Test initialization in cloud mode disables local analytics."""
         config = TraigentConfig(
-            execution_mode="edge_analytics",
+            execution_mode=ExecutionMode.CLOUD.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        assert analytics.enabled is False
+
+    def test_initialization_with_default_endpoint(self, temp_storage_path: str) -> None:
+        """Test initialization uses default analytics endpoint when not specified."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
             analytics_endpoint=None,
         )
-
         analytics = LocalAnalytics(config)
-        assert "analytics.traigent.ai" in analytics.analytics_endpoint
 
-    def test_user_id_creation(self, sample_config):
-        """Test anonymous user ID creation."""
-        analytics = LocalAnalytics(sample_config)
-        user_id = analytics.user_id
+        assert analytics.analytics_endpoint == DEFAULT_ANALYTICS_ENDPOINT
 
-        assert user_id is not None
-        assert isinstance(user_id, str)
-        assert len(user_id) >= 8  # Should be reasonably long
-
-        # Create another instance - should get same user ID if persisted
-        analytics2 = LocalAnalytics(sample_config)
-        # May be same or different depending on implementation
-        assert analytics2.user_id is not None
-
-    def test_user_id_from_config(self, temp_storage_path):
-        """Test using user ID from configuration."""
-        existing_user_id = "test-user-12345"
+    def test_initialization_with_provided_user_id(self, temp_storage_path: str) -> None:
+        """Test initialization uses provided anonymous user ID."""
+        user_id = "test-user-12345"
         config = TraigentConfig(
-            execution_mode="edge_analytics",
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
             enable_usage_analytics=True,
             local_storage_path=temp_storage_path,
-            anonymous_user_id=existing_user_id,
+            anonymous_user_id=user_id,
+        )
+        analytics = LocalAnalytics(config)
+
+        assert analytics.user_id == user_id
+
+    def test_initialization_creates_user_id(self, temp_storage_path: str) -> None:
+        """Test initialization creates new anonymous user ID if not provided."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            anonymous_user_id=None,
+        )
+        analytics = LocalAnalytics(config)
+
+        # Should be a valid UUID
+        assert analytics.user_id is not None
+        try:
+            uuid.UUID(analytics.user_id)
+        except ValueError:
+            pytest.fail("User ID should be a valid UUID")
+
+    def test_user_id_persistence(self, temp_storage_path: str) -> None:
+        """Test that user ID is persisted and reused."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            anonymous_user_id=None,
         )
 
-        analytics = LocalAnalytics(config)
-        assert analytics.user_id == existing_user_id
-
-
-class TestUsageDataCollection:
-    """Test usage data collection functionality."""
-
-    def test_collect_optimization_metrics(self, analytics_instance):
-        """Test collecting optimization metrics."""
-        metrics = {
-            "optimization_id": "opt_123",
-            "total_trials": 50,
-            "successful_trials": 45,
-            "optimization_time": 300.5,
-            "best_score": 0.95,
-            "algorithm": "bayesian",
-            "objectives": ["accuracy", "cost"],
-        }
-
-        # Test method exists and works
-        if hasattr(analytics_instance, "collect_optimization_metrics"):
-            analytics_instance.collect_optimization_metrics(metrics)
-            # Should not raise exception
-
-    def test_collect_model_usage(self, analytics_instance):
-        """Test collecting model usage statistics."""
-        usage_data = {
-            "model_name": "gpt-4",
-            "total_calls": 100,
-            "total_tokens": 50000,
-            "avg_response_time": 2.3,
-            "error_count": 2,
-            "cost_estimate": 1.25,
-        }
-
-        if hasattr(analytics_instance, "collect_model_usage"):
-            analytics_instance.collect_model_usage(usage_data)
-
-    def test_collect_performance_metrics(self, analytics_instance):
-        """Test collecting performance metrics."""
-        perf_data = {
-            "memory_usage_mb": 512,
-            "cpu_usage_percent": 75,
-            "disk_io_mb": 100,
-            "network_requests": 50,
-            "cache_hit_rate": 0.85,
-            "processing_time_ms": 1500,
-        }
-
-        if hasattr(analytics_instance, "collect_performance_metrics"):
-            analytics_instance.collect_performance_metrics(perf_data)
-
-    def test_collect_error_statistics(self, analytics_instance):
-        """Test collecting error statistics."""
-        error_data = {
-            "error_type": "api_timeout",
-            "error_count": 3,
-            "affected_operations": ["optimization", "evaluation"],
-            "recovery_successful": True,
-            "impact_severity": "medium",
-        }
-
-        if hasattr(analytics_instance, "collect_error_statistics"):
-            analytics_instance.collect_error_statistics(error_data)
-
-    def test_aggregate_usage_patterns(self, analytics_instance):
-        """Test aggregating usage patterns."""
-        # Simulate multiple data points
-        for i in range(10):
-            metrics = {
-                "optimization_id": f"opt_{i}",
-                "total_trials": 20 + i * 5,
-                "algorithm": "grid_search" if i % 2 == 0 else "bayesian",
-                "success": i < 8,  # 80% success rate
-            }
-
-            if hasattr(analytics_instance, "collect_optimization_metrics"):
-                analytics_instance.collect_optimization_metrics(metrics)
-
-        # Test aggregation
-        if hasattr(analytics_instance, "aggregate_usage_patterns"):
-            patterns = analytics_instance.aggregate_usage_patterns()
-            assert isinstance(patterns, dict)
-
-    def test_privacy_safe_data_filtering(self, analytics_instance):
-        """Test that sensitive data is filtered out."""
-        sensitive_data = {
-            "api_key": "sk-secret123",
-            "user_email": "user@example.com",
-            "project_path": "/home/user/secret-project",
-            "prompt_content": "Sensitive prompt data",
-            "response_content": "Sensitive response data",
-            "optimization_trials": 50,  # This should be kept
-            "model_name": "gpt-4",  # This should be kept
-        }
-
-        if hasattr(analytics_instance, "filter_sensitive_data"):
-            filtered = analytics_instance.filter_sensitive_data(sensitive_data)
-
-            # Sensitive data should be removed
-            assert "api_key" not in filtered
-            assert "user_email" not in filtered
-            assert "project_path" not in filtered
-            assert "prompt_content" not in filtered
-            assert "response_content" not in filtered
-
-            # Non-sensitive data should be kept
-            assert "optimization_trials" in filtered
-            assert "model_name" in filtered
-
-
-class TestDataPersistence:
-    """Test data persistence functionality."""
-
-    def test_save_analytics_data(self, analytics_instance, sample_usage_data):
-        """Test saving analytics data to local storage."""
-        if hasattr(analytics_instance, "save_analytics_data"):
-            # Only test if the method exists
-            with patch.object(LocalStorageManager, "save_json") as mock_save:
-                analytics_instance.save_analytics_data(
-                    "usage_patterns", sample_usage_data
-                )
-                mock_save.assert_called_once()
-        else:
-            # Method doesn't exist, skip test
-            pytest.skip("save_analytics_data method not implemented")
-
-    def test_load_analytics_data(self, analytics_instance):
-        """Test loading analytics data from local storage."""
-        if hasattr(analytics_instance, "load_analytics_data"):
-            # Only test if the method exists
-            with patch.object(LocalStorageManager, "load_json") as mock_load:
-                mock_load.return_value = {"test": "data"}
-                data = analytics_instance.load_analytics_data("usage_patterns")
-                assert data == {"test": "data"}
-                mock_load.assert_called_once()
-        else:
-            # Method doesn't exist, skip test
-            pytest.skip("load_analytics_data method not implemented")
-
-    def test_load_analytics_data_not_found(self, analytics_instance):
-        """Test loading analytics data when file doesn't exist."""
-        if hasattr(analytics_instance, "load_analytics_data"):
-            # Only test if the method exists
-            with patch.object(LocalStorageManager, "load_json") as mock_load:
-                mock_load.side_effect = FileNotFoundError("File not found")
-                data = analytics_instance.load_analytics_data("nonexistent")
-                assert data is None or data == {}
-        else:
-            # Method doesn't exist, skip test
-            pytest.skip("load_analytics_data method not implemented")
-
-    def test_data_retention_policy(self, analytics_instance):
-        """Test data retention and cleanup."""
-        if hasattr(analytics_instance, "cleanup_old_data"):
-            # Should not raise exception
-            analytics_instance.cleanup_old_data(days_to_keep=30)
-
-    def test_data_compression(self, analytics_instance, sample_usage_data):
-        """Test data compression for storage efficiency."""
-        if hasattr(analytics_instance, "compress_analytics_data"):
-            compressed = analytics_instance.compress_analytics_data(sample_usage_data)
-            assert isinstance(compressed, (bytes, str, dict))
-
-        if hasattr(analytics_instance, "decompress_analytics_data"):
-            if hasattr(analytics_instance, "compress_analytics_data"):
-                compressed = analytics_instance.compress_analytics_data(
-                    sample_usage_data
-                )
-                decompressed = analytics_instance.decompress_analytics_data(compressed)
-                # Should be equivalent to original data
-                assert isinstance(decompressed, dict)
-
-
-class TestCloudSubmission:
-    """Test cloud submission functionality."""
-
-    @pytest.mark.asyncio
-    async def test_submit_analytics_success(
-        self, analytics_instance, sample_usage_data
-    ):
-        """Test successful analytics submission."""
-        with patch("aiohttp.ClientSession.post") as mock_post:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.json = AsyncMock(return_value={"status": "success"})
-            mock_post.return_value.__aenter__.return_value = mock_response
-
-            if hasattr(analytics_instance, "submit_analytics"):
-                result = await analytics_instance.submit_analytics(sample_usage_data)
-                assert result is True or result.get("status") == "success"
-
-    @pytest.mark.asyncio
-    async def test_submit_analytics_failure(
-        self, analytics_instance, sample_usage_data
-    ):
-        """Test analytics submission failure."""
-        with patch("aiohttp.ClientSession.post") as mock_post:
-            mock_response = AsyncMock()
-            mock_response.status = 500
-            mock_response.text = AsyncMock(return_value="Server error")
-            mock_post.return_value.__aenter__.return_value = mock_response
-
-            if hasattr(analytics_instance, "submit_analytics"):
-                result = await analytics_instance.submit_analytics(sample_usage_data)
-                assert result is False or result.get("status") == "error"
-
-    @pytest.mark.asyncio
-    async def test_submit_analytics_network_error(
-        self, analytics_instance, sample_usage_data
-    ):
-        """Test analytics submission with network error."""
-        with patch("aiohttp.ClientSession.post") as mock_post:
-            mock_post.side_effect = aiohttp.ClientError("Network error")
-
-            if hasattr(analytics_instance, "submit_analytics"):
-                result = await analytics_instance.submit_analytics(sample_usage_data)
-                assert result is False or result.get("status") == "error"
-
-    @pytest.mark.asyncio
-    async def test_submit_analytics_timeout(
-        self, analytics_instance, sample_usage_data
-    ):
-        """Test analytics submission timeout."""
-        with patch("aiohttp.ClientSession.post") as mock_post:
-            mock_post.side_effect = TimeoutError("Request timeout")
-
-            if hasattr(analytics_instance, "submit_analytics"):
-                result = await analytics_instance.submit_analytics(sample_usage_data)
-                assert result is False or result.get("status") == "error"
-
-    def test_batch_submission(self, analytics_instance):
-        """Test batch submission of analytics data."""
-        batch_data = [
-            {"event": "optimization_start", "timestamp": datetime.now().isoformat()},
-            {"event": "optimization_complete", "timestamp": datetime.now().isoformat()},
-            {"event": "model_usage", "model": "gpt-4", "tokens": 1000},
-        ]
-
-        if hasattr(analytics_instance, "submit_batch_analytics"):
-            # Should not raise exception
-            try:
-                result = analytics_instance.submit_batch_analytics(batch_data)
-                assert isinstance(result, (bool, dict, type(None)))
-            except Exception as e:
-                # Some exceptions may be expected
-                assert "analytics" in str(e).lower() or "batch" in str(e).lower()
-
-    def test_offline_queue_management(self, analytics_instance):
-        """Test offline queue for analytics submission."""
-        if hasattr(analytics_instance, "queue_for_later_submission"):
-            analytics_instance.queue_for_later_submission({"test": "data"})
-
-        if hasattr(analytics_instance, "process_offline_queue"):
-            # Should not raise exception
-            analytics_instance.process_offline_queue()
-
-
-class TestPrivacyAndSecurity:
-    """Test privacy and security features."""
-
-    def test_no_sensitive_data_collection(self, analytics_instance):
-        """Test that no sensitive data is collected."""
-        sensitive_inputs = {
-            "api_key": "sk-sensitive123",
-            "user_credentials": {"username": "user", "password": "pass"},
-            "personal_info": {"name": "John Doe", "email": "john@example.com"},
-            "file_contents": "print('secret code')",
-            "prompt_data": "Tell me about my private project",
-            "response_data": "Here's sensitive information...",
-        }
-
-        # These should be filtered out or not collected
-        if hasattr(analytics_instance, "collect_usage_data"):
-            try:
-                analytics_instance.collect_usage_data(sensitive_inputs)
-                # Should complete without storing sensitive data
-            except (ValueError, TypeError, KeyError, PermissionError):
-                # May reject sensitive data with validation or permission errors
-                pass
-
-    def test_data_anonymization(self, analytics_instance):
-        """Test data anonymization techniques."""
-        identifiable_data = {
-            "user_id": "real_user_123",
-            "project_name": "secret_project",
-            "file_path": "/home/user/projects/secret",
-            "ip_address": "192.168.1.100",
-            "hostname": "users-macbook",
-            "usage_count": 50,  # This should be kept
-        }
-
-        if hasattr(analytics_instance, "anonymize_data"):
-            anonymized = analytics_instance.anonymize_data(identifiable_data)
-
-            # Should not contain original identifiable information
-            for key, value in identifiable_data.items():
-                if key in ["usage_count"]:  # Non-sensitive data
-                    continue
-                if key in anonymized:
-                    assert anonymized[key] != value  # Should be anonymized/hashed
-
-    def test_data_hashing(self, analytics_instance):
-        """Test consistent data hashing for privacy."""
-        if hasattr(analytics_instance, "hash_identifier"):
-            hash1 = analytics_instance.hash_identifier("test_identifier")
-            hash2 = analytics_instance.hash_identifier("test_identifier")
-            hash3 = analytics_instance.hash_identifier("different_identifier")
-
-            # Same input should produce same hash
-            assert hash1 == hash2
-
-            # Different input should produce different hash
-            assert hash1 != hash3
-
-            # Hash should not be the original value
-            assert hash1 != "test_identifier"
-
-    def test_no_network_when_disabled(self, disabled_analytics_config):
-        """Test that no network requests are made when analytics disabled."""
-        analytics = LocalAnalytics(disabled_analytics_config)
-
-        with patch("aiohttp.ClientSession") as mock_session:
-            # Try to trigger network operations
-            if hasattr(analytics, "submit_analytics"):
-                try:
-                    asyncio.run(analytics.submit_analytics({"test": "data"}))
-                except (
-                    RuntimeError,
-                    ValueError,
-                    ConnectionError,
-                    asyncio.CancelledError,
-                ):
-                    # Expected when analytics is disabled or network unavailable
-                    pass
-
-            # Should not have made any network requests
-            mock_session.assert_not_called()
-
-    def test_opt_out_mechanism(self, sample_config):
-        """Test analytics opt-out mechanism."""
-        # Test runtime disable
-        analytics = LocalAnalytics(sample_config)
-        assert analytics.enabled is True
-
-        if hasattr(analytics, "disable_analytics"):
-            analytics.disable_analytics()
-            assert analytics.enabled is False
-
-        # Test re-enable
-        if hasattr(analytics, "enable_analytics"):
-            analytics.enable_analytics()
-            # May or may not re-enable depending on implementation
-
-
-class TestInsightsAndRecommendations:
-    """Test insights and recommendations generation."""
-
-    def test_generate_usage_insights(self, analytics_instance):
-        """Test generating usage insights."""
-        # Simulate some usage data
-        usage_data = {
-            "optimization_runs": 20,
-            "avg_trials_per_run": 25,
-            "success_rate": 0.85,
-            "most_used_algorithm": "bayesian",
-            "avg_optimization_time": 300,
-            "models_used": ["gpt-4", "gpt-3.5-turbo", "claude-3"],
-        }
-
-        if hasattr(analytics_instance, "generate_usage_insights"):
-            insights = analytics_instance.generate_usage_insights(usage_data)
-
-            assert isinstance(insights, dict)
-            # Should contain meaningful insights
-            # May contain some or all of these keys
-
-    def test_cloud_upgrade_recommendations(self, analytics_instance):
-        """Test cloud upgrade recommendations."""
-        heavy_usage_data = {
-            "optimization_runs": 100,
-            "total_compute_hours": 50,
-            "concurrent_optimizations": 5,
-            "data_volume_gb": 10,
-            "error_rate": 0.15,
-        }
-
-        if hasattr(analytics_instance, "generate_cloud_recommendations"):
-            recommendations = analytics_instance.generate_cloud_recommendations(
-                heavy_usage_data
-            )
-
-            assert isinstance(recommendations, (dict, list))
-            # Should suggest cloud features for heavy usage
-
-    def test_performance_optimization_suggestions(self, analytics_instance):
-        """Test performance optimization suggestions."""
-        performance_data = {
-            "avg_response_time": 5.0,  # Slow
-            "memory_usage_mb": 2048,  # High
-            "cache_hit_rate": 0.3,  # Low
-            "concurrent_requests": 1,  # Low parallelism
-            "optimization_efficiency": 0.6,  # Could be better
-        }
-
-        if hasattr(analytics_instance, "suggest_performance_improvements"):
-            suggestions = analytics_instance.suggest_performance_improvements(
-                performance_data
-            )
-
-            assert isinstance(suggestions, (dict, list))
-            # Should contain actionable suggestions
-
-    def test_cost_optimization_insights(self, analytics_instance):
-        """Test cost optimization insights."""
-        cost_data = {
-            "total_api_calls": 1000,
-            "estimated_cost": 25.50,
-            "cost_per_optimization": 1.27,
-            "expensive_models_usage": 0.8,  # High usage of expensive models
-            "optimization_success_rate": 0.9,
-        }
-
-        if hasattr(analytics_instance, "generate_cost_insights"):
-            insights = analytics_instance.generate_cost_insights(cost_data)
-            assert isinstance(insights, dict)
-
-    def test_feature_usage_analysis(self, analytics_instance):
-        """Test feature usage analysis."""
-        feature_data = {
-            "grid_search_usage": 15,
-            "bayesian_optimization_usage": 25,
-            "multi_objective_usage": 5,
-            "constraint_usage": 8,
-            "parallel_execution_usage": 12,
-            "caching_usage": 30,
-        }
-
-        if hasattr(analytics_instance, "analyze_feature_usage"):
-            analysis = analytics_instance.analyze_feature_usage(feature_data)
-            assert isinstance(analysis, dict)
-
-
-class TestErrorHandling:
-    """Test error handling and edge cases."""
-
-    def test_storage_permission_error(self, sample_config):
-        """Test handling storage permission errors."""
-        # Use invalid storage path
-        sample_config.local_storage_path = "/root/restricted"
-
-        try:
-            analytics = LocalAnalytics(sample_config)
-            # Should handle gracefully
-            assert analytics is not None
-        except (PermissionError, Exception) as e:
-            # Expected for restricted paths
-            # May raise TraigentStorageError or PermissionError
-            assert "permission" in str(e).lower() or "create" in str(e).lower()
-            pass
-
-    def test_corrupted_data_recovery(self, analytics_instance):
-        """Test recovery from corrupted analytics data."""
-        if hasattr(analytics_instance, "recover_corrupted_data"):
-            # Should not raise exception
-            analytics_instance.recover_corrupted_data()
-
-    def test_disk_space_handling(self, analytics_instance):
-        """Test handling low disk space scenarios."""
-        if hasattr(analytics_instance, "check_disk_space"):
-            space_available = analytics_instance.check_disk_space()
-            assert isinstance(space_available, (bool, int, float))
-
-    def test_concurrent_access_safety(self, analytics_instance):
-        """Test thread safety for concurrent analytics operations."""
-        import threading
-
-        # Track exceptions that occur in worker threads
-        thread_errors = []
-        thread_errors_lock = threading.Lock()
-
-        def worker():
-            try:
-                if hasattr(analytics_instance, "collect_optimization_metrics"):
-                    analytics_instance.collect_optimization_metrics({"test": "data"})
-            except (ValueError, TypeError, AttributeError, KeyError):
-                pass  # Expected validation/type errors in concurrent access
-            except Exception as unexpected:
-                with thread_errors_lock:
-                    thread_errors.append(f"{type(unexpected).__name__}: {unexpected}")
-
-        # Run multiple threads
-        threads = [threading.Thread(target=worker) for _ in range(5)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=5.0)  # Timeout to detect deadlocks
-
-        # Verify all threads completed (no deadlocks)
-        alive_threads = [t for t in threads if t.is_alive()]
-        assert (
-            len(alive_threads) == 0
-        ), f"Deadlock detected: {len(alive_threads)} threads still alive"
-
-        # Report any unexpected exceptions
-        assert (
-            len(thread_errors) == 0
-        ), f"Unexpected exceptions in worker threads: {thread_errors}"
-
-    def test_malformed_data_handling(self, analytics_instance):
-        """Test handling malformed analytics data."""
-        malformed_data = [
-            None,
-            "string_instead_of_dict",
-            {"missing_required_fields": True},
-            {"circular_reference": None},
-            {"invalid_timestamp": "not-a-date"},
-            {"negative_metrics": -5},
-        ]
-
-        for data in malformed_data:
-            try:
-                if hasattr(analytics_instance, "collect_usage_data"):
-                    analytics_instance.collect_usage_data(data)
-                # Should handle gracefully
-            except (ValueError, TypeError, KeyError):
-                # Expected for malformed data
-                pass
-
-    def test_network_connectivity_detection(self, analytics_instance):
-        """Test network connectivity detection."""
-        if hasattr(analytics_instance, "check_network_connectivity"):
-            is_connected = analytics_instance.check_network_connectivity()
-            assert isinstance(is_connected, bool)
-
-    def test_graceful_shutdown(self, analytics_instance):
-        """Test graceful shutdown of analytics system."""
-        shutdown_called = False
-        if hasattr(analytics_instance, "shutdown"):
-            analytics_instance.shutdown()
-            shutdown_called = True
-
-        # Verify shutdown completed or instance remains valid
-        if shutdown_called and hasattr(analytics_instance, "is_running"):
-            assert (
-                not analytics_instance.is_running()
-            ), "Analytics should be stopped after shutdown"
-        else:
-            # Verify instance is still accessible (basic sanity check)
-            assert analytics_instance is not None, "Instance should remain accessible"
-
-
-class TestCTDScenarios:
-    """Combinatorial Test Design scenarios for comprehensive coverage."""
-
-    @pytest.mark.parametrize(
-        "execution_mode,enable_analytics,expected_enabled",
-        [
-            ("edge_analytics", True, True),
-            ("edge_analytics", False, False),
-            ("cloud", True, False),
-            ("cloud", False, False),
-            ("standard", True, False),  # Standard mode doesn't enable local analytics
-            ("privacy", True, False),  # Privacy mode doesn't enable local analytics
-        ],
-    )
-    def test_analytics_enable_combinations(
-        self, execution_mode, enable_analytics, expected_enabled, temp_storage_path
-    ):
-        """Test different combinations of execution mode and analytics settings."""
+        # Create first instance
+        analytics1 = LocalAnalytics(config)
+        user_id1 = analytics1.user_id
+
+        # Create second instance with same config
+        analytics2 = LocalAnalytics(config)
+        user_id2 = analytics2.user_id
+
+        # Should reuse the same user ID
+        assert user_id1 == user_id2
+
+    def test_user_id_persistence_file_read_error(self, temp_storage_path: str) -> None:
+        """Test user ID creation when analytics file cannot be read."""
         config = TraigentConfig(
-            execution_mode=execution_mode,
-            enable_usage_analytics=enable_analytics,
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            anonymous_user_id=None,
+        )
+
+        with patch(
+            "pathlib.Path.read_text", side_effect=PermissionError("Access denied")
+        ):
+            analytics = LocalAnalytics(config)
+            # Should create new user ID despite read error
+            assert analytics.user_id is not None
+
+    def test_user_id_persistence_file_write_error(self, temp_storage_path: str) -> None:
+        """Test user ID creation when analytics file cannot be written."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            anonymous_user_id=None,
+        )
+
+        with patch(
+            "pathlib.Path.write_text", side_effect=PermissionError("Access denied")
+        ):
+            analytics = LocalAnalytics(config)
+            # Should still create user ID but fail to persist
+            assert analytics.user_id is not None
+
+
+class TestCollectUsageStats:
+    """Tests for collect_usage_stats method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+            anonymous_user_id="test-user-123",
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_collect_usage_stats_disabled(self, temp_storage_path: str) -> None:
+        """Test that collect_usage_stats returns empty dict when disabled."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=False,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        stats = analytics.collect_usage_stats()
+        assert stats == {}
+
+    def test_collect_usage_stats_with_no_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats with no sessions in storage."""
+        with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
+            stats = analytics_instance.collect_usage_stats()
+
+            assert stats["total_sessions"] == 0
+            assert stats["completed_sessions"] == 0
+            assert stats["failed_sessions"] == 0
+            assert stats["total_trials"] == 0
+            assert stats["unique_functions_optimized"] == 0
+            assert stats["avg_trials_per_session"] == 0
+            assert stats["anonymous_user_id"] == "test-user-123"
+
+    def test_collect_usage_stats_with_completed_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats with completed sessions."""
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func1",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+                best_score=0.95,
+            ),
+            OptimizationSession(
+                session_id="session2",
+                function_name="test_func2",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=20,
+                completed_trials=20,
+                best_score=0.85,
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            with patch.object(
+                analytics_instance.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics_instance.collect_usage_stats()
+
+                assert stats["total_sessions"] == 2
+                assert stats["completed_sessions"] == 2
+                assert stats["failed_sessions"] == 0
+                assert stats["total_trials"] == 30
+                assert stats["total_completed_trials"] == 30
+                assert stats["unique_functions_optimized"] == 2
+                assert abs(stats["avg_trials_per_session"] - 15.0) < 0.01
+
+    def test_collect_usage_stats_with_failed_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats with failed sessions."""
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.FAILED.value,
+                total_trials=5,
+                completed_trials=3,
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            stats = analytics_instance.collect_usage_stats()
+
+            assert stats["completed_sessions"] == 0
+            assert stats["failed_sessions"] == 1
+
+    def test_collect_usage_stats_with_config_space(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats calculates config space size."""
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+                optimization_config={
+                    "configuration_space": {
+                        "param1": [1, 2],
+                        "param2": [3, 4],
+                        "param3": [5, 6],
+                    }
+                },
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            with patch.object(
+                analytics_instance.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics_instance.collect_usage_stats()
+
+                assert abs(stats["avg_config_space_size"] - 3.0) < 0.01
+
+    def test_collect_usage_stats_with_improvements(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats calculates improvement percentages."""
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            with patch.object(
+                analytics_instance.storage,
+                "get_session_summary",
+                return_value={"improvement": 0.25},
+            ):
+                stats = analytics_instance.collect_usage_stats()
+
+                assert abs(stats["avg_improvement_percent"] - 25.0) < 0.01
+
+    def test_collect_usage_stats_recent_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats filters recent sessions."""
+        now = datetime.now(UTC)
+        old_date = (now - timedelta(days=60)).isoformat()
+        recent_date = (now - timedelta(days=10)).isoformat()
+
+        sessions = [
+            OptimizationSession(
+                session_id="old_session",
+                function_name="test_func",
+                created_at=old_date,
+                updated_at=old_date,
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+            OptimizationSession(
+                session_id="recent_session",
+                function_name="test_func",
+                created_at=recent_date,
+                updated_at=recent_date,
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=15,
+                completed_trials=15,
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            with patch.object(
+                analytics_instance.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics_instance.collect_usage_stats()
+
+                assert stats["total_sessions"] == 2
+                assert stats["sessions_last_30_days"] == 1
+
+    def test_collect_usage_stats_error_handling(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats handles errors gracefully."""
+        with patch.object(
+            analytics_instance.storage,
+            "list_sessions",
+            side_effect=Exception("Storage error"),
+        ):
+            stats = analytics_instance.collect_usage_stats()
+
+            # Should return empty dict on error
+            assert stats == {}
+
+    def test_collect_usage_stats_includes_sdk_version(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats includes SDK version."""
+        with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
+            stats = analytics_instance.collect_usage_stats()
+
+            assert "sdk_version" in stats
+            assert stats["sdk_version"] == "1.1.0"
+
+    def test_collect_usage_stats_includes_execution_mode(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats includes execution mode."""
+        with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
+            stats = analytics_instance.collect_usage_stats()
+
+            assert stats["execution_mode"] == ExecutionMode.EDGE_ANALYTICS.value
+
+    def test_collect_usage_stats_includes_timestamp(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test collect_usage_stats includes current timestamp."""
+        with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
+            before = datetime.now(UTC)
+            stats = analytics_instance.collect_usage_stats()
+            after = datetime.now(UTC)
+
+            timestamp = datetime.fromisoformat(stats["timestamp"])
+            assert before <= timestamp <= after
+
+    def test_collect_usage_stats_no_sensitive_data(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test that collect_usage_stats does not include sensitive information."""
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="my_secret_function",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+                metadata={
+                    "api_key": "secret-key-123",
+                    "user_email": "user@example.com",
+                },
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            with patch.object(
+                analytics_instance.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics_instance.collect_usage_stats()
+
+                # Should not contain function names
+                assert "my_secret_function" not in str(stats)
+                # Should not contain metadata
+                assert "api_key" not in stats
+                assert "user_email" not in stats
+
+
+class TestGetDaysSinceFirstUse:
+    """Tests for _get_days_since_first_use method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_days_since_first_use_no_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _get_days_since_first_use with no sessions."""
+        with patch.object(analytics_instance.storage, "list_sessions", return_value=[]):
+            days = analytics_instance._get_days_since_first_use()
+            assert days == 0
+
+    def test_days_since_first_use_with_sessions(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _get_days_since_first_use calculates correctly."""
+        now = datetime.now(UTC)
+        first_use = now - timedelta(days=15)
+
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=first_use.isoformat(),
+                updated_at=first_use.isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+            OptimizationSession(
+                session_id="session2",
+                function_name="test_func",
+                created_at=(first_use + timedelta(days=5)).isoformat(),
+                updated_at=(first_use + timedelta(days=5)).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+        ]
+
+        with patch.object(
+            analytics_instance.storage, "list_sessions", return_value=sessions
+        ):
+            days = analytics_instance._get_days_since_first_use()
+            assert days == 15
+
+    def test_days_since_first_use_error_handling(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _get_days_since_first_use handles errors gracefully."""
+        with patch.object(
+            analytics_instance.storage,
+            "list_sessions",
+            side_effect=Exception("Storage error"),
+        ):
+            days = analytics_instance._get_days_since_first_use()
+            assert days == 0
+
+
+class TestSubmitUsageStats:
+    """Tests for submit_usage_stats method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_disabled(self, temp_storage_path: str) -> None:
+        """Test submit_usage_stats returns error when analytics disabled."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=False,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        result = await analytics.submit_usage_stats()
+
+        assert result["success"] is False
+        assert result["reason"] == "Analytics disabled"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_not_due(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats skips when submission not due."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=False):
+            result = await analytics_instance.submit_usage_stats()
+
+            assert result["success"] is False
+            assert result["reason"] == "Submission not due yet"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_force_submission(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats with force=True bypasses due check."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=False):
+            with patch.object(
+                analytics_instance, "collect_usage_stats", return_value={}
+            ):
+                result = await analytics_instance.submit_usage_stats(force=True)
+
+                # Should attempt submission even if not due
+                assert result["success"] is False
+                assert result["reason"] == "No stats to submit"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_no_stats(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats handles empty stats."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=True):
+            with patch.object(
+                analytics_instance, "collect_usage_stats", return_value={}
+            ):
+                result = await analytics_instance.submit_usage_stats()
+
+                assert result["success"] is False
+                assert result["reason"] == "No stats to submit"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_no_api_key(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats handles missing API key."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=True):
+            with patch.object(
+                analytics_instance,
+                "collect_usage_stats",
+                return_value={"total_sessions": 5},
+            ):
+                with patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value=None,
+                ):
+                    result = await analytics_instance.submit_usage_stats()
+
+                    assert result["success"] is False
+                    assert result["reason"] == "No API key available"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_invalid_api_key(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats handles invalid API key."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=True):
+            with patch.object(
+                analytics_instance,
+                "collect_usage_stats",
+                return_value={"total_sessions": 5},
+            ):
+                with patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value="short",
+                ):
+                    result = await analytics_instance.submit_usage_stats()
+
+                    assert result["success"] is False
+                    assert result["reason"] == "API key invalid"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_timeout(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats handles timeout error."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=True):
+            with patch.object(
+                analytics_instance,
+                "collect_usage_stats",
+                return_value={"total_sessions": 5},
+            ):
+                with patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value="tg_" + "a" * 61,
+                ):
+                    with patch(
+                        "traigent.cloud.backend_client.get_backend_client"
+                    ) as mock_client:
+                        mock_client.return_value.__aenter__.side_effect = TimeoutError()
+
+                        result = await analytics_instance.submit_usage_stats()
+
+                        assert result["success"] is False
+                        assert result["reason"] == "Request timeout"
+
+    @pytest.mark.asyncio
+    async def test_submit_usage_stats_import_error(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test submit_usage_stats handles ImportError."""
+        with patch.object(analytics_instance, "_is_submission_due", return_value=True):
+            with patch.object(
+                analytics_instance,
+                "collect_usage_stats",
+                return_value={"total_sessions": 5},
+            ):
+                with patch(
+                    "traigent.config.backend_config.BackendConfig.get_api_key",
+                    return_value="tg_" + "a" * 61,
+                ):
+                    with patch(
+                        "traigent.cloud.backend_client.get_backend_client",
+                        side_effect=ImportError("Module not found"),
+                    ):
+                        result = await analytics_instance.submit_usage_stats()
+
+                        assert result["success"] is False
+                        assert result["reason"] == "Backend client not available"
+
+
+class TestSubmissionDueCheck:
+    """Tests for _is_submission_due method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_is_submission_due_no_previous_submission(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _is_submission_due returns True when no previous submission."""
+        assert analytics_instance._is_submission_due() is True
+
+    def test_is_submission_due_recent_submission(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _is_submission_due returns False for recent submission."""
+        # Simulate recent submission
+        last_submission_file = (
+            Path(analytics_instance.storage.storage_path) / ".last_analytics"
+        )
+        last_submission_file.write_text(datetime.now(UTC).isoformat())
+
+        assert analytics_instance._is_submission_due() is False
+
+    def test_is_submission_due_old_submission(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _is_submission_due returns True for old submission."""
+        # Simulate old submission (more than 1 day ago)
+        old_date = datetime.now(UTC) - timedelta(days=2)
+        last_submission_file = (
+            Path(analytics_instance.storage.storage_path) / ".last_analytics"
+        )
+        last_submission_file.write_text(old_date.isoformat())
+
+        assert analytics_instance._is_submission_due() is True
+
+    def test_is_submission_due_naive_datetime(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _is_submission_due handles naive datetime correctly."""
+        # Simulate submission with naive datetime (no timezone)
+        old_date = datetime.now() - timedelta(days=2)
+        last_submission_file = (
+            Path(analytics_instance.storage.storage_path) / ".last_analytics"
+        )
+        last_submission_file.write_text(old_date.isoformat())
+
+        # Should handle gracefully and return True
+        assert analytics_instance._is_submission_due() is True
+
+    def test_is_submission_due_file_read_error(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _is_submission_due handles file read errors."""
+        last_submission_file = (
+            Path(analytics_instance.storage.storage_path) / ".last_analytics"
+        )
+        last_submission_file.write_text("invalid-date-format")
+
+        # Should return True on error
+        assert analytics_instance._is_submission_due() is True
+
+
+class TestUpdateLastSubmission:
+    """Tests for _update_last_submission method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_update_last_submission(self, analytics_instance: LocalAnalytics) -> None:
+        """Test _update_last_submission creates/updates timestamp file."""
+        before = datetime.now(UTC)
+        analytics_instance._update_last_submission()
+        after = datetime.now(UTC)
+
+        last_submission_file = (
+            Path(analytics_instance.storage.storage_path) / ".last_analytics"
+        )
+        assert last_submission_file.exists()
+
+        timestamp = datetime.fromisoformat(last_submission_file.read_text().strip())
+        assert before <= timestamp <= after
+
+    def test_update_last_submission_file_write_error(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _update_last_submission handles file write errors gracefully."""
+        with patch(
+            "pathlib.Path.write_text", side_effect=PermissionError("Access denied")
+        ):
+            # Should not raise exception
+            analytics_instance._update_last_submission()
+
+
+class TestCloudIncentiveData:
+    """Tests for get_cloud_incentive_data method."""
+
+    @pytest.fixture
+    def analytics_instance(self, temp_storage_path: str) -> LocalAnalytics:
+        """Create LocalAnalytics instance for testing."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        return LocalAnalytics(config)
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_get_cloud_incentive_data_no_stats(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test get_cloud_incentive_data returns empty dict when no stats."""
+        with patch.object(analytics_instance, "collect_usage_stats", return_value={}):
+            incentive_data = analytics_instance.get_cloud_incentive_data()
+            assert incentive_data == {}
+
+    def test_get_cloud_incentive_data_basic_usage(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test get_cloud_incentive_data with basic usage data."""
+        mock_stats = {
+            "total_sessions": 5,
+            "total_trials": 50,
+            "avg_trials_per_session": 10.0,
+            "avg_config_space_size": 3.0,
+            "days_since_first_use": 7,
+        }
+
+        with patch.object(
+            analytics_instance, "collect_usage_stats", return_value=mock_stats
+        ):
+            incentive_data = analytics_instance.get_cloud_incentive_data()
+
+            assert "usage_summary" in incentive_data
+            assert "cloud_benefits" in incentive_data
+            assert "personalized_message" in incentive_data
+            assert "upgrade_urgency" in incentive_data
+
+            # Check basic benefits are present
+            assert "algorithm_upgrade" in incentive_data["cloud_benefits"]
+            assert "trial_limit" in incentive_data["cloud_benefits"]
+            assert "analytics" in incentive_data["cloud_benefits"]
+
+    def test_get_cloud_incentive_data_power_user(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test get_cloud_incentive_data for power users."""
+        mock_stats = {
+            "total_sessions": 15,
+            "total_trials": 300,
+            "avg_trials_per_session": 20.0,
+            "avg_config_space_size": 8.0,
+            "days_since_first_use": 30,
+        }
+
+        with patch.object(
+            analytics_instance, "collect_usage_stats", return_value=mock_stats
+        ):
+            incentive_data = analytics_instance.get_cloud_incentive_data()
+
+            # Should include team collaboration benefit
+            assert "team_collaboration" in incentive_data["cloud_benefits"]
+            # Should include complex optimization benefit
+            assert "complex_optimization" in incentive_data["cloud_benefits"]
+
+    def test_generate_personalized_message_power_user(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _generate_personalized_message for power users."""
+        stats = {
+            "total_sessions": 25,
+            "total_trials": 100,
+            "avg_improvement_percent": None,
+        }
+        message = analytics_instance._generate_personalized_message(stats)
+        assert "Power user" in message or "20" in message
+
+    def test_generate_personalized_message_high_trials(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _generate_personalized_message for high trial counts."""
+        stats = {
+            "total_sessions": 5,
+            "total_trials": 150,
+            "avg_improvement_percent": None,
+        }
+        message = analytics_instance._generate_personalized_message(stats)
+        assert "trials" in message.lower()
+
+    def test_generate_personalized_message_good_improvement(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _generate_personalized_message for good improvements."""
+        stats = {
+            "total_sessions": 5,
+            "total_trials": 50,
+            "avg_improvement_percent": 25.0,
+        }
+        message = analytics_instance._generate_personalized_message(stats)
+        assert "improvement" in message.lower() or "results" in message.lower()
+
+    def test_generate_personalized_message_moderate_usage(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _generate_personalized_message for moderate usage."""
+        stats = {
+            "total_sessions": 7,
+            "total_trials": 70,
+            "avg_improvement_percent": None,
+        }
+        message = analytics_instance._generate_personalized_message(stats)
+        assert len(message) > 0
+
+    def test_generate_personalized_message_new_user(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _generate_personalized_message for new users."""
+        stats = {
+            "total_sessions": 1,
+            "total_trials": 10,
+            "avg_improvement_percent": None,
+        }
+        message = analytics_instance._generate_personalized_message(stats)
+        assert "start" in message.lower() or "cloud" in message.lower()
+
+    def test_calculate_upgrade_urgency_high_trials(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _calculate_upgrade_urgency with high trial counts."""
+        stats = {
+            "total_sessions": 5,
+            "avg_trials_per_session": 18.0,
+            "days_since_first_use": 5,
+        }
+        urgency = analytics_instance._calculate_upgrade_urgency(stats)
+        assert urgency == "high"
+
+    def test_calculate_upgrade_urgency_heavy_usage(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _calculate_upgrade_urgency with heavy usage."""
+        stats = {
+            "total_sessions": 20,
+            "avg_trials_per_session": 10.0,
+            "days_since_first_use": 10,
+        }
+        urgency = analytics_instance._calculate_upgrade_urgency(stats)
+        assert urgency == "high"
+
+    def test_calculate_upgrade_urgency_medium(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _calculate_upgrade_urgency for medium urgency."""
+        stats = {
+            "total_sessions": 7,
+            "avg_trials_per_session": 10.0,
+            "days_since_first_use": 10,
+        }
+        urgency = analytics_instance._calculate_upgrade_urgency(stats)
+        assert urgency == "medium"
+
+    def test_calculate_upgrade_urgency_low(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _calculate_upgrade_urgency for low urgency."""
+        stats = {
+            "total_sessions": 4,
+            "avg_trials_per_session": 5.0,
+            "days_since_first_use": 3,
+        }
+        urgency = analytics_instance._calculate_upgrade_urgency(stats)
+        assert urgency == "low"
+
+    def test_calculate_upgrade_urgency_none(
+        self, analytics_instance: LocalAnalytics
+    ) -> None:
+        """Test _calculate_upgrade_urgency for no urgency."""
+        stats = {
+            "total_sessions": 1,
+            "avg_trials_per_session": 5.0,
+            "days_since_first_use": 1,
+        }
+        urgency = analytics_instance._calculate_upgrade_urgency(stats)
+        assert urgency == "none"
+
+
+class TestConvenienceFunctions:
+    """Tests for module-level convenience functions."""
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_collect_and_submit_analytics_disabled(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_and_submit_analytics when analytics disabled."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=False,
             local_storage_path=temp_storage_path,
         )
 
-        analytics = LocalAnalytics(config)
-        assert analytics.enabled == expected_enabled
+        # Should not raise exception
+        collect_and_submit_analytics(config)
 
-    @pytest.mark.parametrize(
-        "data_type,privacy_level,should_collect",
-        [
-            ("usage_metrics", "public", True),
-            ("performance_data", "public", True),
-            ("error_statistics", "aggregated", True),
-            ("api_keys", "private", False),
-            ("user_credentials", "private", False),
-            ("file_contents", "private", False),
-            ("project_names", "sensitive", False),
-            ("model_outputs", "sensitive", False),
-        ],
-    )
-    def test_data_collection_privacy_combinations(
-        self, analytics_instance, data_type, privacy_level, should_collect
-    ):
-        """Test different combinations of data types and privacy levels."""
-        test_data = {
-            "type": data_type,
-            "privacy_level": privacy_level,
-            "value": f"test_{data_type}_value",
-        }
+    def test_collect_and_submit_analytics_wrong_mode(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_and_submit_analytics in wrong execution mode."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.CLOUD.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
 
-        if hasattr(analytics_instance, "should_collect_data"):
-            result = analytics_instance.should_collect_data(test_data)
-            assert result == should_collect
-        else:
-            # If method doesn't exist, skip test or use pytest.skip
-            # The test expectation is based on the should_collect parameter
-            # which is the expected behavior if the method existed
-            pytest.skip("should_collect_data method not implemented")
+        # Should not raise exception
+        collect_and_submit_analytics(config)
 
-    @pytest.mark.parametrize(
-        "network_status,queue_enabled,submission_method",
-        [
-            ("online", True, "immediate"),
-            ("online", False, "immediate"),
-            ("offline", True, "queue"),
-            ("offline", False, "drop"),
-            ("intermittent", True, "retry"),
-        ],
-    )
-    def test_submission_strategy_combinations(
-        self, analytics_instance, network_status, queue_enabled, submission_method
-    ):
-        """Test different combinations of network status and submission strategies."""
-        test_data = {"test": "data"}
+    def test_collect_and_submit_analytics_in_async_context(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_and_submit_analytics from async context."""
+        import asyncio
 
-        # Mock network status
-        with patch.object(
-            analytics_instance,
-            (
-                "check_network_connectivity"
-                if hasattr(analytics_instance, "check_network_connectivity")
-                else "enabled"
-            ),
-            return_value=network_status == "online",
-        ):
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
 
-            if hasattr(analytics_instance, "submit_with_strategy"):
-                try:
-                    result = analytics_instance.submit_with_strategy(
-                        test_data, queue_offline=queue_enabled
-                    )
-                    # Should handle according to strategy
-                    assert isinstance(result, (bool, dict, type(None)))
-                except (
-                    NotImplementedError,
-                    ValueError,
-                    TypeError,
-                    ConnectionError,
-                    AttributeError,
-                ):
-                    # Some combinations may not be implemented or may fail validation
-                    pass
+        async def test_async() -> None:
+            # Should not raise exception even in async context
+            collect_and_submit_analytics(config)
+            # Add await to make this properly async
+            await asyncio.sleep(0)
 
-    @pytest.mark.parametrize(
-        "data_volume,compression_enabled,storage_strategy",
-        [
-            ("small", False, "direct"),
-            ("small", True, "compressed"),
-            ("medium", False, "batched"),
-            ("medium", True, "compressed_batched"),
-            ("large", True, "compressed_chunked"),
-        ],
-    )
-    def test_storage_strategy_combinations(
-        self, analytics_instance, data_volume, compression_enabled, storage_strategy
-    ):
-        """Test different combinations of data volume and storage strategies."""
-        # Generate test data of different sizes
-        if data_volume == "small":
-            test_data = {"metrics": list(range(10))}
-        elif data_volume == "medium":
-            test_data = {"metrics": list(range(100))}
-        else:  # large
-            test_data = {"metrics": list(range(1000))}
+        asyncio.run(test_async())
 
-        if hasattr(analytics_instance, "store_with_strategy"):
-            try:
-                analytics_instance.store_with_strategy(
-                    test_data, compress=compression_enabled, strategy=storage_strategy
-                )
-                # Should complete without error
-            except (
-                OSError,
-                NotImplementedError,
-                ValueError,
-                TypeError,
-                AttributeError,
-            ):
-                # Some strategies may not be implemented or may fail validation
-                pass
-
-    @pytest.mark.parametrize(
-        "error_type,retry_enabled,fallback_strategy",
-        [
-            ("network_error", True, "queue"),
-            ("network_error", False, "drop"),
-            ("server_error", True, "retry"),
-            ("client_error", False, "log"),
-            ("timeout_error", True, "queue"),
-        ],
-    )
-    def test_error_handling_combinations(
-        self, analytics_instance, error_type, retry_enabled, fallback_strategy
-    ):
-        """Test different combinations of error types and handling strategies."""
-        test_data = {"test": "data"}
-
-        # Simulate different error conditions
-        error_exceptions = {
-            "network_error": aiohttp.ClientConnectionError("Network error"),
-            "server_error": aiohttp.ClientResponseError(None, None, status=500),
-            "client_error": aiohttp.ClientResponseError(None, None, status=400),
-            "timeout_error": TimeoutError("Request timeout"),
-        }
+    def test_collect_and_submit_analytics_error_handling(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_and_submit_analytics handles errors gracefully."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
 
         with patch(
-            "aiohttp.ClientSession.post", side_effect=error_exceptions[error_type]
+            "traigent.utils.local_analytics.LocalAnalytics",
+            side_effect=Exception("Init error"),
         ):
-            if hasattr(analytics_instance, "submit_with_error_handling"):
-                try:
-                    result = asyncio.run(
-                        analytics_instance.submit_with_error_handling(
-                            test_data, retry=retry_enabled, fallback=fallback_strategy
-                        )
-                    )
-                    # Should handle error according to strategy
-                    assert isinstance(result, (bool, dict, type(None)))
-                except (
-                    TimeoutError,
-                    NotImplementedError,
-                    aiohttp.ClientError,
-                    ConnectionError,
-                    RuntimeError,
-                ):
-                    # Error handling may re-raise or may not be implemented
-                    pass
+            # Should not raise exception
+            collect_and_submit_analytics(config)
 
-    @pytest.mark.parametrize(
-        "usage_pattern,recommendation_type,confidence_level",
-        [
-            ("heavy_compute", "cloud_upgrade", "high"),
-            ("light_usage", "optimization", "medium"),
-            ("frequent_errors", "troubleshooting", "high"),
-            ("inefficient_patterns", "best_practices", "medium"),
-            ("cost_sensitive", "cost_optimization", "high"),
-        ],
-    )
-    def test_recommendation_combinations(
-        self, analytics_instance, usage_pattern, recommendation_type, confidence_level
-    ):
-        """Test different combinations of usage patterns and recommendation types."""
-        # Generate usage data based on pattern
-        usage_data = {
-            "heavy_compute": {"compute_hours": 100, "optimization_runs": 50},
-            "light_usage": {"compute_hours": 5, "optimization_runs": 3},
-            "frequent_errors": {"error_rate": 0.3, "timeout_count": 15},
-            "inefficient_patterns": {"avg_efficiency": 0.4, "wasted_trials": 200},
-            "cost_sensitive": {"total_cost": 500, "cost_per_result": 5.0},
-        }[usage_pattern]
+    def test_get_enhanced_cloud_incentives(self, temp_storage_path: str) -> None:
+        """Test get_enhanced_cloud_incentives function."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
 
-        if hasattr(analytics_instance, "generate_recommendations"):
-            try:
-                recommendations = analytics_instance.generate_recommendations(
-                    usage_data, recommendation_type=recommendation_type
-                )
+        with patch(
+            "traigent.utils.local_analytics.LocalAnalytics.get_cloud_incentive_data",
+            return_value={"test": "data"},
+        ):
+            result = get_enhanced_cloud_incentives(config)
+            assert result == {"test": "data"}
 
-                if recommendations:
-                    assert isinstance(recommendations, (dict, list))
-                    # Should contain relevant recommendations
 
-            except (
-                NotImplementedError,
-                ValueError,
-                TypeError,
-                KeyError,
-                AttributeError,
+class TestEdgeCases:
+    """Tests for edge cases and error conditions."""
+
+    @pytest.fixture
+    def temp_storage_path(self) -> Generator[str, None, None]:
+        """Create temporary storage directory."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            yield temp_dir
+
+    def test_collect_usage_stats_with_invalid_improvement_type(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_usage_stats handles invalid improvement data types."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+        ]
+
+        with patch.object(analytics.storage, "list_sessions", return_value=sessions):
+            with patch.object(
+                analytics.storage,
+                "get_session_summary",
+                return_value={"improvement": "not-a-number"},
             ):
-                # Some recommendation types may not be implemented or may require additional data
-                pass
+                stats = analytics.collect_usage_stats()
+
+                # Should handle invalid type gracefully
+                assert stats["avg_improvement_percent"] is None
+
+    def test_collect_usage_stats_with_none_improvement(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_usage_stats handles None improvement values."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+            ),
+        ]
+
+        with patch.object(analytics.storage, "list_sessions", return_value=sessions):
+            with patch.object(
+                analytics.storage,
+                "get_session_summary",
+                return_value={"improvement": None},
+            ):
+                stats = analytics.collect_usage_stats()
+
+                # Should handle None gracefully
+                assert stats["avg_improvement_percent"] is None
+
+    def test_collect_usage_stats_with_invalid_config_space(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_usage_stats handles invalid config space."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+                optimization_config={"configuration_space": "not-a-dict"},
+            ),
+        ]
+
+        with patch.object(analytics.storage, "list_sessions", return_value=sessions):
+            with patch.object(
+                analytics.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics.collect_usage_stats()
+
+                # Should handle invalid config space gracefully
+                assert abs(stats["avg_config_space_size"] - 0.0) < 0.01
+
+    def test_collect_usage_stats_with_missing_optimization_config(
+        self, temp_storage_path: str
+    ) -> None:
+        """Test collect_usage_stats when optimization_config is None."""
+        config = TraigentConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value,
+            enable_usage_analytics=True,
+            local_storage_path=temp_storage_path,
+        )
+        analytics = LocalAnalytics(config)
+
+        sessions = [
+            OptimizationSession(
+                session_id="session1",
+                function_name="test_func",
+                created_at=datetime.now(UTC).isoformat(),
+                updated_at=datetime.now(UTC).isoformat(),
+                status=OptimizationStatus.COMPLETED.value,
+                total_trials=10,
+                completed_trials=10,
+                optimization_config=None,
+            ),
+        ]
+
+        with patch.object(analytics.storage, "list_sessions", return_value=sessions):
+            with patch.object(
+                analytics.storage, "get_session_summary", return_value={}
+            ):
+                stats = analytics.collect_usage_stats()
+
+                # Should handle missing config gracefully
+                assert abs(stats["avg_config_space_size"] - 0.0) < 0.01
