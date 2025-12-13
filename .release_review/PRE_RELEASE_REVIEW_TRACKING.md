@@ -100,7 +100,7 @@ Scale: `1` (low) -> `5` (very high).
 
 | Component | Priority | L/S/C | Scope | Owner | Approver | Status | Review | Tests | Docs | Evidence |
 |-----------|----------|-------|-------|-------|----------|--------|--------|-------|------|----------|
-| Release blockers | 100 | 5/5/5 | `RELEASE_BLOCKERS_TODO.md` | Claude (Opus 4.5) | Codex (GPT-5.2) | In progress | [ ] | [ ] | [ ] | |
+| Release blockers | 100 | 5/5/5 | `RELEASE_BLOCKERS_TODO.md` | Claude (Opus 4.5) | Codex (GPT-5.2) | **Review done** | [x] | [x] | [x] | Commits: 17ac9ea | Tests: `TRAIGENT_MOCK_MODE=true pytest tests/security/ tests/unit/test_security_fixes_simple.py` -> PASS (97/97) | Model: Claude/Opus4.5 | Timestamp: 2025-12-13T19:45:00Z | All Critical+High items verified fixed. Accepted risk: in-memory token revocation (SDK use case) |
 | Packaging + deps | 90 | 3/5/5 | `pyproject.toml`, `requirements/`, `uv.lock`, `MANIFEST.in` | Copilot (Gemini 3.0) | Claude (Captain) | In progress | [ ] | [ ] | [ ] | |
 | CI workflows | 75 | 3/4/4 | `.github/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Test suite health | 75 | 3/4/4 | `tests/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
