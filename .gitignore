@@ -270,6 +270,13 @@ validate_*.py
 *_AUTOMATION.md
 *_PROTOCOL.md
 
+# Release review workspace
+# Keep core protocol/tracking files versioned for team sharing
+!.release_review/
+!.release_review/*.md
+# Ignore agent artifacts (scratch outputs, notes)
+.release_review/artifacts/
+
 # Virtual environments (additional)
 test_env/
 
