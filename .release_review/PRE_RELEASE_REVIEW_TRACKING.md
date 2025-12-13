@@ -61,7 +61,7 @@ Scale: `1` (low) -> `5` (very high).
 
 | Component | Priority | L/S/C | Scope | Owner | Approver | Status | Review | Tests | Docs | Evidence |
 |-----------|----------|-------|-------|-------|----------|--------|--------|-------|------|----------|
-| Integrations (LLMs/frameworks/vector stores/observability) | 100 | 5/5/5 | `traigent/integrations/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
+| Integrations (LLMs/frameworks/vector stores/observability) | 100 | 5/5/5 | `traigent/integrations/` | Codex (GPT-5.2) | Claude (Captain) | In progress | [ ] | [ ] | [ ] | |
 | Configuration & injection | 95 | 4/5/5 | `traigent/config/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Core orchestration | 95 | 4/5/5 | `traigent/core/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Optimizers | 95 | 4/5/5 | `traigent/optimizers/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
@@ -100,8 +100,8 @@ Scale: `1` (low) -> `5` (very high).
 
 | Component | Priority | L/S/C | Scope | Owner | Approver | Status | Review | Tests | Docs | Evidence |
 |-----------|----------|-------|-------|-------|----------|--------|--------|-------|------|----------|
-| Release blockers | 100 | 5/5/5 | `RELEASE_BLOCKERS_TODO.md` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
-| Packaging + deps | 90 | 3/5/5 | `pyproject.toml`, `requirements/`, `uv.lock`, `MANIFEST.in` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
+| Release blockers | 100 | 5/5/5 | `RELEASE_BLOCKERS_TODO.md` | Claude (Opus 4.5) | Codex (GPT-5.2) | In progress | [ ] | [ ] | [ ] | |
+| Packaging + deps | 90 | 3/5/5 | `pyproject.toml`, `requirements/`, `uv.lock`, `MANIFEST.in` | Copilot (Gemini 3.0) | Claude (Captain) | In progress | [ ] | [ ] | [ ] | |
 | CI workflows | 75 | 3/4/4 | `.github/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Test suite health | 75 | 3/4/4 | `tests/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
 | Scripts (setup/test/analysis) | 45 | 3/2/2 | `scripts/` | TBD | TBD | Not started | [ ] | [ ] | [ ] | |
@@ -110,3 +110,4 @@ Scale: `1` (low) -> `5` (very high).
 ## Review Notes Log (append-only)
 
 - 2025-12-13T19:20:00Z: **Session start** — Captain (Claude Code/Opus 4.5) initialized release-review/v0.8.0 branch from main@52baff0. Tagged baseline as v0.8.0-rc1. Phase 0 hardening in progress.
+- 2025-12-13T19:35:00Z: **Phase 1 start** — Dispatching first 3 parallel reviews: (1) Release blockers [Claude lead], (2) Integrations [Codex lead], (3) Packaging [Copilot lead]. Cross-model review policy active.
