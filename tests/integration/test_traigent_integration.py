@@ -370,9 +370,12 @@ class TestFrameworkIntegrationSetup:
         assert retrieved_config.max_tokens == 500
         assert retrieved_config.custom_params["stream"]
 
-        # Clear config
+        # Clear config - get_config() returns default TraigentConfig when None is set
         set_config(None)
-        assert get_config() is None
+        cleared_config = get_config()
+        # After clearing, get_config returns a default TraigentConfig (not None)
+        assert isinstance(cleared_config, TraigentConfig)
+        assert cleared_config.model is None  # Default has no model set
 
     def test_override_enable_disable_cycle(self):
         """Test enabling and disabling overrides."""

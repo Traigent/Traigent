@@ -284,6 +284,8 @@ class IntegrationPlugin(ABC):
             "top_p",
             "frequency_penalty",
             "presence_penalty",
+            "stop_sequences",
+            "seed",
         ]:
             if hasattr(config_obj, attr):
                 value = getattr(config_obj, attr)

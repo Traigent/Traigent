@@ -19,7 +19,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Load secrets from AWS
-      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' }}
+      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' && hashFiles('scripts/secrets/pull_secret.sh') != '' }}
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}
@@ -86,7 +86,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Load secrets from AWS
-      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' }}
+      if: ${{ secrets.CI_AWS_ACCESS_KEY_ID != '' && hashFiles('scripts/secrets/pull_secret.sh') != '' }}
       env:
         AWS_ACCESS_KEY_ID: ${{ secrets.CI_AWS_ACCESS_KEY_ID }}
         AWS_SECRET_ACCESS_KEY: ${{ secrets.CI_AWS_SECRET_ACCESS_KEY }}

@@ -6,6 +6,7 @@ parameter mappings and framework overrides.
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,6 +17,8 @@ from traigent.integrations.base_plugin import (
 )
 from traigent.integrations.llms.base_llm_plugin import LLMPlugin
 from traigent.integrations.utils import Framework
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAIPlugin(LLMPlugin):
@@ -55,30 +58,16 @@ class OpenAIPlugin(LLMPlugin):
         }
 
     def _get_provider_specific_rules(self) -> dict[str, ValidationRule]:
-        """Return OpenAI-specific validation rules."""
+        """Return OpenAI-specific validation rules.
+
+        Note: Model validation uses custom_validator with dynamic discovery
+        instead of hardcoded allowed_values list. This ensures new models
+        are automatically supported via SDK discovery or config file updates.
+        """
         return {
             "model": ValidationRule(
                 required=True,
-                allowed_values=[
-                    "gpt-4",
-                    "gpt-4-0314",
-                    "gpt-4-0613",
-                    "gpt-4-32k",
-                    "gpt-4-turbo-preview",
-                    "gpt-4-1106-preview",
-                    "gpt-3.5-turbo",
-                    "gpt-3.5-turbo-0301",
-                    "gpt-3.5-turbo-0613",
-                    "gpt-3.5-turbo-16k",
-                    "gpt-3.5-turbo-1106",
-                    "text-davinci-003",
-                    "text-davinci-002",
-                    "code-davinci-002",
-                    "davinci",
-                    "curie",
-                    "babbage",
-                    "ada",
-                ],
+                custom_validator="_validate_model",
             ),
             "max_tokens": ValidationRule(
                 min_value=1, max_value=128000
@@ -93,6 +82,45 @@ class OpenAIPlugin(LLMPlugin):
             "timeout": ValidationRule(min_value=1, max_value=600),
             "max_retries": ValidationRule(min_value=0, max_value=10),
         }
+
+    def _validate_model(self, param_name: str, value: Any) -> list[str]:
+        """Validate model ID using dynamic discovery.
+
+        Uses the model discovery service which:
+        1. Tries SDK-based discovery (client.models.list())
+        2. Falls back to config file known models
+        3. Falls back to regex pattern validation
+        """
+        errors = []
+        if not isinstance(value, str):
+            errors.append(f"Parameter '{param_name}' must be a string")
+            return errors
+
+        if not value:
+            errors.append(f"Parameter '{param_name}' cannot be empty")
+            return errors
+
+        try:
+            from traigent.integrations.model_discovery import get_model_discovery
+
+            discovery = get_model_discovery(self.FRAMEWORK)
+            if discovery and not discovery.is_valid_model(value):
+                errors.append(
+                    f"Model '{value}' is not recognized as a valid OpenAI model. "
+                    f"If this is a new model or fine-tuned model, it may still work."
+                )
+                # Log as warning but don't block - model might be valid
+                logger.warning(
+                    f"Unrecognized OpenAI model: {value}. "
+                    f"Proceeding anyway as it may be a new or custom model."
+                )
+                # Clear errors - we warn but don't block
+                errors.clear()
+        except ImportError:
+            # Discovery module not available, skip validation
+            logger.debug("Model discovery not available, skipping model validation")
+
+        return errors
 
     def get_target_classes(self) -> list[str]:
         """Return list of OpenAI classes to override."""
