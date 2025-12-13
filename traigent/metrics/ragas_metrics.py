@@ -12,6 +12,7 @@ official implementations, only adding glue code to convert Traigent
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -99,6 +100,8 @@ class RagasConfigurationError(RuntimeError):
 
 _GLOBAL_RAGAS_CONFIG = RagasConfig()
 
+_RAGAS_CONFIG_LOCK = threading.Lock()
+
 _RAGAS_METRIC_FACTORIES: dict[str, Callable[[RagasConfig], Metric]] = {}
 
 _UNSET = object()
@@ -165,11 +168,12 @@ def configure_ragas_defaults(
     new_llm = current.llm if llm is _UNSET else llm
     new_embeddings = current.embeddings if embeddings is _UNSET else embeddings
 
-    _GLOBAL_RAGAS_CONFIG = RagasConfig(
-        column_map=new_column_map,
-        llm=new_llm,
-        embeddings=new_embeddings,
-    )
+    with _RAGAS_CONFIG_LOCK:
+        _GLOBAL_RAGAS_CONFIG = RagasConfig(
+            column_map=new_column_map,
+            llm=new_llm,
+            embeddings=new_embeddings,
+        )
 
 
 def _ensure_ragas_available() -> None:
@@ -401,15 +405,16 @@ def compute_ragas_metrics(
     _ensure_ragas_available()
 
     if config is None:
-        config = RagasConfig(
-            column_map=(
-                dict(_GLOBAL_RAGAS_CONFIG.column_map)
-                if _GLOBAL_RAGAS_CONFIG.column_map
-                else None
-            ),
-            llm=_GLOBAL_RAGAS_CONFIG.llm,
-            embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
-        )
+        with _RAGAS_CONFIG_LOCK:
+            config = RagasConfig(
+                column_map=(
+                    dict(_GLOBAL_RAGAS_CONFIG.column_map)
+                    if _GLOBAL_RAGAS_CONFIG.column_map
+                    else None
+                ),
+                llm=_GLOBAL_RAGAS_CONFIG.llm,
+                embeddings=_GLOBAL_RAGAS_CONFIG.embeddings,
+            )
 
     example_results = list(example_results)
     if (not example_results) and dataset_examples is not None:
