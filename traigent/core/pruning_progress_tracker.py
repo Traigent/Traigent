@@ -74,20 +74,27 @@ class PruningProgressTracker:
         if len(report_value_list) == 1:
             report_value = report_value_list[0]
 
-        self._log_progress(step_index, report_value)
+        # Optuna expects monotonically increasing step indices. In concurrent
+        # evaluation modes, examples may complete out-of-order, so we report
+        # progress using the number of completed callbacks instead of the raw
+        # dataset index.
+        report_step = int(self.state.get("evaluated", 0)) - 1
+
+        self._log_progress(report_step, report_value)
 
         should_prune = self.optimizer.report_intermediate_value(  # type: ignore[attr-defined]
             self.optuna_trial_id,
-            step=step_index,
+            step=report_step,
             value=report_value,
         )
 
-        logger.info("   → Pruning decision: %s", should_prune)
+        if should_prune:
+            logger.info("   → Pruning decision: prune")
+        else:
+            logger.debug("   → Pruning decision: keep")
 
         if should_prune:
-            if hasattr(self.optimizer, "report_trial_pruned"):
-                self.optimizer.report_trial_pruned(self.optuna_trial_id, step_index)
-            raise TrialPrunedError(step=step_index)
+            raise TrialPrunedError(step=report_step)
 
     def _update_state(self, step_index: int, payload: dict[str, Any]) -> None:
         """Update internal state with evaluation results."""

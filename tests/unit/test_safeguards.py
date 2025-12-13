@@ -649,7 +649,12 @@ class TestCIApproval:
 
         # Test with CI environment and invalid signature (disable mock mode to test CI approval)
         with patch.dict(
-            os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret", "TRAIGENT_MOCK_MODE": "false"}
+            os.environ,
+            {
+                "CI": "true",
+                "TRAIGENT_APPROVAL_SECRET": "test_secret",
+                "TRAIGENT_MOCK_MODE": "false",
+            },
         ):
             with pytest.raises(OptimizationError):
                 func._check_ci_approval()

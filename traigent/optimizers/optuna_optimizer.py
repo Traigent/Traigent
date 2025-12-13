@@ -356,6 +356,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
                 TrialStatus.COMPLETED,
                 TrialStatus.FAILED,
                 TrialStatus.CANCELLED,
+                TrialStatus.PRUNED,
             }:
                 continue
 
@@ -373,6 +374,12 @@ class OptunaBaseOptimizer(BaseOptimizer):
                 ordered = [metrics.get(obj, 0.0) for obj in self.objectives]
                 values = ordered if len(ordered) > 1 else ordered[0]
                 state = optuna.trial.TrialState.COMPLETE
+            elif status in {TrialStatus.CANCELLED, TrialStatus.PRUNED}:
+                # TraiGent exposes both CANCELLED and PRUNED statuses. Optuna doesn't
+                # have a distinct "cancelled" trial state in ask/tell, so we map
+                # cancelled runs to PRUNED when backfilling history to keep the
+                # study consistent and avoid treating them as failures.
+                state = optuna.trial.TrialState.PRUNED
 
             create_kwargs: dict[str, Any] = {
                 "params": config,

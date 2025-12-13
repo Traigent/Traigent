@@ -59,8 +59,9 @@ except ImportError:
             pass
 
 
-from ..api.types import OptimizationResult, Trial
-from ..utils.logging import get_logger
+from traigent.api.types import OptimizationResult, TrialResult
+
+from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -155,12 +156,12 @@ class TraigentMLflowTracker:
         return cast(str, self.current_run.info.run_id)  # type: ignore[attr-defined]
 
     def log_trial(
-        self, trial: Trial, trial_number: int, step: int | None = None
+        self, trial: TrialResult, trial_number: int, step: int | None = None
     ) -> None:
         """Log individual trial to MLflow.
 
         Args:
-            trial: Trial to log
+            trial: TrialResult to log
             trial_number: Trial number in optimization
             step: Optional step number for metrics
         """
@@ -191,7 +192,7 @@ class TraigentMLflowTracker:
             "metrics": trial.metrics,
             "duration": trial.duration,
             "status": trial.status.value,
-            "timestamp": trial.start_time.isoformat() if trial.start_time else None,
+            "timestamp": trial.timestamp.isoformat() if trial.timestamp else None,
         }
 
         # Create temporary file for trial data
@@ -433,7 +434,7 @@ class MLflowOptimizationCallback:
             tags=kwargs.get("mlflow_tags", {}),
         )
 
-    def on_trial_complete(self, trial: Trial) -> None:
+    def on_trial_complete(self, trial: TrialResult) -> None:
         """Called when trial completes."""
         self.trial_count += 1
         self.tracker.log_trial(trial, self.trial_count)
