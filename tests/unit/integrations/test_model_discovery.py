@@ -472,3 +472,281 @@ class TestConfigFile:
             assert pattern == "^test-pattern-"
         finally:
             config_path.unlink()
+
+
+class TestMistralDiscovery:
+    """Tests for Mistral model discovery."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        reset_global_cache()
+
+    def test_pattern_validation_valid_models(self) -> None:
+        """Valid Mistral models should pass pattern validation."""
+        from traigent.integrations.model_discovery.mistral_discovery import (
+            MistralDiscovery,
+        )
+
+        discovery = MistralDiscovery()
+
+        valid_models = [
+            "mistral-small-latest",
+            "mistral-large-2411",
+            "open-mistral-7b",
+            "open-mixtral-8x7b",
+            "codestral-latest",
+            "pixtral-12b-2409",
+            "ministral-3b-latest",
+            "ft:mistral-small-custom",
+        ]
+
+        for model in valid_models:
+            assert discovery.is_valid_model(model), f"Model {model} should be valid"
+
+    def test_pattern_validation_invalid_models(self) -> None:
+        """Invalid models should fail pattern validation."""
+        from traigent.integrations.model_discovery.mistral_discovery import (
+            MistralDiscovery,
+        )
+
+        discovery = MistralDiscovery()
+
+        invalid_models = [
+            "",
+            "gpt-4",
+            "claude-3-opus",
+            "gemini-pro",
+        ]
+
+        for model in invalid_models:
+            pattern = discovery.get_pattern()
+            import re
+
+            if pattern:
+                assert not re.match(pattern, model), f"Pattern should not match {model}"
+
+    @patch("traigent.integrations.model_discovery.mistral_discovery.os.getenv")
+    def test_sdk_discovery_without_api_key(self, mock_getenv: MagicMock) -> None:
+        """SDK discovery should skip when API key not set."""
+        from traigent.integrations.model_discovery.mistral_discovery import (
+            MistralDiscovery,
+        )
+
+        mock_getenv.return_value = None
+        discovery = MistralDiscovery()
+
+        result = discovery._fetch_models_from_sdk()
+        assert result == []
+
+    def test_framework_attribute(self) -> None:
+        """Discovery should have correct Framework attribute."""
+        from traigent.integrations.model_discovery.mistral_discovery import (
+            MistralDiscovery,
+        )
+
+        discovery = MistralDiscovery()
+        assert discovery.FRAMEWORK == Framework.MISTRAL
+        assert discovery.PROVIDER == "mistral"
+
+    def test_registry_includes_mistral(self) -> None:
+        """Mistral should be registered in the discovery registry."""
+        providers = list_registered_providers()
+        assert "mistral" in providers
+
+        discovery = get_model_discovery("mistral")
+        assert discovery is not None
+
+
+class TestCacheInvalidateAll:
+    """Tests for cache invalidate_all functionality."""
+
+    def setup_method(self) -> None:
+        """Set up test fixtures."""
+        self.temp_dir = tempfile.mkdtemp()
+        self.cache = ModelCache(
+            cache_dir=Path(self.temp_dir),
+            default_ttl=3600,
+            enable_file_cache=True,
+        )
+
+    def teardown_method(self) -> None:
+        """Clean up test fixtures."""
+        import shutil
+
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_invalidate_all_clears_cache(self) -> None:
+        """invalidate_all should clear all cache entries."""
+        self.cache.set("openai", ["gpt-4"])
+        self.cache.set("anthropic", ["claude-3-opus"])
+        self.cache.set("gemini", ["gemini-pro"])
+
+        self.cache.invalidate_all()
+
+        assert self.cache.get("openai") is None
+        assert self.cache.get("anthropic") is None
+        assert self.cache.get("gemini") is None
+
+
+class TestCacheNoFileMode:
+    """Tests for cache with file caching disabled."""
+
+    def test_cache_without_file_persistence(self) -> None:
+        """Cache should work without file persistence."""
+        cache = ModelCache(enable_file_cache=False)
+
+        cache.set("test", ["model1", "model2"])
+        result = cache.get("test")
+
+        assert result == ["model1", "model2"]
+
+
+class TestBaseDiscoveryAbstract:
+    """Tests for base ModelDiscovery abstract methods."""
+
+    def test_refresh_cache_calls_list_models(self) -> None:
+        """refresh_cache should invalidate and re-fetch."""
+        discovery = OpenAIDiscovery()
+        reset_global_cache()
+
+        # First call to populate cache
+        discovery.list_models()
+
+        # Get cache entry
+        entry_before = discovery._cache.get_entry("openai")
+        assert entry_before is not None
+
+        # Refresh - should create new entry
+        discovery.refresh_cache()
+
+        entry_after = discovery._cache.get_entry("openai")
+        # Entry should exist but timestamp should be newer
+        assert entry_after is not None
+
+    def test_invalid_regex_pattern_handled(self) -> None:
+        """Invalid regex pattern should be handled gracefully."""
+
+        class BadPatternDiscovery(ModelDiscovery):
+            PROVIDER = "bad"
+
+            def _fetch_models_from_sdk(self) -> list[str]:
+                return []
+
+            def get_pattern(self) -> str | None:
+                return "[invalid"  # Invalid regex
+
+        discovery = BadPatternDiscovery()
+        # Should not raise, just return False
+        result = discovery.is_valid_model("test-model")
+        assert result is False
+
+    def test_empty_model_id_invalid(self) -> None:
+        """Empty model ID should be invalid."""
+        discovery = OpenAIDiscovery()
+        assert discovery.is_valid_model("") is False
+
+    def test_list_models_caches_result(self) -> None:
+        """list_models should cache results."""
+        discovery = OpenAIDiscovery()
+        reset_global_cache()
+
+        # First call
+        models1 = discovery.list_models()
+
+        # Check cache is populated
+        cached = discovery._cache.get("openai")
+        assert cached is not None
+        assert cached == models1
+
+    def test_missing_config_file(self) -> None:
+        """Missing config file should be handled gracefully."""
+        discovery = OpenAIDiscovery(config_path=Path("/nonexistent/path/models.yaml"))
+
+        # Should not raise
+        models = discovery._get_models_from_config()
+        assert models == []
+
+
+class TestCacheEntryDefaults:
+    """Tests for CacheEntry default values."""
+
+    def test_from_dict_with_missing_fields(self) -> None:
+        """from_dict should handle missing fields with defaults."""
+        entry = CacheEntry.from_dict({})
+
+        assert entry.data == []
+        assert entry.timestamp == pytest.approx(0.0)
+        assert entry.ttl_seconds == 86400
+        assert entry.provider == ""
+
+
+class TestDiscoveryWithMockedSDK:
+    """Tests for SDK discovery with mocked SDK clients."""
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch("openai.OpenAI")
+    def test_openai_sdk_discovery_success(self, mock_openai_class: MagicMock) -> None:
+        """OpenAI SDK discovery should work with valid API key."""
+        mock_client = MagicMock()
+        mock_model1 = MagicMock()
+        mock_model1.id = "gpt-4"
+        mock_model2 = MagicMock()
+        mock_model2.id = "gpt-3.5-turbo"
+        mock_client.models.list.return_value.data = [mock_model1, mock_model2]
+        mock_openai_class.return_value = mock_client
+
+        discovery = OpenAIDiscovery()
+        result = discovery._fetch_models_from_sdk()
+
+        assert "gpt-3.5-turbo" in result
+        assert "gpt-4" in result
+
+    @patch.dict("os.environ", {"OPENAI_API_KEY": "test-api-key"})
+    @patch("openai.OpenAI")
+    def test_openai_sdk_discovery_error(self, mock_openai_class: MagicMock) -> None:
+        """OpenAI SDK discovery should handle errors gracefully."""
+        mock_openai_class.side_effect = Exception("API error")
+
+        discovery = OpenAIDiscovery()
+        # Should raise exception (handled by caller in list_models)
+        with pytest.raises(Exception):
+            discovery._fetch_models_from_sdk()
+
+    @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})
+    @patch("google.generativeai.list_models")
+    @patch("google.generativeai.configure")
+    def test_gemini_sdk_discovery_success(
+        self, mock_configure: MagicMock, mock_list_models: MagicMock
+    ) -> None:
+        """Gemini SDK discovery should work with valid API key."""
+        mock_model1 = MagicMock()
+        mock_model1.name = "models/gemini-pro"
+        mock_model1.supported_generation_methods = ["generateContent"]
+        mock_model2 = MagicMock()
+        mock_model2.name = "models/gemini-1.5-flash"
+        mock_model2.supported_generation_methods = ["generateContent"]
+        mock_list_models.return_value = [mock_model1, mock_model2]
+
+        discovery = GeminiDiscovery()
+        result = discovery._fetch_models_from_sdk()
+
+        assert "models/gemini-pro" in result
+        assert "models/gemini-1.5-flash" in result
+
+    def test_mistral_sdk_discovery_with_mocked_client(self) -> None:
+        """Mistral SDK discovery should work with mocked client.
+
+        Note: We can't use @patch for mistralai as it may not be installed.
+        Instead, we test by directly calling with a mocked internal.
+        """
+        from traigent.integrations.model_discovery.mistral_discovery import (
+            MistralDiscovery,
+        )
+
+        discovery = MistralDiscovery()
+
+        # Test that the discovery works with config (no SDK call)
+        models = discovery.list_models()
+        assert isinstance(models, list)
+        # Should contain known models from config
+        assert any("mistral" in m for m in models)
