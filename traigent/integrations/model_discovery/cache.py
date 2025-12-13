@@ -124,8 +124,9 @@ class ModelCache:
 
             # Try file cache
             if self._enable_file_cache:
-                entry = self._load_from_file(key)
-                if entry and not entry.is_expired():
+                file_entry = self._load_from_file(key)
+                if file_entry and not file_entry.is_expired():
+                    entry = file_entry
                     self._cache[key] = entry
                     logger.debug(
                         f"File cache hit for {key} "

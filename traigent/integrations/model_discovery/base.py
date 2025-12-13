@@ -172,7 +172,10 @@ class ModelDiscovery(ABC):
         config = self._load_config()
         if config and self.PROVIDER in config:
             provider_config = config[self.PROVIDER]
-            return provider_config.get("known_models", [])
+            known_models = provider_config.get("known_models", [])
+            if isinstance(known_models, list):
+                return list(known_models)
+            return []
         return []
 
     def _get_pattern_from_config(self) -> str | None:
@@ -184,7 +187,10 @@ class ModelDiscovery(ABC):
         config = self._load_config()
         if config and self.PROVIDER in config:
             provider_config = config[self.PROVIDER]
-            return provider_config.get("pattern")
+            pattern = provider_config.get("pattern")
+            if isinstance(pattern, str):
+                return pattern
+            return None
         return None
 
     def _load_config(self) -> dict | None:
