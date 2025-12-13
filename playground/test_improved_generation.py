@@ -19,8 +19,8 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from problem_management.code_generator import CodeGenerator
-from problem_management.smart_problem_analyzer import SmartProblemAnalyzer
+from playground.problem_management.code_generator import CodeGenerator
+from playground.problem_management.smart_problem_analyzer import SmartProblemAnalyzer
 
 
 async def test_problem_generation(description: str, expected_type: str):

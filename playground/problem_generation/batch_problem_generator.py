@@ -10,10 +10,10 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
-from ..problem_management.code_generator import CodeGenerator
-from ..problem_management.intelligence import ProblemIntelligence
+from playground.problem_management.code_generator import CodeGenerator
+from playground.problem_management.intelligence import ProblemIntelligence
+
 from .enhanced_example_generator import (
     EnhancedExampleGenerator,
     GenerationBatch,
@@ -28,13 +28,13 @@ class ProblemGenerationResult:
 
     problem_name: str
     problem_spec: ProblemSpecification
-    generation_batches: List[GenerationBatch]
+    generation_batches: list[GenerationBatch]
     code_file_path: str
     total_examples: int
     generation_time: float
     diversity_score: float
     success: bool
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -47,8 +47,8 @@ class BatchGenerationReport:
     total_examples_generated: int
     total_generation_time: float
     average_diversity_score: float
-    problem_results: List[ProblemGenerationResult]
-    coverage_analysis: Dict[str, Dict[str, float]]
+    problem_results: list[ProblemGenerationResult]
+    coverage_analysis: dict[str, dict[str, float]]
 
 
 class BatchProblemGenerator:
@@ -65,7 +65,7 @@ class BatchProblemGenerator:
     def __init__(
         self,
         output_dir: str = "examples/langchain_problems",
-        generation_config: Optional[GenerationConfig] = None,
+        generation_config: GenerationConfig | None = None,
     ):
         """
         Initialize batch generator.
@@ -78,9 +78,7 @@ class BatchProblemGenerator:
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.diversity_manager = ProblemDiversityManager(str(self.output_dir))
-        self.example_generator = EnhancedExampleGenerator(
-            generation_config or GenerationConfig()
-        )
+        self.example_generator = EnhancedExampleGenerator(generation_config or GenerationConfig())
         self.code_generator = CodeGenerator()
         self.intelligence = ProblemIntelligence()
 
@@ -137,7 +135,7 @@ class BatchProblemGenerator:
             # Generate sequentially
             for i, spec in enumerate(problem_specs):
                 print(f"\n{'=' * 60}")
-                print(f"Problem {i+1}/{num_problems}: {spec.name}")
+                print(f"Problem {i + 1}/{num_problems}: {spec.name}")
                 print(f"{'=' * 60}")
 
                 result = await self._generate_single_problem(spec, examples_per_problem)
@@ -188,17 +186,13 @@ class BatchProblemGenerator:
             for batch in batches:
                 all_examples.extend(batch.examples)
 
-            diversity_metrics = (
-                self.example_generator.diversity_analyzer.analyze_diversity(
-                    [self.example_generator._example_to_dict(ex) for ex in all_examples]
-                )
+            diversity_metrics = self.example_generator.diversity_analyzer.analyze_diversity(
+                [self.example_generator._example_to_dict(ex) for ex in all_examples]
             )
 
             # Generate code module
             print("💻 Generating code module...")
-            code_path = await self._generate_problem_code(
-                spec, all_examples, diversity_metrics
-            )
+            code_path = await self._generate_problem_code(spec, all_examples, diversity_metrics)
 
             # Save example data
             self._save_example_data(spec.name, batches)
@@ -234,10 +228,10 @@ class BatchProblemGenerator:
 
     async def _generate_problems_parallel(
         self,
-        problem_specs: List[ProblemSpecification],
+        problem_specs: list[ProblemSpecification],
         examples_per_problem: int,
         max_concurrent: int,
-    ) -> List[ProblemGenerationResult]:
+    ) -> list[ProblemGenerationResult]:
         """Generate multiple problems in parallel."""
         results = []
 
@@ -246,17 +240,13 @@ class BatchProblemGenerator:
 
         async def generate_with_semaphore(spec: ProblemSpecification, index: int):
             async with semaphore:
-                print(
-                    f"\n🔄 Starting problem {index + 1}/{len(problem_specs)}: {spec.name}"
-                )
+                print(f"\n🔄 Starting problem {index + 1}/{len(problem_specs)}: {spec.name}")
                 result = await self._generate_single_problem(spec, examples_per_problem)
                 print(f"✅ Completed problem {index + 1}: {spec.name}")
                 return result
 
         # Create all tasks
-        tasks = [
-            generate_with_semaphore(spec, i) for i, spec in enumerate(problem_specs)
-        ]
+        tasks = [generate_with_semaphore(spec, i) for i, spec in enumerate(problem_specs)]
 
         # Run tasks and collect results
         results = await asyncio.gather(*tasks)
@@ -264,7 +254,7 @@ class BatchProblemGenerator:
         return results
 
     async def _generate_problem_code(
-        self, spec: ProblemSpecification, examples: List, diversity_metrics
+        self, spec: ProblemSpecification, examples: list, diversity_metrics
     ) -> Path:
         """Generate Python code for the problem."""
         # Convert examples to code format
@@ -301,7 +291,7 @@ class BatchProblemGenerator:
 
         return code_path
 
-    def _save_example_data(self, problem_name: str, batches: List[GenerationBatch]):
+    def _save_example_data(self, problem_name: str, batches: list[GenerationBatch]):
         """Save detailed example data for analysis."""
         data_dir = self.output_dir / "example_data"
         data_dir.mkdir(exist_ok=True)
@@ -337,13 +327,13 @@ class BatchProblemGenerator:
         with open(data_file, "w") as f:
             json.dump(batch_data, f, indent=2)
 
-    def _generate_default_specs(self, count: int) -> List[ProblemSpecification]:
+    def _generate_default_specs(self, count: int) -> list[ProblemSpecification]:
         """Generate default problem specifications."""
         # This would be implemented with default templates
         # For now, return empty list
         return []
 
-    def _save_problem_plan(self, specs: List[ProblemSpecification]):
+    def _save_problem_plan(self, specs: list[ProblemSpecification]):
         """Save the problem generation plan."""
         plan_file = self.reports_dir / f"problem_plan_{int(time.time())}.json"
 
@@ -371,7 +361,7 @@ class BatchProblemGenerator:
 
     def _create_final_report(
         self,
-        results: List[ProblemGenerationResult],
+        results: list[ProblemGenerationResult],
         total_time: float,
         num_problems: int,
     ) -> BatchGenerationReport:
@@ -381,9 +371,7 @@ class BatchProblemGenerator:
 
         total_examples = sum(r.total_examples for r in successful)
         avg_diversity = (
-            sum(r.diversity_score for r in successful) / len(successful)
-            if successful
-            else 0.0
+            sum(r.diversity_score for r in successful) / len(successful) if successful else 0.0
         )
 
         # Analyze coverage
@@ -439,9 +427,7 @@ class BatchProblemGenerator:
 
         print(f"\n📊 Full report saved to: {report_file}")
 
-    def _print_progress(
-        self, current: int, total: int, results: List[ProblemGenerationResult]
-    ):
+    def _print_progress(self, current: int, total: int, results: list[ProblemGenerationResult]):
         """Print progress update."""
         successful = len([r for r in results if r.success])
         failed = len([r for r in results if not r.success])
