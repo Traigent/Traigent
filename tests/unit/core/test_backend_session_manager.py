@@ -381,6 +381,77 @@ class TestBackendSessionManagerFinalization:
         assert summary is None
 
 
+class TestBackendSessionManagerWarningSupression:
+    """Test warning suppression logic."""
+
+    def test_suppress_warnings_in_mock_mode(
+        self, mock_backend_client, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test warnings are suppressed when TRAIGENT_MOCK_MODE is set."""
+        import os
+        from unittest.mock import patch
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+            assert manager._should_suppress_backend_warnings() is True
+
+    def test_suppress_warnings_without_api_key(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test warnings are suppressed when no API key is configured."""
+        # Create client with auth manager that has no API key
+        client = Mock()
+        auth_manager = Mock()
+        auth_manager.has_api_key = Mock(return_value=False)
+        client.auth = auth_manager
+
+        manager = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        assert manager._should_suppress_backend_warnings() is True
+
+    def test_no_suppress_warnings_with_api_key(
+        self, mock_backend_client, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test warnings are NOT suppressed when API key is configured."""
+        import os
+        from unittest.mock import patch
+
+        # Mock auth with has_api_key returning True
+        mock_backend_client.auth = Mock()
+        mock_backend_client.auth.has_api_key = Mock(return_value=True)
+
+        manager = BackendSessionManager(
+            backend_client=mock_backend_client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        # Ensure mock mode is off
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+            assert manager._should_suppress_backend_warnings() is False
+
+
 class TestBackendSessionManagerMetadata:
     """Test metadata attachment."""
 
