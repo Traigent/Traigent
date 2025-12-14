@@ -451,6 +451,175 @@ class TestBackendSessionManagerWarningSuppression:
         with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
             assert manager._should_suppress_backend_warnings() is False
 
+    def test_suppress_warnings_no_backend_client(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test warnings suppression when backend_client is None."""
+        import os
+        from unittest.mock import patch
+
+        manager = BackendSessionManager(
+            backend_client=None,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        # With no backend client and mock mode off, should return False
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+            assert manager._should_suppress_backend_warnings() is False
+
+    def test_suppress_warnings_client_without_auth_attr(
+        self, traigent_config, objective_schema, mock_optimizer
+    ):
+        """Test warnings suppression when client has no auth attribute."""
+        import os
+        from unittest.mock import patch
+
+        # Client without auth attribute
+        client = Mock(spec=[])  # Empty spec = no attributes
+
+        manager = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        # No auth attribute means no API key, should suppress
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+            assert manager._should_suppress_backend_warnings() is True
+
+    @pytest.mark.asyncio
+    async def test_weighted_score_update_failure_with_suppressed_warning(
+        self, traigent_config, mock_optimizer
+    ):
+        """Test weighted score update logs debug (not warning) when suppressed."""
+        import os
+        from unittest.mock import patch
+
+        from traigent.core.objectives import create_default_objectives
+
+        # Client with no API key (warnings suppressed)
+        client = Mock()
+        client.auth = Mock()
+        client.auth.has_api_key = Mock(return_value=False)
+        client.update_trial_weighted_scores = AsyncMock(return_value=False)
+        client.weighted_update_concurrency = 8
+
+        objective_schema = create_default_objectives(
+            objective_names=["accuracy", "cost"],
+            orientations={"accuracy": "maximize", "cost": "minimize"},
+            weights={"accuracy": 0.7, "cost": 0.3},
+        )
+
+        manager = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        # Create mock trial and result
+        mock_trial = Mock(spec=TrialResult)
+        mock_trial.trial_id = "trial-fail-test"
+        mock_trial.config = {"param": 1}
+        mock_trial.metrics = {"accuracy": 0.9, "cost": 0.5}
+        mock_trial.is_successful = True
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = [mock_trial]
+        result.successful_trials = [mock_trial]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(mock_trial, 0.85)],
+                "normalization_ranges": {},
+                "best_weighted_config": {"param": 1},
+                "best_weighted_score": 0.85,
+            }
+        )
+        result.metadata = {}
+
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+            update_count = await manager.update_weighted_scores(
+                result=result, session_id="test-session"
+            )
+
+        # Update failed but warning was suppressed (logged as debug)
+        assert update_count == 0
+        client.update_trial_weighted_scores.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_weighted_score_update_exception_with_suppressed_warning(
+        self, traigent_config, mock_optimizer
+    ):
+        """Test weighted score exception logs debug when warnings suppressed."""
+        import os
+        from unittest.mock import patch
+
+        from traigent.core.objectives import create_default_objectives
+
+        # Client with no API key (warnings suppressed) that raises exception
+        client = Mock()
+        client.auth = Mock()
+        client.auth.has_api_key = Mock(return_value=False)
+        client.update_trial_weighted_scores = AsyncMock(
+            side_effect=Exception("Connection failed")
+        )
+        client.weighted_update_concurrency = 8
+
+        objective_schema = create_default_objectives(
+            objective_names=["accuracy", "cost"],
+            orientations={"accuracy": "maximize", "cost": "minimize"},
+            weights={"accuracy": 0.7, "cost": 0.3},
+        )
+
+        manager = BackendSessionManager(
+            backend_client=client,
+            traigent_config=traigent_config,
+            objectives=["accuracy", "cost"],
+            objective_schema=objective_schema,
+            optimizer=mock_optimizer,
+            optimization_id="test-opt-id",
+            optimization_status=OptimizationStatus.RUNNING,
+        )
+
+        mock_trial = Mock(spec=TrialResult)
+        mock_trial.trial_id = "trial-exc-test"
+        mock_trial.config = {"param": 1}
+        mock_trial.metrics = {"accuracy": 0.9, "cost": 0.5}
+        mock_trial.is_successful = True
+
+        result = Mock(spec=OptimizationResult)
+        result.trials = [mock_trial]
+        result.successful_trials = [mock_trial]
+        result.calculate_weighted_scores = Mock(
+            return_value={
+                "weighted_scores": [(mock_trial, 0.85)],
+                "normalization_ranges": {},
+                "best_weighted_config": {"param": 1},
+                "best_weighted_score": 0.85,
+            }
+        )
+        result.metadata = {}
+
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+            update_count = await manager.update_weighted_scores(
+                result=result, session_id="test-session"
+            )
+
+        # Exception occurred but warning was suppressed
+        assert update_count == 0
+
 
 class TestBackendSessionManagerMetadata:
     """Test metadata attachment."""
