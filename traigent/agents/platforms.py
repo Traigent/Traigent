@@ -341,6 +341,26 @@ class OpenAIAgentExecutor(AgentExecutor):
         self._openai_client: Any | None = None
         self.auth_manager: Any | None = None
 
+    async def _platform_cleanup(self) -> None:
+        """Cleanup OpenAI client and auth resources."""
+        # Close OpenAI client if it has a close method
+        if self._openai_client is not None:
+            if hasattr(self._openai_client, "close"):
+                try:
+                    await self._openai_client.close()
+                    logger.debug("OpenAI client closed successfully")
+                except Exception as e:
+                    logger.warning(f"Error closing OpenAI client: {e}")
+
+            self._openai_client = None
+
+        # Clear auth manager reference
+        self.auth_manager = None
+
+        # Reset availability flags
+        self._openai_available = False
+        self._openai_use_v1 = False
+
     async def _platform_initialize(self) -> None:
         """Initialize OpenAI components with unified auth integration."""
         try:
