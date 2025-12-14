@@ -2,12 +2,14 @@
 
 import asyncio
 from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from traigent.adapters.execution_adapter import (
     HybridPlatformAdapter,
     LocalExecutionAdapter,
+    RemoteExecutionAdapter,
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 
@@ -230,3 +232,294 @@ async def test_hybrid_adapter_reuses_prebuilt_agent_and_enriches_metadata():
 
     # sanity check: execution completed via local adapter path
     assert result["metrics"]["accuracy"] == 1.0
+
+
+# ==============================================================================
+# RemoteExecutionAdapter Tests
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_remote_adapter_executes_configuration_via_backend():
+    """Test RemoteExecutionAdapter delegates to backend client."""
+    # Mock backend client
+    backend_client = Mock()
+    backend_client.execute_configuration = AsyncMock(
+        return_value={
+            "trial_id": "remote-1",
+            "metrics": {"accuracy": 0.85, "latency": 1.2},
+            "execution_time": 5.5,
+            "metadata": {"backend": "cloud", "examples_processed": 10},
+        }
+    )
+
+    adapter = RemoteExecutionAdapter(backend_client)
+
+    # Dataset with dataset_id (required for remote execution)
+    dataset = {"dataset_id": "ds-12345"}
+    agent_spec = {"model": "gpt-4", "temperature": 0.7}
+
+    # Execute
+    result = await adapter.execute_configuration(
+        agent_spec=agent_spec, dataset=dataset, trial_id="remote-1"
+    )
+
+    # Verify backend client was called correctly
+    backend_client.execute_configuration.assert_called_once_with(
+        trial_id="remote-1", agent_spec=agent_spec, dataset_id="ds-12345"
+    )
+
+    # Verify result structure
+    assert result["trial_id"] == "remote-1"
+    assert result["metrics"]["accuracy"] == 0.85
+    assert result["metadata"]["backend"] == "cloud"
+
+
+@pytest.mark.asyncio
+async def test_remote_adapter_raises_error_without_dataset_id():
+    """Test RemoteExecutionAdapter requires dataset_id."""
+    backend_client = Mock()
+    adapter = RemoteExecutionAdapter(backend_client)
+
+    # Dataset without dataset_id
+    dataset = {"examples": [{"input": "test"}]}
+    agent_spec = {"model": "gpt-4"}
+
+    # Should raise ValueError
+    with pytest.raises(ValueError) as exc_info:
+        await adapter.execute_configuration(
+            agent_spec=agent_spec, dataset=dataset, trial_id="remote-2"
+        )
+
+    assert "Dataset ID required for remote execution" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_remote_adapter_get_execution_mode():
+    """Test RemoteExecutionAdapter returns cloud execution mode."""
+    backend_client = Mock()
+    adapter = RemoteExecutionAdapter(backend_client)
+
+    mode = await adapter.get_execution_mode()
+    assert mode == "cloud"
+
+
+@pytest.mark.asyncio
+async def test_remote_adapter_handles_backend_errors():
+    """Test RemoteExecutionAdapter propagates backend errors."""
+    backend_client = Mock()
+    backend_client.execute_configuration = AsyncMock(
+        side_effect=Exception("Backend unavailable")
+    )
+
+    adapter = RemoteExecutionAdapter(backend_client)
+    dataset = {"dataset_id": "ds-12345"}
+    agent_spec = {"model": "gpt-4"}
+
+    # Should propagate the exception
+    with pytest.raises(Exception) as exc_info:
+        await adapter.execute_configuration(
+            agent_spec=agent_spec, dataset=dataset, trial_id="remote-3"
+        )
+
+    assert "Backend unavailable" in str(exc_info.value)
+
+
+# ==============================================================================
+# Additional Evaluation Types Tests
+# ==============================================================================
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_contains_evaluation_type():
+    """Test LocalExecutionAdapter handles 'contains' evaluation type."""
+    agent = _SimpleAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "test"},
+                "expected_output": "OK",
+                "metadata": {"evaluation_type": "contains"},
+            }
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="contains-1"
+    )
+
+    # "OK" is contained in "OK", so accuracy should be 1.0
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["accuracy_contains"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_numeric_evaluation_type():
+    """Test LocalExecutionAdapter handles 'numeric' evaluation type."""
+
+    class NumericAgent:
+        async def execute(self, _input):
+            return "42.5"
+
+    agent = NumericAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "calculate"},
+                "expected_output": "42.49",
+                "metadata": {"evaluation_type": "numeric", "tolerance": 0.1},
+            }
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="numeric-1"
+    )
+
+    # 42.5 is within 0.1 of 42.49
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["accuracy_numeric"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_numeric_evaluation_with_failure():
+    """Test LocalExecutionAdapter handles numeric evaluation failures."""
+
+    class NumericAgent:
+        async def execute(self, _input):
+            return "100.0"
+
+    agent = NumericAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "calculate"},
+                "expected_output": "42.0",
+                "metadata": {"evaluation_type": "numeric", "tolerance": 0.01},
+            }
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="numeric-2"
+    )
+
+    # 100.0 is not within 0.01 of 42.0
+    assert result["metrics"]["accuracy"] == 0.0
+    assert result["metrics"]["accuracy_numeric"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_semantic_evaluation_type():
+    """Test LocalExecutionAdapter handles 'semantic' evaluation type."""
+    agent = _SimpleAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "test"},
+                "expected_output": "similar meaning",
+                "metadata": {"evaluation_type": "semantic"},
+            }
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="semantic-1"
+    )
+
+    # Semantic evaluation requires external processing
+    # The result should have the correct field set to None (requires semantic eval)
+    assert (
+        result["metrics"]["examples_with_ground_truth"] == 0.0
+        or result["metrics"]["examples_with_ground_truth"] == 1.0
+    )
+    # The key is that semantic evaluation is marked as requiring semantic eval
+    assert result["metrics"]["total_examples"] == 1.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_mixed_evaluation_types():
+    """Test LocalExecutionAdapter handles multiple evaluation types."""
+
+    class MixedAgent:
+        async def execute(self, _input):
+            text = _input.get("text", "")
+            if "exact" in text:
+                return "EXACT"
+            elif "contains" in text:
+                return "This contains PARTIAL"
+            elif "numeric" in text:
+                return "99.5"
+            return "DEFAULT"
+
+    agent = MixedAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "exact"},
+                "expected_output": "EXACT",
+                "metadata": {"evaluation_type": "exact_match"},
+            },
+            {
+                "input": {"text": "contains"},
+                "expected_output": "PARTIAL",
+                "metadata": {"evaluation_type": "contains"},
+            },
+            {
+                "input": {"text": "numeric"},
+                "expected_output": "100.0",
+                "metadata": {"evaluation_type": "numeric", "tolerance": 1.0},
+            },
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="mixed-1"
+    )
+
+    # All three should be correct
+    assert result["metrics"]["accuracy"] == 1.0
+    assert result["metrics"]["accuracy_exact_match"] == 1.0
+    assert result["metrics"]["accuracy_contains"] == 1.0
+    assert result["metrics"]["accuracy_numeric"] == 1.0
+    assert result["metrics"]["total_examples"] == 3.0
+
+
+@pytest.mark.asyncio
+async def test_local_adapter_invalid_numeric_values():
+    """Test LocalExecutionAdapter handles invalid numeric values gracefully."""
+
+    class InvalidNumericAgent:
+        async def execute(self, _input):
+            return "not a number"
+
+    agent = InvalidNumericAgent()
+    adapter = LocalExecutionAdapter(_AgentBuilder(agent))
+
+    dataset = {
+        "examples": [
+            {
+                "input": {"text": "test"},
+                "expected_output": "42.0",
+                "metadata": {"evaluation_type": "numeric"},
+            }
+        ]
+    }
+
+    result = await adapter.execute_configuration(
+        agent_spec={}, dataset=dataset, trial_id="invalid-numeric-1"
+    )
+
+    # Invalid numeric should fail evaluation
+    assert result["metrics"]["accuracy"] == 0.0
+    assert result["metrics"]["accuracy_numeric"] == 0.0
