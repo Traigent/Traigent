@@ -152,7 +152,6 @@ class TestProgressBarCallback:
         result = callback.on_trial_start(1, {"model": "gpt-4"})
         assert result is None
 
-    @pytest.mark.skip(reason="Source code has f-string formatting bug")
     def test_on_trial_complete_updates_progress(
         self,
         callback: ProgressBarCallback,
@@ -160,10 +159,22 @@ class TestProgressBarCallback:
         progress_info: ProgressInfo,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test trial complete callback updates progress bar."""
-        # Skipped: Source code has invalid f-string format at line 131
-        # f"🏆 {progress.best_score:.3f if progress.best_score else 'N/A'}"
-        pass
+        """Test trial complete callback updates progress bar.
+
+        This test was previously skipped due to an f-string formatting bug
+        which has now been fixed.
+        """
+        callback.on_trial_complete(trial_result, progress_info)
+
+        # Capture output
+        captured = capsys.readouterr()
+
+        # Verify progress bar elements are present
+        assert "%" in captured.out  # Progress percentage
+        assert "✅" in captured.out  # Successful trials
+        assert "❌" in captured.out  # Failed trials
+        assert "⏱️" in captured.out  # Elapsed time
+        assert "🏆" in captured.out  # Best score
 
     def test_on_trial_complete_throttles_updates(
         self,
@@ -212,7 +223,7 @@ class TestProgressBarCallback:
         trial_result: TrialResult,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Test trial complete callback handles None best score."""
+        """Test trial complete callback handles None best score gracefully."""
         progress = ProgressInfo(
             current_trial=1,
             total_trials=10,
@@ -230,9 +241,12 @@ class TestProgressBarCallback:
 
         callback.last_update = time.time() - 1.0  # Allow update
 
-        # This will raise TypeError due to source code bug with f-string formatting
-        with pytest.raises(TypeError):
-            callback.on_trial_complete(trial_result, progress)
+        # Should handle None best_score gracefully (bug was fixed)
+        callback.on_trial_complete(trial_result, progress)
+
+        captured = capsys.readouterr()
+        # Verify N/A is displayed for None best_score
+        assert "N/A" in captured.out
 
     def test_on_optimization_complete(
         self, callback: ProgressBarCallback, capsys: pytest.CaptureFixture[str]

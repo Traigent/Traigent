@@ -332,34 +332,79 @@ class TodoImporter:
 
 def main() -> None:
     """CLI entry point."""
+    import argparse
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: todo_importer.py <source> [target]")
-        print("Example: todo_importer.py .release_review/v0.8.0/POST_RELEASE_TODO.md")
-        sys.exit(1)
-
-    source = sys.argv[1]
-    target = (
-        sys.argv[2]
-        if len(sys.argv) > 2
-        else ".post_release_recommendation_fixes/TRACKING.md"
+    parser = argparse.ArgumentParser(
+        description="Import TODOs from POST_RELEASE_TODO.md into tracking system"
+    )
+    parser.add_argument(
+        "source",
+        help="Path to source POST_RELEASE_TODO.md",
+    )
+    parser.add_argument(
+        "target",
+        nargs="?",
+        default=".post_release_recommendation_fixes/TRACKING.md",
+        help="Path to target TRACKING.md (default: .post_release_recommendation_fixes/TRACKING.md)",
+    )
+    parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Skip confirmation prompt (for automation)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Parse and show items without importing",
+    )
+    parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress verbose output",
     )
 
-    importer = TodoImporter(source)
+    args = parser.parse_args()
 
-    print(f"Parsing: {source}")
-    items = importer.parse_source()
-    print(f"Found {len(items)} TODO items")
+    importer = TodoImporter(args.source)
 
-    for item in items:
-        print(f"  [{item.priority}] {item.id}: {item.title}")
+    if not args.quiet:
+        print(f"Parsing: {args.source}")
 
-    print()
-    confirm = input(f"Import to {target}? [y/N]: ").strip().lower()
-    if confirm == "y":
-        path = importer.import_to_tracking(target)
-        print(f"Created: {path}")
+    try:
+        items = importer.parse_source()
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.quiet:
+        print(f"Found {len(items)} TODO items")
+        for item in items:
+            print(f"  [{item.priority}] {item.id}: {item.title}")
+        print()
+
+    if args.dry_run:
+        print("Dry run - no changes made.")
+        sys.exit(0)
+
+    # Check for confirmation
+    if args.yes:
+        do_import = True
+    else:
+        try:
+            confirm = input(f"Import to {args.target}? [y/N]: ").strip().lower()
+            do_import = confirm == "y"
+        except EOFError:
+            # Non-interactive mode without --yes flag
+            print("Error: Non-interactive mode detected. Use --yes flag.", file=sys.stderr)
+            sys.exit(1)
+
+    if do_import:
+        path = importer.import_to_tracking(args.target)
+        if not args.quiet:
+            print(f"Created: {path}")
+    else:
+        print("Import cancelled.")
 
 
 if __name__ == "__main__":

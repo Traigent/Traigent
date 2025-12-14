@@ -21,7 +21,7 @@ def get_version() -> str:
     project_root = Path(__file__).resolve().parent.parent
     if (project_root / "pyproject.toml").exists():
         # In workspace/development mode we rely on the development version string
-        return "0.8.0"
+        return "0.9.0"
 
     if os.getenv("TRAIGENT_USE_PACKAGE_METADATA", "0") == "1":
         try:
@@ -31,7 +31,7 @@ def get_version() -> str:
             pass
 
     # Fallback to hardcoded version for development/testing
-    return "0.8.0"
+    return "0.9.0"
 
 
 def get_version_info() -> dict[str, str]:

@@ -135,11 +135,12 @@ class TestConcurrentSessionCreation:
                     ), f"Expected 1 unique session, but {len(sessions_created)} were created"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="Known race condition in _ensure_session - needs synchronization fix"
-    )
     async def test_race_condition_in_session_initialization(self):
-        """Test that session initialization is thread-safe under race conditions."""
+        """Test that session initialization is thread-safe under race conditions.
+
+        This test was previously marked as xfail but the race condition has been
+        fixed with proper async locking in _ensure_session.
+        """
         api_key = "tg_" + "a" * 61
 
         # Track the order of operations

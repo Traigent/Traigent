@@ -400,8 +400,15 @@ class LocalStorageManager:
             # Convert session to dict for JSON serialization
             session_data = asdict(session)
 
-            with open(path_obj, "w") as f:
-                json.dump(session_data, f, indent=2, default=str)
+            # Atomic write: write to temp file, then rename
+            temp_path = path_obj.with_suffix(f"{path_obj.suffix}.tmp.{os.getpid()}")
+            try:
+                with open(temp_path, "w") as f:
+                    json.dump(session_data, f, indent=2, default=str)
+                temp_path.replace(path_obj)  # Atomic rename on POSIX
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
 
             logger.info(f"Exported session {session_id} to {path_obj}")
             return True
@@ -452,7 +459,11 @@ class LocalStorageManager:
         }
 
     def _save_session(self, session: OptimizationSession) -> None:
-        """Save session to JSON file."""
+        """Save session to JSON file atomically.
+
+        Uses temp file + rename pattern to prevent data corruption
+        if the process crashes during write.
+        """
         session_file = self.storage_path / "sessions" / f"{session.session_id}.json"
 
         try:
@@ -460,8 +471,15 @@ class LocalStorageManager:
             session_data = asdict(session)
             session_data = self._make_json_serializable(session_data)
 
-            with open(session_file, "w") as f:
-                json.dump(session_data, f, indent=2)
+            # Atomic write: write to temp file, then rename
+            temp_path = session_file.with_suffix(f".json.tmp.{os.getpid()}")
+            try:
+                with open(temp_path, "w") as f:
+                    json.dump(session_data, f, indent=2)
+                temp_path.replace(session_file)  # Atomic rename on POSIX
+            finally:
+                if temp_path.exists():
+                    temp_path.unlink()
 
         except Exception as e:
             raise TraigentStorageError(
