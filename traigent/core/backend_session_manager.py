@@ -64,6 +64,32 @@ class BackendSessionManager:
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
 
+    def _should_suppress_backend_warnings(self) -> bool:
+        """Check if backend-related warnings should be suppressed.
+
+        Returns True if:
+        - Mock mode is enabled, OR
+        - No API key is configured (user hasn't set up backend access)
+
+        This prevents noisy warnings for users evaluating the SDK without
+        backend access or running in local-only mode.
+        """
+        if is_mock_mode():
+            return True
+
+        # Check if backend client has API key configured
+        if self._backend_client:
+            auth_manager = getattr(self._backend_client, "auth", None)
+            has_api_key = bool(
+                auth_manager
+                and hasattr(auth_manager, "has_api_key")
+                and auth_manager.has_api_key()
+            )
+            if not has_api_key:
+                return True
+
+        return False
+
     def create_session(
         self,
         func: Callable[..., Any],
@@ -490,11 +516,18 @@ class BackendSessionManager:
                             objective_weights=objective_weights,
                         )
                     except Exception as exc:  # pragma: no cover - defensive
-                        logger.warning(
-                            "Exception while updating weighted score for trial %s: %s",
-                            trial_identifier,
-                            exc,
-                        )
+                        if self._should_suppress_backend_warnings():
+                            logger.debug(
+                                "Exception while updating weighted score for trial %s: %s (backend unavailable)",
+                                trial_identifier,
+                                exc,
+                            )
+                        else:
+                            logger.warning(
+                                "Exception while updating weighted score for trial %s: %s",
+                                trial_identifier,
+                                exc,
+                            )
                         return False
 
                     if success:
@@ -505,15 +538,16 @@ class BackendSessionManager:
                         )
                         return True
 
-                    # Only warn in non-mock mode to reduce noise
-                    if not is_mock_mode():
-                        logger.warning(
-                            "Failed to update weighted score for trial %s",
+                    # Suppress warnings in mock mode or when no API key configured
+                    # This prevents noisy output for users evaluating SDK without backend
+                    if self._should_suppress_backend_warnings():
+                        logger.debug(
+                            "Failed to update weighted score for trial %s (backend unavailable or mock mode)",
                             trial_identifier,
                         )
                     else:
-                        logger.debug(
-                            "Failed to update weighted score for trial %s (mock mode)",
+                        logger.warning(
+                            "Failed to update weighted score for trial %s",
                             trial_identifier,
                         )
                     return False
