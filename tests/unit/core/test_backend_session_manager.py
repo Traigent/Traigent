@@ -381,7 +381,7 @@ class TestBackendSessionManagerFinalization:
         assert summary is None
 
 
-class TestBackendSessionManagerWarningSupression:
+class TestBackendSessionManagerWarningSuppression:
     """Test warning suppression logic."""
 
     def test_suppress_warnings_in_mock_mode(
