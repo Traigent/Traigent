@@ -1,0 +1,189 @@
+# TVL 0.9 Example: Promotion Policy with Epsilon-Pareto Dominance
+#
+# This example demonstrates the full promotion policy configuration including:
+# - Epsilon-Pareto dominance testing
+# - Benjamini-Hochberg multiple testing adjustment
+# - Chance constraints for safety guarantees
+# - Derived constraints over environment symbols
+#
+# Use case: Production LLM system with strict SLOs and safety requirements.
+
+spec:
+  id: llm-production-policy
+  version: "1.0"
+
+metadata:
+  owner: ml-platform-team
+  description: Production LLM with comprehensive promotion policy
+  tags:
+    - production
+    - safety-critical
+    - multi-objective
+
+# Environment configuration
+environment:
+  snapshot_id: "2025-01-15T00:00:00Z"
+  components:
+    model_catalog:
+      provider: openai
+      models: ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+    price_catalog:
+      gpt-4o: 0.005
+      gpt-4o-mini: 0.00015
+      gpt-3.5-turbo: 0.0005
+    quotas:
+      daily_budget_usd: 100.0
+      max_requests_per_minute: 100
+
+# TVL 0.9 tvars with registry domain example
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.5]
+      resolution: 0.05
+    default: 0.7
+    unit: unitless
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [128, 4096]
+    default: 1024
+
+  - name: top_p
+    type: float
+    domain:
+      range: [0.1, 1.0]
+    default: 0.95
+
+  - name: presence_penalty
+    type: float
+    domain:
+      range: [-2.0, 2.0]
+    default: 0.0
+
+  - name: frequency_penalty
+    type: float
+    domain:
+      range: [-2.0, 2.0]
+    default: 0.0
+
+# Multi-objective optimization
+objectives:
+  - name: task_accuracy
+    direction: maximize
+    weight: 1.0
+
+  - name: response_latency
+    direction: minimize
+    unit: ms
+    weight: 0.7
+
+  - name: cost_per_request
+    direction: minimize
+    unit: USD
+    weight: 0.5
+
+  - name: safety_score
+    direction: maximize
+    weight: 1.2
+
+# Constraints with both structural and derived
+constraints:
+  structural:
+    # Model-specific constraints
+    - when: "params.model == 'gpt-4o'"
+      then: "params.temperature <= 1.0"
+    - when: "params.model == 'gpt-3.5-turbo'"
+      then: "params.max_tokens <= 2048"
+
+    # General constraints
+    - expr: "params.top_p >= 0.5"
+    - expr: "params.presence_penalty + params.frequency_penalty <= 2.0"
+
+  # Derived constraints (evaluated with environment symbols)
+  derived:
+    - require: "env.daily_budget_usd >= cost_per_request * 1000"
+      description: "Budget sufficient for minimum daily volume"
+    - require: "env.max_requests_per_minute >= 10"
+      description: "Rate limit sufficient for production"
+
+# Full promotion policy configuration
+promotion_policy:
+  # Epsilon-Pareto dominance relation
+  dominance: epsilon_pareto
+
+  # Family-wise error rate
+  alpha: 0.05
+
+  # Per-objective epsilon tolerances (minimum meaningful effect)
+  min_effect:
+    task_accuracy: 0.01      # 1% accuracy improvement
+    response_latency: 50.0   # 50ms latency reduction
+    cost_per_request: 0.0001 # $0.0001 cost reduction
+    safety_score: 0.005      # 0.5% safety improvement
+
+  # Benjamini-Hochberg adjustment for multiple testing
+  adjust: BH
+
+  # Chance constraints for safety-critical metrics
+  # Format: P(metric >= threshold) >= confidence
+  chance_constraints:
+    - name: safety_score
+      threshold: 0.95
+      confidence: 0.99
+
+    - name: task_accuracy
+      threshold: 0.80
+      confidence: 0.95
+
+  # Tie-breakers when candidates are equivalent
+  tie_breakers:
+    cost_per_request: min_abs_deviation
+
+# Exploration configuration
+exploration:
+  strategy:
+    type: nsga2
+    initial_sampling: sobol
+  parallelism:
+    max_parallel_trials: 8
+  convergence:
+    metric: hypervolume_improvement
+    window: 20
+    threshold: 0.001
+  budgets:
+    max_trials: 200
+    max_spend_usd: 50.0
+    max_wallclock_s: 7200
+
+# Environment overlays for different deployment stages
+environments:
+  staging:
+    overrides:
+      exploration:
+        budgets:
+          max_trials: 50
+          max_spend_usd: 10.0
+      promotion_policy:
+        alpha: 0.10
+        chance_constraints:
+          - name: safety_score
+            threshold: 0.90
+            confidence: 0.95
+
+  production:
+    extends: staging
+    overrides:
+      promotion_policy:
+        alpha: 0.01
+        chance_constraints:
+          - name: safety_score
+            threshold: 0.98
+            confidence: 0.999

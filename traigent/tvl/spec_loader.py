@@ -19,7 +19,19 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
+from .models import (
+    DerivedConstraint,
+    PromotionPolicy,
+    StructuralConstraint,
+    TVarDecl,
+    normalize_tvar_type,
+    parse_domain_spec,
+)
+
 logger = get_logger(__name__)
+
+# Constant for metrics reference detection in constraint expressions
+_METRICS_PREFIX = "metrics."
 
 
 @dataclass(slots=True)
@@ -74,6 +86,9 @@ class TVLSpecArtifact:
     metadata: dict[str, Any]
     budget: TVLBudget
     algorithm: str | None
+    promotion_policy: PromotionPolicy | None = None
+    tvars: list[TVarDecl] | None = None
+    derived_constraints: list[DerivedConstraint] | None = None
 
     def runtime_overrides(self) -> dict[str, Any]:
         """Return decorator/runtime overrides derived from the spec."""
@@ -104,7 +119,11 @@ def load_tvl_spec(
     environment: str | None = None,
     validate_constraints: bool = True,
 ) -> TVLSpecArtifact:
-    """Load and normalize a TVL specification from disk."""
+    """Load and normalize a TVL specification from disk.
+
+    Supports both legacy format (configuration_space) and TVL 0.9 format (tvars).
+    Auto-detects format based on presence of 'tvars' vs 'configuration_space'.
+    """
 
     path = Path(spec_path).expanduser()
     if not path.is_file():
@@ -119,16 +138,32 @@ def load_tvl_spec(
         raise TVLValidationError("TVL specification must be a mapping")
 
     resolved = _apply_environment(raw_data, environment)
-    config_space, defaults, units = _parse_configuration_space(resolved)
+
+    # Detect format: TVL 0.9 uses 'tvars', legacy uses 'configuration_space'
+    tvars: list[TVarDecl] | None = None
+    if "tvars" in resolved:
+        tvars, config_space, defaults, units = _parse_tvars(resolved)
+    else:
+        config_space, defaults, units = _parse_configuration_space(resolved)
+
     objective_schema = _parse_objectives(resolved)
-    compiled_constraints = _compile_constraints(
+
+    # Parse constraints - support both legacy and TVL 0.9 format
+    compiled_constraints, derived_constraints = _compile_constraints_unified(
         resolved.get("constraints", []) or [], validate_constraints, path
     )
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
     ]
-    budget = _parse_budget(resolved.get("optimization"))
-    algorithm = _resolve_algorithm(resolved.get("optimization"))
+
+    budget = _parse_budget(resolved.get("optimization") or resolved.get("exploration"))
+    algorithm = _resolve_algorithm(
+        resolved.get("optimization") or resolved.get("exploration")
+    )
+
+    # Parse promotion policy (TVL 0.9)
+    promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
+
     metadata = _build_metadata(
         resolved,
         path,
@@ -147,6 +182,9 @@ def load_tvl_spec(
         metadata=metadata,
         budget=budget,
         algorithm=algorithm,
+        promotion_policy=promotion_policy,
+        tvars=tvars,
+        derived_constraints=derived_constraints,
     )
 
 
@@ -266,6 +304,213 @@ def _normalize_parameter(
     raise TVLValidationError(
         f"Unsupported parameter type '{parameter_type}' for '{name}'"
     )
+
+
+def _parse_tvars(
+    resolved: dict[str, Any],
+) -> tuple[list[TVarDecl], dict[str, Any], dict[str, Any], dict[str, str]]:
+    """Parse TVL 0.9 tvars array format.
+
+    Args:
+        resolved: The resolved TVL spec dictionary.
+
+    Returns:
+        Tuple of (tvars, configuration_space, defaults, units).
+    """
+    tvars_section = resolved.get("tvars")
+    if not isinstance(tvars_section, list) or not tvars_section:
+        raise TVLValidationError("tvars must be a non-empty array")
+
+    tvars: list[TVarDecl] = []
+    configuration_space: dict[str, Any] = {}
+    defaults: dict[str, Any] = {}
+    units: dict[str, str] = {}
+
+    for idx, decl in enumerate(tvars_section):
+        if not isinstance(decl, dict):
+            raise TVLValidationError(
+                f"TVAR declaration at index {idx} must be a mapping"
+            )
+
+        name = decl.get("name")
+        if not isinstance(name, str) or not name:
+            raise TVLValidationError(f"TVAR at index {idx} requires a 'name' string")
+
+        raw_type = decl.get("type")
+        if not isinstance(raw_type, str):
+            raise TVLValidationError(f"TVAR '{name}' requires a 'type' string")
+
+        tvar_type = normalize_tvar_type(raw_type)
+        if tvar_type is None:
+            raise TVLValidationError(f"TVAR '{name}' has unsupported type '{raw_type}'")
+
+        domain_data = decl.get("domain")
+        try:
+            domain = parse_domain_spec(name, tvar_type, domain_data)
+        except ValueError as exc:
+            raise TVLValidationError(str(exc)) from exc
+
+        # Extract unit if present
+        unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
+        if unit:
+            units[name] = unit
+
+        # Extract default if present
+        default = decl.get("default")
+
+        tvar = TVarDecl(
+            name=name,
+            type=tvar_type,
+            raw_type=raw_type,
+            domain=domain,
+            default=default,
+            unit=unit,
+        )
+        tvars.append(tvar)
+
+        # Convert to configuration space format
+        configuration_space[name] = domain.to_configuration_space_entry()
+
+        if default is not None:
+            defaults[name] = default
+
+    return tvars, configuration_space, defaults, units
+
+
+def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:
+    """Parse TVL 0.9 promotion_policy section.
+
+    Args:
+        policy_data: The raw promotion_policy dictionary.
+
+    Returns:
+        PromotionPolicy if present, None otherwise.
+    """
+    if policy_data is None:
+        return None
+
+    if not isinstance(policy_data, dict):
+        raise TVLValidationError("promotion_policy must be a mapping")
+
+    try:
+        return PromotionPolicy.from_dict(policy_data)
+    except (ValueError, KeyError) as exc:
+        raise TVLValidationError(f"Invalid promotion_policy: {exc}") from exc
+
+
+def _compile_constraints_unified(
+    entries: list[Any] | dict[str, Any],
+    validate_constraints: bool,
+    path: Path,
+) -> tuple[list[CompiledConstraint], list[DerivedConstraint] | None]:
+    """Compile constraints supporting both legacy and TVL 0.9 formats.
+
+    Legacy format: list of constraint objects with type/rule/when/then
+    TVL 0.9 format: dict with 'structural' and/or 'derived' arrays
+
+    Returns:
+        Tuple of (compiled_constraints, derived_constraints).
+        derived_constraints is None for legacy format.
+    """
+    # Handle TVL 0.9 format (dict with structural/derived)
+    if isinstance(entries, dict):
+        structural = entries.get("structural", [])
+        derived_raw = entries.get("derived", [])
+        compiled = _compile_structural_constraints(
+            structural, validate_constraints, path
+        )
+        derived = _parse_derived_constraints(derived_raw)
+        return compiled, derived
+
+    # Handle legacy format (list)
+    if isinstance(entries, list):
+        return _compile_constraints(entries, validate_constraints, path), None
+
+    return [], None
+
+
+def _parse_derived_constraints(entries: list[Any]) -> list[DerivedConstraint] | None:
+    """Parse TVL 0.9 derived constraints.
+
+    Derived constraints are linear arithmetic expressions over environment
+    symbols. They are stored as data only - actual SMT compilation is
+    handled by TVL tools, not the runtime.
+
+    Args:
+        entries: List of derived constraint dictionaries.
+
+    Returns:
+        List of DerivedConstraint objects, or None if empty.
+    """
+    if not entries:
+        return None
+
+    derived: list[DerivedConstraint] = []
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise TVLValidationError(
+                f"Derived constraint at index {index} must be a mapping"
+            )
+
+        try:
+            constraint = DerivedConstraint.from_dict(entry, index)
+        except ValueError as exc:
+            raise TVLValidationError(str(exc)) from exc
+
+        derived.append(constraint)
+
+    return derived if derived else None
+
+
+def _compile_structural_constraints(
+    entries: list[Any],
+    validate_constraints: bool,
+    path: Path,
+) -> list[CompiledConstraint]:
+    """Compile TVL 0.9 structural constraints.
+
+    Structural constraints are typed DNF clauses that support:
+    - expr: standalone expression
+    - when/then: conditional implication
+    """
+    compiled: list[CompiledConstraint] = []
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise TVLValidationError(
+                f"Structural constraint at index {index} must be a mapping"
+            )
+
+        constraint_id = f"structural_{index}"
+        error_message = f"Structural constraint {constraint_id} violated"
+
+        try:
+            struct_constraint = StructuralConstraint.from_dict(entry, index)
+        except ValueError as exc:
+            raise TVLValidationError(str(exc)) from exc
+
+        # Convert to rule expression
+        rule_expr = struct_constraint.to_rule_expression()
+
+        # Check if metrics are referenced (structural constraints shouldn't use metrics)
+        requires_metrics = _METRICS_PREFIX in rule_expr
+
+        compiled_rule = compile_constraint_expression(
+            rule_expr, label=f"{path}:{constraint_id}"
+        )
+
+        compiled.append(
+            CompiledConstraint(
+                identifier=constraint_id,
+                description=error_message,
+                requires_metrics=requires_metrics,
+                evaluator=compiled_rule,
+                constraint_type="structural",
+            )
+        )
+
+    return compiled
 
 
 def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
@@ -414,7 +659,9 @@ def _compile_constraints(
             then_compiled = compile_constraint_expression(
                 then_expr, label=f"{path}:{constraint_id}:then"
             )
-            requires_metrics = "metrics." in when_expr or "metrics." in then_expr
+            requires_metrics = (
+                _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
+            )
 
             def _conditional(
                 config: dict[str, Any],
@@ -435,7 +682,7 @@ def _compile_constraints(
                 raise TVLValidationError(
                     f"Constraint '{constraint_id}' requires a string 'rule' expression"
                 )
-            requires_metrics = "metrics." in rule_expr
+            requires_metrics = _METRICS_PREFIX in rule_expr
             compiled_rule = compile_constraint_expression(
                 rule_expr, label=f"{path}:{constraint_id}:rule"
             )
