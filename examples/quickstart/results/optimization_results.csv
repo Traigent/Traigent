@@ -1,0 +1,9 @@
+Question,Expected,"Trial 1: gpt-4o, t=0.7","Trial 2: gpt-4o, t=0.5","Trial 3: gpt-4o-mini, t=0.9","Trial 4: gpt-4o, t=0.7","Trial 5: gpt-3.5-turbo, t=0.1"
+What is the capital of France?,Paris,Paris,Paris,Paris.,Paris,The capital of France is Paris.
+What is 2 + 2?,4,4,4,4,4,4
+Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare,William Shakespeare,William Shakespeare.,William Shakespeare,William Shakespeare
+What is the largest planet in our solar system?,Jupiter,Jupiter is the largest planet in our solar system.,Jupiter,Jupiter,Jupiter,Jupiter
+What year did World War II end?,1945,World War II ended in 1945.,World War II ended in 1945.,World War II ended in 1945.,World War II ended in 1945.,World War II ended in 1945.
+What is the chemical symbol for water?,H2O,The chemical symbol for water is H2O.,H2O,H2O,The chemical symbol for water is H2O.,H2O
+Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci,Leonardo da Vinci,Leonardo da Vinci.,Leonardo da Vinci.,Leonardo da Vinci.
+What is the speed of light?,"299,792,458 meters per second","The speed of light in a vacuum is approximately 299,792 kilometers per second, or about 186,282 miles per second.","The speed of light is approximately 299,792 kilometers per second in a vacuum.","The speed of light in a vacuum is approximately 299,792 kilometers per second (186,282 miles per second).","The speed of light in a vacuum is approximately 299,792 kilometers per second.","The speed of light is approximately 186,282 miles per second (299,792 kilometers per second)."
