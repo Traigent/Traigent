@@ -95,11 +95,15 @@ def clopper_pearson_lower_bound(
     trials: int,
     confidence: float,
 ) -> float:
-    """Compute Clopper-Pearson exact binomial confidence interval lower bound.
+    """Compute binomial confidence interval lower bound.
 
-    The Clopper-Pearson interval is an exact method for computing binomial
-    confidence intervals, commonly used for chance constraints in promotion
-    policies.
+    For small samples (n < 30), uses exact Clopper-Pearson method via beta
+    quantile. For large samples (n >= 30), uses Wilson score interval which
+    provides a good approximation with better computational stability.
+
+    Note: Wilson intervals may be slightly less conservative than exact
+    Clopper-Pearson for borderline cases. For strict safety-critical
+    applications requiring exact bounds, consider using scipy.stats.
 
     Args:
         successes: Number of successes (non-negative).
@@ -126,39 +130,28 @@ def clopper_pearson_lower_bound(
         return 0.0
 
     alpha = 1 - confidence
-
-    # Use the beta distribution quantile function
-    # Lower bound = B^{-1}(alpha/2; successes, trials - successes + 1)
-    # We approximate this using the relationship with the F-distribution
-
-    # For exact computation, we use the beta quantile
-    # For Clopper-Pearson lower: beta.ppf(alpha/2, x, n-x+1)
-    # Approximation using normal for large samples, beta otherwise
-
     k = successes
     n = trials
 
-    # Use Wilson score interval approximation for computational efficiency
-    # This is accurate and computationally stable
+    # For small samples, use exact Clopper-Pearson via beta quantile
+    # For large samples, use Wilson score interval for computational efficiency
+    # Wilson is accurate and more stable for large n
 
-    if n >= 30:
+    if n < 30:
+        # Exact Clopper-Pearson: beta.ppf(alpha/2, k, n-k+1)
+        return _beta_quantile_approx(alpha / 2, k, n - k + 1)
+    else:
         # Wilson score interval lower bound
         # For lower bound, we need the (1-alpha/2) quantile (positive z)
-        # to get center - margin correctly
-        z = _inverse_normal_cdf(1 - alpha / 2)  # Positive z for lower bound
+        z = _inverse_normal_cdf(1 - alpha / 2)
         p_hat = k / n
 
-        # Wilson score interval lower bound
         denominator = 1 + z * z / n
         center = (p_hat + z * z / (2 * n)) / denominator
         margin = z * math.sqrt(p_hat * (1 - p_hat) / n + z * z / (4 * n * n))
         margin = margin / denominator
 
         return max(0.0, center - margin)
-    else:
-        # For small samples, use a more accurate approximation
-        # based on the beta distribution
-        return _beta_quantile_approx(alpha / 2, k, n - k + 1)
 
 
 def _inverse_normal_cdf(p: float) -> float:
@@ -358,17 +351,20 @@ def paired_comparison_test(
     epsilon: float,
     direction: Literal["greater", "less"],
 ) -> PairedComparisonResult:
-    """Test if x is better than y by at least epsilon.
+    """Test if x is better than y by at least epsilon using a paired t-test.
 
-    This implements a paired t-test for the hypothesis:
-    - "greater": H0: mean(x) - mean(y) <= epsilon, H1: mean(x) - mean(y) > epsilon
-    - "less": H0: mean(x) - mean(y) >= -epsilon, H1: mean(x) - mean(y) < -epsilon
+    This implements a paired t-test on the differences (x_i - y_i):
+    - "greater": H0: mean(x-y) <= epsilon, H1: mean(x-y) > epsilon
+    - "less": H0: mean(x-y) >= -epsilon, H1: mean(x-y) < -epsilon
 
     For epsilon-Pareto dominance, we test whether x dominates y with margin epsilon.
 
+    The paired test requires equal-length, aligned samples (e.g., metrics from
+    the same evaluation runs for incumbent vs candidate).
+
     Args:
-        x_samples: Samples from the first distribution.
-        y_samples: Samples from the second distribution.
+        x_samples: Samples from the first distribution (must match y_samples length).
+        y_samples: Samples from the second distribution (must match x_samples length).
         epsilon: The margin/tolerance for the comparison.
         direction: Direction of the test ("greater" or "less").
 
@@ -376,29 +372,38 @@ def paired_comparison_test(
         PairedComparisonResult with test outcome and statistics.
 
     Raises:
-        ValueError: If samples are empty or have mismatched lengths for paired test.
+        ValueError: If samples are empty or have mismatched lengths.
     """
     if len(x_samples) == 0 or len(y_samples) == 0:
         raise ValueError("Cannot perform comparison with empty samples")
 
-    # Compute sample statistics
-    n_x = len(x_samples)
-    n_y = len(y_samples)
-    mean_x = sum(x_samples) / n_x
-    mean_y = sum(y_samples) / n_y
+    if len(x_samples) != len(y_samples):
+        raise ValueError(
+            f"Paired test requires equal-length samples, got {len(x_samples)} and {len(y_samples)}"
+        )
 
-    var_x = sum((x - mean_x) ** 2 for x in x_samples) / max(1, n_x - 1)
-    var_y = sum((y - mean_y) ** 2 for y in y_samples) / max(1, n_y - 1)
+    n = len(x_samples)
 
-    # Effect size (difference in means)
-    effect_size = mean_x - mean_y
+    # Compute paired differences
+    differences = [x - y for x, y in zip(x_samples, y_samples, strict=True)]
 
-    # Use Welch's t-test for unequal variances
-    se_x = var_x / n_x if n_x > 1 else 0
-    se_y = var_y / n_y if n_y > 1 else 0
-    pooled_se = math.sqrt(se_x + se_y)
+    # Mean and variance of differences
+    mean_diff = sum(differences) / n
+    if n > 1:
+        var_diff = sum((d - mean_diff) ** 2 for d in differences) / (n - 1)
+    else:
+        var_diff = 0.0
 
-    if pooled_se < 1e-15:
+    # Effect size is the mean difference
+    effect_size = mean_diff
+
+    # Standard error of the mean difference
+    se_diff = math.sqrt(var_diff / n) if n > 1 and var_diff > 0 else 0.0
+
+    # Degrees of freedom for paired t-test
+    df = max(1, n - 1)
+
+    if se_diff < 1e-15:
         # No variance - degenerate case
         if direction == "greater":
             reject = effect_size > epsilon
@@ -410,29 +415,16 @@ def paired_comparison_test(
             p_value=0.0 if reject else 1.0,
             effect_size=effect_size,
             test_statistic=float("inf") if reject else 0.0,
-            degrees_of_freedom=max(1, n_x + n_y - 2),
+            degrees_of_freedom=df,
         )
 
-    # Compute test statistic
+    # Compute test statistic for one-sided test
     if direction == "greater":
-        # Testing H0: mean_x - mean_y <= epsilon
-        t_stat = (effect_size - epsilon) / pooled_se
+        # Testing H0: mean(x-y) <= epsilon
+        t_stat = (mean_diff - epsilon) / se_diff
     else:
-        # Testing H0: mean_x - mean_y >= -epsilon
-        t_stat = (effect_size + epsilon) / pooled_se
-
-    # Welch-Satterthwaite degrees of freedom
-    if se_x + se_y > 0:
-        numerator = (se_x + se_y) ** 2
-        denominator = (se_x**2 / max(1, n_x - 1)) + (se_y**2 / max(1, n_y - 1))
-        if denominator > 0:
-            df = int(numerator / denominator)
-        else:
-            df = max(1, n_x + n_y - 2)
-    else:
-        df = max(1, n_x + n_y - 2)
-
-    df = max(1, df)
+        # Testing H0: mean(x-y) >= -epsilon
+        t_stat = (mean_diff + epsilon) / se_diff
 
     # Compute p-value
     if direction == "greater":
@@ -441,8 +433,7 @@ def paired_comparison_test(
         p_value = _t_cdf_lower(t_stat, df)
 
     # Don't hardcode rejection decision - let caller apply their alpha
-    # reject_null is set based on p_value for convenience, but caller
-    # should use p_value with their configured alpha for proper testing
+    # reject_null is deprecated; caller should use p_value with their configured alpha
     return PairedComparisonResult(
         reject_null=False,  # Deprecated: use p_value with your alpha
         p_value=p_value,

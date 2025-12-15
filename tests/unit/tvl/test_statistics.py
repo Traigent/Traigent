@@ -118,6 +118,14 @@ class TestPairedComparisonTest:
         with pytest.raises(ValueError, match="empty samples"):
             paired_comparison_test([1, 2, 3], [], 0.0, "greater")
 
+    def test_mismatched_lengths_raises(self) -> None:
+        """Mismatched sample lengths raise ValueError."""
+        with pytest.raises(ValueError, match="equal-length samples"):
+            paired_comparison_test([1, 2, 3], [4, 5], 0.0, "greater")
+
+        with pytest.raises(ValueError, match="equal-length samples"):
+            paired_comparison_test([1, 2], [3, 4, 5, 6], 0.0, "less")
+
     def test_clearly_greater(self) -> None:
         """X clearly greater than Y is detected."""
         x = [10.0, 11.0, 9.0, 10.5, 10.2]
