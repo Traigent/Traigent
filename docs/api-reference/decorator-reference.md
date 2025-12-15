@@ -195,7 +195,7 @@ def cost_constraint(config, metrics=None):
 #### `tvl`
 - **Type**: `TVLOptions | dict[str, Any] | None`
 - **Default**: `None`
-- **Description**: Structured TVL options
+- **Description**: Structured TVL options (including whether to apply `evaluation_set` and how to resolve registry domains)
 
 ```python
 from traigent.tvl.options import TVLOptions
@@ -204,6 +204,7 @@ from traigent.tvl.options import TVLOptions
     tvl=TVLOptions(
         spec_path="specs/my_optimization.tvl",
         environment="production",
+        apply_evaluation_set=True,
         apply_configuration_space=True,
         apply_objectives=True,
         apply_constraints=True,

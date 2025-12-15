@@ -8,6 +8,7 @@ import ast
 import copy
 import math
 import re
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -26,6 +27,7 @@ from .models import (
     EvaluationSet,
     ExplorationBudgets,
     PromotionPolicy,
+    RegistryResolver,
     StructuralConstraint,
     TVarDecl,
     TVLHeader,
@@ -123,11 +125,6 @@ class TVLSpecArtifact:
             overrides.setdefault(
                 "samples_include_pruned", self.budget.samples_include_pruned
             )
-        if self.evaluation_set:
-            if self.evaluation_set.dataset:
-                overrides.setdefault("dataset", self.evaluation_set.dataset)
-            if self.evaluation_set.seed is not None:
-                overrides.setdefault("seed", self.evaluation_set.seed)
         if self.metadata:
             overrides.setdefault("tvl_metadata", self.metadata)
         return overrides
@@ -138,11 +135,20 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
     """Load and normalize a TVL specification from disk.
 
     Supports both legacy format (configuration_space) and TVL 0.9 format (tvars).
     Auto-detects format based on presence of 'tvars' vs 'configuration_space'.
+
+    Args:
+        spec_path: Path to the TVL spec file.
+        environment: Optional environment overlay key to apply.
+        validate_constraints: Whether to compile and validate structural constraints.
+        registry_resolver: Optional resolver used to materialize registry domains
+            into concrete configuration values. If a spec contains a registry
+            domain and no resolver is provided, spec loading fails fast.
     """
 
     path = Path(spec_path).expanduser()
@@ -183,11 +189,15 @@ def load_tvl_spec(
 
     tvars: list[TVarDecl] | None = None
     if has_tvars:
-        tvars, config_space, defaults, units = _parse_tvars(resolved)
+        tvars, config_space, defaults, units = _parse_tvars(
+            resolved, registry_resolver=registry_resolver
+        )
     elif has_config_space:
-        logger.warning(
-            "Using legacy 'configuration_space' format. "
-            "This format is deprecated in TVL 0.9. Please migrate to 'tvars'."
+        warnings.warn(
+            "TVL spec uses legacy 'configuration_space' format. "
+            "This format is deprecated in TVL 0.9; migrate to 'tvars'.",
+            DeprecationWarning,
+            stacklevel=2,
         )
         config_space, defaults, units = _parse_configuration_space(resolved)
     else:
@@ -196,6 +206,15 @@ def load_tvl_spec(
 
     objective_schema = _parse_objectives(resolved)
 
+    constraints_section = resolved.get("constraints")
+    if isinstance(constraints_section, list) and constraints_section:
+        warnings.warn(
+            "TVL spec uses legacy 'constraints' list format. "
+            "This format is deprecated in TVL 0.9; use 'constraints: {structural: [...], derived: [...]}' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
     # Parse constraints - support both legacy and TVL 0.9 format
     compiled_constraints, derived_constraints = _compile_constraints_unified(
         resolved.get("constraints", []) or [], validate_constraints, path
@@ -203,6 +222,16 @@ def load_tvl_spec(
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
     ]
+
+    has_exploration = "exploration" in resolved
+    has_optimization = "optimization" in resolved
+    if has_optimization and not has_exploration:
+        warnings.warn(
+            "TVL spec uses legacy 'optimization' section. "
+            "This format is deprecated in TVL 0.9; migrate to 'exploration'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
     # Parse exploration section (supports both 'optimization' and 'exploration')
     exploration_section = (
@@ -261,9 +290,8 @@ def compile_constraint_expression(
     - Functions: `min`, `max`, `abs`, `len`, `sum`, `any`, `all`
 
     Note on Equality:
-    TVL specs may use `=` for equality (SQL/CEL style). This compiler
-    automatically translates `=` to `==` unless it appears to be part of
-    `>=`, `<=`, `==`, or `!=`.
+    Constraint expressions are parsed as Python expressions, so equality must
+    be written as `==` (not `=`).
 
     Args:
         expression: The constraint expression string.
@@ -391,11 +419,14 @@ def _normalize_parameter(
 
 def _parse_tvars(
     resolved: dict[str, Any],
+    *,
+    registry_resolver: RegistryResolver | None = None,
 ) -> tuple[list[TVarDecl], dict[str, Any], dict[str, Any], dict[str, str]]:
     """Parse TVL 0.9 tvars array format.
 
     Args:
         resolved: The resolved TVL spec dictionary.
+        registry_resolver: Optional resolver used to materialize registry domains.
 
     Returns:
         Tuple of (tvars, configuration_space, defaults, units).
@@ -452,7 +483,27 @@ def _parse_tvars(
         tvars.append(tvar)
 
         # Convert to configuration space format
-        configuration_space[name] = domain.to_configuration_space_entry()
+        if domain.kind == "registry":
+            if registry_resolver is None:
+                raise TVLValidationError(
+                    f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
+                    "but no registry_resolver was provided."
+                )
+            assert domain.registry is not None  # validated by DomainSpec
+            resolved_values = registry_resolver.resolve(
+                domain.registry, filter_expr=domain.filter, version=domain.version
+            )
+            if not isinstance(resolved_values, list):
+                raise TVLValidationError(
+                    f"RegistryResolver.resolve() must return a list; got {type(resolved_values)}"
+                )
+            if not resolved_values:
+                raise TVLValidationError(
+                    f"Registry domain '{domain.registry}' for TVAR '{name}' resolved to no values"
+                )
+            configuration_space[name] = resolved_values
+        else:
+            configuration_space[name] = domain.to_configuration_space_entry()
 
         if default is not None:
             defaults[name] = default

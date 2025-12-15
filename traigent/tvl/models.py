@@ -71,12 +71,9 @@ class DomainSpec:
                 raise ValueError("Range domain has no range defined")
             return self.range
         if self.kind == "registry":
-            # Registry domains need to be resolved at runtime
-            # Currently, the SDK does not support automatic registry resolution
-            # without an explicit resolver.
-            raise NotImplementedError(
-                f"Registry domain '{self.registry}' is not yet supported. "
-                "Please use explicit 'enum' or 'range' domains."
+            raise ValueError(
+                "Registry domains must be resolved into concrete values via a "
+                "RegistryResolver during spec loading."
             )
         return []
 
@@ -684,8 +681,8 @@ class RegistryResolver(Protocol):
                 ...
         ```
 
-    Note: This protocol is defined for future use. Current TraiGent SDK
-    returns an empty list for registry domains and logs a warning.
+    Note: Registry resolution is opt-in. If a TVL spec includes a registry
+    domain and no resolver is provided to the spec loader, the SDK fails fast.
     """
 
     def resolve(

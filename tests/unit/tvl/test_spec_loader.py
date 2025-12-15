@@ -52,6 +52,17 @@ def test_compiled_constraints_attach_metadata() -> None:
     assert isinstance(constraint({"response_latency_ms": 800}), bool)
 
 
+def test_legacy_formats_emit_deprecation_warnings() -> None:
+    """Legacy TVL formats emit DeprecationWarnings during spec loading."""
+    with pytest.warns(DeprecationWarning) as record:
+        load_tvl_spec(spec_path=FIXTURE_SPEC)
+
+    messages = [str(w.message) for w in record]
+    assert any("configuration_space" in message for message in messages)
+    assert any("constraints" in message for message in messages)
+    assert any("optimization" in message for message in messages)
+
+
 class TestDerivedConstraintParsing:
     """Tests for TVL 0.9 derived constraint parsing."""
 
@@ -225,8 +236,34 @@ objectives:
             assert artifact.configuration_space["temperature"] == (0.0, 2.0)
             assert artifact.configuration_space["use_cot"] == [True, False]
 
-    def test_registry_domain_raises_not_implemented(self) -> None:
-        """Registry domain raises NotImplementedError (fail-fast behavior)."""
+    def test_tvars_and_configuration_space_conflict_raises(self) -> None:
+        """Using both tvars and configuration_space is an error."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            with pytest.raises(TVLValidationError, match="both 'tvars'"):
+                load_tvl_spec(spec_path=f.name)
+
+    def test_registry_domain_requires_resolver(self) -> None:
+        """Registry domains fail fast unless a resolver is provided."""
         spec_content = """
 tvars:
   - name: scorer
@@ -245,12 +282,56 @@ objectives:
             f.write(spec_content)
             f.flush()
 
-            # Registry domains should fail-fast until a resolver is configured
-            with pytest.raises(NotImplementedError) as exc_info:
+            with pytest.raises(TVLValidationError, match="registry_resolver"):
                 load_tvl_spec(spec_path=f.name)
 
-            assert "scorers" in str(exc_info.value)
-            assert "not yet supported" in str(exc_info.value)
+    def test_registry_domain_resolves_with_resolver(self) -> None:
+        """Registry domains are resolved into concrete configuration values."""
+        spec_content = """
+tvars:
+  - name: scorer
+    type: callable[ScorerProto]
+    domain:
+      registry: scorers
+      filter: "version >= 2"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+
+        class DummyResolver:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, str | None, str | None]] = []
+
+            def resolve(
+                self,
+                registry_id: str,
+                filter_expr: str | None = None,
+                version: str | None = None,
+            ) -> list[str]:
+                self.calls.append((registry_id, filter_expr, version))
+                return ["scorer_v2", "scorer_v3"]
+
+        resolver = DummyResolver()
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            artifact = load_tvl_spec(spec_path=f.name, registry_resolver=resolver)
+
+            assert artifact.tvars is not None
+            assert len(artifact.tvars) == 1
+
+            scorer_tvar = artifact.tvars[0]
+            assert scorer_tvar.domain.kind == "registry"
+            assert scorer_tvar.domain.registry == "scorers"
+            assert scorer_tvar.domain.filter == "version >= 2"
+
+            assert artifact.configuration_space["scorer"] == ["scorer_v2", "scorer_v3"]
+            assert resolver.calls == [("scorers", "version >= 2", None)]
 
 
 class TestBandedObjectiveParsing:
