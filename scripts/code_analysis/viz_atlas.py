@@ -13,20 +13,13 @@ import math
 import re
 from collections import defaultdict
 
-# Use defusedxml to prevent XXE attacks
+# Requires defusedxml for secure XML parsing (install: pip install traigent[security])
 try:
     import defusedxml.ElementTree as ET
-except ImportError:
-    # Fallback with security warning - should install defusedxml
-    import warnings
-    import xml.etree.ElementTree as ET
-
-    warnings.warn(
-        "defusedxml not installed. Using stdlib xml.etree.ElementTree which is "
-        "vulnerable to XXE attacks. Install defusedxml: pip install defusedxml",
-        UserWarning,
-        stacklevel=2,
-    )
+except ImportError as e:
+    raise ImportError(
+        "defusedxml is required for XML parsing. Install with: pip install traigent[security]"
+    ) from e
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Sequence
