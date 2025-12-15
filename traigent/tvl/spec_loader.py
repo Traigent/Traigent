@@ -123,6 +123,11 @@ class TVLSpecArtifact:
             overrides.setdefault(
                 "samples_include_pruned", self.budget.samples_include_pruned
             )
+        if self.evaluation_set:
+            if self.evaluation_set.dataset:
+                overrides.setdefault("dataset", self.evaluation_set.dataset)
+            if self.evaluation_set.seed is not None:
+                overrides.setdefault("seed", self.evaluation_set.seed)
         if self.metadata:
             overrides.setdefault("tvl_metadata", self.metadata)
         return overrides
@@ -167,11 +172,27 @@ def load_tvl_spec(
     evaluation_set = _parse_evaluation_set(resolved.get("evaluation_set"))
 
     # Detect format: TVL 0.9 uses 'tvars', legacy uses 'configuration_space'
+    has_tvars = "tvars" in resolved
+    has_config_space = "configuration_space" in resolved
+
+    if has_tvars and has_config_space:
+        raise TVLValidationError(
+            "TVL spec contains both 'tvars' (TVL 0.9) and 'configuration_space' "
+            "(legacy). Please remove 'configuration_space' to use the new format."
+        )
+
     tvars: list[TVarDecl] | None = None
-    if "tvars" in resolved:
+    if has_tvars:
         tvars, config_space, defaults, units = _parse_tvars(resolved)
-    else:
+    elif has_config_space:
+        logger.warning(
+            "Using legacy 'configuration_space' format. "
+            "This format is deprecated in TVL 0.9. Please migrate to 'tvars'."
+        )
         config_space, defaults, units = _parse_configuration_space(resolved)
+    else:
+        # Fallback or empty spec - handled by validation inside parsers if needed
+        config_space, defaults, units = {}, {}, {}
 
     objective_schema = _parse_objectives(resolved)
 
@@ -183,15 +204,19 @@ def load_tvl_spec(
         constraint.to_callable() for constraint in compiled_constraints
     ]
 
-    # Parse exploration section (supports both 'optimization' legacy and 'exploration' TVL 0.9)
-    exploration_section = resolved.get("exploration") or resolved.get("optimization")
+    # Parse exploration section (supports both 'optimization' and 'exploration')
+    exploration_section = (
+        resolved.get("exploration") or resolved.get("optimization")
+    )
     budget = _parse_budget(exploration_section)
     algorithm = _resolve_algorithm(exploration_section)
     convergence = _parse_convergence(exploration_section)
     exploration_budgets = _parse_exploration_budgets(exploration_section)
 
     # Parse promotion policy (TVL 0.9)
-    promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
+    promotion_policy = _parse_promotion_policy(
+        resolved.get("promotion_policy")
+    )
 
     metadata = _build_metadata(
         resolved,
@@ -226,7 +251,30 @@ def load_tvl_spec(
 def compile_constraint_expression(
     expression: str, *, label: str
 ) -> Callable[[dict[str, Any], dict[str, Any] | None], bool]:
-    """Compile a CEL-like constraint into a safe Python callable."""
+    """Compile a CEL-like constraint into a safe Python callable.
+
+    The expression language supports a subset of Python syntax for safety:
+    - Identifiers: `params.x`, `metrics.accuracy`
+    - Literals: Numbers, strings, booleans (`True`, `False`)
+    - Operators: `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `<=`, `>`, `>=`
+    - Logical: `and`, `or`, `not`
+    - Functions: `min`, `max`, `abs`, `len`, `sum`, `any`, `all`
+
+    Note on Equality:
+    TVL specs may use `=` for equality (SQL/CEL style). This compiler
+    automatically translates `=` to `==` unless it appears to be part of
+    `>=`, `<=`, `==`, or `!=`.
+
+    Args:
+        expression: The constraint expression string.
+        label: Label for the compiled code object (for tracebacks).
+
+    Returns:
+        A callable that takes (config, metrics) and returns a boolean.
+
+    Raises:
+        TVLValidationError: If the expression is invalid or unsafe.
+    """
 
     translated = _translate_expression(expression)
     try:
@@ -256,7 +304,7 @@ def compile_constraint_expression(
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
-            # 2. Only whitelisted AST nodes are allowed (no imports, lambdas, etc.)
+            # 2. Only whitelisted AST nodes are allowed (no imports, lambdas)
             # 3. __builtins__ is empty, removing access to dangerous functions
             # 4. Context only exposes params, metrics, and safe math functions
             result = eval(code, {"__builtins__": {}}, context)  # nosec B307

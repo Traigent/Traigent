@@ -1,6 +1,5 @@
 """Unit tests for TVL statistics module."""
 
-import math
 
 import pytest
 

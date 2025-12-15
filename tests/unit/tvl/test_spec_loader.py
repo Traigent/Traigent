@@ -225,8 +225,8 @@ objectives:
             assert artifact.configuration_space["temperature"] == (0.0, 2.0)
             assert artifact.configuration_space["use_cot"] == [True, False]
 
-    def test_registry_domain_parsed(self) -> None:
-        """Registry domain is parsed correctly."""
+    def test_registry_domain_raises_not_implemented(self) -> None:
+        """Registry domain raises NotImplementedError (fail-fast behavior)."""
         spec_content = """
 tvars:
   - name: scorer
@@ -245,20 +245,12 @@ objectives:
             f.write(spec_content)
             f.flush()
 
-            artifact = load_tvl_spec(spec_path=f.name)
+            # Registry domains should fail-fast until a resolver is configured
+            with pytest.raises(NotImplementedError) as exc_info:
+                load_tvl_spec(spec_path=f.name)
 
-            assert artifact.tvars is not None
-            assert len(artifact.tvars) == 1
-
-            scorer_tvar = artifact.tvars[0]
-            assert scorer_tvar.name == "scorer"
-            assert scorer_tvar.type == "callable"
-            assert scorer_tvar.domain.kind == "registry"
-            assert scorer_tvar.domain.registry == "scorers"
-            assert scorer_tvar.domain.filter == "version >= 2"
-
-            # Registry domains return empty list until resolved
-            assert artifact.configuration_space["scorer"] == []
+            assert "scorers" in str(exc_info.value)
+            assert "not yet supported" in str(exc_info.value)
 
 
 class TestBandedObjectiveParsing:

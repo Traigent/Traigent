@@ -72,8 +72,12 @@ class DomainSpec:
             return self.range
         if self.kind == "registry":
             # Registry domains need to be resolved at runtime
-            # Return empty list as placeholder
-            return []
+            # Currently, the SDK does not support automatic registry resolution
+            # without an explicit resolver.
+            raise NotImplementedError(
+                f"Registry domain '{self.registry}' is not yet supported. "
+                "Please use explicit 'enum' or 'range' domains."
+            )
         return []
 
 
