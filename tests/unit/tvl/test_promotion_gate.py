@@ -1,11 +1,8 @@
 """Unit tests for TVL promotion gate."""
 
-import pytest
 
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
 from traigent.tvl.promotion_gate import (
-    ChanceConstraintResult,
-    ObjectiveResult,
     ObjectiveSpec,
     PromotionDecision,
     PromotionGate,
