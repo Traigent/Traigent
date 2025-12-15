@@ -290,19 +290,14 @@ def quantiles(
 
 
 def load_coverage_map(coverage_xml: Path, project_root: Path) -> dict[str, float]:
-    # Use defusedxml to prevent XXE attacks
+    # Requires defusedxml for secure XML parsing
     try:
         import defusedxml.ElementTree as ET
-    except ImportError:
-        # Fallback with security warning
-        import warnings
-        from xml.etree import ElementTree as ET
-
-        warnings.warn(
-            "defusedxml not installed. Install it to prevent XXE attacks: pip install defusedxml",
-            UserWarning,
-            stacklevel=2,
-        )
+    except ImportError as e:
+        raise ImportError(
+            "defusedxml is required for XML parsing. "
+            "Install with: pip install traigent[security]"
+        ) from e
 
     if not coverage_xml.exists():
         return {}
