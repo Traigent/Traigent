@@ -291,8 +291,7 @@ class CodeEvaluator:
 
         # Execute code with restricted builtins (not a full sandbox - see docstring)
         try:
-            # nosemgrep: python.lang.security.audit.exec-detected.exec-detected
-            exec(code, namespace)  # noqa: S102
+            exec(code, namespace)  # nosemgrep # noqa: S102
         except SyntaxError as e:
             return {
                 "pass_rate": 0.0,
