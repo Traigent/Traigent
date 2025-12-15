@@ -61,7 +61,9 @@ def demonstrate_bh_correction():
         sig_raw = "sig" if raw < 0.05 else "not sig"
         sig_adj = "sig" if adj < 0.05 else "not sig"
         change = "CHANGED" if sig_raw != sig_adj else ""
-        print(f"    Objective {i+1}: raw={raw:.3f} ({sig_raw}), adj={adj:.3f} ({sig_adj}) {change}")
+        print(
+            f"    Objective {i+1}: raw={raw:.3f} ({sig_raw}), adj={adj:.3f} ({sig_adj}) {change}"
+        )
 
     print("\n  BH correction reduces false discoveries when testing")
     print("  multiple objectives simultaneously.")
@@ -74,10 +76,50 @@ def demonstrate_chance_constraints():
     print("-" * 50)
 
     # Simulate safety score samples
-    good_samples = [0.96, 0.97, 0.95, 0.98, 0.96, 0.97, 0.95, 0.96, 0.98, 0.97,
-                   0.96, 0.95, 0.97, 0.96, 0.98, 0.95, 0.97, 0.96, 0.95, 0.96]
-    bad_samples = [0.92, 0.93, 0.91, 0.94, 0.90, 0.93, 0.91, 0.92, 0.94, 0.90,
-                  0.93, 0.91, 0.92, 0.90, 0.93, 0.91, 0.92, 0.94, 0.91, 0.93]
+    good_samples = [
+        0.96,
+        0.97,
+        0.95,
+        0.98,
+        0.96,
+        0.97,
+        0.95,
+        0.96,
+        0.98,
+        0.97,
+        0.96,
+        0.95,
+        0.97,
+        0.96,
+        0.98,
+        0.95,
+        0.97,
+        0.96,
+        0.95,
+        0.96,
+    ]
+    bad_samples = [
+        0.92,
+        0.93,
+        0.91,
+        0.94,
+        0.90,
+        0.93,
+        0.91,
+        0.92,
+        0.94,
+        0.90,
+        0.93,
+        0.91,
+        0.92,
+        0.90,
+        0.93,
+        0.91,
+        0.92,
+        0.94,
+        0.91,
+        0.93,
+    ]
 
     threshold = 0.95
     confidence = 0.99
@@ -148,11 +190,14 @@ def demonstrate_promotion_gate():
     candidate_1 = {
         "task_accuracy": generate_samples(0.88, 0.02),  # Better
         "response_latency": generate_samples(450, 30),  # Better
-        "safety_score": generate_samples(0.97, 0.01),   # Better
+        "safety_score": generate_samples(0.97, 0.01),  # Better
         "cost_per_request": generate_samples(0.0009, 0.0001),  # Better
     }
+    # Provide constraint_data for chance constraints: (successes, trials)
+    # Candidate passes safety check 19/20 times
+    constraint_data_1 = {"safety_score": (19, 20)}
 
-    decision_1 = gate.evaluate(incumbent_1, candidate_1)
+    decision_1 = gate.evaluate(incumbent_1, candidate_1, constraint_data_1)
     print(f"    Decision: {decision_1.decision}")
     print(f"    Reason: {decision_1.reason}")
 
@@ -166,11 +211,12 @@ def demonstrate_promotion_gate():
     candidate_2 = {
         "task_accuracy": generate_samples(0.90, 0.02),  # Better
         "response_latency": generate_samples(600, 30),  # Worse!
-        "safety_score": generate_samples(0.96, 0.01),   # Same
+        "safety_score": generate_samples(0.96, 0.01),  # Same
         "cost_per_request": generate_samples(0.0012, 0.0001),  # Worse!
     }
+    constraint_data_2 = {"safety_score": (18, 20)}
 
-    decision_2 = gate.evaluate(incumbent_2, candidate_2)
+    decision_2 = gate.evaluate(incumbent_2, candidate_2, constraint_data_2)
     print(f"    Decision: {decision_2.decision}")
     print(f"    Reason: {decision_2.reason}")
 
@@ -187,8 +233,10 @@ def demonstrate_promotion_gate():
         "safety_score": generate_samples(0.962, 0.01),  # Marginally better
         "cost_per_request": generate_samples(0.00099, 0.0001),  # Marginally better
     }
+    # Still need constraint_data for chance constraints
+    constraint_data_3 = {"safety_score": (19, 20)}
 
-    decision_3 = gate.evaluate(incumbent_3, candidate_3)
+    decision_3 = gate.evaluate(incumbent_3, candidate_3, constraint_data_3)
     print(f"    Decision: {decision_3.decision}")
     print(f"    Reason: {decision_3.reason}")
 

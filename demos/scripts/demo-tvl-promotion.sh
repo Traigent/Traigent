@@ -93,12 +93,19 @@ sleep 0.5
 
 cat << 'PYTHON'
 from traigent.tvl import load_tvl_spec
-from traigent.tvl.promotion_gate import PromotionGate
+from traigent.tvl.promotion_gate import PromotionGate, ObjectiveSpec
 
 spec = load_tvl_spec("production_deploy.tvl.yml")
-gate = PromotionGate(spec.promotion_policy, spec.objectives)
+
+# Convert objective definitions to ObjectiveSpec for PromotionGate
+objectives = [
+    ObjectiveSpec(obj.name, obj.orientation)
+    for obj in spec.objective_schema.objectives
+]
+gate = PromotionGate(spec.promotion_policy, objectives)
 
 # Compare incumbent (current production) vs candidate (new config)
+# constraint_data provides (successes, trials) for chance constraints
 decision = gate.evaluate(
     incumbent_metrics={
         "accuracy": [0.82, 0.84, 0.81, 0.83, 0.85],
@@ -109,12 +116,13 @@ decision = gate.evaluate(
         "accuracy": [0.87, 0.89, 0.86, 0.88, 0.90],
         "latency_ms": [245, 250, 242, 248, 251],
         "cost": [0.0008, 0.0007, 0.0008, 0.0007, 0.0008]
-    }
+    },
+    constraint_data={"accuracy": (5, 5)}  # All 5 samples passed threshold
 )
 
 print(f"Decision: {decision.decision}")
 print(f"Reason: {decision.reason}")
-print(f"P-values: {decision.p_values}")
+print(f"P-values: {decision.adjusted_p_values}")
 PYTHON
 sleep 3
 

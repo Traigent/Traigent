@@ -48,7 +48,7 @@ def optimize(
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys fall back to values detected in the decorated function. |
 | `constraints` | `list[Callable] \| None` | `None` | Hard constraints evaluated before running a trial. Callables accept `(config, metrics=None)` and return `True/False`. |
 
-**TVL Integration** (Test Variation Language)
+**TVL Integration** (Tuned Variable Language)
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |

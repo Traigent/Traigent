@@ -80,9 +80,9 @@ from traigent.tvl import load_tvl_spec
 # Load and inspect the spec
 spec = load_tvl_spec("chatbot.tvl.yml")
 
-print(f"Spec: {spec.id}")
+print(f"Spec ID: {spec.metadata['spec_id']}")
 print(f"TVARs: {[t.name for t in spec.tvars]}")
-print(f"Objectives: {[o.name for o in spec.objectives]}")
+print(f"Objectives: {[o.name for o in spec.objective_schema.objectives]}")
 
 # Use with decorator
 @traigent.optimize(tvl_spec="chatbot.tvl.yml")

@@ -67,8 +67,28 @@ def demonstrate_tost():
     print(f"\n  Target band: [{band.low}, {band.high}]")
 
     # Samples clearly inside the band
-    samples_inside = [0.88, 0.91, 0.89, 0.92, 0.90, 0.87, 0.91, 0.89, 0.90, 0.88,
-                     0.89, 0.91, 0.88, 0.90, 0.92, 0.89, 0.87, 0.90, 0.91, 0.89]
+    samples_inside = [
+        0.88,
+        0.91,
+        0.89,
+        0.92,
+        0.90,
+        0.87,
+        0.91,
+        0.89,
+        0.90,
+        0.88,
+        0.89,
+        0.91,
+        0.88,
+        0.90,
+        0.92,
+        0.89,
+        0.87,
+        0.90,
+        0.91,
+        0.89,
+    ]
     result_inside = tost_equivalence_test(samples_inside, band, alpha=0.05)
     print(f"\n  Samples inside band (mean={result_inside.sample_mean:.3f}):")
     print(f"    Is equivalent: {result_inside.is_equivalent}")
@@ -76,11 +96,33 @@ def demonstrate_tost():
     print(f"    P-value (upper): {result_inside.p_upper:.4f}")
     print(f"    Sample std: {result_inside.sample_std:.4f}")
     ci_low, ci_high = result_inside.confidence_interval
-    print(f"    95% CI: [{ci_low:.3f}, {ci_high:.3f}]")
+    print(
+        f"    90% CI: [{ci_low:.3f}, {ci_high:.3f}]"
+    )  # 90% CI corresponds to alpha=0.05 TOST
 
     # Samples outside the band (too low)
-    samples_low = [0.78, 0.80, 0.79, 0.82, 0.81, 0.77, 0.80, 0.79, 0.81, 0.78,
-                  0.79, 0.80, 0.78, 0.81, 0.79, 0.80, 0.77, 0.79, 0.80, 0.78]
+    samples_low = [
+        0.78,
+        0.80,
+        0.79,
+        0.82,
+        0.81,
+        0.77,
+        0.80,
+        0.79,
+        0.81,
+        0.78,
+        0.79,
+        0.80,
+        0.78,
+        0.81,
+        0.79,
+        0.80,
+        0.77,
+        0.79,
+        0.80,
+        0.78,
+    ]
     result_low = tost_equivalence_test(samples_low, band, alpha=0.05)
     print(f"\n  Samples below band (mean={result_low.sample_mean:.3f}):")
     print(f"    Is equivalent: {result_low.is_equivalent}")
@@ -88,8 +130,28 @@ def demonstrate_tost():
     print(f"    P-value (upper): {result_low.p_upper:.4f}")
 
     # Samples outside the band (too high)
-    samples_high = [0.98, 0.99, 0.97, 1.00, 0.98, 0.99, 0.97, 0.98, 1.00, 0.99,
-                   0.98, 0.97, 0.99, 0.98, 1.00, 0.99, 0.97, 0.98, 0.99, 0.98]
+    samples_high = [
+        0.98,
+        0.99,
+        0.97,
+        1.00,
+        0.98,
+        0.99,
+        0.97,
+        0.98,
+        1.00,
+        0.99,
+        0.98,
+        0.97,
+        0.99,
+        0.98,
+        1.00,
+        0.99,
+        0.97,
+        0.98,
+        0.99,
+        0.98,
+    ]
     result_high = tost_equivalence_test(samples_high, band, alpha=0.05)
     print(f"\n  Samples above band (mean={result_high.sample_mean:.3f}):")
     print(f"    Is equivalent: {result_high.is_equivalent}")
@@ -127,7 +189,9 @@ def demonstrate_banded_comparison():
         print(f"    {desc}: A={val_a}, B={val_b}")
         print(f"      Winner: {result.winner}")
         print(f"      A in band: {result.a_in_band}, B in band: {result.b_in_band}")
-        print(f"      A deviation: {result.a_deviation:.3f}, B deviation: {result.b_deviation:.3f}")
+        print(
+            f"      A deviation: {result.a_deviation:.3f}, B deviation: {result.b_deviation:.3f}"
+        )
         print()
 
 
