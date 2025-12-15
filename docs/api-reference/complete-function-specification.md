@@ -54,7 +54,7 @@ def optimize(
 | --- | --- | --- | --- |
 | `tvl_spec` | `str \| Path \| None` | `None` | Path to a TVL specification file. When provided, becomes the authoritative source for configuration space, objectives, and constraints. |
 | `tvl_environment` | `str \| None` | `None` | Named environment overlay from the TVL spec (e.g., "development", "production"). |
-| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options controlling how the spec is applied (`apply_configuration_space`, `apply_objectives`, `apply_constraints`, `apply_budget`). |
+| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options controlling how the spec is applied (`apply_evaluation_set`, `apply_configuration_space`, `apply_objectives`, `apply_constraints`, `apply_budget`, `registry_resolver`). |
 
 **Grouped Option Bundles** (Preferred for new code)
 
