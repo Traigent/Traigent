@@ -402,6 +402,142 @@ class DerivedConstraint:
         )
 
 
+@dataclass(slots=True)
+class TVLHeader:
+    """TVL module header containing metadata.
+
+    Attributes:
+        module: Fully-qualified module identifier (e.g., 'corp.product.spec').
+        validation: Optional validation configuration for tooling.
+    """
+
+    module: str
+    skip_budget_checks: bool = False
+    skip_cost_estimation: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> TVLHeader:
+        """Create TVLHeader from dict representation."""
+        module = data.get("module")
+        if not isinstance(module, str):
+            raise ValueError("TVL header requires a 'module' string")
+
+        validation = data.get("validation", {})
+        return cls(
+            module=module,
+            skip_budget_checks=validation.get("skip_budget_checks", False),
+            skip_cost_estimation=validation.get("skip_cost_estimation", False),
+        )
+
+
+@dataclass(slots=True)
+class EnvironmentSnapshot:
+    """Environment snapshot from TVL 0.9.
+
+    The environment snapshot (E_τ) provides symbols used to specialise domains
+    and evaluate derived constraints at a specific point in time.
+
+    Attributes:
+        snapshot_id: RFC3339 timestamp labeling the environment snapshot.
+        components: Implementation-defined map of environment components.
+    """
+
+    snapshot_id: str
+    components: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EnvironmentSnapshot:
+        """Create EnvironmentSnapshot from dict representation."""
+        snapshot_id = data.get("snapshot_id")
+        if not isinstance(snapshot_id, str):
+            raise ValueError("Environment requires a 'snapshot_id' string")
+
+        return cls(
+            snapshot_id=snapshot_id,
+            components=data.get("components", {}),
+        )
+
+
+@dataclass(slots=True)
+class EvaluationSet:
+    """Evaluation set definition from TVL 0.9.
+
+    Anchors the dataset and optional randomness seed used in validation runs.
+
+    Attributes:
+        dataset: Canonical identifier or URI for the evaluation dataset.
+        seed: Optional deterministic seed for stochastic evaluation sets.
+    """
+
+    dataset: str
+    seed: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> EvaluationSet:
+        """Create EvaluationSet from dict representation."""
+        dataset = data.get("dataset")
+        if not isinstance(dataset, str):
+            raise ValueError("EvaluationSet requires a 'dataset' string")
+
+        seed = data.get("seed")
+        if seed is not None and not isinstance(seed, int):
+            raise ValueError("EvaluationSet 'seed' must be an integer")
+
+        return cls(dataset=dataset, seed=seed)
+
+
+@dataclass(slots=True)
+class ConvergenceCriteria:
+    """Convergence criteria for exploration from TVL 0.9.
+
+    Attributes:
+        metric: Convergence signal monitored (hypervolume_improvement or none).
+        window: Sliding window size for convergence metric aggregation.
+        threshold: Minimum improvement required to continue exploration.
+    """
+
+    metric: str = "hypervolume_improvement"
+    window: int = 5
+    threshold: float = 0.01
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ConvergenceCriteria:
+        """Create ConvergenceCriteria from dict representation."""
+        return cls(
+            metric=data.get("metric", "hypervolume_improvement"),
+            window=int(data.get("window", 5)),
+            threshold=float(data.get("threshold", 0.01)),
+        )
+
+
+@dataclass(slots=True)
+class ExplorationBudgets:
+    """Hard limits on exploration from TVL 0.9.
+
+    Attributes:
+        max_trials: Maximum number of trials permitted.
+        max_spend_usd: Budget cap on spend in USD.
+        max_wallclock_s: Maximum wall-clock duration in seconds.
+    """
+
+    max_trials: int | None = None
+    max_spend_usd: float | None = None
+    max_wallclock_s: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> ExplorationBudgets:
+        """Create ExplorationBudgets from dict representation."""
+        max_trials = data.get("max_trials")
+        max_spend = data.get("max_spend_usd")
+        max_wallclock = data.get("max_wallclock_s")
+
+        return cls(
+            max_trials=int(max_trials) if max_trials is not None else None,
+            max_spend_usd=float(max_spend) if max_spend is not None else None,
+            max_wallclock_s=int(max_wallclock) if max_wallclock is not None else None,
+        )
+
+
 # Type alias for objectives that can be either standard or banded
 ObjectiveType = Literal["standard", "banded"]
 

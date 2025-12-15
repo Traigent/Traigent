@@ -80,25 +80,26 @@ echo ""
 sleep 0.5
 
 cat << 'PYTHON'
-from traigent.tvl import load_tvl_spec
-from traigent.tvl.objectives import BandedObjectiveSpec, tost_test
+from traigent.tvl import load_tvl_spec, BandTarget
+from traigent.tvl.objectives import BandedObjectiveSpec, tost_equivalence_test
 
 spec = load_tvl_spec("banded_objectives.tvl.yml")
 
 # Create a banded objective evaluator
+# Get band from the objective definition
+latency_obj = spec.objective_schema.objectives[1]  # latency_ms
 banded = BandedObjectiveSpec(
     name="latency_ms",
-    target=spec.objectives[1].band,  # BandTarget(low=200, high=500)
+    target=latency_obj.band,  # BandTarget(low=200, high=500)
     alpha=0.05
 )
 
 # Test if samples are within the band
 latency_samples = [245, 312, 289, 267, 301, 256, 278, 295]
 
-result = banded.evaluate_samples(latency_samples)
-print(f"Mean latency: {result.mean:.1f}ms")
-print(f"In band [200-500]: {result.in_band}")
-print(f"TOST p-value: {result.p_value:.4f}")
+result = banded.evaluate(latency_samples)  # Returns TOSTResult
+print(f"Mean latency: {result.sample_mean:.1f}ms")
+print(f"TOST p-values: lower={result.p_lower:.4f}, upper={result.p_upper:.4f}")
 print(f"Equivalent at alpha=0.05: {result.is_equivalent}")
 PYTHON
 sleep 3
@@ -130,7 +131,7 @@ sleep 1
 echo "========================================"
 echo "RESULT: EQUIVALENT"
 echo "Latency is within [200-500]ms band"
-echo "with 95% confidence"
+echo "at alpha=0.05 significance level"
 echo "========================================"
 sleep 2
 

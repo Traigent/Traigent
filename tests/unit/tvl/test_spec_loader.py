@@ -259,3 +259,114 @@ objectives:
 
             # Registry domains return empty list until resolved
             assert artifact.configuration_space["scorer"] == []
+
+
+class TestBandedObjectiveParsing:
+    """Tests for TVL 0.9 banded objective parsing."""
+
+    def test_parses_banded_objective_with_interval(self, tmp_path):
+        """Test parsing banded objective with [L, U] interval."""
+        spec_path = tmp_path / "banded.yaml"
+        spec_content = """tvl:
+  module: test.banded
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: response_length
+    band:
+      target: [100, 200]
+      test: TOST
+      alpha: 0.05
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_path.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_path)
+        assert artifact.objective_schema is not None
+        obj = artifact.objective_schema.objectives[0]
+        assert obj.name == "response_length"
+        assert obj.orientation == "band"
+        assert obj.band is not None
+        assert obj.band.low == 100
+        assert obj.band.high == 200
+
+
+class TestTVL09EnvironmentParsing:
+    """Tests for TVL 0.9 environment section parsing."""
+
+    def test_parses_environment_snapshot(self, tmp_path):
+        """Test parsing environment snapshot with components."""
+        spec_path = tmp_path / "env.yaml"
+        spec_content = """tvl:
+  module: test.env
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-15T10:30:00Z"
+  components:
+    retriever: bm25-v3
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_path.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_path)
+        assert artifact.environment_snapshot is not None
+        assert artifact.environment_snapshot.snapshot_id == "2025-01-15T10:30:00Z"
+        assert artifact.environment_snapshot.components["retriever"] == "bm25-v3"
+
+
+class TestTVL09ExplorationParsing:
+    """Tests for TVL 0.9 exploration section parsing."""
+
+    def test_parses_convergence_criteria(self, tmp_path):
+        """Test parsing convergence criteria."""
+        spec_path = tmp_path / "convergence.yaml"
+        spec_content = """tvl:
+  module: test.conv
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+exploration:
+  strategy:
+    type: nsga2
+  convergence:
+    metric: hypervolume_improvement
+    window: 20
+    threshold: 0.001
+  budgets:
+    max_trials: 200
+"""
+        spec_path.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_path)
+        assert artifact.convergence is not None
+        assert artifact.convergence.metric == "hypervolume_improvement"
+        assert artifact.convergence.window == 20
+        assert artifact.exploration_budgets is not None
+        assert artifact.exploration_budgets.max_trials == 200

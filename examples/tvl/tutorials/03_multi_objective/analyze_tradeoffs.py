@@ -149,14 +149,62 @@ def main():
     random.seed(42)
 
     configs = [
-        {"model": "gpt-4o", "temperature": 0.3, "max_tokens": 1024, "retrieval_k": 7, "use_cot": True},
-        {"model": "gpt-4o", "temperature": 0.7, "max_tokens": 512, "retrieval_k": 5, "use_cot": True},
-        {"model": "gpt-4o-mini", "temperature": 0.5, "max_tokens": 512, "retrieval_k": 5, "use_cot": False},
-        {"model": "gpt-4o-mini", "temperature": 0.7, "max_tokens": 768, "retrieval_k": 6, "use_cot": False},
-        {"model": "gpt-4o-mini", "temperature": 0.3, "max_tokens": 1024, "retrieval_k": 8, "use_cot": True},
-        {"model": "gpt-3.5-turbo", "temperature": 0.5, "max_tokens": 512, "retrieval_k": 5, "use_cot": False},
-        {"model": "gpt-3.5-turbo", "temperature": 0.7, "max_tokens": 256, "retrieval_k": 3, "use_cot": False},
-        {"model": "gpt-3.5-turbo", "temperature": 0.3, "max_tokens": 768, "retrieval_k": 7, "use_cot": False},
+        {
+            "model": "gpt-4o",
+            "temperature": 0.3,
+            "max_tokens": 1024,
+            "retrieval_k": 7,
+            "use_cot": True,
+        },
+        {
+            "model": "gpt-4o",
+            "temperature": 0.7,
+            "max_tokens": 512,
+            "retrieval_k": 5,
+            "use_cot": True,
+        },
+        {
+            "model": "gpt-4o-mini",
+            "temperature": 0.5,
+            "max_tokens": 512,
+            "retrieval_k": 5,
+            "use_cot": False,
+        },
+        {
+            "model": "gpt-4o-mini",
+            "temperature": 0.7,
+            "max_tokens": 768,
+            "retrieval_k": 6,
+            "use_cot": False,
+        },
+        {
+            "model": "gpt-4o-mini",
+            "temperature": 0.3,
+            "max_tokens": 1024,
+            "retrieval_k": 8,
+            "use_cot": True,
+        },
+        {
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.5,
+            "max_tokens": 512,
+            "retrieval_k": 5,
+            "use_cot": False,
+        },
+        {
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.7,
+            "max_tokens": 256,
+            "retrieval_k": 3,
+            "use_cot": False,
+        },
+        {
+            "model": "gpt-3.5-turbo",
+            "temperature": 0.3,
+            "max_tokens": 768,
+            "retrieval_k": 7,
+            "use_cot": False,
+        },
     ]
 
     # Evaluate all configs
@@ -181,7 +229,9 @@ def main():
     print("\n   Pareto-Optimal Configurations:")
     for i, (config, metrics) in enumerate(pareto_front):
         print(f"\n   Solution {i+1}: {config['model']}")
-        print(f"     Config: temp={config['temperature']}, tokens={config['max_tokens']}, k={config['retrieval_k']}")
+        print(
+            f"     Config: temp={config['temperature']}, tokens={config['max_tokens']}, k={config['retrieval_k']}"
+        )
         print(f"     Accuracy:    {metrics[0]:.3f}")
         print(f"     Consistency: {metrics[1]:.3f}")
         print(f"     Latency:     {metrics[2]:.0f}ms")
@@ -211,7 +261,9 @@ def main():
             metrics, accumulated_front, reference, directions
         )
         accumulated_front.append(metrics)
-        print(f"   + Solution {i+1} ({config['model']}): HV improvement = {improvement:.4f}")
+        print(
+            f"   + Solution {i+1} ({config['model']}): HV improvement = {improvement:.4f}"
+        )
 
     print("\n" + "=" * 60)
     print("Tutorial complete! Next: 04_promotion_policy")

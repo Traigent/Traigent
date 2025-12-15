@@ -20,10 +20,15 @@ from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
 from .models import (
+    ConvergenceCriteria,
     DerivedConstraint,
+    EnvironmentSnapshot,
+    EvaluationSet,
+    ExplorationBudgets,
     PromotionPolicy,
     StructuralConstraint,
     TVarDecl,
+    TVLHeader,
     normalize_tvar_type,
     parse_domain_spec,
 )
@@ -75,7 +80,10 @@ class CompiledConstraint:
 
 @dataclass(slots=True)
 class TVLSpecArtifact:
-    """Normalized view of a TVL spec ready for the decorator/runtime."""
+    """Normalized view of a TVL spec ready for the decorator/runtime.
+
+    TVL 0.9 compatible artifact containing all parsed spec components.
+    """
 
     path: Path
     environment: str | None
@@ -89,6 +97,13 @@ class TVLSpecArtifact:
     promotion_policy: PromotionPolicy | None = None
     tvars: list[TVarDecl] | None = None
     derived_constraints: list[DerivedConstraint] | None = None
+    # TVL 0.9 additions
+    tvl_header: TVLHeader | None = None
+    environment_snapshot: EnvironmentSnapshot | None = None
+    evaluation_set: EvaluationSet | None = None
+    tvl_version: str | None = None
+    convergence: ConvergenceCriteria | None = None
+    exploration_budgets: ExplorationBudgets | None = None
 
     def runtime_overrides(self) -> dict[str, Any]:
         """Return decorator/runtime overrides derived from the spec."""
@@ -139,6 +154,18 @@ def load_tvl_spec(
 
     resolved = _apply_environment(raw_data, environment)
 
+    # Parse TVL 0.9 header (tvl section)
+    tvl_header = _parse_tvl_header(resolved.get("tvl"))
+    tvl_version = resolved.get("tvl_version")
+    if isinstance(tvl_version, (int, float)):
+        tvl_version = str(tvl_version)
+
+    # Parse TVL 0.9 environment snapshot
+    environment_snapshot = _parse_environment_snapshot(resolved.get("environment"))
+
+    # Parse TVL 0.9 evaluation set
+    evaluation_set = _parse_evaluation_set(resolved.get("evaluation_set"))
+
     # Detect format: TVL 0.9 uses 'tvars', legacy uses 'configuration_space'
     tvars: list[TVarDecl] | None = None
     if "tvars" in resolved:
@@ -156,10 +183,12 @@ def load_tvl_spec(
         constraint.to_callable() for constraint in compiled_constraints
     ]
 
-    budget = _parse_budget(resolved.get("optimization") or resolved.get("exploration"))
-    algorithm = _resolve_algorithm(
-        resolved.get("optimization") or resolved.get("exploration")
-    )
+    # Parse exploration section (supports both 'optimization' legacy and 'exploration' TVL 0.9)
+    exploration_section = resolved.get("exploration") or resolved.get("optimization")
+    budget = _parse_budget(exploration_section)
+    algorithm = _resolve_algorithm(exploration_section)
+    convergence = _parse_convergence(exploration_section)
+    exploration_budgets = _parse_exploration_budgets(exploration_section)
 
     # Parse promotion policy (TVL 0.9)
     promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
@@ -185,6 +214,12 @@ def load_tvl_spec(
         promotion_policy=promotion_policy,
         tvars=tvars,
         derived_constraints=derived_constraints,
+        tvl_header=tvl_header,
+        environment_snapshot=environment_snapshot,
+        evaluation_set=evaluation_set,
+        tvl_version=tvl_version,
+        convergence=convergence,
+        exploration_budgets=exploration_budgets,
     )
 
 
@@ -398,6 +433,119 @@ def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:
         raise TVLValidationError(f"Invalid promotion_policy: {exc}") from exc
 
 
+def _parse_tvl_header(header_data: Any) -> TVLHeader | None:
+    """Parse TVL module header.
+
+    Args:
+        header_data: The raw tvl header dictionary.
+
+    Returns:
+        TVLHeader if present, None otherwise.
+    """
+    if header_data is None:
+        return None
+
+    if not isinstance(header_data, dict):
+        raise TVLValidationError("tvl header must be a mapping")
+
+    try:
+        return TVLHeader.from_dict(header_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid tvl header: {exc}") from exc
+
+
+def _parse_environment_snapshot(env_data: Any) -> EnvironmentSnapshot | None:
+    """Parse TVL 0.9 environment section.
+
+    Args:
+        env_data: The raw environment dictionary.
+
+    Returns:
+        EnvironmentSnapshot if present, None otherwise.
+    """
+    if env_data is None:
+        return None
+
+    if not isinstance(env_data, dict):
+        raise TVLValidationError("environment must be a mapping")
+
+    try:
+        return EnvironmentSnapshot.from_dict(env_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid environment: {exc}") from exc
+
+
+def _parse_evaluation_set(eval_data: Any) -> EvaluationSet | None:
+    """Parse TVL 0.9 evaluation_set section.
+
+    Args:
+        eval_data: The raw evaluation_set dictionary.
+
+    Returns:
+        EvaluationSet if present, None otherwise.
+    """
+    if eval_data is None:
+        return None
+
+    if not isinstance(eval_data, dict):
+        raise TVLValidationError("evaluation_set must be a mapping")
+
+    try:
+        return EvaluationSet.from_dict(eval_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid evaluation_set: {exc}") from exc
+
+
+def _parse_convergence(exploration_data: Any) -> ConvergenceCriteria | None:
+    """Parse convergence criteria from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        ConvergenceCriteria if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    convergence_data = exploration_data.get("convergence")
+    if convergence_data is None:
+        return None
+
+    if not isinstance(convergence_data, dict):
+        raise TVLValidationError("convergence must be a mapping")
+
+    try:
+        return ConvergenceCriteria.from_dict(convergence_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid convergence: {exc}") from exc
+
+
+def _parse_exploration_budgets(exploration_data: Any) -> ExplorationBudgets | None:
+    """Parse exploration budgets from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        ExplorationBudgets if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    budgets_data = exploration_data.get("budgets")
+    if budgets_data is None:
+        return None
+
+    if not isinstance(budgets_data, dict):
+        raise TVLValidationError("budgets must be a mapping")
+
+    try:
+        return ExplorationBudgets.from_dict(budgets_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid budgets: {exc}") from exc
+
+
 def _compile_constraints_unified(
     entries: list[Any] | dict[str, Any],
     validate_constraints: bool,
@@ -527,6 +675,13 @@ def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
 
 
 def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
+    """Parse objectives supporting both standard and banded objectives (TVL 0.9).
+
+    Standard objectives have a direction (maximize/minimize).
+    Banded objectives have a band with target, test, and alpha.
+    """
+    from .models import BandTarget
+
     objectives = resolved.get("objectives")
     if objectives is None:
         return None
@@ -540,21 +695,70 @@ def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
         name = entry.get("name")
         if not isinstance(name, str):
             raise TVLValidationError("Each objective requires a 'name'")
-        direction = (entry.get("direction") or "maximize").lower()
-        if direction not in {"maximize", "minimize"}:
-            raise TVLValidationError(
-                f"Objective '{name}' direction must be 'maximize' or 'minimize'"
-            )
+
         weight = float(entry.get("weight", 1.0))
         unit = entry.get("unit") if isinstance(entry.get("unit"), str) else None
-        definitions.append(
-            ObjectiveDefinition(
-                name=name,
-                orientation=cast(Literal["maximize", "minimize"], direction),
-                weight=weight,
-                unit=unit,
+
+        # Check if this is a banded objective (TVL 0.9)
+        band_spec = entry.get("band")
+        if band_spec is not None:
+            if not isinstance(band_spec, dict):
+                raise TVLValidationError(f"Objective '{name}' band must be a mapping")
+
+            # Parse band target
+            target = band_spec.get("target")
+            if target is None:
+                raise TVLValidationError(
+                    f"Banded objective '{name}' requires a 'target'"
+                )
+
+            try:
+                band_target = BandTarget.from_dict(target)
+            except ValueError as exc:
+                raise TVLValidationError(
+                    f"Invalid band target for objective '{name}': {exc}"
+                ) from exc
+
+            # Parse test type (TVL 0.9 mandates TOST)
+            test_type = band_spec.get("test", "TOST")
+            if test_type != "TOST":
+                raise TVLValidationError(
+                    f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
+                )
+
+            # Parse alpha (significance level)
+            alpha = float(band_spec.get("alpha", 0.05))
+            if not 0 < alpha < 1:
+                raise TVLValidationError(
+                    f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"
+                )
+
+            definitions.append(
+                ObjectiveDefinition(
+                    name=name,
+                    orientation="band",
+                    weight=weight,
+                    unit=unit,
+                    band=band_target,
+                    band_test="TOST",
+                    band_alpha=alpha,
+                )
             )
-        )
+        else:
+            # Standard objective with direction
+            direction = (entry.get("direction") or "maximize").lower()
+            if direction not in {"maximize", "minimize"}:
+                raise TVLValidationError(
+                    f"Objective '{name}' direction must be 'maximize' or 'minimize'"
+                )
+            definitions.append(
+                ObjectiveDefinition(
+                    name=name,
+                    orientation=cast(Literal["maximize", "minimize"], direction),
+                    weight=weight,
+                    unit=unit,
+                )
+            )
 
     return ObjectiveSchema.from_objectives(definitions)
 
