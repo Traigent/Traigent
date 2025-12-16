@@ -276,6 +276,11 @@ validate_*.py
 !.release_review/*.md
 # Ignore agent artifacts (scratch outputs, notes)
 .release_review/artifacts/
+.release_review/walkthrough_review/
+
+# Marketing materials viewer (local development only)
+marketing-viewer/
+run_marketing_viewer.sh
 
 # Virtual environments (additional)
 test_env/
