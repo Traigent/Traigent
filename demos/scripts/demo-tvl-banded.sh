@@ -45,17 +45,19 @@ objectives:
 
   # BANDED OBJECTIVE: Just needs to be within range
   - name: latency_ms
-    direction: band
-    target:
-      low: 200
-      high: 500
+    band:
+      target: [200, 500]    # [low, high] interval format
+      test: TOST
+      alpha: 0.05
 
   # BANDED with center/tolerance notation
   - name: response_length
-    direction: band
-    target:
-      center: 200          # Target 200 words
-      tol: 50              # +/- 50 words acceptable
+    band:
+      target:
+        center: 200         # Target 200 words
+        tol: 50             # +/- 50 words acceptable
+      test: TOST
+      alpha: 0.05
 YAML
 sleep 3
 
