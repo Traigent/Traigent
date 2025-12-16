@@ -429,6 +429,57 @@ class TestFromSpecArtifact:
         gate = PromotionGate.from_spec_artifact(MockArtifact())
         assert gate is None
 
+    def test_with_none_objective_schema(self) -> None:
+        """Returns gate with empty objectives when objective_schema is None."""
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy(alpha=0.05)
+            objective_schema = None
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        assert len(gate.objectives) == 0
+
+    def test_with_empty_objectives_list(self) -> None:
+        """Returns gate with empty objectives when objectives list is empty."""
+
+        # Create ObjectiveSchema with empty objectives list directly
+        # (bypassing from_objectives which requires at least one objective)
+        class MockObjectiveSchema:
+            objectives: list = []
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy(alpha=0.05)
+            objective_schema = MockObjectiveSchema()
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        assert len(gate.objectives) == 0
+
+    def test_default_band_alpha_when_not_specified(self) -> None:
+        """Default band_alpha is 0.05 when not specified."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy()
+            objective_schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="consistency",
+                        orientation="band",
+                        weight=1.0,
+                        band=BandTarget(low=0.85, high=0.95),
+                        # band_alpha not specified - should default to 0.05
+                    ),
+                ]
+            )
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        obj = gate.objectives["consistency"]
+        assert obj.direction == "band"
+        assert abs(obj.band_alpha - 0.05) < 1e-10  # Default value
+
     def test_with_standard_objectives(self) -> None:
         """Creates gate from artifact with standard objectives."""
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema

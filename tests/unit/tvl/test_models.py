@@ -337,6 +337,11 @@ class TestParseDomainSpec:
         assert isinstance(domain.range[0], int)
         assert isinstance(domain.range[1], int)
 
+    def test_integer_tvar_range_rejects_non_integral_float_bounds(self) -> None:
+        """Integer TVAR ranges should reject lossy float bounds (no truncation)."""
+        with pytest.raises(ValueError, match="must be integers"):
+            parse_domain_spec("max_tokens", "int", {"range": [100.5, 1000]})
+
     def test_float_tvar_range_returns_float_type(self) -> None:
         """Float TVAR ranges should return float tuples."""
         domain = parse_domain_spec("temperature", "float", {"range": [0, 1]})
@@ -364,6 +369,38 @@ class TestParseDomainSpec:
         """Invalid domain raises ValueError."""
         with pytest.raises(ValueError, match="invalid domain specification"):
             parse_domain_spec("x", "int", 42)
+
+    def test_integer_range_with_negative_values(self) -> None:
+        """Integer ranges with negative values preserve int type."""
+        domain = parse_domain_spec("offset", "int", {"range": [-10, 10]})
+        assert domain.kind == "range"
+        assert domain.range == (-10, 10)
+        assert isinstance(domain.range[0], int)
+        assert isinstance(domain.range[1], int)
+
+    def test_integer_range_with_zero_bounds(self) -> None:
+        """Integer ranges with zero bounds preserve int type."""
+        domain = parse_domain_spec("count", "int", {"range": [0, 0]})
+        assert domain.kind == "range"
+        assert domain.range == (0, 0)
+        assert isinstance(domain.range[0], int)
+
+    def test_float_range_with_negative_values(self) -> None:
+        """Float ranges with negative values return floats."""
+        domain = parse_domain_spec("scale", "float", {"range": [-1.5, 0.5]})
+        assert domain.kind == "range"
+        assert domain.range == (-1.5, 0.5)
+        assert isinstance(domain.range[0], float)
+
+    def test_invalid_range_single_element(self) -> None:
+        """Range with single element raises ValueError."""
+        with pytest.raises(ValueError, match="range must be"):
+            parse_domain_spec("x", "int", {"range": [1]})
+
+    def test_invalid_range_three_elements(self) -> None:
+        """Range with three elements raises ValueError."""
+        with pytest.raises(ValueError, match="range must be"):
+            parse_domain_spec("x", "int", {"range": [1, 2, 3]})
 
 
 class TestDerivedConstraint:

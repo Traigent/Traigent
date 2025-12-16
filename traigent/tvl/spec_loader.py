@@ -146,6 +146,17 @@ class TVLSpecArtifact:
         if self.exploration_parallelism is not None:
             overrides.setdefault("parallel_trials", self.exploration_parallelism)
 
+        # Ensure parallelism impacts runtime by mapping legacy parallel_trials into
+        # the unified parallel_config structure used by execution.
+        if "parallel_trials" in overrides and "parallel_config" not in overrides:
+            parallel_trials_value = overrides.get("parallel_trials")
+            if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
+                from traigent.config.parallel import ParallelConfig
+
+                overrides["parallel_config"] = ParallelConfig.from_legacy(
+                    parallel_trials=parallel_trials_value
+                )
+
         if self.metadata:
             overrides.setdefault("tvl_metadata", self.metadata)
         return overrides
@@ -249,7 +260,7 @@ def load_tvl_spec(
 
     # Error if both exploration and optimization are present
     if has_exploration and has_optimization:
-        raise ValueError(
+        raise TVLValidationError(
             "TVL spec contains both 'exploration' and 'optimization' sections. "
             "Use only 'exploration' (TVL 0.9) or 'optimization' (legacy), not both."
         )
@@ -779,8 +790,12 @@ def _compile_structural_constraints(
                 f"Structural constraint at index {index} must be a mapping"
             )
 
-        constraint_id = f"structural_{index}"
-        error_message = f"Structural constraint {constraint_id} violated"
+        # Use explicit id from YAML if provided, otherwise generate from index
+        constraint_id = entry.get("id") or f"structural_{index}"
+        error_message = (
+            entry.get("error_message")
+            or f"Structural constraint {constraint_id} violated"
+        )
 
         try:
             struct_constraint = StructuralConstraint.from_dict(entry, index)

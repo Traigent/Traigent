@@ -175,6 +175,11 @@ def register_optuna_optimizers(force: bool = False) -> None:
     register_optimizer("optuna_cmaes", OptunaCMAESOptimizer)
     register_optimizer("optuna_nsga2", OptunaNSGAIIOptimizer)
     register_optimizer("optuna_grid", OptunaGridOptimizer)
+
+    # Backwards-compatible aliases (used by TVL strategy mapping and legacy configs)
+    register_optimizer("optuna", OptunaTPEOptimizer)
+    register_optimizer("tpe", OptunaTPEOptimizer)
+    register_optimizer("nsga2", OptunaNSGAIIOptimizer)
     logger.debug("Registered Optuna optimizers (force=%s)", force)
 
 

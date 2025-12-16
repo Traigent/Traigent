@@ -1398,6 +1398,7 @@ class TestOptimizationOrchestrator:
         result = await orchestrator.optimize(lambda _: "stub", sample_dataset)
 
         assert orchestrator._stop_reason == "plateau"
+        assert result.stop_reason == "plateau"  # Verify public API
         assert len(result.trials) <= 4
 
     @pytest.mark.asyncio
@@ -1473,6 +1474,106 @@ class TestOptimizationOrchestrator:
         orchestrator._abandon_optuna_trial(123, reason="trial_skipped_for_test")
 
         orchestrator.optimizer.report_trial_pruned.assert_called_once_with(123, 0)
+
+
+class TestStopReasonInResult:
+    """Tests for stop_reason field in OptimizationResult."""
+
+    @pytest.fixture
+    def sample_dataset(self):
+        """Create sample dataset."""
+        examples = [
+            EvaluationExample({"query": "Hello"}, "Hi there!"),
+            EvaluationExample({"query": "Goodbye"}, "See you later!"),
+        ]
+        return Dataset(examples, name="test_dataset", description="Test dataset")
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_max_trials_reached(self, sample_dataset):
+        """stop_reason is 'max_trials_reached' when max_trials limit hit."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)  # More than max_trials
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,  # Limit to 3 trials
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "max_trials_reached"
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_timeout(self, sample_dataset):
+        """stop_reason is 'timeout' when timeout is reached."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(100)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_evaluation_delay(0.3)  # Slow evaluation
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=100,
+            timeout=0.5,  # Short timeout
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_optimizer_stop(self, sample_dataset):
+        """stop_reason is 'optimizer' when optimizer requests stop."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(2)  # Optimizer stops after 2
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=100,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        # Optimizer provides exactly 2 configs then stops - treated as optimizer stop
+        assert result.stop_reason == "optimizer"
+        assert len(result.trials) == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_optimizer_when_no_suggestions(self, sample_dataset):
+        """stop_reason is 'optimizer' when optimizer provides no suggestions."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(0)  # No suggestions
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        # When optimizer provides no suggestions, stop_reason is "optimizer"
+        assert result.stop_reason == "optimizer"
+        assert len(result.trials) == 0
 
 
 class TestOrchestratorCodeQuality:

@@ -12,7 +12,7 @@ Sync: SYNC-OptimizationFlow
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, Protocol, runtime_checkable
 
 # Type aliases for TVL type system
 TVarType = Literal["bool", "int", "float", "enum", "tuple", "callable"]
@@ -58,7 +58,9 @@ class DomainSpec:
         if self.kind == "registry" and not self.registry:
             raise ValueError("Domain kind 'registry' requires a registry identifier")
 
-    def to_configuration_space_entry(self) -> list[Any] | tuple[float, float]:
+    def to_configuration_space_entry(
+        self,
+    ) -> list[Any] | tuple[int, int] | tuple[float, float]:
         """Convert to TraiGent configuration space format.
 
         Returns:
@@ -100,7 +102,7 @@ class TVarDecl:
 
     def to_configuration_space_entry(
         self,
-    ) -> tuple[str, list[Any] | tuple[float, float]]:
+    ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float]]:
         """Convert to TraiGent configuration space format.
 
         Returns:
@@ -610,14 +612,38 @@ def parse_domain_spec(
         if "range" in domain_data:
             range_val = domain_data["range"]
             if isinstance(range_val, list) and len(range_val) == 2:
-                # Preserve integer type for int TVARs
+                range_tuple: tuple[int, int] | tuple[float, float]
+                # Preserve integer type for int TVARs; reject lossy truncation.
                 if tvar_type == "int":
-                    range_tuple: tuple[int, int] | tuple[float, float] = (
-                        int(range_val[0]),
-                        int(range_val[1]),
+                    low_raw, high_raw = range_val
+
+                    def _coerce_int_bound(value: Any, which: str) -> int:
+                        if isinstance(value, bool) or not isinstance(
+                            value, (int, float)
+                        ):
+                            raise ValueError(
+                                f"TVAR '{tvar_name}' int range bounds must be integers, "
+                                f"got {which}={value!r}"
+                            )
+                        if isinstance(value, int):
+                            return value
+                        assert isinstance(value, float)
+                        if value.is_integer():
+                            return int(value)
+                        raise ValueError(
+                            f"TVAR '{tvar_name}' int range bounds must be integers "
+                            f"(no truncation), got {which}={value!r}"
+                        )
+
+                    range_tuple = (
+                        _coerce_int_bound(low_raw, "min"),
+                        _coerce_int_bound(high_raw, "max"),
                     )
                 else:
-                    range_tuple = (float(range_val[0]), float(range_val[1]))
+                    range_tuple = (
+                        float(range_val[0]),
+                        float(range_val[1]),
+                    )
                 return DomainSpec(
                     kind="range",
                     range=range_tuple,
@@ -643,14 +669,6 @@ def parse_domain_spec(
     raise ValueError(
         f"TVAR '{tvar_name}' has invalid domain specification: {domain_data}"
     )
-
-
-# Protocol for registry resolution (future implementation)
-# Using typing.Protocol requires Python 3.8+ and typing_extensions for older versions
-try:
-    from typing import Protocol, runtime_checkable
-except ImportError:
-    from typing_extensions import Protocol, runtime_checkable
 
 
 @runtime_checkable

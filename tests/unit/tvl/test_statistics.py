@@ -289,3 +289,126 @@ class TestStatisticsEdgeCases:
         result = paired_comparison_test(x, y, 5.0, "greater")
         # Should not reject when epsilon is larger than difference
         assert result.p_value > 0.05
+
+
+class TestCalculateHypervolume:
+    """Tests for _calculate_hypervolume function covering multiple dimensions."""
+
+    def test_1d_hypervolume(self) -> None:
+        """1D hypervolume is just distance from best point to reference."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front = [[0.8], [0.9], [0.7]]
+        reference = [0.0]
+        directions = ["maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        # Best point is 0.9, reference is 0.0, so HV = 0.9
+        assert abs(hv - 0.9) < 0.01
+
+    def test_1d_hypervolume_minimize(self) -> None:
+        """1D hypervolume with minimize direction."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front = [[10.0], [20.0], [15.0]]
+        reference = [100.0]  # Worst case for minimize
+        directions = ["minimize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        # After normalization (negate), best is -10, ref is -100
+        # HV = -10 - (-100) = 90
+        assert hv > 0
+
+    def test_2d_hypervolume(self) -> None:
+        """2D hypervolume uses sweep algorithm."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front = [[0.8, 0.6], [0.6, 0.8], [0.7, 0.7]]
+        reference = [0.0, 0.0]
+        directions = ["maximize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        assert hv > 0
+
+    def test_3d_hypervolume_monte_carlo(self) -> None:
+        """3D hypervolume uses Monte Carlo approximation."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        # 3 objectives - this triggers _hypervolume_simple
+        pareto_front = [
+            [0.8, 0.7, 0.6],
+            [0.6, 0.8, 0.7],
+            [0.7, 0.6, 0.8],
+        ]
+        reference = [0.0, 0.0, 0.0]
+        directions = ["maximize", "maximize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        # Should be positive and reasonable for a 3D front
+        assert hv > 0
+
+    def test_empty_pareto_front(self) -> None:
+        """Empty Pareto front returns 0."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front: list[list[float]] = []
+        reference = [0.0, 0.0]
+        directions = ["maximize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        assert abs(hv) < 1e-10
+
+    def test_empty_reference_point(self) -> None:
+        """Empty reference point returns 0."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front = [[0.8, 0.7]]
+        reference: list[float] = []
+        directions: list[str] = []
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        assert abs(hv) < 1e-10
+
+    def test_3d_hypervolume_no_valid_points(self) -> None:
+        """3D hypervolume with no points better than reference returns 0."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        # All points are at or below reference
+        pareto_front = [
+            [0.0, 0.0, 0.0],
+            [-0.1, -0.1, -0.1],
+        ]
+        reference = [0.0, 0.0, 0.0]
+        directions = ["maximize", "maximize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        assert abs(hv) < 1e-10
+
+    def test_3d_hypervolume_with_mixed_directions(self) -> None:
+        """3D hypervolume with mixed maximize/minimize directions."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        pareto_front = [
+            [0.8, 10.0, 0.6],  # High accuracy, low latency, medium cost
+            [0.7, 5.0, 0.8],  # Lower accuracy, very low latency, high cost
+        ]
+        reference = [0.0, 100.0, 0.0]  # Worst case: 0 accuracy, 100ms latency, 0 cost
+        directions = ["maximize", "minimize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        assert hv > 0
+
+    def test_3d_hypervolume_negative_side_returns_zero(self) -> None:
+        """3D hypervolume returns 0 when bounding box has negative side."""
+        from traigent.tvl.statistics import _calculate_hypervolume
+
+        # Reference point is better than all pareto points on one dimension
+        pareto_front = [
+            [0.8, 0.7, 0.6],
+        ]
+        reference = [0.9, 0.0, 0.0]  # Reference > all points on first dim
+        directions = ["maximize", "maximize", "maximize"]
+
+        hv = _calculate_hypervolume(pareto_front, reference, directions)
+        # After normalization, upper_bound[0] - ref[0] <= 0
+        assert abs(hv) < 1e-10

@@ -877,6 +877,7 @@ class OptimizedFunction:
         updated_timeout = timeout if timeout is not None else overrides.get("timeout")
 
         for key in (
+            "parallel_config",
             "parallel_trials",
             "max_total_examples",
             "samples_include_pruned",
