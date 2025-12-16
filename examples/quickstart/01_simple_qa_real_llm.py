@@ -43,9 +43,31 @@ from traigent.api.decorators import (
 )
 
 # Path to dataset (relative to this file)
+# Use qa_samples.jsonl for quick test, llm_eval_mixed.jsonl for full run
 DATASET_PATH = (
     Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
+    # Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
 )
+
+
+# Configuration space - single source of truth for all config values
+CONFIGURATION_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
+    "max_tokens": [50, 100, 200],
+}
+
+DEFAULT_CONFIG = {
+    "model": "gpt-3.5-turbo",
+    "temperature": 0.7,
+    "max_tokens": 100,
+}
+
+# Constraints as descriptive strings for printing
+CONSTRAINTS_DESCRIPTIONS = [
+    "GPT-4o: temperature <= 0.5",
+    "GPT-3.5-turbo: max_tokens <= 100",
+]
 
 
 def custom_accuracy_scorer(output: str, expected, llm_metrics: dict = None) -> float:
@@ -71,17 +93,9 @@ def custom_accuracy_scorer(output: str, expected, llm_metrics: dict = None) -> f
 
 @traigent.optimize(
     # Configuration space: define the search space for optimization
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
-        "max_tokens": [50, 100, 200],
-    },
+    configuration_space=CONFIGURATION_SPACE,
     # Default configuration: starting point before optimization
-    default_config={
-        "model": "gpt-3.5-turbo",
-        "temperature": 0.7,
-        "max_tokens": 100,
-    },
+    default_config=DEFAULT_CONFIG,
     # Multi-objective optimization
     objectives=["accuracy", "cost", "latency"],
     # Constraints: skip configurations that don't make sense
@@ -137,7 +151,7 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
     """Save optimization results to a CSV file.
 
     Creates a CSV with questions as rows and trials as columns.
-    Each cell contains the LLM's answer for that question in that trial.
+    Each trial has two columns: Answer and Pass (True/False).
 
     Args:
         results: OptimizationResult from the optimization run
@@ -154,14 +168,15 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
             expected_answers.append(data["output"])
 
     # Build CSV data structure
-    # Columns: Question, Expected, Trial1, Trial2, ...
+    # Columns: Question, Expected, Trial1 Answer, Trial1 Pass, Trial2 Answer, Trial2 Pass, ...
     headers = ["Question", "Expected"]
     trial_configs = []
 
     for i, trial in enumerate(results.trials, 1):
         config = getattr(trial, "config", getattr(trial, "configuration", {}))
-        config_str = f"Trial {i}: {config.get('model', 'N/A')}, t={config.get('temperature', 'N/A')}"
-        headers.append(config_str)
+        config_str = f"T{i}: {config.get('model', 'N/A')}, t={config.get('temperature', 'N/A')}"
+        headers.append(f"{config_str} Answer")
+        headers.append(f"{config_str} Pass")
         trial_configs.append(config)
 
     # Initialize rows with questions and expected answers
@@ -169,20 +184,26 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
     for q_idx, (question, expected) in enumerate(zip(questions, expected_answers)):
         rows.append([question, expected])
 
-    # Fill in trial answers
+    # Fill in trial answers and pass/fail
     for trial in results.trials:
         example_results = trial.metadata.get("example_results", [])
 
+        # Create lookup by example_id
+        results_by_id = {}
+        for ex_result in example_results:
+            ex_idx = int(ex_result.example_id.split("_")[1])
+            results_by_id[ex_idx] = ex_result
+
         for q_idx in range(len(questions)):
-            # Find the example result for this question
-            answer = "N/A"
-            for ex_result in example_results:
-                # example_id is like "example_0", "example_1", etc.
-                ex_idx = int(ex_result.example_id.split("_")[1])
-                if ex_idx == q_idx:
-                    answer = str(ex_result.actual_output)
-                    break
-            rows[q_idx].append(answer)
+            ex_result = results_by_id.get(q_idx)
+            if ex_result:
+                answer = str(ex_result.actual_output) if ex_result.actual_output else ""
+                passed = getattr(ex_result, "success", False)
+                rows[q_idx].append(answer)
+                rows[q_idx].append("PASS" if passed else "FAIL")
+            else:
+                rows[q_idx].append("N/A")
+                rows[q_idx].append("")
 
     # Write CSV
     with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -191,6 +212,194 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
         writer.writerows(rows)
 
     print(f"Results saved to: {output_path}")
+
+
+def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) -> None:
+    """Save detailed optimization results with one row per question × trial.
+
+    Includes all available metrics: pass/fail, score, source, category,
+    latency, tokens, and cost.
+
+    Args:
+        results: OptimizationResult from the optimization run
+        dataset_path: Path to the JSONL dataset file
+        output_path: Path where the CSV file will be saved
+    """
+    # Load dataset metadata (source, category)
+    dataset_metadata = []
+    with open(dataset_path) as f:
+        for line in f:
+            data = json.loads(line)
+            dataset_metadata.append(
+                {
+                    "question": data["input"]["question"],
+                    "expected": data["output"],
+                    "source": data.get("source", "unknown"),
+                    "category": data.get("category", "unknown"),
+                }
+            )
+
+    # Build rows: one per (question, trial) combination
+    headers = [
+        "question_id",
+        "question",
+        "expected",
+        "actual",
+        "pass",
+        "score",
+        "source",
+        "category",
+        "trial_id",
+        "model",
+        "temperature",
+        "max_tokens",
+        "latency_ms",
+        "input_tokens",
+        "output_tokens",
+        "total_cost",
+    ]
+    rows = []
+
+    for trial_idx, trial in enumerate(results.trials, 1):
+        config = getattr(trial, "config", getattr(trial, "configuration", {}))
+        example_results = trial.metadata.get("example_results", [])
+
+        # Create a lookup by example_id for faster access
+        results_by_id = {}
+        for ex_result in example_results:
+            ex_idx = int(ex_result.example_id.split("_")[1])
+            results_by_id[ex_idx] = ex_result
+
+        for q_idx, meta in enumerate(dataset_metadata):
+            ex_result = results_by_id.get(q_idx)
+            if ex_result:
+                metrics = getattr(ex_result, "metrics", {}) or {}
+                rows.append(
+                    [
+                        f"example_{q_idx}",
+                        meta["question"],
+                        meta["expected"],
+                        str(ex_result.actual_output) if ex_result.actual_output else "",
+                        ex_result.success if hasattr(ex_result, "success") else "",
+                        metrics.get("accuracy", metrics.get("score", "")),
+                        meta["source"],
+                        meta["category"],
+                        trial_idx,
+                        config.get("model", ""),
+                        config.get("temperature", ""),
+                        config.get("max_tokens", ""),
+                        getattr(ex_result, "execution_time", "")
+                        or metrics.get("latency_ms", ""),
+                        metrics.get("input_tokens", ""),
+                        metrics.get("output_tokens", ""),
+                        metrics.get("total_cost", ""),
+                    ]
+                )
+            else:
+                # No result for this question in this trial
+                rows.append(
+                    [
+                        f"example_{q_idx}",
+                        meta["question"],
+                        meta["expected"],
+                        "N/A",
+                        "",
+                        "",
+                        meta["source"],
+                        meta["category"],
+                        trial_idx,
+                        config.get("model", ""),
+                        config.get("temperature", ""),
+                        config.get("max_tokens", ""),
+                        "",
+                        "",
+                        "",
+                        "",
+                    ]
+                )
+
+    # Write CSV
+    with open(output_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(headers)
+        writer.writerows(rows)
+
+    print(f"Detailed results saved to: {output_path}")
+
+
+def print_category_summary(results, dataset_path: Path) -> None:
+    """Print accuracy breakdown by source category and by model.
+
+    Args:
+        results: OptimizationResult from the optimization run
+        dataset_path: Path to the JSONL dataset file
+    """
+    # Load dataset metadata
+    dataset_metadata = []
+    with open(dataset_path) as f:
+        for line in f:
+            data = json.loads(line)
+            dataset_metadata.append(
+                {
+                    "source": data.get("source", "unknown"),
+                    "category": data.get("category", "unknown"),
+                }
+            )
+
+    # Collect results by source and by model
+    source_results = {}  # source -> [pass/fail bools]
+    model_results = {}  # model -> [pass/fail bools]
+    total_cost = 0.0
+
+    for trial in results.trials:
+        config = getattr(trial, "config", getattr(trial, "configuration", {}))
+        model = config.get("model", "unknown")
+        example_results = trial.metadata.get("example_results", [])
+
+        # Track trial cost
+        trial_cost = trial.metadata.get("total_example_cost", 0)
+        if trial_cost:
+            total_cost += float(trial_cost)
+
+        for ex_result in example_results:
+            ex_idx = int(ex_result.example_id.split("_")[1])
+            if ex_idx < len(dataset_metadata):
+                source = dataset_metadata[ex_idx]["source"]
+                passed = getattr(ex_result, "success", False)
+
+                # Aggregate by source
+                if source not in source_results:
+                    source_results[source] = []
+                source_results[source].append(passed)
+
+                # Aggregate by model
+                if model not in model_results:
+                    model_results[model] = []
+                model_results[model].append(passed)
+
+    # Print summary
+    print()
+    print("=" * 60)
+    print("Results Summary by Category")
+    print("=" * 60)
+    print()
+
+    print("Accuracy by Source:")
+    for source in sorted(source_results.keys()):
+        passes = source_results[source]
+        accuracy = sum(passes) / len(passes) * 100 if passes else 0
+        print(f"  {source} ({len(passes)} examples): {accuracy:.1f}%")
+
+    print()
+    print("Accuracy by Model:")
+    for model in sorted(model_results.keys()):
+        passes = model_results[model]
+        accuracy = sum(passes) / len(passes) * 100 if passes else 0
+        print(f"  {model} ({len(passes)} examples): {accuracy:.1f}%")
+
+    print()
+    print(f"Total Cost: ${total_cost:.4f}")
+    print()
 
 
 async def main():
@@ -204,14 +413,14 @@ async def main():
     print()
 
     print("Configuration Space:")
-    print("  - Models: gpt-3.5-turbo, gpt-4o-mini, gpt-4o")
-    print("  - Temperature: 0.1, 0.3, 0.5, 0.7, 0.9")
-    print("  - Max Tokens: 50, 100, 200")
+    print(f"  - Models: {', '.join(CONFIGURATION_SPACE['model'])}")
+    print(f"  - Temperature: {', '.join(str(t) for t in CONFIGURATION_SPACE['temperature'])}")
+    print(f"  - Max Tokens: {', '.join(str(t) for t in CONFIGURATION_SPACE['max_tokens'])}")
     print()
 
     print("Constraints Applied:")
-    print("  - GPT-4o: temperature <= 0.5")
-    print("  - GPT-3.5-turbo: max_tokens <= 100")
+    for constraint in CONSTRAINTS_DESCRIPTIONS:
+        print(f"  - {constraint}")
     print()
 
     # Run optimization
@@ -243,11 +452,18 @@ async def main():
     print()
 
     # Save results to CSV
-    csv_output_path = (
-        Path(__file__).parent / "results" / "optimization_results.csv"
-    )
+    csv_output_path = Path(__file__).parent / "results" / "optimization_results.csv"
     csv_output_path.parent.mkdir(parents=True, exist_ok=True)
     save_results_to_csv(results, DATASET_PATH, csv_output_path)
+
+    # Save detailed results CSV
+    detailed_csv_path = (
+        Path(__file__).parent / "results" / "optimization_results_detailed.csv"
+    )
+    save_detailed_results_csv(results, DATASET_PATH, detailed_csv_path)
+
+    # Print category summary
+    print_category_summary(results, DATASET_PATH)
 
     print()
 
