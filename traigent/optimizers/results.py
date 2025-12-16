@@ -5,7 +5,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from traigent.api.types import StopReason
 
 
 @dataclass
@@ -32,6 +35,7 @@ class OptimizationResult:
     trials: list[Trial]
     duration: float
     convergence_info: dict[str, Any] = field(default_factory=dict)
+    stop_reason: StopReason | None = None
 
     @property
     def total_trials(self) -> int:

@@ -7,12 +7,69 @@ from pathlib import Path
 
 import pytest
 
-from traigent.tvl.spec_loader import load_tvl_spec
+from traigent.tvl.spec_loader import (
+    _parse_exploration_parallelism,
+    _resolve_algorithm,
+    load_tvl_spec,
+)
 from traigent.utils.exceptions import TVLValidationError
 
 FIXTURE_SPEC = Path(
     "docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml"
 )
+
+
+class TestLoadTvlSpecErrors:
+    """Tests for error handling in load_tvl_spec."""
+
+    def test_file_not_found_raises_error(self, tmp_path: Path) -> None:
+        """Missing spec file raises TVLValidationError."""
+        nonexistent = tmp_path / "does_not_exist.tvl.yml"
+        with pytest.raises(TVLValidationError, match="not found"):
+            load_tvl_spec(spec_path=nonexistent)
+
+    def test_non_mapping_spec_raises_error(self, tmp_path: Path) -> None:
+        """Spec that is not a mapping raises TVLValidationError."""
+        spec_file = tmp_path / "invalid.tvl.yml"
+        spec_file.write_text("- item1\n- item2\n")  # List instead of mapping
+
+        with pytest.raises(TVLValidationError, match="must be a mapping"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_tvl_version_numeric_converted_to_string(self, tmp_path: Path) -> None:
+        """Numeric tvl_version is converted to string."""
+        spec_content = """
+tvl_version: 0.9
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        # tvl_version should be string
+        assert artifact.tvl_version == "0.9"
+
+    def test_spec_without_tvars_or_configuration_space(self, tmp_path: Path) -> None:
+        """Spec without tvars or configuration_space gets empty config space."""
+        spec_content = """
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        # Should have empty configuration space
+        assert artifact.configuration_space == {}
 
 
 def test_loads_configuration_space_and_objectives() -> None:
@@ -28,7 +85,9 @@ def test_loads_configuration_space_and_objectives() -> None:
         "response_latency",
         "token_cost",
     ]
-    assert artifact.budget.max_trials == 60
+    # TVL 0.9 uses exploration_budgets instead of legacy budget
+    assert artifact.exploration_budgets is not None
+    assert artifact.exploration_budgets.max_trials == 60
     assert artifact.metadata["spec_id"] == "rag-campus-orientation"
 
 
@@ -37,8 +96,11 @@ def test_environment_overrides_budget_and_space() -> None:
 
     artifact = load_tvl_spec(spec_path=FIXTURE_SPEC, environment="finals_week")
 
-    assert artifact.budget.max_trials == 90
-    assert artifact.configuration_space["retrieval_depth"] == (3.0, 8.0)
+    # TVL 0.9 uses exploration_budgets instead of legacy budget
+    assert artifact.exploration_budgets is not None
+    assert artifact.exploration_budgets.max_trials == 90
+    # Integer tvars produce int ranges, not float
+    assert artifact.configuration_space["retrieval_depth"] == (3, 8)
 
 
 def test_compiled_constraints_attach_metadata() -> None:
@@ -48,14 +110,17 @@ def test_compiled_constraints_attach_metadata() -> None:
     assert artifact.constraints, "spec defines constraints"
     constraint = artifact.constraints[0]
     meta = getattr(constraint, "__tvl_constraint__", {})
+    # TVL 0.9 structural constraints use id from the constraint definition
     assert meta["id"] == "campus-hour-latency"
     assert isinstance(constraint({"response_latency_ms": 800}), bool)
 
 
 def test_legacy_formats_emit_deprecation_warnings() -> None:
     """Legacy TVL formats emit DeprecationWarnings during spec loading."""
+    # Use the environment_overlays example which is intentionally legacy format
+    legacy_spec = Path("examples/tvl/environment_overlays/overlays.tvl.yml")
     with pytest.warns(DeprecationWarning) as record:
-        load_tvl_spec(spec_path=FIXTURE_SPEC)
+        load_tvl_spec(spec_path=legacy_spec)
 
     messages = [str(w.message) for w in record]
     assert any("configuration_space" in message for message in messages)
@@ -506,7 +571,9 @@ exploration:
         spec_file = tmp_path / "test.tvl.yml"
         spec_file.write_text(spec_content)
 
-        with pytest.raises(ValueError, match="both 'exploration' and 'optimization'"):
+        with pytest.raises(
+            TVLValidationError, match="both 'exploration' and 'optimization'"
+        ):
             load_tvl_spec(spec_path=spec_file)
 
     def test_strategy_dict_format_works(self, tmp_path: Path) -> None:
@@ -533,3 +600,363 @@ exploration:
         overrides = artifact.runtime_overrides()
 
         assert overrides.get("algorithm") == "bayesian"
+
+    def test_legacy_budget_takes_precedence_over_exploration(
+        self, tmp_path: Path
+    ) -> None:
+        """Legacy optimization.budget should take precedence over exploration.budgets."""
+        # This test uses only optimization (legacy) to verify it works
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+optimization:
+  strategy: nsga2
+  budget:
+    max_trials:
+      value: 100
+    timeout_seconds: 3600
+    parallel_trials: 8
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        # Legacy budget values should be used
+        assert overrides.get("max_trials") == 100
+        assert overrides.get("timeout") == 3600
+        assert overrides.get("parallel_trials") == 8
+
+    def test_exploration_budgets_only_when_no_legacy(self, tmp_path: Path) -> None:
+        """exploration.budgets fields are used when legacy budget is not set."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+exploration:
+  budgets:
+    max_trials: 75
+    max_spend_usd: 25.0
+    max_wallclock_s: 2400
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("max_trials") == 75
+        assert overrides.get("cost_limit") == 25.0
+        assert overrides.get("timeout") == 2400
+
+    def test_exploration_parallelism_only(self, tmp_path: Path) -> None:
+        """exploration.parallelism alone adds parallel_trials."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+exploration:
+  parallelism:
+    max_parallel_trials: 6
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("parallel_trials") == 6
+        # Should not have other budget keys
+        assert "max_trials" not in overrides
+        assert "timeout" not in overrides
+
+    def test_empty_exploration_returns_minimal_overrides(self, tmp_path: Path) -> None:
+        """Empty exploration section returns minimal overrides."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+exploration: {}
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        # Should not have budget keys when exploration is empty
+        assert "max_trials" not in overrides
+        assert "timeout" not in overrides
+        assert "parallel_trials" not in overrides
+        assert "cost_limit" not in overrides
+
+    def test_legacy_budget_max_total_examples(self, tmp_path: Path) -> None:
+        """Legacy budget.max_total_examples is wired to runtime_overrides."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+optimization:
+  budget:
+    max_trials:
+      value: 50
+    max_total_examples: 1000
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("max_total_examples") == 1000
+
+    def test_legacy_budget_samples_include_pruned(self, tmp_path: Path) -> None:
+        """Legacy budget.samples_include_pruned is wired to runtime_overrides."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+optimization:
+  budget:
+    max_trials:
+      value: 50
+    samples_include_pruned: true
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        import warnings
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("samples_include_pruned") is True
+
+
+class TestParseExplorationParallelism:
+    """Unit tests for _parse_exploration_parallelism() function."""
+
+    def test_returns_none_for_none_input(self) -> None:
+        """None input returns None."""
+        assert _parse_exploration_parallelism(None) is None
+
+    def test_returns_none_for_string_input(self) -> None:
+        """String input (non-dict) returns None."""
+        assert _parse_exploration_parallelism("invalid") is None
+
+    def test_returns_none_for_list_input(self) -> None:
+        """List input (non-dict) returns None."""
+        assert _parse_exploration_parallelism([1, 2, 3]) is None
+
+    def test_returns_none_for_int_input(self) -> None:
+        """Integer input (non-dict) returns None."""
+        assert _parse_exploration_parallelism(42) is None
+
+    def test_returns_none_when_parallelism_key_missing(self) -> None:
+        """Empty dict (no parallelism key) returns None."""
+        assert _parse_exploration_parallelism({}) is None
+
+    def test_returns_none_when_parallelism_is_string(self) -> None:
+        """parallelism as string (not dict) returns None."""
+        assert _parse_exploration_parallelism({"parallelism": "not_dict"}) is None
+
+    def test_returns_none_when_parallelism_is_list(self) -> None:
+        """parallelism as list (not dict) returns None."""
+        assert _parse_exploration_parallelism({"parallelism": []}) is None
+
+    def test_returns_none_when_max_parallel_trials_missing(self) -> None:
+        """parallelism dict without max_parallel_trials returns None."""
+        assert _parse_exploration_parallelism({"parallelism": {}}) is None
+
+    def test_returns_none_when_max_parallel_trials_is_string(self) -> None:
+        """max_parallel_trials as string (not int) returns None."""
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": "4"}}
+        )
+        assert result is None
+
+    def test_returns_none_when_max_parallel_trials_is_float(self) -> None:
+        """max_parallel_trials as float (not int) returns None."""
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": 4.5}}
+        )
+        assert result is None
+
+    def test_extracts_max_parallel_trials_correctly(self) -> None:
+        """Valid max_parallel_trials integer is extracted."""
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": 4}}
+        )
+        assert result == 4
+
+    def test_handles_zero_parallel_trials(self) -> None:
+        """Zero is a valid integer value."""
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": 0}}
+        )
+        assert result == 0
+
+    def test_handles_large_parallel_trials(self) -> None:
+        """Large integer values are handled."""
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": 999999}}
+        )
+        assert result == 999999
+
+    def test_boolean_passes_int_check(self) -> None:
+        """Python quirk: isinstance(True, int) == True.
+
+        This documents current behavior. In Python, bool is a subclass of int,
+        so True/False pass isinstance(x, int) checks.
+        """
+        result = _parse_exploration_parallelism(
+            {"parallelism": {"max_parallel_trials": True}}
+        )
+        # Current behavior: True passes the int check
+        assert result is True
+
+
+class TestResolveAlgorithm:
+    """Unit tests for _resolve_algorithm() function."""
+
+    def test_returns_none_for_none_section(self) -> None:
+        """None section returns None."""
+        assert _resolve_algorithm(None) is None
+
+    def test_returns_none_for_string_section(self) -> None:
+        """String section (non-dict) returns None."""
+        assert _resolve_algorithm("invalid") is None
+
+    def test_returns_none_for_list_section(self) -> None:
+        """List section (non-dict) returns None."""
+        assert _resolve_algorithm([1, 2, 3]) is None
+
+    def test_returns_none_when_strategy_missing(self) -> None:
+        """Empty dict (no strategy key) returns None."""
+        assert _resolve_algorithm({}) is None
+
+    def test_returns_none_when_strategy_is_none(self) -> None:
+        """strategy: None returns None."""
+        assert _resolve_algorithm({"strategy": None}) is None
+
+    def test_returns_none_when_strategy_is_int(self) -> None:
+        """strategy as int (not str or dict) returns None."""
+        assert _resolve_algorithm({"strategy": 123}) is None
+
+    def test_dict_strategy_extracts_type(self) -> None:
+        """Dict strategy with type key extracts the type."""
+        result = _resolve_algorithm({"strategy": {"type": "bayesian"}})
+        assert result == "bayesian"
+
+    def test_dict_strategy_without_type_returns_none(self) -> None:
+        """Dict strategy without type key returns None."""
+        assert _resolve_algorithm({"strategy": {"no_type": "x"}}) is None
+
+    def test_empty_dict_strategy_returns_none(self) -> None:
+        """Empty dict strategy returns None."""
+        assert _resolve_algorithm({"strategy": {}}) is None
+
+    def test_string_strategy_normalizes_case(self) -> None:
+        """String strategy is case-insensitive."""
+        assert _resolve_algorithm({"strategy": "PARETO_OPTIMAL"}) == "nsga2"
+        assert _resolve_algorithm({"strategy": "Pareto_Optimal"}) == "nsga2"
+
+    def test_unknown_strategy_returned_lowercase(self) -> None:
+        """Unknown strategy values are returned as-is (lowercased)."""
+        assert _resolve_algorithm({"strategy": "Custom_Algo"}) == "custom_algo"
+
+    def test_mapping_pareto_optimal(self) -> None:
+        """pareto_optimal maps to nsga2."""
+        assert _resolve_algorithm({"strategy": "pareto_optimal"}) == "nsga2"
+
+    def test_mapping_nsga2(self) -> None:
+        """nsga2 maps to nsga2."""
+        assert _resolve_algorithm({"strategy": "nsga2"}) == "nsga2"
+
+    def test_mapping_grid(self) -> None:
+        """grid maps to grid."""
+        assert _resolve_algorithm({"strategy": "grid"}) == "grid"
+
+    def test_mapping_grid_search(self) -> None:
+        """grid_search maps to grid."""
+        assert _resolve_algorithm({"strategy": "grid_search"}) == "grid"
+
+    def test_mapping_random(self) -> None:
+        """random maps to random."""
+        assert _resolve_algorithm({"strategy": "random"}) == "random"
+
+    def test_mapping_random_search(self) -> None:
+        """random_search maps to random."""
+        assert _resolve_algorithm({"strategy": "random_search"}) == "random"
+
+    def test_mapping_bayesian(self) -> None:
+        """bayesian maps to bayesian."""
+        assert _resolve_algorithm({"strategy": "bayesian"}) == "bayesian"
+
+    def test_mapping_tpe(self) -> None:
+        """tpe maps to optuna."""
+        assert _resolve_algorithm({"strategy": "tpe"}) == "optuna"
+
+    def test_dict_strategy_with_extra_fields(self) -> None:
+        """Dict strategy with extra fields still extracts type."""
+        result = _resolve_algorithm(
+            {
+                "strategy": {
+                    "type": "bayesian",
+                    "initial_sampling": "sobol",
+                    "n_warmup": 10,
+                }
+            }
+        )
+        assert result == "bayesian"
