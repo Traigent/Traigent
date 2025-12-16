@@ -1,0 +1,46 @@
+question_id,question,expected,actual,pass,score,source,category,trial_id,model,temperature,max_tokens,latency_ms,input_tokens,output_tokens,total_cost
+example_0,What is the capital of France?,Paris,Paris,True,1.0,unknown,unknown,1,gpt-4o,0.9,50,0.8044517040252686,21,1,6.25e-05
+example_1,What is 2 + 2?,4,4,True,1.0,unknown,unknown,1,gpt-4o,0.9,50,0.8130912780761719,22,1,6.500000000000001e-05
+example_2,Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare.,True,0.0,unknown,unknown,1,gpt-4o,0.9,50,0.7175862789154053,20,3,8e-05
+example_3,What is the largest planet in our solar system?,Jupiter,Jupiter is the largest planet in our solar system.,True,0.0,unknown,unknown,1,gpt-4o,0.9,50,0.410184383392334,24,11,0.00017
+example_4,What year did World War II end?,1945,World War II ended in 1945.,True,0.0,unknown,unknown,1,gpt-4o,0.9,50,0.6132867336273193,22,9,0.000145
+example_5,What is the chemical symbol for water?,H2O,H2O,True,1.0,unknown,unknown,1,gpt-4o,0.9,50,0.5133848190307617,22,3,8.5e-05
+example_6,Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci,True,1.0,unknown,unknown,1,gpt-4o,0.9,50,0.9713358879089355,20,4,9e-05
+example_7,What is the speed of light?,"299,792,458 meters per second","The speed of light is approximately 299,792 kilometers per second in a vacuum.",True,0.0,unknown,unknown,1,gpt-4o,0.9,50,0.8723545074462891,21,17,0.00022250000000000001
+example_8,Who is Nerisett Karay?,I don't have information on Nerisett Karay.,"Nerisett Karay is a fictional character in the book ""The Starless Sea"" by Erin Morgenstern.",True,0.0,unknown,unknown,1,gpt-4o,0.9,50,0.5957250595092773,22,26,0.000315
+example_0,What is the capital of France?,Paris,Paris.,True,0.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.42362022399902344,21,2,4.35e-06
+example_1,What is 2 + 2?,4,4,True,1.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.4084796905517578,22,1,3.9e-06
+example_2,Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare wrote Romeo and Juliet.,True,0.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.8232169151306152,20,7,7.2e-06
+example_3,What is the largest planet in our solar system?,Jupiter,Jupiter,True,1.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.4060342311859131,24,2,4.8e-06
+example_4,What year did World War II end?,1945,World War II ended in 1945.,True,0.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.5115303993225098,22,9,8.7e-06
+example_5,What is the chemical symbol for water?,H2O,H2O,True,1.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.4284706115722656,22,3,5.0999999999999995e-06
+example_6,Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci,True,1.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.49288249015808105,20,4,5.4e-06
+example_7,What is the speed of light?,"299,792,458 meters per second","The speed of light in a vacuum is approximately 299,792 kilometers per second (186,282 miles per second).",True,0.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.5335891246795654,21,24,1.755e-05
+example_8,Who is Nerisett Karay?,I don't have information on Nerisett Karay.,"Nerisett Karay is a fictional character from the television show ""The Witcher"".",True,0.0,unknown,unknown,2,gpt-4o-mini,0.9,200,0.7624039649963379,22,19,1.4699999999999998e-05
+example_0,What is the capital of France?,Paris,Paris,True,1.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.33895301818847656,21,1,3.7499999999999997e-06
+example_1,What is 2 + 2?,4,4,True,1.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.4095170497894287,22,1,3.9e-06
+example_2,Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare wrote Romeo and Juliet.,True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.511824369430542,20,7,7.2e-06
+example_3,What is the largest planet in our solar system?,Jupiter,Jupiter is the largest planet in our solar system.,True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.5111105442047119,24,11,1.0199999999999999e-05
+example_4,What year did World War II end?,1945,World War II ended in 1945.,True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.513160228729248,22,9,8.7e-06
+example_5,What is the chemical symbol for water?,H2O,The chemical symbol for water is H2O.,True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.5094926357269287,22,10,9.299999999999999e-06
+example_6,Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci,True,1.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.7170109748840332,20,4,5.4e-06
+example_7,What is the speed of light?,"299,792,458 meters per second","The speed of light is approximately 299,792 kilometers per second in a vacuum.",True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.5132629871368408,21,17,1.335e-05
+example_8,Who is Nerisett Karay?,I don't have information on Nerisett Karay.,"Nerisett Karay is a fictional character from the video game ""Genshin Impact.""",True,0.0,unknown,unknown,3,gpt-4o-mini,0.9,200,0.5112507343292236,22,20,1.53e-05
+example_0,What is the capital of France?,Paris,Paris.,True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.37999582290649414,21,2,3.55e-05
+example_1,What is 2 + 2?,4,4,True,1.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.7426877021789551,22,1,3.5000000000000004e-05
+example_2,Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare.,True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.40906500816345215,20,3,3.6e-05
+example_3,What is the largest planet in our solar system?,Jupiter,Jupiter,True,1.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.8187158107757568,24,2,4e-05
+example_4,What year did World War II end?,1945,World War II ended in 1945.,True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.4084136486053467,22,9,5.1000000000000006e-05
+example_5,What is the chemical symbol for water?,H2O,H2O,True,1.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.7181649208068848,22,3,3.9e-05
+example_6,Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci.,True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.5118522644042969,20,5,3.9999999999999996e-05
+example_7,What is the speed of light?,"299,792,458 meters per second","The speed of light is approximately 299,792 kilometers per second in a vacuum.",True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,0.5129184722900391,21,17,6.549999999999999e-05
+example_8,Who is Nerisett Karay?,I don't have information on Nerisett Karay.,"Nerisett Karay is a fictional character in the video game ""The Witcher 3: Wild Hunt.""",True,0.0,unknown,unknown,4,gpt-3.5-turbo,0.1,200,24.267504930496216,22,24,8.1e-05
+example_0,What is the capital of France?,Paris,Paris,True,1.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.5043849945068359,21,1,3.35e-05
+example_1,What is 2 + 2?,4,4,True,1.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.4099271297454834,22,1,3.5000000000000004e-05
+example_2,Who wrote Romeo and Juliet?,William Shakespeare,William Shakespeare.,True,0.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.4102311134338379,20,3,3.6e-05
+example_3,What is the largest planet in our solar system?,Jupiter,Jupiter is the largest planet in our solar system.,True,0.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.5115313529968262,24,11,5.8e-05
+example_4,What year did World War II end?,1945,World War II ended in 1945.,True,0.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.6161947250366211,22,9,5.1000000000000006e-05
+example_5,What is the chemical symbol for water?,H2O,H2O,True,1.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.40616703033447266,22,3,3.9e-05
+example_6,Who painted the Mona Lisa?,Leonardo da Vinci,Leonardo da Vinci,True,1.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.4130861759185791,20,4,3.8e-05
+example_7,What is the speed of light?,"299,792,458 meters per second","The speed of light is approximately 299,792,458 meters per second in a vacuum.",True,0.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.4769444465637207,21,19,6.95e-05
+example_8,Who is Nerisett Karay?,I don't have information on Nerisett Karay.,"Nerisett Karay is a fictional character from the video game ""Dragon Age: Inquisition.""",True,0.0,unknown,unknown,5,gpt-3.5-turbo,0.9,100,0.5441074371337891,22,21,7.500000000000001e-05
