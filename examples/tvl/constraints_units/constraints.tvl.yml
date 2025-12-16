@@ -1,61 +1,69 @@
+# TVL 0.9 Example: Constraints Lab
+#
+# Explores CEL constraints and unit typing.
+# Migrated from legacy format to TVL 0.9.
+
 spec:
   id: constraints-lab
-  version: 0.1.0
+  version: "0.1.0"
+
 metadata:
   owner: "qa@traigent.ai"
   description: "Explores CEL constraints and unit typing."
-units:
-  time: [milliseconds, seconds]
-  currency: [USD]
-  ratio: [dimensionless]
-  percentage: [percent]
-configuration_space:
-  temperature:
-    type: continuous
-    range: [0.0, 1.0]
-    unit: ratio
-  max_tokens:
-    type: integer
-    range: [128, 1024]
+
+# TVL 0.9 typed variables (replaces configuration_space)
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+    default: 0.5
+    unit: dimensionless
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [128, 1024]
+    default: 512
     unit: tokens
-  cache_ttl_hours:
-    type: continuous
-    range: [0.5, 12.0]
+
+  - name: cache_ttl_hours
+    type: float
+    domain:
+      range: [0.5, 12.0]
+    default: 2.0
     unit: hours
-  rerank_weight:
-    type: continuous
-    range: [0.0, 1.0]
-    unit: ratio
+
+  - name: rerank_weight
+    type: float
+    domain:
+      range: [0.0, 1.0]
+    default: 0.5
+    unit: dimensionless
+
 objectives:
   - name: stability
     direction: maximize
+
   - name: cost
     direction: minimize
+
+# TVL 0.9 structural constraints (replaces flat constraints list)
 constraints:
-  # Expression constraint: simple rule
-  - id: cache-ttl-unit-check
-    type: expression
-    rule: 'params.cache_ttl_hours >= 1.0'
-    error_message: "Cache needs at least 1 hour TTL."
+  structural:
+    # Expression constraint: simple rule
+    - expr: "params.cache_ttl_hours >= 1.0"
 
-  # Expression constraint: compound expression
-  - id: token-temperature-budget
-    type: expression
-    rule: 'params.temperature * params.max_tokens <= 600'
-    error_message: "Token-temperature product keeps hallucinations manageable."
+    # Expression constraint: compound expression
+    - expr: "params.temperature * params.max_tokens <= 600"
 
-  # Conditional constraint: when-then pattern
-  - id: rerank-mandate
-    type: conditional
-    when: 'params.max_tokens >= 512'
-    then: 'params.rerank_weight >= 0.4'
-    error_message: "Long answers must lean on reranking."
+    # Conditional constraint: when-then pattern
+    - when: "params.max_tokens >= 512"
+      then: "params.rerank_weight >= 0.4"
 
-  # Forbidden constraint: explicit prohibition
-  - id: rerank-cap
-    type: forbidden
-    rule: 'params.rerank_weight > 0.8'
-    error_message: "Rerank weight above 0.8 is unstable."
+    # Forbidden constraint as expression (rerank_weight > 0.8 is forbidden)
+    - expr: "params.rerank_weight <= 0.8"
+
 evaluation:
   workloads:
     - name: stability_suite

@@ -1,9 +1,20 @@
+# TVL Legacy Example: Environment Overlays
+#
+# NOTE: This example uses legacy TVL format intentionally.
+# Environment overlays use deep-merge semantics that REPLACE lists rather than
+# merge by name. Migrating to TVL 0.9 tvars would require implementing merge-by-name
+# semantics for lists, which is out of scope.
+#
+# The overlay mechanics (extends/overrides) work identically for both legacy
+# and TVL 0.9 formats.
+
 spec:
   id: overlays-fleet
-  version: 0.2.0
+  version: "0.2.0"
+
 metadata:
   owner: "platform@traigent.ai"
-  description: "Shows how extends/overrides manage environments."
+  description: "Shows how extends/overrides manage environments (legacy format)."
 units:
   time: [milliseconds, seconds]
   ratio: [dimensionless]

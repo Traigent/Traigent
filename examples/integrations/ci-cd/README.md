@@ -6,7 +6,7 @@ This example demonstrates how to integrate TraiGent optimization gates into your
 
 1. **Regression Gate**: Prevent merging if configuration underperforms baseline
 2. **Improvement Gate**: Alert when auto-tuning finds better configurations
-3. **Zero Custom Code**: Use only TraiGent decorator and SDK methods
+3. **No Custom Scoring Functions**: Use TraiGent’s built-in evaluator + metrics (a small runner script wires it into CI)
 4. **Specification-Driven**: Configure behavior through environment variables
 
 ## 📁 Structure

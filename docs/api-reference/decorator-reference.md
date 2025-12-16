@@ -53,7 +53,7 @@ def optimize(
 
     # Runtime overrides
     **runtime_overrides: Any,
-) -> Callable[[Callable[..., Any]], OptimizedFunction]
+) -> Callable[[Callable[..., Any]], Any]
 ```
 
 ## Parameter Groups
@@ -61,11 +61,13 @@ def optimize(
 ### Core Optimization Parameters
 
 #### `objectives`
+
 - **Type**: `list[str] | ObjectiveSchema | None`
 - **Default**: `["accuracy"]`
 - **Description**: Target metrics to optimize
 
 **String List Form** (Simple):
+
 ```python
 @traigent.optimize(
     objectives=["accuracy", "cost", "latency"],
@@ -74,10 +76,12 @@ def optimize(
 ```
 
 TraiGent automatically infers:
+
 - **Orientations**: Maximize for accuracy-like metrics, minimize for cost/latency
 - **Weights**: Equal weights for all objectives
 
 **ObjectiveSchema Form** (Advanced):
+
 ```python
 from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
@@ -94,16 +98,61 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 ```
 
 Explicit control over:
+
 - **Weights**: Relative importance of each objective
-- **Orientations**: "maximize" or "minimize"
+- **Orientations**: "maximize", "minimize", or "band" (TVL 0.9)
 - **Metadata**: Additional objective configuration
 
+**Banded Objectives** (TVL 0.9):
+
+For objectives where you want to stay within a target range rather than maximize/minimize:
+
+```python
+from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
+from traigent.tvl.models import BandTarget
+
+@traigent.optimize(
+    objectives=ObjectiveSchema(
+        definitions=[
+            ObjectiveDefinition(name="accuracy", weight=2.0, orientation="maximize"),
+            # Banded objective: target response length between 100-200 tokens
+            ObjectiveDefinition(
+                name="response_length",
+                orientation="band",
+                band=BandTarget(low=100, high=200),
+                band_test="TOST",    # Two One-Sided Tests for equivalence
+                band_alpha=0.05,     # Significance level
+                weight=1.0,
+            ),
+            # Alternative: center ± tolerance
+            ObjectiveDefinition(
+                name="cost",
+                orientation="band",
+                band=BandTarget(center=0.01, tol=0.005),  # Band is [0.005, 0.015]
+                band_test="TOST",
+                band_alpha=0.05,
+                weight=1.0,
+            ),
+        ]
+    ),
+    ...
+)
+```
+
+Banded objectives use TOST (Two One-Sided Tests) to statistically verify that the metric falls within the target band.
+
+> **Current Status**: Banded objectives are fully parsed and available in `ObjectiveDefinition`. During optimization, they are currently treated as minimize objectives. For full TOST-based statistical testing, use `PromotionGate.evaluate()` with collected sample data after optimization.
+
 #### `configuration_space`
+
 - **Type**: `dict[str, Any] | None`
 - **Default**: `None`
 - **Description**: Search space describing tunable parameters
 
+> ⚠️ **Deprecation Notice (TVL 0.9)**: The `configuration_space` parameter is deprecated in favor of the `tvars` section in TVL spec files. When using TVL specs, define your search space using `tvars` (typed variables) for full TVL 0.9 support including type safety, units, and registry domains. A `DeprecationWarning` is raised when loading specs with `configuration_space`.
+
 **Discrete Choices** (List):
+
 ```python
 configuration_space={
     "model": ["gpt-4o-mini", "gpt-4", "claude-3-haiku"],
@@ -112,6 +161,7 @@ configuration_space={
 ```
 
 **Continuous Ranges** (Tuple):
+
 ```python
 configuration_space={
     "temperature": (0.0, 1.0),  # min, max
@@ -120,6 +170,7 @@ configuration_space={
 ```
 
 **Mixed Configuration**:
+
 ```python
 configuration_space={
     "model": ["gpt-4o-mini", "gpt-4"],
@@ -129,6 +180,7 @@ configuration_space={
 ```
 
 #### `default_config`
+
 - **Type**: `dict[str, Any] | None`
 - **Default**: `None`
 - **Description**: Baseline configuration for first trial
@@ -142,11 +194,13 @@ configuration_space={
 ```
 
 #### `constraints`
+
 - **Type**: `list[Callable[..., Any]] | None`
 - **Default**: `None`
 - **Description**: Validation functions that return True/False
 
 **Configuration-only Constraints**:
+
 ```python
 def max_tokens_constraint(config):
     if config["model"] == "gpt-4" and config["max_tokens"] > 2000:
@@ -160,6 +214,7 @@ def max_tokens_constraint(config):
 ```
 
 **Metrics-based Constraints**:
+
 ```python
 def cost_constraint(config, metrics=None):
     if metrics and metrics.get("cost", 0) > 0.10:
@@ -174,7 +229,29 @@ def cost_constraint(config, metrics=None):
 
 ### TVL Integration
 
+TraiGent supports the TVL (Tuned Variables Language) 0.9 specification for declarative optimization configuration. TVL specs provide:
+
+- **Typed Variables (tvars)**: Parameters with explicit types (`bool`, `int`, `float`, `enum[str]`, `tuple[...]`). Integer ranges preserve `int` type for proper sampling.
+- **Structural Constraints**: Boolean formulas over tvars (compiled to DNF)
+- **Derived Constraints**: Linear arithmetic over environment symbols
+- **Banded Objectives**: TOST equivalence testing with target bands (parsed; use `PromotionGate` for evaluation)
+- **Promotion Policy**: Epsilon-Pareto dominance with configurable error rates (use `PromotionGate.from_spec_artifact()` for statistical decisions)
+- **Exploration Settings**: Strategy (supports `{type: ...}` dict format), convergence criteria, parallelism, and budgets
+
+When a TVL spec is loaded, the `TVLSpecArtifact` provides access to all parsed sections including `tvars`, `constraints` (compiled structural constraints as callables), `derived_constraints`, `promotion_policy`, `convergence`, `exploration_budgets`, and `exploration_parallelism`.
+
+**Runtime Wiring (TVL 0.9 `exploration` section)**:
+
+- `exploration.budgets.max_trials` → `max_trials`
+- `exploration.budgets.max_spend_usd` → `cost_limit`
+- `exploration.budgets.max_wallclock_s` → `timeout`
+- `exploration.strategy.type` → `algorithm`
+- `exploration.parallelism.max_parallel_trials` → `parallel_config.trial_concurrency`
+
+> **Note**: If both `exploration` (TVL 0.9) and `optimization` (legacy) sections are present in a spec, an error is raised. Use only one format.
+
 #### `tvl_spec`
+
 - **Type**: `str | Path | None`
 - **Default**: `None`
 - **Description**: Path to TVL specification file
@@ -188,14 +265,16 @@ def cost_constraint(config, metrics=None):
 ```
 
 #### `tvl_environment`
+
 - **Type**: `str | None`
 - **Default**: `None`
 - **Description**: Named environment overlay from the TVL spec
 
 #### `tvl`
+
 - **Type**: `TVLOptions | dict[str, Any] | None`
 - **Default**: `None`
-- **Description**: Structured TVL options
+- **Description**: Structured TVL options controlling how the spec is applied (configuration space, objectives, constraints, budgets) and how to resolve registry domains
 
 ```python
 from traigent.tvl.options import TVLOptions
@@ -204,6 +283,9 @@ from traigent.tvl.options import TVLOptions
     tvl=TVLOptions(
         spec_path="specs/my_optimization.tvl",
         environment="production",
+        validate_constraints=True,        # Compile and validate structural constraints
+        registry_resolver=my_resolver,    # Required if spec uses registry domains
+        apply_evaluation_set=True,        # Wire evaluation_set.uri to evaluation settings
         apply_configuration_space=True,
         apply_objectives=True,
         apply_constraints=True,
@@ -213,9 +295,22 @@ from traigent.tvl.options import TVLOptions
 )
 ```
 
+**TVLOptions Fields**:
+
+- `spec_path`: Path to the TVL specification file (required)
+- `environment`: Named environment overlay from the spec
+- `validate_constraints`: Whether to compile and validate structural constraints (default: `True`)
+- `registry_resolver`: Resolver for registry domains (required if spec uses `registry://` domains)
+- `apply_evaluation_set`: Wire TVL `evaluation_set.uri` to evaluation settings (default: `True`)
+- `apply_configuration_space`: Apply TVL configuration space (default: `True`)
+- `apply_objectives`: Apply TVL objectives (default: `True`)
+- `apply_constraints`: Apply TVL constraints (default: `True`)
+- `apply_budget`: Apply TVL budget settings (default: `True`)
+
 ### Grouped Option Bundles
 
 #### `evaluation`
+
 - **Type**: `EvaluationOptions | dict[str, Any] | None`
 - **Default**: `None`
 
@@ -243,12 +338,14 @@ from traigent.api.decorators import EvaluationOptions
 ```
 
 **EvaluationOptions Fields**:
+
 - `eval_dataset`: Dataset path, list of paths, or Dataset instance
 - `custom_evaluator`: Custom evaluation function
 - `scoring_function`: Custom scoring function
 - `metric_functions`: Dict of metric name to evaluator functions
 
 #### `injection`
+
 - **Type**: `InjectionOptions | dict[str, Any] | None`
 - **Default**: `None`
 
@@ -267,12 +364,14 @@ from traigent.api.decorators import InjectionOptions
 ```
 
 **InjectionOptions Fields**:
+
 - `injection_mode`: How to inject config ("context", "parameter", "attribute", "seamless")
 - `config_param`: Parameter name when using "parameter" mode
 - `auto_override_frameworks`: Auto-detect framework classes
 - `framework_targets`: Explicit list of framework classes
 
 #### `execution`
+
 - **Type**: `ExecutionOptions | dict[str, Any] | None`
 - **Default**: `None`
 
@@ -297,6 +396,7 @@ from traigent.config.parallel import ParallelConfig
 ```
 
 **ExecutionOptions Fields**:
+
 - `execution_mode`: "edge_analytics" (only supported mode in OSS)
 - `local_storage_path`: Custom storage directory
 - `minimal_logging`: Reduce log verbosity
@@ -308,6 +408,7 @@ from traigent.config.parallel import ParallelConfig
 - `reps_aggregation`: How to aggregate repetitions ("mean", "median", "min", "max")
 
 #### `mock`
+
 - **Type**: `MockModeOptions | dict[str, Any] | None`
 - **Default**: `None`
 
@@ -326,6 +427,7 @@ from traigent.api.decorators import MockModeOptions
 ```
 
 **MockModeOptions Fields**:
+
 - `enabled`: Enable mock mode
 - `override_evaluator`: Use mock evaluator
 - `base_accuracy`: Base accuracy for mock results
@@ -336,6 +438,7 @@ from traigent.api.decorators import MockModeOptions
 The `**runtime_overrides` parameter accepts additional settings:
 
 **Optimization Algorithm**:
+
 ```python
 @traigent.optimize(
     algorithm="optuna",  # "grid", "random", "bayesian", "optuna"
@@ -346,6 +449,7 @@ The `**runtime_overrides` parameter accepts additional settings:
 ```
 
 **Cost Controls**:
+
 ```python
 @traigent.optimize(
     cost_limit=5.00,  # USD
@@ -355,6 +459,7 @@ The `**runtime_overrides` parameter accepts additional settings:
 ```
 
 **Budget Controls**:
+
 ```python
 @traigent.optimize(
     budget_limit=1000,  # Max samples
@@ -365,6 +470,7 @@ The `**runtime_overrides` parameter accepts additional settings:
 ```
 
 **Stop Conditions**:
+
 ```python
 @traigent.optimize(
     plateau_window=10,  # trials

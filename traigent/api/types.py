@@ -11,7 +11,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -46,6 +46,21 @@ class TrialStatus(str, Enum):
     FAILED = "failed"
     CANCELLED = "cancelled"
     PRUNED = "pruned"
+
+
+# Type alias for optimization stop reasons
+# Using Literal provides type safety and IDE autocompletion
+StopReason = Literal[
+    "max_trials_reached",
+    "max_samples_reached",
+    "timeout",
+    "cost_limit",
+    "optimizer",
+    "plateau",
+    "user_cancelled",
+    "condition",  # Generic stop condition triggered
+    "error",  # Optimization failed due to an exception
+]
 
 
 @dataclass
@@ -167,7 +182,35 @@ class ExperimentStats:
 
 @dataclass
 class OptimizationResult:
-    """Complete results from an optimization run."""
+    """Complete results from an optimization run.
+
+    Attributes:
+        trials: List of all trial results from the optimization.
+        best_config: The configuration that achieved the best score.
+        best_score: The best objective score achieved.
+        optimization_id: Unique identifier for this optimization run.
+        duration: Total wall-clock time in seconds.
+        convergence_info: Dictionary with convergence statistics.
+        status: Final status of the optimization (completed, failed, etc.).
+        objectives: List of objective names being optimized.
+        algorithm: Name of the optimization algorithm used.
+        timestamp: When the optimization completed.
+        metadata: Additional metadata from the optimization run.
+        total_cost: Total API cost incurred (if tracked).
+        total_tokens: Total tokens consumed (if tracked).
+        metrics: Aggregated metrics across all trials.
+        stop_reason: Why the optimization stopped. One of:
+            - "max_trials_reached": Hit the configured max_trials limit
+            - "max_samples_reached": Hit the max samples/examples limit
+            - "timeout": Exceeded the timeout duration
+            - "cost_limit": Hit the cost budget limit
+            - "optimizer": Optimizer decided to stop (exhausted search space)
+            - "plateau": Detected optimization plateau (no improvement)
+            - "user_cancelled": User cancelled or declined cost approval
+            - "condition": Generic stop condition was triggered
+            - "error": Optimization failed due to an exception
+            - None: Unknown or not set
+    """
 
     trials: list[TrialResult]
     best_config: dict[str, Any]
@@ -185,6 +228,9 @@ class OptimizationResult:
     total_cost: float | None = None
     total_tokens: int | None = None
     metrics: dict[str, Any] = field(default_factory=dict)
+
+    # Stop reason - why the optimization stopped (see class docstring for values)
+    stop_reason: StopReason | None = None
     _experiment_stats: ExperimentStats | None = field(
         default=None, init=False, repr=False
     )

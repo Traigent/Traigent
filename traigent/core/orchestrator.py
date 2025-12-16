@@ -1763,6 +1763,7 @@ class OptimizationOrchestrator:
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=self._build_result_metadata(session_summary, safeguards_telemetry),
+            stop_reason=self._stop_reason,
         )
 
         # Log optimization completion

@@ -158,6 +158,58 @@ class TestOptimizeDecorator:
         assert "model" in tvl_wrapped.configuration_space
         assert tvl_wrapped.configuration_space["max_tokens"] == [256, 384, 512]
 
+    def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
+        """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
+        spec_path = tmp_path / "evalset.tvl.yml"
+        spec_path.write_text(
+            """tvl:
+  module: test.evalset
+tvl_version: "0.9"
+evaluation_set:
+  dataset: test.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        )
+
+        @optimize(tvl_spec=spec_path)
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.eval_dataset == "test.jsonl"
+
+    def test_decorator_does_not_override_explicit_eval_dataset(self, tmp_path):
+        """Explicit eval_dataset beats evaluation_set in a TVL spec."""
+        spec_path = tmp_path / "evalset_override.tvl.yml"
+        spec_path.write_text(
+            """tvl:
+  module: test.evalset.override
+tvl_version: "0.9"
+evaluation_set:
+  dataset: spec.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        )
+
+        @optimize(tvl_spec=spec_path, eval_dataset="user.jsonl")
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.eval_dataset == "user.jsonl"
+
 
 class TestOptimizedFunctionIntegration:
     """Integration tests for OptimizedFunction wrapper."""

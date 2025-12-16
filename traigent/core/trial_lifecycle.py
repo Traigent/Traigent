@@ -159,7 +159,7 @@ class TrialLifecycle:
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
                 )
-                orchestrator._stop_reason = "cost_limit_reached"
+                orchestrator._stop_reason = "cost_limit"
                 if hasattr(orchestrator, "_abandon_optuna_trial"):
                     orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                         optuna_trial_id,

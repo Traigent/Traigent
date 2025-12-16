@@ -1,46 +1,62 @@
+# TVL 0.9 Example: Hello TVL
+#
+# This is the minimal TVL spec used in Chapter 2 to introduce the core sections.
+# Migrated from legacy format to TVL 0.9.
+
 spec:
   id: hello-tvl
-  version: 0.0.1
+  version: "0.0.1"
+
 metadata:
   owner: "students@traigent.ai"
   description: "Minimal TVL spec used in Chapter 2 to introduce the core sections."
   reviewers: ["mentor@traigent.ai"]
-units:
-  time: [milliseconds, seconds]
-  ratio: [dimensionless]
-configuration_space:
-  model:
-    type: categorical
-    values: ["gpt-4o-mini", "claude-3-haiku"]
-  temperature:
-    type: continuous
-    range: [0.0, 0.8]
-    unit: ratio
-  max_tokens:
-    type: discrete
-    values: [256, 384, 512]
+
+# TVL 0.9 typed variables (replaces configuration_space)
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "claude-3-haiku"]
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 0.8]
+    default: 0.4
+    unit: dimensionless
+
+  - name: max_tokens
+    type: int
+    domain: [256, 384, 512]
+    default: 384
     unit: tokens
+
 objectives:
   - name: faithfulness
     direction: maximize
+
   - name: latency
     direction: minimize
-optimization:
-  strategy: pareto_optimal
-  budget:
-    max_trials:
-      value: 30
-      unit: count
-    timeout_seconds: 900
+
+# TVL 0.9 exploration (replaces optimization)
+exploration:
+  strategy:
+    type: pareto_optimal
+  budgets:
+    max_trials: 30
+    max_wallclock_s: 900
+
+# TVL 0.9 structural constraints
 constraints:
-  - id: mild-temperature
-    type: expression
-    rule: 'params.temperature <= 0.8'
-    error_message: "Stick to milder sampling in the quickstart."
+  structural:
+    - expr: "params.temperature <= 0.8"
+
 evaluation:
   workloads:
     - name: tutorial
       dataset: dvl://demo/tutorial
+
 promotion:
   gate: manual_review
   reviewers: ["mentor@traigent.ai"]
