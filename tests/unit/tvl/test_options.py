@@ -56,7 +56,7 @@ class TestTVLOptions:
 
     def test_extra_fields_forbidden(self) -> None:
         """Extra fields raise ValidationError."""
-        with pytest.raises(Exception):  # Pydantic ValidationError
+        with pytest.raises(TypeError):  # Pydantic ValidationError wraps to TypeError
             TVLOptions(spec_path="test.tvl", unknown_field="value")  # type: ignore
 
 

@@ -1,6 +1,5 @@
 """Unit tests for TVL promotion gate."""
 
-
 from traigent.tvl.models import BandTarget, ChanceConstraint, PromotionPolicy
 from traigent.tvl.promotion_gate import (
     ObjectiveSpec,
@@ -411,27 +410,41 @@ class TestBandedObjectivesEdgeCases:
 
 
 class TestFromSpecArtifact:
-    """Tests for PromotionGate.from_spec_artifact."""
+    """Tests for PromotionGate.from_spec_artifact using mocked ObjectiveSchema."""
 
     def test_no_promotion_policy_returns_none(self) -> None:
         """Returns None when artifact has no promotion policy."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
             promotion_policy = None
-            objectives: list = []
+            objective_schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="accuracy", orientation="maximize", weight=1.0
+                    )
+                ]
+            )
 
         gate = PromotionGate.from_spec_artifact(MockArtifact())
         assert gate is None
 
     def test_with_standard_objectives(self) -> None:
         """Creates gate from artifact with standard objectives."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
             promotion_policy = PromotionPolicy(alpha=0.05)
-            objectives = [
-                {"name": "accuracy", "direction": "maximize"},
-                {"name": "latency", "direction": "minimize"},
-            ]
+            objective_schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="accuracy", orientation="maximize", weight=1.0
+                    ),
+                    ObjectiveDefinition(
+                        name="latency", orientation="minimize", weight=1.0
+                    ),
+                ]
+            )
 
         gate = PromotionGate.from_spec_artifact(MockArtifact())
         assert gate is not None
@@ -441,18 +454,21 @@ class TestFromSpecArtifact:
 
     def test_with_banded_objectives_list_target(self) -> None:
         """Creates gate from artifact with banded objectives using list target."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
             promotion_policy = PromotionPolicy()
-            objectives = [
-                {
-                    "name": "consistency",
-                    "band": {
-                        "target": [0.85, 0.95],
-                        "alpha": 0.10,
-                    },
-                },
-            ]
+            objective_schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="consistency",
+                        orientation="band",
+                        weight=1.0,
+                        band=BandTarget(low=0.85, high=0.95),
+                        band_alpha=0.10,
+                    ),
+                ]
+            )
 
         gate = PromotionGate.from_spec_artifact(MockArtifact())
         assert gate is not None
@@ -466,23 +482,72 @@ class TestFromSpecArtifact:
 
     def test_with_banded_objectives_dict_target(self) -> None:
         """Creates gate from artifact with banded objectives using dict target."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
         class MockArtifact:
             promotion_policy = PromotionPolicy()
-            objectives = [
-                {
-                    "name": "cost",
-                    "band": {
-                        "target": {"center": 0.10, "tol": 0.02},
-                    },
-                },
-            ]
+            objective_schema = ObjectiveSchema.from_objectives(
+                [
+                    ObjectiveDefinition(
+                        name="cost",
+                        orientation="band",
+                        weight=1.0,
+                        band=BandTarget(center=0.10, tol=0.02),
+                    ),
+                ]
+            )
 
         gate = PromotionGate.from_spec_artifact(MockArtifact())
         assert gate is not None
         obj = gate.objectives["cost"]
         assert obj.direction == "band"
         assert obj.band is not None
-        # BandTarget.from_dict should compute low/high from center±tol
+        # BandTarget should have center and tol preserved
         assert abs(obj.band.center - 0.10) < 1e-10  # type: ignore[operator]
         assert abs(obj.band.tol - 0.02) < 1e-10  # type: ignore[operator]
+
+
+class TestFromSpecArtifactRealArtifact:
+    """Tests for from_spec_artifact with real TVLSpecArtifact."""
+
+    def test_from_spec_artifact_with_real_artifact(self) -> None:
+        """Test from_spec_artifact with actual TVLSpecArtifact structure."""
+        from pathlib import Path
+
+        from traigent.tvl import load_tvl_spec
+
+        spec_path = Path("examples/tvl/promotion_policy/promotion.tvl.yml")
+        artifact = load_tvl_spec(spec_path=spec_path)
+
+        gate = PromotionGate.from_spec_artifact(artifact)
+
+        assert gate is not None
+        # gate.objectives is a dict {name: ObjectiveSpec}, not a list!
+        assert len(gate.objectives) > 0
+
+        # Verify objectives extracted correctly
+        # The promotion.tvl.yml has: task_accuracy, response_latency,
+        # cost_per_request, safety_score
+        assert "task_accuracy" in gate.objectives
+        assert "response_latency" in gate.objectives
+        assert "cost_per_request" in gate.objectives
+        assert "safety_score" in gate.objectives
+
+        # Verify objective directions
+        assert gate.objectives["task_accuracy"].direction == "maximize"
+        assert gate.objectives["response_latency"].direction == "minimize"
+        assert gate.objectives["cost_per_request"].direction == "minimize"
+        assert gate.objectives["safety_score"].direction == "maximize"
+
+    def test_from_spec_artifact_returns_none_without_policy(self) -> None:
+        """Test from_spec_artifact returns None when no promotion_policy."""
+        from pathlib import Path
+
+        from traigent.tvl import load_tvl_spec
+
+        # hello_tvl has promotion gate: manual_review but no promotion_policy
+        spec_path = Path("examples/tvl/hello_tvl/hello_tvl.tvl.yml")
+        artifact = load_tvl_spec(spec_path=spec_path)
+
+        gate = PromotionGate.from_spec_artifact(artifact)
+        assert gate is None

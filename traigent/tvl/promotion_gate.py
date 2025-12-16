@@ -490,34 +490,22 @@ class PromotionGate:
         if artifact.promotion_policy is None:
             return None
 
-        # Build objective specs from the artifact
+        # Build objective specs from the artifact's objective_schema
         objectives: list[ObjectiveSpec] = []
 
-        for obj_data in artifact.objectives:
-            name = obj_data.get("name", "")
-            direction = obj_data.get("direction", "maximize")
+        if artifact.objective_schema is not None:
+            for obj_def in artifact.objective_schema.objectives:
+                # obj_def is an ObjectiveDefinition, not a dict
+                band = obj_def.band  # Already a BandTarget or None
+                band_alpha = obj_def.band_alpha if obj_def.band_alpha else 0.05
 
-            band = None
-            band_alpha = 0.05
-
-            if "band" in obj_data:
-                band_data = obj_data["band"]
-                target = band_data.get("target")
-                if target:
-                    if isinstance(target, list) and len(target) == 2:
-                        band = BandTarget(low=target[0], high=target[1])
-                    elif isinstance(target, dict):
-                        band = BandTarget.from_dict(target)
-                band_alpha = float(band_data.get("alpha", 0.05))
-                direction = "band"
-
-            objectives.append(
-                ObjectiveSpec(
-                    name=name,
-                    direction=direction,
-                    band=band,
-                    band_alpha=band_alpha,
+                objectives.append(
+                    ObjectiveSpec(
+                        name=obj_def.name,
+                        direction=obj_def.orientation,  # orientation, not direction
+                        band=band,
+                        band_alpha=band_alpha,
+                    )
                 )
-            )
 
         return cls(artifact.promotion_policy, objectives)
