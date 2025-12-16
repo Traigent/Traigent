@@ -6,22 +6,7 @@ Run with: pytest examples/quickstart/test_custom_accuracy_scorer.py -v
 
 import pytest
 
-
-def custom_accuracy_scorer(output: str, expected: str, llm_metrics: dict) -> float:
-    """Custom scoring function that checks if expected answer is in output.
-
-    Args:
-        output: The LLM's response
-        expected: The expected answer from the dataset
-        llm_metrics: Additional metrics from the LLM call (tokens, latency, etc.)
-
-    Returns:
-        Score between 0 and 1
-    """
-    if not output or not expected:
-        return 0.0
-    # Case-insensitive containment check
-    return 1.0 if expected.lower() in output.lower() else 0.0
+from scorers import custom_accuracy_scorer
 
 
 @pytest.mark.unit
@@ -136,3 +121,7 @@ class TestCustomAccuracyScorerEdgeCases:
 
     def test_tabs_in_output(self):
         assert custom_accuracy_scorer("Answer:\tParis", "Paris", {}) == 1.0
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

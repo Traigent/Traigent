@@ -42,6 +42,8 @@ from traigent.api.decorators import (
     InjectionOptions,
 )
 
+from scorers import custom_accuracy_scorer
+
 # Path to dataset (relative to this file)
 # Use qa_samples.jsonl for quick test, llm_eval_mixed.jsonl for full run
 DATASET_PATH = (
@@ -68,27 +70,6 @@ CONSTRAINTS_DESCRIPTIONS = [
     "GPT-4o: temperature <= 0.5",
     "GPT-3.5-turbo: max_tokens <= 100",
 ]
-
-
-def custom_accuracy_scorer(output: str, expected, llm_metrics: dict = None) -> float:
-    """Custom scoring function that checks if expected answer is in output.
-
-    Args:
-        output: The LLM's response
-        expected: The expected answer from the dataset (str or dict with 'output' key)
-        llm_metrics: Additional metrics from the LLM call (tokens, latency, etc.)
-
-    Returns:
-        Score between 0 and 1
-    """
-    # Handle case where expected is a dict (full dataset row)
-    if isinstance(expected, dict):
-        expected = expected.get("output", "")
-
-    if not output or not expected:
-        return 0.0
-    # Case-insensitive containment check
-    return 1.0 if expected.lower() in output.lower() else 0.0
 
 
 @traigent.optimize(
@@ -124,7 +105,7 @@ def custom_accuracy_scorer(output: str, expected, llm_metrics: dict = None) -> f
     ),
     # Runtime controls
     max_trials=5,  # Limit trials for quick demo
-    cost_limit=1.00,  # Max $1.00 spend per optimization run
+    cost_limit=10.00,  # Max $1.00 spend per optimization run
     cost_approved=True,  # Skip cost approval prompt for demo
 )
 def simple_qa_agent(
@@ -182,7 +163,9 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
     # Initialize rows with questions and expected answers
     rows = []
     for q_idx, (question, expected) in enumerate(zip(questions, expected_answers)):
-        rows.append([question, expected])
+        # Sanitize newlines for CSV compatibility with LibreOffice/Excel
+        question_clean = question.replace("\n", " | ")
+        rows.append([question_clean, expected])
 
     # Fill in trial answers and pass/fail
     for trial in results.trials:
@@ -277,7 +260,7 @@ def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) ->
                 rows.append(
                     [
                         f"example_{q_idx}",
-                        meta["question"],
+                        meta["question"].replace("\n", " | "),
                         meta["expected"],
                         str(ex_result.actual_output) if ex_result.actual_output else "",
                         ex_result.success if hasattr(ex_result, "success") else "",
@@ -300,7 +283,7 @@ def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) ->
                 rows.append(
                     [
                         f"example_{q_idx}",
-                        meta["question"],
+                        meta["question"].replace("\n", " | "),
                         meta["expected"],
                         "N/A",
                         "",
