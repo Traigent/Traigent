@@ -1,0 +1,105 @@
+# TVL 0.9 Example: Complete Banded Objectives with TOST
+#
+# This example demonstrates the full banded objectives syntax including:
+# - Band targets with [low, high] interval format
+# - Band targets with {center, tol} format
+# - TOST (Two One-Sided Tests) configuration
+#
+# Use case: Quality assurance system where metrics must stay within target ranges.
+
+spec:
+  id: banded-tost-complete
+  version: "1.0"
+
+metadata:
+  owner: tutorials@traigent.ai
+  description: Complete banded objectives with TOST demonstration
+  tags:
+    - tutorial
+    - banded-objectives
+    - tost
+    - tvl-0.9
+
+# TVL 0.9 typed variables
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-3.5-turbo", "gpt-4o"]
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+      resolution: 0.05
+    default: 0.7
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 2048]
+    default: 512
+
+  - name: top_p
+    type: float
+    domain:
+      range: [0.5, 1.0]
+    default: 0.95
+
+# Objectives including banded objectives
+objectives:
+  # Standard maximize: want highest accuracy
+  - name: task_accuracy
+    direction: maximize
+    weight: 1.0
+
+  # Banded objective with [low, high] interval:
+  # We want response time between 100-300ms (not too fast, not too slow)
+  - name: response_time_ms
+    band:
+      target: [100, 300]
+      test: TOST
+      alpha: 0.05
+
+  # Banded objective with center/tolerance format:
+  # We want cost around $0.001 ± $0.0005 (i.e., $0.0005 to $0.0015)
+  - name: cost_per_query
+    band:
+      target:
+        center: 0.001
+        tol: 0.0005
+      test: TOST
+      alpha: 0.05
+
+  # Standard minimize: minimize latency for internal processing
+  - name: processing_latency_ms
+    direction: minimize
+    weight: 0.3
+
+# Structural constraints
+constraints:
+  structural:
+    # Temperature bounds by model
+    - when: "params.model == 'gpt-4o'"
+      then: "params.temperature <= 0.8"
+
+    # General constraint
+    - expr: "params.top_p >= 0.7"
+
+# Promotion policy supporting banded objectives
+promotion_policy:
+  dominance: epsilon_pareto
+  alpha: 0.05
+  min_effect:
+    task_accuracy: 0.01
+    response_time_ms: 20.0
+    cost_per_query: 0.0001
+    processing_latency_ms: 10.0
+  adjust: BH
+
+exploration:
+  strategy:
+    type: nsga2
+  budgets:
+    max_trials: 75
+    max_wallclock_s: 2400

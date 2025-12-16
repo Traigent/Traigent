@@ -40,7 +40,7 @@ class TestObjectiveDefinition:
     def test_invalid_orientation_validation(self):
         """Test that invalid orientations are rejected."""
         with pytest.raises(
-            ValueError, match="Orientation must be 'maximize' or 'minimize'"
+            ValueError, match="Orientation must be 'maximize', 'minimize', or 'band'"
         ):
             ObjectiveDefinition(
                 name="accuracy", orientation="optimize", weight=1.0  # Invalid

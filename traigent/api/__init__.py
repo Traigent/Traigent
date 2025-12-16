@@ -18,6 +18,7 @@ from traigent.api.types import (
     OptimizationStatus,
     ParetoFront,
     SensitivityAnalysis,
+    StopReason,
     StrategyConfig,
     TrialResult,
 )
@@ -35,5 +36,6 @@ __all__ = [
     "ConfigurationComparison",
     "ParetoFront",
     "OptimizationStatus",
+    "StopReason",
     "StrategyConfig",
 ]

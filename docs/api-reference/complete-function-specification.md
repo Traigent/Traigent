@@ -48,13 +48,13 @@ def optimize(
 | `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys fall back to values detected in the decorated function. |
 | `constraints` | `list[Callable] \| None` | `None` | Hard constraints evaluated before running a trial. Callables accept `(config, metrics=None)` and return `True/False`. |
 
-**TVL Integration** (Test Variation Language)
+**TVL Integration** (Tuned Variable Language)
 
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `tvl_spec` | `str \| Path \| None` | `None` | Path to a TVL specification file. When provided, becomes the authoritative source for configuration space, objectives, and constraints. |
 | `tvl_environment` | `str \| None` | `None` | Named environment overlay from the TVL spec (e.g., "development", "production"). |
-| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options controlling how the spec is applied (`apply_configuration_space`, `apply_objectives`, `apply_constraints`, `apply_budget`). |
+| `tvl` | `TVLOptions \| dict \| None` | `None` | Structured TVL options controlling how the spec is applied (`apply_evaluation_set`, `apply_configuration_space`, `apply_objectives`, `apply_constraints`, `apply_budget`, `registry_resolver`). |
 
 **Grouped Option Bundles** (Preferred for new code)
 

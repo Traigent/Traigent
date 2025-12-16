@@ -249,7 +249,7 @@ class TestFullOptimizationWorkflow:
         assert "algorithms" in info
         assert "features" in info
         assert "integrations" in info
-        assert info["version"] == "0.8.0"
+        assert info["version"] == "0.9.0"
         assert "grid" in info["algorithms"]
         assert "random" in info["algorithms"]
 

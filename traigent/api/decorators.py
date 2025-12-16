@@ -802,6 +802,12 @@ def optimize(
             default_config=default_config,
             runtime_overrides=combined_runtime_overrides,
         )
+        if (
+            tvl_options.apply_evaluation_set
+            and eval_dataset is None
+            and tvl_artifact.evaluation_set is not None
+        ):
+            eval_dataset = tvl_artifact.evaluation_set.dataset
         logger.info(
             "TVL spec %s applied%s",
             tvl_artifact.path,
