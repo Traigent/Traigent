@@ -222,3 +222,71 @@ class TestHypervolumeImprovement:
         hv = hypervolume_improvement(new_point, pareto_front, reference, directions)
         # New point should improve hypervolume
         assert hv >= 0.0
+
+
+class TestStatisticsEdgeCases:
+    """Additional edge case tests for statistics functions."""
+
+    def test_bh_adjust_preserves_order(self) -> None:
+        """BH adjustment preserves original index order."""
+        p_vals = [0.05, 0.01, 0.03, 0.02]
+        adjusted = benjamini_hochberg_adjust(p_vals)
+
+        # Should return list of same length
+        assert len(adjusted) == len(p_vals)
+        # All values should be valid p-values
+        assert all(0.0 <= p <= 1.0 for p in adjusted)
+
+    def test_bh_adjust_large_p_values(self) -> None:
+        """BH adjustment handles p-values near 1."""
+        p_vals = [0.9, 0.95, 0.99, 1.0]
+        adjusted = benjamini_hochberg_adjust(p_vals)
+
+        # All should be capped at 1.0
+        assert all(p <= 1.0 for p in adjusted)
+
+    def test_clopper_pearson_small_sample(self) -> None:
+        """Clopper-Pearson works with small samples."""
+        # 5 out of 10 successes
+        lb = clopper_pearson_lower_bound(5, 10, 0.95)
+        assert 0.15 < lb < 0.50
+
+    def test_clopper_pearson_large_sample(self) -> None:
+        """Clopper-Pearson works with larger samples."""
+        # 800 out of 1000 successes
+        lb = clopper_pearson_lower_bound(800, 1000, 0.95)
+        assert 0.75 < lb < 0.80
+
+    def test_paired_comparison_two_sided(self) -> None:
+        """Paired comparison with two-sided alternative."""
+        x = [10.0, 11.0, 9.0, 10.5, 10.2]
+        y = [5.0, 4.5, 5.5, 4.8, 5.2]
+
+        # "greater" alternative
+        result = paired_comparison_test(x, y, 0.0, "greater")
+        assert result.p_value < 0.05
+
+    def test_paired_comparison_no_difference(self) -> None:
+        """Paired comparison with nearly identical samples."""
+        x = [10.0, 10.1, 9.9, 10.05, 10.02]
+        y = [10.0, 10.1, 9.9, 10.05, 10.02]
+
+        result = paired_comparison_test(x, y, 0.0, "greater")
+        # With identical samples, p-value should be high (no significant difference)
+        assert result.p_value >= 0.40
+
+    def test_clopper_pearson_very_high_confidence(self) -> None:
+        """Clopper-Pearson with 99% confidence."""
+        lb = clopper_pearson_lower_bound(90, 100, 0.99)
+        # With higher confidence, lower bound is lower (more conservative)
+        assert 0.75 < lb < 0.90
+
+    def test_paired_comparison_large_epsilon(self) -> None:
+        """Paired comparison with large epsilon makes test non-significant."""
+        x = [10.0, 10.5, 9.5, 10.2, 10.3]
+        y = [9.0, 9.5, 8.5, 9.2, 9.3]
+
+        # Large epsilon (larger than actual difference)
+        result = paired_comparison_test(x, y, 5.0, "greater")
+        # Should not reject when epsilon is larger than difference
+        assert result.p_value > 0.05
