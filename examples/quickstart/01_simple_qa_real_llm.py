@@ -181,7 +181,10 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
             ex_result = results_by_id.get(q_idx)
             if ex_result:
                 answer = str(ex_result.actual_output) if ex_result.actual_output else ""
-                passed = getattr(ex_result, "success", False)
+                # Use evaluator score for pass/fail, not just "success" (which means call succeeded)
+                metrics = getattr(ex_result, "metrics", {}) or {}
+                score = metrics.get("accuracy", metrics.get("score", 0))
+                passed = score >= 0.5 if isinstance(score, (int, float)) else False
                 rows[q_idx].append(answer)
                 rows[q_idx].append("PASS" if passed else "FAIL")
             else:
@@ -348,7 +351,10 @@ def print_category_summary(results, dataset_path: Path) -> None:
             ex_idx = int(ex_result.example_id.split("_")[1])
             if ex_idx < len(dataset_metadata):
                 source = dataset_metadata[ex_idx]["source"]
-                passed = getattr(ex_result, "success", False)
+                # Use evaluator score for pass/fail, not just "success" (which means call succeeded)
+                metrics = getattr(ex_result, "metrics", {}) or {}
+                score = metrics.get("accuracy", metrics.get("score", 0))
+                passed = score >= 0.5 if isinstance(score, (int, float)) else False
 
                 # Aggregate by source
                 if source not in source_results:
