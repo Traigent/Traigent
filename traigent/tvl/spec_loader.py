@@ -106,11 +106,14 @@ class TVLSpecArtifact:
     tvl_version: str | None = None
     convergence: ConvergenceCriteria | None = None
     exploration_budgets: ExplorationBudgets | None = None
+    exploration_parallelism: int | None = None
 
     def runtime_overrides(self) -> dict[str, Any]:
         """Return decorator/runtime overrides derived from the spec."""
 
         overrides: dict[str, Any] = {}
+
+        # Legacy budget fields first (they take precedence if set)
         if self.algorithm:
             overrides.setdefault("algorithm", self.algorithm)
         if self.budget.max_trials is not None:
@@ -125,6 +128,24 @@ class TVLSpecArtifact:
             overrides.setdefault(
                 "samples_include_pruned", self.budget.samples_include_pruned
             )
+
+        # TVL 0.9 exploration_budgets (only set if not already set by legacy)
+        if self.exploration_budgets is not None:
+            if self.exploration_budgets.max_trials is not None:
+                overrides.setdefault("max_trials", self.exploration_budgets.max_trials)
+            if self.exploration_budgets.max_spend_usd is not None:
+                overrides.setdefault(
+                    "cost_limit", self.exploration_budgets.max_spend_usd
+                )
+            if self.exploration_budgets.max_wallclock_s is not None:
+                overrides.setdefault(
+                    "timeout", self.exploration_budgets.max_wallclock_s
+                )
+
+        # TVL 0.9 exploration parallelism
+        if self.exploration_parallelism is not None:
+            overrides.setdefault("parallel_trials", self.exploration_parallelism)
+
         if self.metadata:
             overrides.setdefault("tvl_metadata", self.metadata)
         return overrides
@@ -225,6 +246,14 @@ def load_tvl_spec(
 
     has_exploration = "exploration" in resolved
     has_optimization = "optimization" in resolved
+
+    # Error if both exploration and optimization are present
+    if has_exploration and has_optimization:
+        raise ValueError(
+            "TVL spec contains both 'exploration' and 'optimization' sections. "
+            "Use only 'exploration' (TVL 0.9) or 'optimization' (legacy), not both."
+        )
+
     if has_optimization and not has_exploration:
         warnings.warn(
             "TVL spec uses legacy 'optimization' section. "
@@ -234,18 +263,15 @@ def load_tvl_spec(
         )
 
     # Parse exploration section (supports both 'optimization' and 'exploration')
-    exploration_section = (
-        resolved.get("exploration") or resolved.get("optimization")
-    )
+    exploration_section = resolved.get("exploration") or resolved.get("optimization")
     budget = _parse_budget(exploration_section)
     algorithm = _resolve_algorithm(exploration_section)
     convergence = _parse_convergence(exploration_section)
     exploration_budgets = _parse_exploration_budgets(exploration_section)
+    exploration_parallelism = _parse_exploration_parallelism(exploration_section)
 
     # Parse promotion policy (TVL 0.9)
-    promotion_policy = _parse_promotion_policy(
-        resolved.get("promotion_policy")
-    )
+    promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
 
     metadata = _build_metadata(
         resolved,
@@ -274,6 +300,7 @@ def load_tvl_spec(
         tvl_version=tvl_version,
         convergence=convergence,
         exploration_budgets=exploration_budgets,
+        exploration_parallelism=exploration_parallelism,
     )
 
 
@@ -645,6 +672,29 @@ def _parse_exploration_budgets(exploration_data: Any) -> ExplorationBudgets | No
         raise TVLValidationError(f"Invalid budgets: {exc}") from exc
 
 
+def _parse_exploration_parallelism(exploration_data: Any) -> int | None:
+    """Parse parallelism config from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        max_parallel_trials if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    parallelism = exploration_data.get("parallelism")
+    if parallelism is None:
+        return None
+
+    if isinstance(parallelism, dict):
+        max_parallel = parallelism.get("max_parallel_trials")
+        if isinstance(max_parallel, int):
+            return max_parallel
+    return None
+
+
 def _compile_constraints_unified(
     entries: list[Any] | dict[str, Any],
     validate_constraints: bool,
@@ -917,8 +967,14 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
     if not isinstance(optimization_section, dict):
         return None
     strategy = optimization_section.get("strategy")
+
+    # Handle TVL 0.9 dict format: {type: "nsga2", ...}
+    if isinstance(strategy, dict):
+        strategy = strategy.get("type")
+
     if not isinstance(strategy, str):
         return None
+
     normalized = strategy.lower()
     mapping = {
         "pareto_optimal": "nsga2",

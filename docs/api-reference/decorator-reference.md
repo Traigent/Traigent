@@ -136,6 +136,8 @@ from traigent.tvl.models import BandTarget
 
 Banded objectives use TOST (Two One-Sided Tests) to statistically verify that the metric falls within the target band.
 
+> **Current Status**: Banded objectives are fully parsed and available in `ObjectiveDefinition`. During optimization, they are currently treated as minimize objectives. For full TOST-based statistical testing, use `PromotionGate.evaluate()` with collected sample data after optimization.
+
 #### `configuration_space`
 - **Type**: `dict[str, Any] | None`
 - **Default**: `None`
@@ -216,14 +218,23 @@ def cost_constraint(config, metrics=None):
 
 TraiGent supports the TVL (Tuned Variables Language) 0.9 specification for declarative optimization configuration. TVL specs provide:
 
-- **Typed Variables (tvars)**: Parameters with explicit types (`bool`, `int`, `float`, `enum[str]`, `tuple[...]`)
+- **Typed Variables (tvars)**: Parameters with explicit types (`bool`, `int`, `float`, `enum[str]`, `tuple[...]`). Integer ranges preserve `int` type for proper sampling.
 - **Structural Constraints**: Boolean formulas over tvars (compiled to DNF)
 - **Derived Constraints**: Linear arithmetic over environment symbols
-- **Banded Objectives**: TOST equivalence testing with target bands
-- **Promotion Policy**: Epsilon-Pareto dominance with configurable error rates
-- **Exploration Settings**: Strategy, convergence criteria, and budgets
+- **Banded Objectives**: TOST equivalence testing with target bands (parsed; use `PromotionGate` for evaluation)
+- **Promotion Policy**: Epsilon-Pareto dominance with configurable error rates (use `PromotionGate.from_spec_artifact()` for statistical decisions)
+- **Exploration Settings**: Strategy (supports `{type: ...}` dict format), convergence criteria, parallelism, and budgets
 
 When a TVL spec is loaded, the `TVLSpecArtifact` provides access to all parsed sections including `tvars`, `structural_constraints`, `derived_constraints`, `promotion_policy`, `convergence`, and `exploration_budgets`.
+
+**Runtime Wiring (TVL 0.9 `exploration` section)**:
+- `exploration.budgets.max_trials` → `max_trials`
+- `exploration.budgets.max_spend_usd` → `cost_limit`
+- `exploration.budgets.max_wallclock_s` → `timeout`
+- `exploration.strategy.type` → `algorithm`
+- `exploration.parallelism.max_parallel_trials` → `parallel_trials`
+
+> **Note**: If both `exploration` (TVL 0.9) and `optimization` (legacy) sections are present in a spec, an error is raised. Use only one format.
 
 #### `tvl_spec`
 - **Type**: `str | Path | None`

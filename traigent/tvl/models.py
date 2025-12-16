@@ -43,7 +43,7 @@ class DomainSpec:
 
     kind: DomainKind
     values: list[Any] | None = None
-    range: tuple[float, float] | None = None
+    range: tuple[int, int] | tuple[float, float] | None = None
     resolution: float | None = None
     registry: str | None = None
     filter: str | None = None
@@ -610,9 +610,17 @@ def parse_domain_spec(
         if "range" in domain_data:
             range_val = domain_data["range"]
             if isinstance(range_val, list) and len(range_val) == 2:
+                # Preserve integer type for int TVARs
+                if tvar_type == "int":
+                    range_tuple: tuple[int, int] | tuple[float, float] = (
+                        int(range_val[0]),
+                        int(range_val[1]),
+                    )
+                else:
+                    range_tuple = (float(range_val[0]), float(range_val[1]))
                 return DomainSpec(
                     kind="range",
-                    range=(float(range_val[0]), float(range_val[1])),
+                    range=range_tuple,
                     resolution=domain_data.get("resolution"),
                 )
             raise ValueError(

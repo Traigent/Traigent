@@ -329,6 +329,22 @@ class TestParseDomainSpec:
         assert domain.kind == "range"
         assert domain.resolution == 0.1
 
+    def test_integer_tvar_range_preserves_int_type(self) -> None:
+        """Integer TVAR ranges should return int tuples, not float."""
+        domain = parse_domain_spec("max_tokens", "int", {"range": [100, 1000]})
+        assert domain.kind == "range"
+        assert domain.range == (100, 1000)
+        assert isinstance(domain.range[0], int)
+        assert isinstance(domain.range[1], int)
+
+    def test_float_tvar_range_returns_float_type(self) -> None:
+        """Float TVAR ranges should return float tuples."""
+        domain = parse_domain_spec("temperature", "float", {"range": [0, 1]})
+        assert domain.kind == "range"
+        assert domain.range == (0.0, 1.0)
+        assert isinstance(domain.range[0], float)
+        assert isinstance(domain.range[1], float)
+
     def test_set_domain(self) -> None:
         """Set wrapper is converted to set domain."""
         domain = parse_domain_spec("values", "enum", {"set": [1, 2, 3]})

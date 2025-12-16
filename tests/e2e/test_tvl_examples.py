@@ -157,9 +157,9 @@ class TestSpecificExamples:
 
         # Should have objective schema with multiple objectives
         assert artifact.objective_schema is not None
-        assert len(artifact.objective_schema.objectives) >= 2, (
-            "Expected at least two objectives"
-        )
+        assert (
+            len(artifact.objective_schema.objectives) >= 2
+        ), "Expected at least two objectives"
 
     def test_promotion_policy_example_loads(self) -> None:
         """The promotion_policy example should load with policy configuration."""

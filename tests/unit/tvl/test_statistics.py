@@ -1,6 +1,5 @@
 """Unit tests for TVL statistics module."""
 
-
 import pytest
 
 from traigent.tvl.statistics import (

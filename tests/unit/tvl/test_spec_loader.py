@@ -443,3 +443,93 @@ exploration:
         assert artifact.convergence.window == 20
         assert artifact.exploration_budgets is not None
         assert artifact.exploration_budgets.max_trials == 200
+
+
+class TestExplorationBudgetsWiring:
+    """Tests for TVL 0.9 exploration.budgets wiring to runtime_overrides."""
+
+    def test_exploration_budgets_wired_to_runtime(self, tmp_path: Path) -> None:
+        """TVL 0.9 exploration.budgets should be wired to runtime_overrides."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+exploration:
+  strategy:
+    type: nsga2
+  parallelism:
+    max_parallel_trials: 4
+  budgets:
+    max_trials: 50
+    max_spend_usd: 10.0
+    max_wallclock_s: 1800
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("algorithm") == "nsga2"
+        assert overrides.get("max_trials") == 50
+        assert overrides.get("cost_limit") == 10.0
+        assert overrides.get("timeout") == 1800
+        assert overrides.get("parallel_trials") == 4
+
+    def test_exploration_and_optimization_conflict_raises(self, tmp_path: Path) -> None:
+        """Error should be raised if both exploration and optimization exist."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+optimization:
+  budget:
+    max_trials:
+      value: 30
+
+exploration:
+  budgets:
+    max_trials: 50
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(ValueError, match="both 'exploration' and 'optimization'"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_strategy_dict_format_works(self, tmp_path: Path) -> None:
+        """Strategy as dict {type: ...} should be parsed correctly."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+exploration:
+  strategy:
+    type: bayesian
+    initial_sampling: sobol
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        assert overrides.get("algorithm") == "bayesian"
