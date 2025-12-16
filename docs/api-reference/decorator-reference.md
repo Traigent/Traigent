@@ -53,7 +53,7 @@ def optimize(
 
     # Runtime overrides
     **runtime_overrides: Any,
-) -> Callable[[Callable[..., Any]], OptimizedFunction]
+) -> Callable[[Callable[..., Any]], Any]
 ```
 
 ## Parameter Groups
@@ -95,13 +95,53 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 
 Explicit control over:
 - **Weights**: Relative importance of each objective
-- **Orientations**: "maximize" or "minimize"
+- **Orientations**: "maximize", "minimize", or "band" (TVL 0.9)
 - **Metadata**: Additional objective configuration
+
+**Banded Objectives** (TVL 0.9):
+
+For objectives where you want to stay within a target range rather than maximize/minimize:
+
+```python
+from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
+from traigent.tvl.models import BandTarget
+
+@traigent.optimize(
+    objectives=ObjectiveSchema(
+        definitions=[
+            ObjectiveDefinition(name="accuracy", weight=2.0, orientation="maximize"),
+            # Banded objective: target response length between 100-200 tokens
+            ObjectiveDefinition(
+                name="response_length",
+                orientation="band",
+                band=BandTarget(low=100, high=200),
+                band_test="TOST",    # Two One-Sided Tests for equivalence
+                band_alpha=0.05,     # Significance level
+                weight=1.0,
+            ),
+            # Alternative: center ± tolerance
+            ObjectiveDefinition(
+                name="cost",
+                orientation="band",
+                band=BandTarget(center=0.01, tol=0.005),  # Band is [0.005, 0.015]
+                band_test="TOST",
+                band_alpha=0.05,
+                weight=1.0,
+            ),
+        ]
+    ),
+    ...
+)
+```
+
+Banded objectives use TOST (Two One-Sided Tests) to statistically verify that the metric falls within the target band.
 
 #### `configuration_space`
 - **Type**: `dict[str, Any] | None`
 - **Default**: `None`
 - **Description**: Search space describing tunable parameters
+
+> ⚠️ **Deprecation Notice (TVL 0.9)**: The `configuration_space` parameter is deprecated in favor of the `tvars` section in TVL spec files. When using TVL specs, define your search space using `tvars` (typed variables) for full TVL 0.9 support including type safety, units, and registry domains. A `DeprecationWarning` is raised when loading specs with `configuration_space`.
 
 **Discrete Choices** (List):
 ```python
@@ -174,6 +214,17 @@ def cost_constraint(config, metrics=None):
 
 ### TVL Integration
 
+TraiGent supports the TVL (Tuned Variables Language) 0.9 specification for declarative optimization configuration. TVL specs provide:
+
+- **Typed Variables (tvars)**: Parameters with explicit types (`bool`, `int`, `float`, `enum[str]`, `tuple[...]`)
+- **Structural Constraints**: Boolean formulas over tvars (compiled to DNF)
+- **Derived Constraints**: Linear arithmetic over environment symbols
+- **Banded Objectives**: TOST equivalence testing with target bands
+- **Promotion Policy**: Epsilon-Pareto dominance with configurable error rates
+- **Exploration Settings**: Strategy, convergence criteria, and budgets
+
+When a TVL spec is loaded, the `TVLSpecArtifact` provides access to all parsed sections including `tvars`, `structural_constraints`, `derived_constraints`, `promotion_policy`, `convergence`, and `exploration_budgets`.
+
 #### `tvl_spec`
 - **Type**: `str | Path | None`
 - **Default**: `None`
@@ -195,7 +246,7 @@ def cost_constraint(config, metrics=None):
 #### `tvl`
 - **Type**: `TVLOptions | dict[str, Any] | None`
 - **Default**: `None`
-- **Description**: Structured TVL options (including whether to apply `evaluation_set` and how to resolve registry domains)
+- **Description**: Structured TVL options controlling how the spec is applied (configuration space, objectives, constraints, budgets) and how to resolve registry domains
 
 ```python
 from traigent.tvl.options import TVLOptions
@@ -204,7 +255,9 @@ from traigent.tvl.options import TVLOptions
     tvl=TVLOptions(
         spec_path="specs/my_optimization.tvl",
         environment="production",
-        apply_evaluation_set=True,
+        validate_constraints=True,        # Compile and validate structural constraints
+        registry_resolver=my_resolver,    # Required if spec uses registry domains
+        apply_evaluation_set=True,        # Wire evaluation_set.uri to evaluation settings
         apply_configuration_space=True,
         apply_objectives=True,
         apply_constraints=True,
@@ -213,6 +266,17 @@ from traigent.tvl.options import TVLOptions
     ...
 )
 ```
+
+**TVLOptions Fields**:
+- `spec_path`: Path to the TVL specification file (required)
+- `environment`: Named environment overlay from the spec
+- `validate_constraints`: Whether to compile and validate structural constraints (default: `True`)
+- `registry_resolver`: Resolver for registry domains (required if spec uses `registry://` domains)
+- `apply_evaluation_set`: Wire TVL `evaluation_set.uri` to evaluation settings (default: `True`)
+- `apply_configuration_space`: Apply TVL configuration space (default: `True`)
+- `apply_objectives`: Apply TVL objectives (default: `True`)
+- `apply_constraints`: Apply TVL constraints (default: `True`)
+- `apply_budget`: Apply TVL budget settings (default: `True`)
 
 ### Grouped Option Bundles
 

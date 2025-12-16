@@ -325,3 +325,164 @@ class TestPromotionDecision:
         assert decision.chance_results == []
         assert decision.adjusted_p_values == {}
         assert decision.dominance_satisfied is False
+
+
+class TestChanceConstraintsEdgeCases:
+    """Additional tests for chance constraint edge cases."""
+
+    def test_zero_trials_constraint(self) -> None:
+        """Zero trials in constraint data is treated as not satisfied."""
+        policy = PromotionPolicy(
+            chance_constraints=[
+                ChanceConstraint(name="safety", threshold=0.90, confidence=0.95)
+            ]
+        )
+        objectives = [ObjectiveSpec("accuracy", "maximize")]
+        gate = PromotionGate(policy, objectives)
+
+        decision = gate.evaluate(
+            incumbent_metrics={"accuracy": [0.8] * 5},
+            candidate_metrics={"accuracy": [0.9] * 5},
+            constraint_data={"safety": (0, 0)},  # Zero trials
+        )
+
+        assert decision.decision == "reject"
+        assert len(decision.chance_results) == 1
+        assert decision.chance_results[0].satisfied is False
+        assert abs(decision.chance_results[0].observed_rate - 0.0) < 1e-10
+
+
+class TestBandedObjectivesEdgeCases:
+    """Additional tests for banded objective edge cases."""
+
+    def test_both_not_equivalent_compare_by_distance(self) -> None:
+        """When both fail TOST, compare by distance to band center."""
+        band = BandTarget(low=0.85, high=0.95)
+        policy = PromotionPolicy()
+        objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
+        gate = PromotionGate(policy, objectives)
+
+        # Both are outside the band but candidate is closer to center (0.9)
+        decision = gate.evaluate(
+            incumbent_metrics={
+                "consistency": [0.60, 0.62, 0.58, 0.61, 0.59] * 2  # Far from band
+            },
+            candidate_metrics={
+                "consistency": [0.75, 0.77, 0.73, 0.76, 0.74] * 2  # Closer to band
+            },
+        )
+
+        # Should have results even if neither passes TOST
+        assert len(decision.objective_results) == 1
+
+    def test_both_equivalent_compare_by_center_distance(self) -> None:
+        """When both pass TOST, compare by distance from band center."""
+        band = BandTarget(low=0.80, high=1.00)  # Wide band
+        policy = PromotionPolicy()
+        objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
+        gate = PromotionGate(policy, objectives)
+
+        # Both in band, candidate closer to center (0.9)
+        decision = gate.evaluate(
+            incumbent_metrics={
+                "consistency": [0.82, 0.83, 0.81, 0.82, 0.82] * 2  # At low end of band
+            },
+            candidate_metrics={
+                "consistency": [0.90, 0.91, 0.89, 0.90, 0.90] * 2  # At center of band
+            },
+        )
+
+        assert len(decision.objective_results) == 1
+
+    def test_band_with_center_tolerance(self) -> None:
+        """Band specified with center and tolerance."""
+        band = BandTarget(center=0.90, tol=0.05)  # Band is [0.85, 0.95]
+        policy = PromotionPolicy()
+        objectives = [ObjectiveSpec("consistency", "band", band=band, band_alpha=0.05)]
+        gate = PromotionGate(policy, objectives)
+
+        decision = gate.evaluate(
+            incumbent_metrics={"consistency": [0.70, 0.72, 0.71] * 3},
+            candidate_metrics={"consistency": [0.90, 0.91, 0.89] * 3},
+        )
+
+        # Should handle center/tol format correctly
+        assert len(decision.objective_results) == 1
+
+
+class TestFromSpecArtifact:
+    """Tests for PromotionGate.from_spec_artifact."""
+
+    def test_no_promotion_policy_returns_none(self) -> None:
+        """Returns None when artifact has no promotion policy."""
+
+        class MockArtifact:
+            promotion_policy = None
+            objectives: list = []
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is None
+
+    def test_with_standard_objectives(self) -> None:
+        """Creates gate from artifact with standard objectives."""
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy(alpha=0.05)
+            objectives = [
+                {"name": "accuracy", "direction": "maximize"},
+                {"name": "latency", "direction": "minimize"},
+            ]
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        assert len(gate.objectives) == 2
+        assert gate.objectives["accuracy"].direction == "maximize"
+        assert gate.objectives["latency"].direction == "minimize"
+
+    def test_with_banded_objectives_list_target(self) -> None:
+        """Creates gate from artifact with banded objectives using list target."""
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy()
+            objectives = [
+                {
+                    "name": "consistency",
+                    "band": {
+                        "target": [0.85, 0.95],
+                        "alpha": 0.10,
+                    },
+                },
+            ]
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        assert len(gate.objectives) == 1
+        obj = gate.objectives["consistency"]
+        assert obj.direction == "band"
+        assert obj.band is not None
+        assert abs(obj.band.low - 0.85) < 1e-10  # type: ignore[operator]
+        assert abs(obj.band.high - 0.95) < 1e-10  # type: ignore[operator]
+        assert abs(obj.band_alpha - 0.10) < 1e-10
+
+    def test_with_banded_objectives_dict_target(self) -> None:
+        """Creates gate from artifact with banded objectives using dict target."""
+
+        class MockArtifact:
+            promotion_policy = PromotionPolicy()
+            objectives = [
+                {
+                    "name": "cost",
+                    "band": {
+                        "target": {"center": 0.10, "tol": 0.02},
+                    },
+                },
+            ]
+
+        gate = PromotionGate.from_spec_artifact(MockArtifact())
+        assert gate is not None
+        obj = gate.objectives["cost"]
+        assert obj.direction == "band"
+        assert obj.band is not None
+        # BandTarget.from_dict should compute low/high from center±tol
+        assert abs(obj.band.center - 0.10) < 1e-10  # type: ignore[operator]
+        assert abs(obj.band.tol - 0.02) < 1e-10  # type: ignore[operator]
