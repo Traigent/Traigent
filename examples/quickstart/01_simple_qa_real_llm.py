@@ -88,8 +88,8 @@ CONSTRAINTS_DESCRIPTIONS = [
             cfg["max_tokens"] <= 100 if cfg["model"] == "gpt-3.5-turbo" else True
         ),
     ],
-    # Custom evaluator for scoring
-    evaluator=custom_accuracy_scorer,
+    # Custom metric functions for accuracy (takes output, expected)
+    metric_functions={"accuracy": custom_accuracy_scorer},
     # Evaluation dataset
     eval_dataset=str(DATASET_PATH),
     # Execution options with statistical stability
