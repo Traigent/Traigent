@@ -47,8 +47,8 @@ from scorers import custom_accuracy_scorer
 # Path to dataset (relative to this file)
 # Use qa_samples.jsonl for quick test, llm_eval_mixed.jsonl for full run
 DATASET_PATH = (
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
-    # Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
+    # Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
+    Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
 )
 
 
@@ -167,7 +167,9 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
         question_clean = question.replace("\n", " | ")
         rows.append([question_clean, expected])
 
-    # Fill in trial answers and pass/fail
+    # Fill in trial answers and pass/fail, tracking pass counts per trial
+    trial_pass_counts = []  # List of (pass_count, total_count) per trial
+
     for trial in results.trials:
         example_results = trial.metadata.get("example_results", [])
 
@@ -177,6 +179,8 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
             ex_idx = int(ex_result.example_id.split("_")[1])
             results_by_id[ex_idx] = ex_result
 
+        pass_count = 0
+        total_count = 0
         for q_idx in range(len(questions)):
             ex_result = results_by_id.get(q_idx)
             if ex_result:
@@ -187,15 +191,32 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
                 passed = score >= 0.5 if isinstance(score, (int, float)) else False
                 rows[q_idx].append(answer)
                 rows[q_idx].append("PASS" if passed else "FAIL")
+                total_count += 1
+                if passed:
+                    pass_count += 1
             else:
                 rows[q_idx].append("N/A")
                 rows[q_idx].append("")
+
+        trial_pass_counts.append((pass_count, total_count))
+
+    # Add summary row with pass ratios
+    summary_row = ["SUMMARY", "Pass Rate"]
+    for pass_count, total_count in trial_pass_counts:
+        if total_count > 0:
+            ratio = pass_count / total_count
+            summary_row.append(f"{pass_count}/{total_count}")
+            summary_row.append(f"{ratio:.1%}")
+        else:
+            summary_row.append("N/A")
+            summary_row.append("N/A")
 
     # Write CSV
     with open(output_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(headers)
         writer.writerows(rows)
+        writer.writerow(summary_row)
 
     print(f"Results saved to: {output_path}")
 
