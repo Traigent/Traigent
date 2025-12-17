@@ -55,7 +55,7 @@ def exact_match(output: str, expected: str) -> float:
     return 1.0 if output.strip().lower() == expected.strip().lower() else 0.0
 
 @traigent.optimize(
-    evaluator=exact_match,
+    scoring_function=exact_match,
     eval_dataset="data.jsonl",
     objectives=["accuracy"],
 )
