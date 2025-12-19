@@ -317,7 +317,7 @@ export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
 When optimizing across models from different providers (OpenAI, Anthropic, Google, Mistral, etc.), we recommend using [LiteLLM](https://github.com/BerriAI/litellm) to provide a unified interface:
 
 ```python
-from litellm import completion
+import importlib
 import traigent
 
 @traigent.optimize(
@@ -331,6 +331,11 @@ import traigent
 )
 def multi_provider_agent(question: str) -> str:
     config = traigent.get_config()
+
+    # Litellm is optional; import only when the dependency is installed
+    litellm = importlib.import_module("litellm")
+    completion = getattr(litellm, "completion")
+
     response = completion(
         model=config.get("model"),
         temperature=config.get("temperature"),
