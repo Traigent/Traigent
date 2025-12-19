@@ -706,11 +706,21 @@ def get_version_info() -> dict[str, Any]:
 
     from traigent import __version__
 
+    algorithms = list_optimizers()
+    if not algorithms:
+        try:
+            from traigent.optimizers.registry import _register_builtin_optimizers
+
+            _register_builtin_optimizers()
+            algorithms = list_optimizers()
+        except Exception:
+            algorithms = []
+
     return {
         "version": __version__,
         "python_version": sys.version,
         "platform": platform.platform(),
-        "algorithms": list_optimizers(),
+        "algorithms": algorithms,
         "features": {
             "grid_search": True,
             "random_search": True,

@@ -20,6 +20,16 @@ except ImportError:
 
     # Mock mlflow for type hints
     class mlflow:  # type: ignore[no-redef]
+        _tracking_uri = None
+        _active_experiment = None
+        _experiments: dict[str, Any] = {}
+        _current_run: Any = None
+
+        class tracking:  # type: ignore[no-redef]
+            class MlflowClient:
+                def get_run(self, run_id: str) -> Any:
+                    raise RuntimeError("MLflow not available")
+
         @staticmethod
         def start_run(*args, **kwargs) -> Any:
             class MockRun:
@@ -28,7 +38,28 @@ except ImportError:
 
                 info = Info()
 
-            return MockRun()
+            run = MockRun()
+            mlflow._current_run = run
+            return run
+
+        @staticmethod
+        def set_tracking_uri(uri: str) -> None:
+            mlflow._tracking_uri = uri
+
+        @staticmethod
+        def get_experiment_by_name(name: str) -> Any | None:
+            return mlflow._experiments.get(name)
+
+        @staticmethod
+        def create_experiment(name: str) -> str:
+            experiment = type("MockExperiment", (), {})()
+            experiment.experiment_id = f"exp_{len(mlflow._experiments)}"
+            mlflow._experiments[name] = experiment
+            return experiment.experiment_id
+
+        @staticmethod
+        def set_experiment(name: str) -> None:
+            mlflow._active_experiment = name
 
         @staticmethod
         def end_run(*args, **kwargs) -> None:
