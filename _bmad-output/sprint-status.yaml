@@ -1,0 +1,138 @@
+# Sprint Status - Agentic Workflow Tuning: Haystack Integration
+# This file tracks the development progress of all epics and stories
+
+# generated: 2025-12-19
+# project: Agentic Workflow Tuning - Haystack Integration
+# project_key: TRAIGENT-HAYSTACK
+# tracking_system: file-system
+# story_location: "_bmad-output/stories/"
+# epic_source: "_bmad-output/epics.md"
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Mark epic as 'in-progress' when starting work on its first story
+# - SM typically creates next story ONLY after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then Dev runs code-review (fresh context, ideally different LLM)
+
+development_status:
+  # Epic 1: Pipeline Discovery & Analysis (7 stories)
+  # FRs: FR-101 to FR-107 | NFRs: NFR-1, NFR-5
+  epic-1: backlog
+  1-1-extract-components-from-pipeline: backlog
+  1-2-extract-component-parameters: backlog
+  1-3-identify-tunable-vs-fixed-parameters: backlog
+  1-4-extract-pipeline-graph-structure: backlog
+  1-5-detect-loops-and-max-runs: backlog
+  1-6-support-custom-component-decorated-components: backlog
+  1-7-introspection-performance-and-component-coverage: backlog
+  epic-1-retrospective: optional
+
+  # Epic 2: Configuration Space & TVL (9 stories)
+  # FRs: FR-201 to FR-207 | NFRs: NFR-4
+  epic-2: backlog
+  2-1-define-configspace-data-model: backlog
+  2-2-support-categorical-variables: backlog
+  2-3-support-numerical-variables: backlog
+  2-4-support-conditional-variables: backlog
+  2-5-fix-parameters-exclude-from-search: backlog
+  2-6-validate-configuration-space-consistency: backlog
+  2-7-search-space-tvl-syntax: backlog
+  2-8-auto-discovery-with-sensible-defaults: backlog
+  2-9-support-boolean-and-optional-parameters: backlog
+  epic-2-retrospective: optional
+
+  # Epic 3: Basic Optimization Execution (9 stories)
+  # FRs: FR-301, FR-302 (grid/random), FR-305, FR-404 (basic) | NFRs: NFR-7
+  epic-3: backlog
+  3-1-define-evaluation-dataset-format: backlog
+  3-2-execute-pipeline-with-configuration: backlog
+  3-3-basic-apply-function-for-testing: backlog
+  3-4-grid-search-strategy: backlog
+  3-5-random-search-strategy: backlog
+  3-6-user-defined-quality-metrics: backlog
+  3-7-basic-optimizationresult-container: backlog
+  3-8-execution-error-handling-and-failure-thresholds: backlog
+  3-9-asyncpipeline-support: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Cost, Latency & Constraints (5 stories)
+  # FRs: FR-303, FR-304, FR-306 | NFRs: NFR-6
+  epic-4: backlog
+  4-1-track-token-usage-and-cost-per-run: backlog
+  4-2-track-latency-metrics-per-run: backlog
+  4-3-define-cost-and-latency-constraints: backlog
+  4-4-early-stopping-on-constraint-violation: backlog
+  4-5-constraint-satisfaction-in-results: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: Advanced Optimization & Pareto Analysis (10 stories)
+  # FRs: FR-302 (Bayesian/evolutionary), FR-307, FR-308, FR-401, FR-402 | NFRs: NFR-2, NFR-3
+  epic-5: backlog
+  5-1-bayesian-optimization-strategy: backlog
+  5-2-evolutionary-optimization-strategy-nsga-ii: backlog
+  5-3-parallel-experiment-execution: backlog
+  5-4-checkpoint-and-resume-optimization: backlog
+  5-5-multi-objective-targets: backlog
+  5-6-pareto-frontier-computation: backlog
+  5-7-rank-configurations-by-primary-objective: backlog
+  5-8-memory-efficiency-for-large-run-history: backlog
+  5-9-time-budgeted-optimization: backlog
+  5-10-optimization-effectiveness-benchmark: backlog
+  epic-5-retrospective: optional
+
+  # Epic 6: Attribution & Insights (5 stories)
+  # FRs: FR-406 | User Story: US-3
+  epic-6: backlog
+  6-1-per-node-metrics-collection-per-run: backlog
+  6-2-quality-contribution-analysis-aggregate: backlog
+  6-3-cost-and-latency-contribution-analysis: backlog
+  6-4-parameter-sensitivity-analysis: backlog
+  6-5-optimization-recommendations: backlog
+  epic-6-retrospective: optional
+
+  # Epic 7: Production Readiness & CI/CD (8 stories)
+  # FRs: FR-403, FR-404 (production), FR-405 | User Story: US-4
+  epic-7: backlog
+  7-1-cli-interface-for-headless-optimization: backlog
+  7-2-yaml-json-configuration-files: backlog
+  7-3-production-hardened-apply-function: backlog
+  7-4-export-tuned-config-tvl: backlog
+  7-5-export-experiment-history: backlog
+  7-6-artifact-storage-integration: backlog
+  7-7-structured-output-for-ci-integration: backlog
+  7-8-minimal-integration-quickstart: backlog
+  epic-7-retrospective: optional
+
+# SUMMARY:
+# ========
+# Total Epics: 7
+# Total Stories: 53
+# - Epic 1: 7 stories (Pipeline Discovery)
+# - Epic 2: 9 stories (Configuration Space)
+# - Epic 3: 9 stories (Basic Optimization)
+# - Epic 4: 5 stories (Constraints)
+# - Epic 5: 10 stories (Advanced Optimization)
+# - Epic 6: 5 stories (Attribution)
+# - Epic 7: 8 stories (Production Readiness)
+#
+# Requirements Coverage:
+# - Functional Requirements: 28/28 covered
+# - Non-Functional Requirements: 7/7 covered

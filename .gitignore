@@ -9,6 +9,12 @@ demo_venv/
 traigent_test_env/
 cache/
 sections/
+
+# BMAD (agent/workflow artifacts)
+/_bmad/
+/.bmad/
+/bmad/
+
 # But keep example site sections tracked
 !examples/sections/
 !examples/sections/**
