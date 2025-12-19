@@ -159,7 +159,6 @@ print("Best parameters", result["best_params"])
 
 ## Dependency
 
-The Optuna features require the `optuna` package. It has been added to the
-`requirements-bayesian.txt` optional extras—install via `pip install -r
-requirements/requirements-bayesian.txt` or include `optuna>=4.5.0` in your
-project dependencies.
+The Optuna features require the `optuna` package, which is included in TraiGent's
+core dependencies and enabled by default. No additional installation or
+environment variables are required—Optuna optimizers are available out of the box.

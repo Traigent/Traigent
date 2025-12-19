@@ -312,6 +312,35 @@ export TRAIGENT_BACKEND_URL=http://localhost:5000
 export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
 -->
 
+### Testing Models from Multiple Providers
+
+When optimizing across models from different providers (OpenAI, Anthropic, Google, Mistral, etc.), we recommend using [LiteLLM](https://github.com/BerriAI/litellm) to provide a unified interface:
+
+```python
+from litellm import completion
+import traigent
+
+@traigent.optimize(
+    configuration_space={
+        # Test models from multiple providers with a single interface
+        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+        "temperature": [0.1, 0.5, 0.9]
+    },
+    objectives=["accuracy", "cost"],
+    eval_dataset="qa_samples.jsonl"
+)
+def multi_provider_agent(question: str) -> str:
+    config = traigent.get_config()
+    response = completion(
+        model=config.get("model"),
+        temperature=config.get("temperature"),
+        messages=[{"role": "user", "content": question}]
+    )
+    return response.choices[0].message.content
+```
+
+LiteLLM supports 100+ LLM providers with a consistent API, making it easy to compare models across vendors during optimization.
+
 ### Available Feature Sets
 
 When installing TraiGent, you can choose specific feature sets:

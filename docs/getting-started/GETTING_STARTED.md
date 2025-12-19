@@ -83,6 +83,29 @@ traigent validate examples/datasets/hello-world/evaluation_set.jsonl
 traigent plot my_run -p progress
 ```
 
+## 🔀 Multi-Provider Model Testing
+
+To test models from different providers (OpenAI, Anthropic, Google, etc.) with a unified interface, we recommend [LiteLLM](https://github.com/BerriAI/litellm):
+
+```bash
+pip install litellm
+```
+
+```python
+from litellm import completion
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+    },
+    ...
+)
+def my_agent(query: str) -> str:
+    config = traigent.get_config()
+    response = completion(model=config.get("model"), messages=[{"role": "user", "content": query}])
+    return response.choices[0].message.content
+```
+
 ## 🔒 Execution Model
 
 Open-source builds support `execution_mode="edge_analytics"` (local). Cloud/hybrid orchestration is a roadmap item—keep runs in local mode unless you have a managed backend wired up.

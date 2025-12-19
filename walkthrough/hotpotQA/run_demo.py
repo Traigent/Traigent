@@ -8,8 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-# Enable Optuna-backed optimizers before importing TraiGent.
-os.environ.setdefault("TRAIGENT_OPTUNA_ENABLED", "1")
+# Optuna-backed optimizers are enabled by default.
 os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
@@ -37,18 +36,30 @@ USE_MOCK = os.getenv("TRAIGENT_MOCK_MODE", "true").lower() == "true"
 def _validate_real_credentials(model: str) -> None:
     lowered = model.lower()
     if "gpt" in lowered and not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("Set OPENAI_API_KEY before running in real mode with GPT models.")
-    if any(keyword in lowered for keyword in ("claude", "haiku", "sonnet")) and not os.getenv("ANTHROPIC_API_KEY"):
-        raise RuntimeError("Set ANTHROPIC_API_KEY before running in real mode with Claude/Haiku models.")
-    if "gpt" not in lowered and not any(keyword in lowered for keyword in ("claude", "haiku", "sonnet")):
-        raise ValueError(f"Unknown model '{model}'. Supported: gpt-*, claude-*, haiku-*.")
+        raise RuntimeError(
+            "Set OPENAI_API_KEY before running in real mode with GPT models."
+        )
+    if any(
+        keyword in lowered for keyword in ("claude", "haiku", "sonnet")
+    ) and not os.getenv("ANTHROPIC_API_KEY"):
+        raise RuntimeError(
+            "Set ANTHROPIC_API_KEY before running in real mode with Claude/Haiku models."
+        )
+    if "gpt" not in lowered and not any(
+        keyword in lowered for keyword in ("claude", "haiku", "sonnet")
+    ):
+        raise ValueError(
+            f"Unknown model '{model}'. Supported: gpt-*, claude-*, haiku-*."
+        )
 
 
 def _invoke_openai(model: str, prompt: str, temperature: float, max_tokens: int) -> str:
     try:
         from openai import OpenAI
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("Install the 'openai' package to run in real mode with GPT models.") from exc
+        raise RuntimeError(
+            "Install the 'openai' package to run in real mode with GPT models."
+        ) from exc
 
     client = OpenAI()
     response = client.chat.completions.create(
@@ -60,20 +71,22 @@ def _invoke_openai(model: str, prompt: str, temperature: float, max_tokens: int)
     return response.choices[0].message.content.strip()
 
 
-def _invoke_anthropic(model: str, prompt: str, temperature: float, max_tokens: int) -> str:
+def _invoke_anthropic(
+    model: str, prompt: str, temperature: float, max_tokens: int
+) -> str:
     try:
         from anthropic import Anthropic
     except ImportError as exc:  # pragma: no cover - optional dependency
-        raise RuntimeError("Install the 'anthropic' package to run in real mode with Claude/Haiku models.") from exc
+        raise RuntimeError(
+            "Install the 'anthropic' package to run in real mode with Claude/Haiku models."
+        ) from exc
 
     client = Anthropic()
     lowered = model.lower()
     resolved_model = (
         "claude-3-5-haiku-20241022"
         if "haiku" in lowered
-        else "claude-3-5-sonnet-20241022"
-        if "sonnet" in lowered
-        else model
+        else "claude-3-5-sonnet-20241022" if "sonnet" in lowered else model
     )
 
     response = client.messages.create(
@@ -83,7 +96,11 @@ def _invoke_anthropic(model: str, prompt: str, temperature: float, max_tokens: i
         max_tokens=max_tokens,
     )
     first_block = response.content[0]
-    return getattr(first_block, "text", "").strip() if hasattr(first_block, "text") else str(first_block)
+    return (
+        getattr(first_block, "text", "").strip()
+        if hasattr(first_block, "text")
+        else str(first_block)
+    )
 
 
 def generate_real_answer(
@@ -101,7 +118,11 @@ def generate_real_answer(
     _validate_real_credentials(model)
 
     selected_context = context[:retriever_k] if context else []
-    context_block = "\n\n".join(selected_context) if selected_context else "No retrieved context provided."
+    context_block = (
+        "\n\n".join(selected_context)
+        if selected_context
+        else "No retrieved context provided."
+    )
     reasoning_instruction = (
         "Think step by step and explain how each retrieved passage contributes before giving the final answer."
         if prompt_style == "cot"

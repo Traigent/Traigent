@@ -51,7 +51,7 @@ Run `./install.sh` to provision a dedicated virtual environment, install TraiGen
 ./run_demo.sh
 ```
 
-The script wraps `run_demo.py`, which optimizes a compact mock-mode HotpotQA agent with high-impact variables (`model`, `temperature`, `retriever_k`, `prompt_style`, `retrieval_reranker`, `max_output_tokens`). Optuna-backed search is enabled automatically via `TRAIGENT_OPTUNA_ENABLED=1`, and the mock simulator makes it fast to inspect results without real API keys.
+The script wraps `run_demo.py`, which optimizes a compact mock-mode HotpotQA agent with high-impact variables (`model`, `temperature`, `retriever_k`, `prompt_style`, `retrieval_reranker`, `max_output_tokens`). Optuna-backed search is enabled by default, and the mock simulator makes it fast to inspect results without real API keys.
 
 #### Run against live models
 
