@@ -16,20 +16,15 @@ from collections import defaultdict
 # Use defusedxml to prevent XXE attacks
 try:
     import defusedxml.ElementTree as ET
-except ImportError:
-    # Fallback with security warning - should install defusedxml
-    import warnings
-    import xml.etree.ElementTree as ET
-
-    warnings.warn(
-        "defusedxml not installed. Using stdlib xml.etree.ElementTree which is "
-        "vulnerable to XXE attacks. Install defusedxml: pip install defusedxml",
-        UserWarning,
-        stacklevel=2,
-    )
+except ImportError as exc:
+    raise RuntimeError(
+        "defusedxml is required for XML parsing in scripts/code_analysis. "
+        "Install it (e.g. `pip install defusedxml` or enable the TraiGent "
+        "security extras)."
+    ) from exc
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from collections.abc import Sequence
 
 try:  # pragma: no cover - allow running as a script
     from .dependency_graph import Canvas, layout_positions
@@ -568,16 +563,11 @@ def load_config(path: Path) -> AtlasConfig:
                     data[key] = []
                     current_key = key
     return AtlasConfig(
-        max_nodes_per_view=int(
-            data.get("max_nodes_per_view", defaults.max_nodes_per_view)
-        ),
-        image_max_edge_px=int(
-            data.get("image_max_edge_px", defaults.image_max_edge_px)
-        ),
+        max_nodes_per_view=int(data.get("max_nodes_per_view", defaults.max_nodes_per_view)),
+        image_max_edge_px=int(data.get("image_max_edge_px", defaults.image_max_edge_px)),
         top_hubs=int(data.get("top_hubs", defaults.top_hubs)),
         exclude_patterns=tuple(
-            str(item)
-            for item in data.get("exclude_patterns", defaults.exclude_patterns)
+            str(item) for item in data.get("exclude_patterns", defaults.exclude_patterns)
         ),
         vertical_layers=tuple(
             str(item) for item in data.get("vertical_layers", defaults.vertical_layers)
@@ -614,7 +604,7 @@ def load_metrics(path: Path) -> dict[str, dict[str, object]]:
 def load_graphml(path: Path) -> tuple[dict[str, str], list[GraphEdge]]:
     if not path.exists():
         return {}, []
-    tree = ET.parse(path)
+    tree = ET.parse(str(path))
     root = tree.getroot()
     ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
 
@@ -758,15 +748,11 @@ class AtlasBuilder:
                 or self.node_paths.get(module)
                 or module.replace(".", "/") + ".py"
             )
-            sloc = int(
-                float(metrics_row.get("sloc", inventory_row.get("sloc", 0)) or 0)
-            )
+            sloc = int(float(metrics_row.get("sloc", inventory_row.get("sloc", 0)) or 0))
             fan_in = int(float(metrics_row.get("fan_in", 0) or 0))
             fan_out = int(float(metrics_row.get("fan_out", 0) or 0))
             test_count = int(float(metrics_row.get("test_count", 0) or 0))
-            module_info[module] = ModuleData(
-                module, path, sloc, fan_in, fan_out, test_count
-            )
+            module_info[module] = ModuleData(module, path, sloc, fan_in, fan_out, test_count)
         self.module_data = module_info
 
         included: list[str] = []
@@ -856,17 +842,13 @@ class AtlasBuilder:
         )
 
     def build_component_overview(self) -> None:
-        components = strongly_connected_components(
-            self.filtered_modules, self.adjacency
-        )
+        components = strongly_connected_components(self.filtered_modules, self.adjacency)
         component_map: dict[str, int] = {}
         component_data: list[dict[str, object]] = []
         for idx, nodes in enumerate(components):
             component_map.update(dict.fromkeys(nodes, idx))
             total_sloc = sum(self.module_data[node].sloc for node in nodes)
-            representative = sorted(
-                nodes, key=lambda n: (-self.module_data[n].sloc, n)
-            )[0]
+            representative = sorted(nodes, key=lambda n: (-self.module_data[n].sloc, n))[0]
             component_data.append(
                 {
                     "id": idx,
@@ -882,15 +864,11 @@ class AtlasBuilder:
             comp_dst = component_map[dst]
             if comp_src == comp_dst:
                 continue
-            edge_map[(comp_src, comp_dst)] = (
-                edge_map.get((comp_src, comp_dst), 0.0) + weight
-            )
+            edge_map[(comp_src, comp_dst)] = edge_map.get((comp_src, comp_dst), 0.0) + weight
         self.components = component_data
         self.component_edges = edge_map
 
-        patterns = [
-            re.compile(layer, re.IGNORECASE) for layer in self.config.vertical_layers
-        ]
+        patterns = [re.compile(layer, re.IGNORECASE) for layer in self.config.vertical_layers]
         layer_buckets: dict[int, list[int]] = defaultdict(list)
         for comp in component_data:
             representative = comp["representative"]
@@ -910,9 +888,7 @@ class AtlasBuilder:
         margin_y = 140
         layer_count = max(1, len(ordered_layers))
         largest_layer = max((len(layer) for layer in ordered_layers), default=1)
-        width = min(
-            self.config.image_max_edge_px, max(800, margin_x * 2 + largest_layer * 260)
-        )
+        width = min(self.config.image_max_edge_px, max(800, margin_x * 2 + largest_layer * 260))
         height = min(
             self.config.image_max_edge_px,
             max(600, margin_y * 2 + max(layer_count - 1, 1) * 220),
@@ -921,9 +897,7 @@ class AtlasBuilder:
             y_positions = [height // 2]
         else:
             layer_spacing = (height - 2 * margin_y) / (layer_count - 1)
-            y_positions = [
-                int(margin_y + i * layer_spacing) for i in range(layer_count)
-            ]
+            y_positions = [int(margin_y + i * layer_spacing) for i in range(layer_count)]
         for layer_idx, layer in enumerate(ordered_layers):
             count = max(1, len(layer))
             if count == 1:
@@ -951,9 +925,7 @@ class AtlasBuilder:
             dst_pos = positions[dst]
             thickness = max(1, int(round(2 * weight / max_weight)))
             color = (120, 120, 120, 160)
-            canvas.draw_line(
-                src_pos[0], src_pos[1], dst_pos[0], dst_pos[1], color, thickness
-            )
+            canvas.draw_line(src_pos[0], src_pos[1], dst_pos[0], dst_pos[1], color, thickness)
         for comp in component_data:
             comp_id = comp["id"]
             x, y = positions[comp_id]
@@ -974,9 +946,7 @@ class AtlasBuilder:
         for package, modules in self.packages.items():
             if not modules:
                 continue
-            chunks = [
-                modules[i : i + max_nodes] for i in range(0, len(modules), max_nodes)
-            ]
+            chunks = [modules[i : i + max_nodes] for i in range(0, len(modules), max_nodes)]
             chunk_records: list[dict[str, object]] = []
             for index, chunk in enumerate(chunks, start=1):
                 chunk_nodes = chunk
@@ -1023,9 +993,7 @@ class AtlasBuilder:
                     )
                     canvas.draw_circle(x, y, radius_node, (65, 105, 225, 220))
                     label = node.replace("traigent.", "")
-                    draw_text(
-                        canvas, x - len(label[:16]) * 3, y + radius_node + 8, label[:16]
-                    )
+                    draw_text(canvas, x - len(label[:16]) * 3, y + radius_node + 8, label[:16])
                 caption = f"{package.upper()} ({index}/{len(chunks)}) - {count} MODULES"
                 draw_text(canvas, 20, 30, caption, scale=2)
                 filename = f"{sanitize_filename(package.replace('.', '_'))}_{index:02d}_of_{len(chunks):02d}.png"
@@ -1048,9 +1016,7 @@ class AtlasBuilder:
     def build_neighborhoods(self) -> None:
         modules = sorted(
             self.filtered_modules,
-            key=lambda name: max(
-                self.module_data[name].fan_in, self.module_data[name].fan_out
-            ),
+            key=lambda name: max(self.module_data[name].fan_in, self.module_data[name].fan_out),
             reverse=True,
         )[: self.config.top_hubs]
 
@@ -1099,12 +1065,8 @@ class AtlasBuilder:
                     coords.append((x, y))
                 return coords
 
-            inbound_positions = fan_positions(
-                len(inbound), math.pi * 0.75, math.pi * 1.25
-            )
-            outbound_positions = fan_positions(
-                len(outbound), -math.pi * 0.25, math.pi * 0.25
-            )
+            inbound_positions = fan_positions(len(inbound), math.pi * 0.75, math.pi * 1.25)
+            outbound_positions = fan_positions(len(outbound), -math.pi * 0.25, math.pi * 0.25)
             max_in_weight = max((w for (_, w) in inbound), default=1.0)
             max_out_weight = max((w for (_, w) in outbound), default=1.0)
 
@@ -1118,9 +1080,7 @@ class AtlasBuilder:
                     max(1, int(round(3 * weight / max_in_weight))),
                 )
                 canvas.draw_circle(x, y, 8, (65, 105, 225, 255))
-                draw_text(
-                    canvas, x - 40, y + 14, neighbor.replace("traigent.", "")[:16]
-                )
+                draw_text(canvas, x - 40, y + 14, neighbor.replace("traigent.", "")[:16])
             for (neighbor, weight), (x, y) in zip(outbound, outbound_positions):
                 canvas.draw_line(
                     center_x,
@@ -1131,9 +1091,7 @@ class AtlasBuilder:
                     max(1, int(round(3 * weight / max_out_weight))),
                 )
                 canvas.draw_circle(x, y, 8, (34, 139, 34, 255))
-                draw_text(
-                    canvas, x - 40, y + 14, neighbor.replace("traigent.", "")[:16]
-                )
+                draw_text(canvas, x - 40, y + 14, neighbor.replace("traigent.", "")[:16])
 
             center_color = (205, 92, 92, 240)
             canvas.draw_circle(center_x, center_y, 14, center_color)
@@ -1194,9 +1152,7 @@ class AtlasBuilder:
                 html_lines.append("  <figure>")
                 html_lines.append(f"    <figcaption>{chunk['caption']}</figcaption>")
                 html_lines.append('    <div class="viz-frame">')
-                html_lines.append(
-                    f"      <img src=\"{chunk['filename']}\" alt=\"{chunk['caption']}\">"
-                )
+                html_lines.append(f'      <img src="{chunk["filename"]}" alt="{chunk["caption"]}">')
                 html_lines.append("    </div>")
                 html_lines.append("  </figure>")
         html_lines.append("  <h2>Neighborhoods</h2>")
@@ -1205,15 +1161,11 @@ class AtlasBuilder:
             html_lines.append("  <figure>")
             html_lines.append(f"    <figcaption>{caption}</figcaption>")
             html_lines.append('    <div class="viz-frame">')
-            html_lines.append(
-                f"      <img src=\"{entry['filename']}\" alt=\"{caption}\">"
-            )
+            html_lines.append(f'      <img src="{entry["filename"]}" alt="{caption}">')
             html_lines.append("    </div>")
             html_lines.append("  </figure>")
         html_lines.extend(["</body>", "</html>"])
-        (self.output_dir / "index.html").write_text(
-            "\n".join(html_lines), encoding="utf-8"
-        )
+        (self.output_dir / "index.html").write_text("\n".join(html_lines), encoding="utf-8")
 
     def build(self) -> None:
         self.load_sources()
