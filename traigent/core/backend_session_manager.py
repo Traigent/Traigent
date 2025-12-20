@@ -207,7 +207,7 @@ class BackendSessionManager:
         trial_result: TrialResult,
         session_id: str | None,
     ) -> bool:
-        """Submit successful trial to backend.
+        """Submit trial to backend.
 
         Args:
             trial_result: Completed trial result

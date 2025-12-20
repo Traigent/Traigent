@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1612,6 +1612,35 @@ class TestOptimizationOrchestrator:
         orchestrator._trials.append(completed_trial)
 
         assert stop_condition.should_stop(orchestrator._trials)
+
+    @pytest.mark.asyncio
+    async def test_pruned_trial_submits_to_backend(self, orchestrator):
+        """Verify pruned trials are submitted to the backend session manager."""
+        orchestrator.backend_session_manager.submit_trial = AsyncMock(return_value=True)
+
+        trial_result = TrialResult(
+            trial_id="trial_pruned_0",
+            config={"temperature": 0.5},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.PRUNED,
+            duration=0.1,
+            timestamp=None,
+            metadata={"pruned": True},
+        )
+
+        await orchestrator._handle_trial_result(
+            trial_result=trial_result,
+            optimizer_config=trial_result.config,
+            current_trial_index=0,
+            session_id="session-123",
+            optuna_trial_id=None,
+            log_on_success=False,
+        )
+
+        orchestrator.backend_session_manager.submit_trial.assert_awaited_once_with(
+            trial_result=trial_result,
+            session_id="session-123",
+        )
 
 
 class TestStopReasonInResult:

@@ -649,7 +649,7 @@ class OptimizationOrchestrator:
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
-        if self.backend_client and session_id and trial_result.is_successful:
+        if self.backend_client and session_id:
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
