@@ -611,10 +611,28 @@ class ApiOperations:
             return
 
         try:
-            # Map SDK status to backend status
-            backend_status = status.upper()
-            if backend_status not in ["COMPLETED", "FAILED", "RUNNING", "NOT_STARTED"]:
-                logger.warning(f"Unknown status {status}, using COMPLETED as default")
+            # Map SDK status to backend status using the standard mapping
+            backend_status = self.map_to_backend_status(status)
+
+            # Valid experiment run statuses that the backend should accept
+            # Note: PRUNED and CANCELLED are valid trial outcomes that the backend
+            # needs to support. If backend shows these as "UNKNOWN", the backend
+            # needs to be updated to recognize these statuses.
+            valid_statuses = [
+                "COMPLETED",
+                "FAILED",
+                "RUNNING",
+                "NOT_STARTED",
+                "ACTIVE",
+                "CREATED",
+                "PRUNED",
+                "CANCELLED",
+            ]
+            if backend_status not in valid_statuses:
+                logger.warning(
+                    f"Unexpected status '{status}' (mapped to '{backend_status}'), "
+                    f"using COMPLETED as default"
+                )
                 backend_status = "COMPLETED"
 
             # Prepare headers with API key
