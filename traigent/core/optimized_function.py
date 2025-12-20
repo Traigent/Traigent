@@ -217,9 +217,7 @@ class OptimizedFunction:
         # Initialize state and function wrapper
         self._initialize_state_and_wrapper()
 
-        logger.debug(
-            f"Created OptimizedFunction for {getattr(func, '__name__', str(func))}"
-        )
+        logger.debug(f"Created OptimizedFunction for {getattr(func, '__name__', str(func))}")
 
     def _store_core_parameters(
         self,
@@ -340,11 +338,7 @@ class OptimizedFunction:
         kwargs["timeout"] = self.timeout
 
         save_to_value = kwargs.pop("save_to", sentinel)
-        self.save_to = (
-            None
-            if save_to_value is sentinel or save_to_value is None
-            else save_to_value
-        )
+        self.save_to = None if save_to_value is sentinel or save_to_value is None else save_to_value
         if self.save_to is not None:
             kwargs["save_to"] = self.save_to
 
@@ -447,9 +441,7 @@ class OptimizedFunction:
             "samples_include_pruned",
         }
         self._decorator_runtime_overrides = {
-            key: value
-            for key, value in kwargs.items()
-            if key not in excluded_runtime_keys
+            key: value for key, value in kwargs.items() if key not in excluded_runtime_keys
         }
 
         # Cloud service client (initialized lazily)
@@ -468,9 +460,7 @@ class OptimizedFunction:
             else self.injection_mode
         )
         try:
-            self._provider = get_provider(
-                injection_mode_str, config_param=self.config_param
-            )
+            self._provider = get_provider(injection_mode_str, config_param=self.config_param)
         except ConfigurationError as e:
             # Normalize provider/config errors to ValueError for decorator tests
             raise ValueError(str(e)) from None
@@ -669,9 +659,7 @@ class OptimizedFunction:
                 "Provide an ObjectiveSchema instead."
             )
         if objectives is not None and legacy_objectives is not None:
-            raise ValueError(
-                "objectives provided both via parameter and inside algorithm_kwargs"
-            )
+            raise ValueError("objectives provided both via parameter and inside algorithm_kwargs")
 
         tvl_options_runtime = self._resolve_runtime_tvl_options(
             tvl_spec if tvl_spec is not None else runtime_tvl_spec_kw,
@@ -697,9 +685,7 @@ class OptimizedFunction:
                 tvl_artifact.runtime_overrides(),
             )
 
-        runtime_objective_input = (
-            objectives if objectives is not None else legacy_objectives
-        )
+        runtime_objective_input = objectives if objectives is not None else legacy_objectives
         try:
             runtime_schema = normalize_objectives(runtime_objective_input)
         except TypeError as exc:
@@ -871,9 +857,7 @@ class OptimizedFunction:
         overrides: dict[str, Any],
     ) -> tuple[str | None, int | None, float | None]:
         updated_algorithm = algorithm or overrides.get("algorithm")
-        updated_max_trials = (
-            max_trials if max_trials is not None else overrides.get("max_trials")
-        )
+        updated_max_trials = max_trials if max_trials is not None else overrides.get("max_trials")
         updated_timeout = timeout if timeout is not None else overrides.get("timeout")
 
         for key in (
@@ -901,9 +885,7 @@ class OptimizedFunction:
         """
         # Determine effective configuration space (optimize() parameter takes precedence)
         effective_config_space = (
-            configuration_space
-            if configuration_space is not None
-            else self.configuration_space
+            configuration_space if configuration_space is not None else self.configuration_space
         )
 
         # Resolve algorithm (prefer method arg, else decorator-provided)
@@ -958,14 +940,8 @@ class OptimizedFunction:
         dataset = self._load_dataset()
 
         # Apply example cap if specified
-        max_examples = algorithm_kwargs.get("max_examples") or getattr(
-            self, "max_examples", None
-        )
-        if (
-            max_examples is not None
-            and isinstance(max_examples, int)
-            and max_examples > 0
-        ):
+        max_examples = algorithm_kwargs.get("max_examples") or getattr(self, "max_examples", None)
+        if max_examples is not None and isinstance(max_examples, int) and max_examples > 0:
             if len(dataset.examples) > max_examples:
                 capped_dataset = Dataset(
                     examples=dataset.examples[:max_examples],
@@ -988,9 +964,7 @@ class OptimizedFunction:
         else:
             self.max_total_examples = max_total_examples_value
 
-        samples_include_pruned_value = algorithm_kwargs.pop(
-            "samples_include_pruned", None
-        )
+        samples_include_pruned_value = algorithm_kwargs.pop("samples_include_pruned", None)
         if samples_include_pruned_value is None:
             samples_include_pruned_value = getattr(self, "samples_include_pruned", True)
         else:
@@ -1032,9 +1006,7 @@ class OptimizedFunction:
             merged_parallel_config,
             default_thread_workers=default_thread_workers,
             config_space_size=self._estimate_search_space_size(),
-            detected_function_kind=(
-                "async" if asyncio.iscoroutinefunction(self.func) else "sync"
-            ),
+            detected_function_kind=("async" if asyncio.iscoroutinefunction(self.func) else "sync"),
             sources=merged_sources,
         )
 
@@ -1078,14 +1050,10 @@ class OptimizedFunction:
         if has_custom:
             effective_evaluator = provided_custom_evaluator
         elif has_scoring and override_evaluator:
-            effective_evaluator = (
-                None  # Will be handled by LocalEvaluator with scoring function
-            )
+            effective_evaluator = None  # Will be handled by LocalEvaluator with scoring function
 
         if mock_mode_env and mock_enabled and override_evaluator and has_custom:
-            logger.info(
-                "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
-            )
+            logger.info("Mock mode enabled: overriding custom evaluator with LocalEvaluator")
             effective_evaluator = None
 
         if effective_evaluator:
@@ -1097,6 +1065,20 @@ class OptimizedFunction:
                 timeout=timeout or 60.0,
                 capture_llm_metrics=True,
             )
+
+        effective_metric_functions: dict[str, Callable[..., Any]] = dict(
+            self.metric_functions or {}
+        )
+
+        if self.scoring_function is not None:
+            target_metric: str | None = None
+            if "accuracy" in self.objectives:
+                target_metric = "accuracy"
+            elif "score" in self.objectives:
+                target_metric = "score"
+
+            if target_metric and target_metric not in effective_metric_functions:
+                effective_metric_functions[target_metric] = self.scoring_function
 
         effective_workers = int(effective_batch_size or 1)
         if effective_workers < 1:
@@ -1117,7 +1099,7 @@ class OptimizedFunction:
             execution_mode=self.execution_mode,
             privacy_enabled=effective_privacy_enabled,
             mock_mode_config=self.mock_mode_config,
-            metric_functions=self.metric_functions,
+            metric_functions=effective_metric_functions or None,
         )
 
     def _build_optimization_orchestrator(
@@ -1148,9 +1130,7 @@ class OptimizedFunction:
         if "budget_metric" in algorithm_kwargs:
             orchestrator_kwargs["budget_metric"] = algorithm_kwargs["budget_metric"]
         if "budget_include_pruned" in algorithm_kwargs:
-            orchestrator_kwargs["budget_include_pruned"] = algorithm_kwargs[
-                "budget_include_pruned"
-            ]
+            orchestrator_kwargs["budget_include_pruned"] = algorithm_kwargs["budget_include_pruned"]
 
         orchestrator_kwargs["samples_include_pruned"] = samples_include_pruned_value
 
@@ -1262,10 +1242,8 @@ class OptimizedFunction:
         specialized helper methods for each phase of execution.
         """
         # Phase 1: Resolve and validate parameters
-        algorithm, max_trials, effective_config_space = (
-            self._resolve_execution_parameters(
-                algorithm, max_trials, configuration_space
-            )
+        algorithm, max_trials, effective_config_space = self._resolve_execution_parameters(
+            algorithm, max_trials, configuration_space
         )
 
         # Phase 2: Create TraigentConfig and check CI approval
@@ -1427,9 +1405,7 @@ class OptimizedFunction:
                 trials=[mock_trial],  # Cloud service doesn't expose all trials
                 best_config=cloud_result.best_config,
                 best_score=(
-                    max(cloud_result.best_metrics.values())
-                    if cloud_result.best_metrics
-                    else 0.0
+                    max(cloud_result.best_metrics.values()) if cloud_result.best_metrics else 0.0
                 ),
                 optimization_id=f"cloud_{int(time.time())}",
                 duration=cloud_result.optimization_time,
@@ -1491,9 +1467,7 @@ class OptimizedFunction:
                     dataset = Dataset.from_jsonl(path)
                     all_examples.extend(dataset.examples)
                 except Exception as e:
-                    raise ConfigurationError(
-                        f"Failed to load dataset from {path}: {e}"
-                    ) from e
+                    raise ConfigurationError(f"Failed to load dataset from {path}: {e}") from e
 
             return Dataset(
                 examples=all_examples,
@@ -1507,9 +1481,7 @@ class OptimizedFunction:
     def _build_empty_result(self, algorithm: str) -> OptimizationResult:
         """Create a result representing a skipped optimization run."""
 
-        best_config = (
-            self._current_config.copy() if hasattr(self, "_current_config") else {}
-        )
+        best_config = self._current_config.copy() if hasattr(self, "_current_config") else {}
         now = datetime.now(UTC)
 
         return OptimizationResult(
@@ -1539,9 +1511,7 @@ class OptimizedFunction:
         # Allow mock mode to run without CI approval since no real calls occur
         if is_mock_mode():
             if is_production():
-                logger.warning(
-                    "Skipping CI approval in mock mode while ENVIRONMENT=production."
-                )
+                logger.warning("Skipping CI approval in mock mode while ENVIRONMENT=production.")
             else:
                 logger.info("Skipping CI approval in mock mode.")
             return
@@ -1584,9 +1554,7 @@ class OptimizedFunction:
                     # Fall back to legacy token format
                     if "approved_by" in token_data and "expires_at" in token_data:
                         expires_str = token_data["expires_at"]
-                        expires_at = datetime.fromisoformat(
-                            expires_str.replace("Z", "+00:00")
-                        )
+                        expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
                         now = datetime.now()
                         if expires_at.tzinfo:
                             now = now.replace(tzinfo=UTC)
@@ -1621,18 +1589,12 @@ class OptimizedFunction:
                         ).decode()
 
                         # Constant-time comparison
-                        if hmac.compare_digest(
-                            token_data.get("signature", ""), expected_sig
-                        ):
+                        if hmac.compare_digest(token_data.get("signature", ""), expected_sig):
                             # Check expiration
                             expires_at = datetime.fromisoformat(
                                 token_data["expires_iso"].replace("Z", "+00:00")
                             )
-                            now = (
-                                datetime.now(UTC)
-                                if expires_at.tzinfo
-                                else datetime.now()
-                            )
+                            now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
 
                             # Enforce max TTL of 24 hours from creation
                             if expires_at - now > timedelta(hours=24):
@@ -1798,9 +1760,7 @@ To approve, use one of these methods:
             elif self._optimization_results.status == OptimizationStatus.FAILED:
                 self._state = OptimizationState.ERROR
             else:
-                self._state = (
-                    OptimizationState.OPTIMIZED
-                )  # Assume optimized for loaded results
+                self._state = OptimizationState.OPTIMIZED  # Assume optimized for loaded results
 
             logger.info(f"Loaded optimization results from {path}")
 
