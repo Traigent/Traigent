@@ -135,7 +135,10 @@ class ApiOperations:
         """Map TraiGent status values to backend-expected values.
 
         TraiGent uses lowercase (pending, completed, failed)
-        Backend expects uppercase (CREATED, ACTIVE, COMPLETED, FAILED)
+        Backend expects uppercase (CREATED, ACTIVE, COMPLETED, FAILED, PRUNED)
+
+        Note: PRUNED is a success case (early stopping for efficiency).
+        CANCELLED indicates the trial was abandoned before execution.
         """
         status_mapping = {
             "pending": "ACTIVE",
@@ -144,6 +147,10 @@ class ApiOperations:
             "completed": "COMPLETED",
             "failed": "FAILED",
             "not_started": "CREATED",
+            # Pruned is early stopping (success case)
+            "pruned": "PRUNED",
+            # Cancelled means trial didn't execute
+            "cancelled": "CANCELLED",
             # Also handle if already uppercase
             "PENDING": "ACTIVE",
             "IN_PROGRESS": "ACTIVE",
@@ -151,6 +158,8 @@ class ApiOperations:
             "FAILED": "FAILED",
             "CREATED": "CREATED",
             "ACTIVE": "ACTIVE",
+            "PRUNED": "PRUNED",
+            "CANCELLED": "CANCELLED",
         }
         return status_mapping.get(status, status.upper())
 

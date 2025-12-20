@@ -6,7 +6,12 @@ import asyncio
 from collections.abc import Callable
 from typing import Any
 
-from traigent.api.types import OptimizationResult, OptimizationStatus, TrialResult
+from traigent.api.types import (
+    OptimizationResult,
+    OptimizationStatus,
+    TrialResult,
+    TrialStatus,
+)
 from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.config.types import TraigentConfig
 from traigent.core.metadata_helpers import build_backend_metadata
@@ -339,7 +344,18 @@ class BackendSessionManager:
         if "score" not in metrics_payload and score is not None:
             metrics_payload["score"] = sanitized_score
 
-        status = "COMPLETED" if trial_result.is_successful else "FAILED"
+        # Map SDK TrialStatus to backend status string.
+        # PRUNED is a success case (early stopping for efficiency), not a failure.
+        status_mapping = {
+            TrialStatus.COMPLETED: "COMPLETED",
+            TrialStatus.FAILED: "FAILED",
+            TrialStatus.PRUNED: "PRUNED",
+            TrialStatus.CANCELLED: "CANCELLED",
+            TrialStatus.RUNNING: "RUNNING",
+            TrialStatus.PENDING: "PENDING",
+            TrialStatus.NOT_STARTED: "PENDING",
+        }
+        status = status_mapping.get(trial_result.status, "FAILED")
 
         try:
             try:
