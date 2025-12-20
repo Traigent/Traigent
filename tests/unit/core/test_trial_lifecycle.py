@@ -78,6 +78,11 @@ class MockOrchestrator:
         self.cache_policy_handler = MagicMock()
         self.callback_manager = MagicMock()
         self.cost_enforcer = None  # Added for sequential permit enforcement
+        self._default_config = None
+        self._default_config_used = False
+
+    def _consume_default_config(self):
+        return None
 
     async def _handle_trial_result(self, **kwargs):
         return kwargs.get("current_trial_index", 0) + 1

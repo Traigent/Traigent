@@ -1139,6 +1139,8 @@ class OptimizedFunction:
         orchestrator_kwargs: dict[str, Any] = {
             "cache_policy": cache_policy,
         }
+        if self.default_config:
+            orchestrator_kwargs["default_config"] = self.default_config.copy()
 
         # Pass budget stop condition parameters
         if "budget_limit" in algorithm_kwargs:

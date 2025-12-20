@@ -3,6 +3,7 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
 import asyncio
+import copy
 import inspect
 import math
 import time
@@ -103,7 +104,12 @@ class OptimizationOrchestrator:
         file_version: str = "2",
         **kwargs: Any,
     ) -> None:
-        """Initialize optimization orchestrator."""
+        """Initialize optimization orchestrator.
+
+        Keyword Args:
+            default_config: Optional baseline configuration evaluated once before
+                optimizer-driven suggestions. Counts toward max_trials.
+        """
 
         self._initialized = False
         validate_constructor_arguments(
@@ -135,6 +141,7 @@ class OptimizationOrchestrator:
         )
 
         raw_constraints = kwargs.pop("constraints", None)
+        default_config = kwargs.pop("default_config", None)
         self._constraints_pre_eval: list[Callable[..., bool]] = []
         self._constraints_post_eval: list[Callable[..., bool]] = []
         if raw_constraints:
@@ -147,6 +154,16 @@ class OptimizationOrchestrator:
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
         )
+
+        self._default_config: dict[str, Any] | None = None
+        self._default_config_used = False
+        if isinstance(default_config, dict) and default_config:
+            self._default_config = copy.deepcopy(default_config)
+        elif default_config is not None:
+            logger.debug(
+                "Ignoring default_config with unexpected type: %s",
+                type(default_config).__name__,
+            )
 
         self.use_versioned_logger = use_versioned_logger
         self.file_version = file_version
@@ -352,6 +369,26 @@ class OptimizationOrchestrator:
         self._consumed_examples = 0
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
+
+    def _consume_default_config(self) -> dict[str, Any] | None:
+        """Return the default config once to seed a baseline trial."""
+        if self._default_config_used:
+            return None
+
+        self._default_config_used = True
+        if not self._default_config:
+            return None
+
+        # Keep optimizer trial counts aligned with max_trials when applicable.
+        # Some optimizers (random/optuna) track an internal _trial_count and can
+        # stop early if it isn't incremented for the baseline trial.
+        if hasattr(self.optimizer, "_trial_count"):
+            try:
+                self.optimizer._trial_count += 1  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Unable to increment optimizer trial count for baseline.")
+
+        return copy.deepcopy(self._default_config)
 
     @property
     def status(self) -> OptimizationStatus:
@@ -673,6 +710,14 @@ class OptimizationOrchestrator:
         """
         configs: list[dict[str, Any]] = []
         used_async_batch = False
+        remaining = target_batch_size
+
+        baseline_config = self._consume_default_config()
+        if baseline_config is not None:
+            configs.append(baseline_config)
+            remaining -= 1
+            if remaining <= 0:
+                return configs, used_async_batch
 
         mode_enum = self.traigent_config.execution_mode_enum
         if mode_enum is ExecutionMode.HYBRID:
@@ -681,14 +726,16 @@ class OptimizationOrchestrator:
                     "privacy_enabled": getattr(
                         self.traigent_config, "privacy_enabled", False
                     ),
-                    "parallel_trials": target_batch_size,
+                    "parallel_trials": remaining,
                     "mode": "hybrid",
                     "dataset_size": len(dataset),
                 }
-                configs = await self.optimizer.generate_candidates_async(
-                    target_batch_size, remote_context=remote_context
+                async_candidates = await self.optimizer.generate_candidates_async(
+                    remaining, remote_context=remote_context
                 )
-                used_async_batch = len(configs) > 0
+                if async_candidates:
+                    configs.extend(async_candidates)
+                used_async_batch = len(async_candidates) > 0
             except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
                 logger.warning(
                     "Async batch suggestion unavailable, falling back to sequential: %s",
@@ -696,7 +743,7 @@ class OptimizationOrchestrator:
                 )
 
         if not used_async_batch:
-            for _ in range(target_batch_size):
+            for _ in range(remaining):
                 try:
                     cfg = self.optimizer.suggest_next_trial(self._trials)
                     configs.append(cfg)
@@ -811,6 +858,7 @@ class OptimizationOrchestrator:
                 self._abandon_optuna_trial(
                     optuna_id,
                     reason="trial_skipped_zero_sample_ceiling",
+                    config=cfg,
                     status=TrialStatus.CANCELLED,
                     pruned_step=0,
                 )
@@ -986,6 +1034,7 @@ class OptimizationOrchestrator:
                 self._abandon_optuna_trial(
                     optuna_id,
                     reason="trial_prevented_by_cap",
+                    config=cfg,
                     status=TrialStatus.PRUNED,
                     pruned_step=0,
                 )
@@ -994,11 +1043,14 @@ class OptimizationOrchestrator:
         cache_policy = self.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            before_ids = {
-                cfg.get("_optuna_trial_id")
+            # Build a map from optuna_trial_id to config before filtering
+            id_to_config: dict[int, dict[str, Any]] = {
+                cfg.get("_optuna_trial_id"): cfg
                 for cfg in configs
-                if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
+                if isinstance(cfg, dict)
+                and isinstance(cfg.get("_optuna_trial_id"), int)
             }
+            before_ids = set(id_to_config.keys())
             configs = self.cache_policy_handler.apply_policy(
                 configs, cache_policy, function_name or "unknown_function", dataset_name
             )
@@ -1016,6 +1068,7 @@ class OptimizationOrchestrator:
                     self._abandon_optuna_trial(
                         optuna_id,
                         reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        config=id_to_config.get(optuna_id),
                         status=TrialStatus.PRUNED,
                         pruned_step=0,
                     )
@@ -1381,10 +1434,24 @@ class OptimizationOrchestrator:
         optuna_trial_id: int | None,
         *,
         reason: str,
+        config: dict[str, Any] | None = None,
         status: TrialStatus = TrialStatus.PRUNED,
         pruned_step: int = 0,
     ) -> None:
-        """Finalize an asked Optuna trial that will never be executed."""
+        """Finalize an asked Optuna trial that will never be executed.
+
+        Creates a TrialResult for the abandoned trial and:
+        1. Appends it to self._trials so it appears in OptimizationResult
+        2. Logs the trial via the logger facade
+        3. Notifies the optimizer so it can update its internal state
+
+        Args:
+            optuna_trial_id: The Optuna trial ID to abandon.
+            reason: Human-readable reason for abandonment.
+            config: The configuration that was to be evaluated (if available).
+            status: Trial status (default PRUNED).
+            pruned_step: Step at which pruning occurred.
+        """
 
         if optuna_trial_id is None:
             return
@@ -1396,14 +1463,23 @@ class OptimizationOrchestrator:
 
         trial_result = TrialResult(
             trial_id=f"optuna_{optuna_trial_id}",
-            config={},
+            config=config or {},
             metrics={},
             status=status,
             duration=0.0,
             timestamp=datetime.now(UTC),
             error_message=reason,
-            metadata={"pruned_step": pruned_step, "stop_reason": reason},
+            metadata={
+                "pruned_step": pruned_step,
+                "stop_reason": reason,
+                "abandoned": True,
+            },
         )
+
+        # Record the abandoned trial in the trials list and log it
+        self._trials.append(trial_result)
+        self._log_trial(trial_result)
+
         self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
     def _notify_optimizer_of_result(
