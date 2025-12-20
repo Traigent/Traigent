@@ -35,28 +35,28 @@
 development_status:
   # Epic 1: Pipeline Discovery & Analysis (7 stories)
   # FRs: FR-101 to FR-107 | NFRs: NFR-1, NFR-5
-  epic-1: backlog
-  1-1-extract-components-from-pipeline: backlog
-  1-2-extract-component-parameters: backlog
-  1-3-identify-tunable-vs-fixed-parameters: backlog
-  1-4-extract-pipeline-graph-structure: backlog
-  1-5-detect-loops-and-max-runs: backlog
-  1-6-support-custom-component-decorated-components: backlog
-  1-7-introspection-performance-and-component-coverage: backlog
+  epic-1: done
+  1-1-extract-components-from-pipeline: done
+  1-2-extract-component-parameters: done
+  1-3-identify-tunable-vs-fixed-parameters: done
+  1-4-extract-pipeline-graph-structure: done
+  1-5-detect-loops-and-max-runs: done
+  1-6-support-custom-component-decorated-components: done
+  1-7-introspection-performance-and-component-coverage: done
   epic-1-retrospective: optional
 
   # Epic 2: Configuration Space & TVL (9 stories)
   # FRs: FR-201 to FR-207 | NFRs: NFR-4
-  epic-2: backlog
-  2-1-define-configspace-data-model: backlog
-  2-2-support-categorical-variables: backlog
-  2-3-support-numerical-variables: backlog
-  2-4-support-conditional-variables: backlog
-  2-5-fix-parameters-exclude-from-search: backlog
-  2-6-validate-configuration-space-consistency: backlog
-  2-7-search-space-tvl-syntax: backlog
-  2-8-auto-discovery-with-sensible-defaults: backlog
-  2-9-support-boolean-and-optional-parameters: backlog
+  epic-2: done
+  2-1-define-configspace-data-model: done
+  2-2-support-categorical-variables: done
+  2-3-support-numerical-variables: done
+  2-4-support-conditional-variables: done
+  2-5-fix-parameters-exclude-from-search: done
+  2-6-validate-configuration-space-consistency: done
+  2-7-search-space-tvl-syntax: done
+  2-8-auto-discovery-with-sensible-defaults: done
+  2-9-support-boolean-and-optional-parameters: done
   epic-2-retrospective: optional
 
   # Epic 3: Basic Optimization Execution (9 stories)

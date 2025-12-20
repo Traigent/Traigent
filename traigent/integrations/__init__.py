@@ -31,6 +31,7 @@ Example of zero-code-change optimization:
 
 from __future__ import annotations
 
+import importlib.util
 from typing import Any
 
 # Activation state management (thread-safe state)
@@ -164,6 +165,14 @@ try:
 except ImportError:
     OPENAI_SDK_INTEGRATION_AVAILABLE = False
 
+# Haystack integration
+try:
+    from .haystack import Component, ConfigSpace, Parameter, from_pipeline
+
+    HAYSTACK_INTEGRATION_AVAILABLE = importlib.util.find_spec("haystack") is not None
+except ImportError:
+    HAYSTACK_INTEGRATION_AVAILABLE = False
+
 __all__ = [
     # Core framework override (primary API)
     "FrameworkOverrideManager",
@@ -250,5 +259,17 @@ if OPENAI_SDK_INTEGRATION_AVAILABLE:
             "auto_detect_openai",
             "enable_streaming_optimization",
             "enable_tools_optimization",
+        ]
+    )
+
+# Add Haystack exports if available
+if HAYSTACK_INTEGRATION_AVAILABLE:
+    __all__.extend(
+        [
+            "from_pipeline",
+            "ConfigSpace",
+            "Component",
+            "Parameter",
+            "HAYSTACK_INTEGRATION_AVAILABLE",
         ]
     )
