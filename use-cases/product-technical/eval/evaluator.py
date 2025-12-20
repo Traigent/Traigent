@@ -194,6 +194,67 @@ class CodeEvaluator:
         "StopIteration": StopIteration,
     }
 
+    # Dangerous attribute patterns that could escape sandbox via introspection
+    FORBIDDEN_ATTRIBUTES = frozenset(
+        [
+            "__class__",
+            "__bases__",
+            "__mro__",
+            "__subclasses__",
+            "__globals__",
+            "__code__",
+            "__builtins__",
+            "__import__",
+            "__reduce__",
+            "__reduce_ex__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+        ]
+    )
+
+    # Forbidden function calls that could escape sandbox
+    FORBIDDEN_CALLS = frozenset(["exec", "eval", "compile", "__import__"])
+
+    def _validate_ast(self, code: str) -> tuple[bool, str]:
+        """
+        Validate code AST for dangerous patterns that could escape sandbox.
+
+        Returns:
+            Tuple of (is_safe, error_message)
+        """
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return False, f"Syntax error: {e}"
+
+        for node in ast.walk(tree):
+            error = self._check_node_safety(node)
+            if error:
+                return False, error
+
+        return True, ""
+
+    def _check_node_safety(self, node: ast.AST) -> str | None:
+        """Check if an AST node is safe. Returns error message if unsafe, None if safe."""
+        # Block imports
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            return "Import statements are not allowed"
+
+        # Block dangerous attribute access (e.g., obj.__class__.__bases__)
+        if isinstance(node, ast.Attribute) and node.attr in self.FORBIDDEN_ATTRIBUTES:
+            return f"Access to '{node.attr}' is not allowed"
+
+        # Block exec/eval/compile calls by name
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in self.FORBIDDEN_CALLS
+        ):
+            return f"Call to '{node.func.id}' is not allowed"
+
+        return None
+
     def _run_tests(
         self,
         code: str,
@@ -201,10 +262,12 @@ class CodeEvaluator:
         test_cases: list[dict],
     ) -> dict[str, Any]:
         """
-        Execute test cases against the generated code in a sandboxed environment.
+        Execute test cases against the generated code.
 
-        Security: Uses restricted builtins to prevent file/network/system access.
-        The code cannot import modules, access files, or execute system commands.
+        Note: This uses restricted builtins and AST validation to reduce attack surface,
+        but is NOT a secure sandbox. Frame introspection can still escape to outer scopes.
+        Only use with trusted or self-generated code. For untrusted code, use process
+        isolation with resource limits.
 
         Returns:
             Dictionary with pass_rate, passed, total, and errors
@@ -212,14 +275,23 @@ class CodeEvaluator:
         if not test_cases:
             return {"pass_rate": 1.0, "passed": 0, "total": 0, "errors": []}
 
-        # Create sandboxed execution namespace with restricted builtins
-        # This prevents access to: open, exec, eval, __import__, compile, globals, locals, etc.
-        namespace = {"__builtins__": self.SAFE_BUILTINS}
+        # Validate AST to block obvious dangerous patterns
+        is_safe, error_msg = self._validate_ast(code)
+        if not is_safe:
+            return {
+                "pass_rate": 0.0,
+                "passed": 0,
+                "total": len(test_cases),
+                "errors": [f"Security validation failed: {error_msg}"],
+            }
+
+        # Create execution namespace with restricted builtins (copy to prevent mutation)
+        namespace: dict[str, Any] = {"__builtins__": dict(self.SAFE_BUILTINS)}
         errors = []
 
-        # Try to execute the code in sandboxed environment
+        # Execute code with restricted builtins (not a full sandbox - see docstring)
         try:
-            exec(code, namespace)  # noqa: S102 - sandboxed with restricted builtins
+            exec(code, namespace)  # nosemgrep # noqa: S102
         except SyntaxError as e:
             return {
                 "pass_rate": 0.0,
