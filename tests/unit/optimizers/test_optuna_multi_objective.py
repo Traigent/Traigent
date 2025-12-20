@@ -161,6 +161,7 @@ class TestOptunaMultiObjective:
             objectives=["minimize_f1", "minimize_f2", "minimize_f3"],
             max_trials=50,
             population_size=20,
+            sampler=optuna.samplers.NSGAIISampler(seed=42),
         )
 
         history = []

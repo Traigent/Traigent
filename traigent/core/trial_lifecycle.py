@@ -104,13 +104,15 @@ class TrialLifecycle:
             orchestrator._stop_reason = "max_trials_reached"
             return trial_count, "break"
 
-        try:
-            config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
-        except OptimizationError:
-            raise
-        except (ValueError, TypeError, KeyError, AttributeError) as e:
-            logger.exception("Optimizer failed to suggest the next trial: %s", e)
-            return trial_count, "break"
+        config = orchestrator._consume_default_config()
+        if config is None:
+            try:
+                config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
+            except OptimizationError:
+                raise
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                logger.exception("Optimizer failed to suggest the next trial: %s", e)
+                return trial_count, "break"
 
         optuna_trial_id = (
             config.get("_optuna_trial_id") if isinstance(config, dict) else None
@@ -131,6 +133,7 @@ class TrialLifecycle:
                     orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                         optuna_trial_id,
                         reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        config=config,
                         status=TrialStatus.PRUNED,
                         pruned_step=0,
                     )
@@ -164,6 +167,7 @@ class TrialLifecycle:
                     orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                         optuna_trial_id,
                         reason="trial_cancelled_by_cost_limit",
+                        config=config_for_run,
                         status=TrialStatus.CANCELLED,
                         pruned_step=0,
                     )
