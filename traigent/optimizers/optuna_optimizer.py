@@ -102,11 +102,11 @@ class OptunaBaseOptimizer(BaseOptimizer):
             if len(inferred) > 1:
                 pruner = optuna.pruners.SuccessiveHalvingPruner()
             else:
-                pruner = CeilingPruner(
-                    min_completed_trials=2,
-                    warmup_steps=2,
-                    epsilon=1e-6,
-                )
+                # Defaults tuned for balanced exploration vs exploitation:
+                # - min_completed_trials=3: Gather enough baseline data
+                # - warmup_steps=5: Let trials warm up before pruning
+                # - epsilon=0.05: Allow 5% exploration margin
+                pruner = CeilingPruner()
 
         # Create study upfront so suggestions are reproducible across calls.
         self._study = optuna.create_study(
