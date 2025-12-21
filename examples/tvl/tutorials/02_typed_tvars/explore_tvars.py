@@ -14,7 +14,6 @@ Run with: python explore_tvars.py
 from pathlib import Path
 
 from traigent.tvl import (
-    DomainSpec,
     TVarDecl,
     load_tvl_spec,
     normalize_tvar_type,

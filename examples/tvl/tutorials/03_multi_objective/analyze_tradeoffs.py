@@ -17,10 +17,7 @@ Run with: python analyze_tradeoffs.py
 import random
 from pathlib import Path
 
-from traigent.tvl import (
-    PromotionPolicy,
-    load_tvl_spec,
-)
+from traigent.tvl import load_tvl_spec
 from traigent.tvl.statistics import hypervolume_improvement
 
 SPEC_PATH = Path(__file__).parent / "multi_objective_rag.tvl.yml"
@@ -138,7 +135,7 @@ def main():
     # Extract promotion policy
     policy = spec.promotion_policy
     if policy:
-        print(f"\n   Promotion Policy:")
+        print("\n   Promotion Policy:")
         print(f"   - Dominance: {policy.dominance}")
         print(f"   - Alpha: {policy.alpha}")
         print(f"   - Adjustment: {policy.adjust}")
@@ -249,9 +246,6 @@ def main():
     print("\n5. Hypervolume Analysis...")
     # Reference point (worst acceptable values)
     reference = [0.5, 0.5, 5000, 0.01]  # [min_acc, min_cons, max_lat, max_cost]
-
-    front_points = [metrics for _, metrics in pareto_front]
-    current_hv = 0.0
 
     # Add points one by one and show improvement
     print("   Adding solutions to Pareto front:")

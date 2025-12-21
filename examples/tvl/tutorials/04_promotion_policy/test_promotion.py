@@ -18,14 +18,10 @@ import random
 from pathlib import Path
 
 from traigent.tvl import (
-    BandTarget,
-    ChanceConstraint,
-    PromotionPolicy,
     load_tvl_spec,
 )
 from traigent.tvl.promotion_gate import (
     ObjectiveSpec,
-    PromotionDecision,
     PromotionGate,
 )
 from traigent.tvl.statistics import (
@@ -57,7 +53,7 @@ def demonstrate_bh_correction():
     print(f"  BH-adjusted:       {[f'{p:.3f}' for p in adjusted]}")
 
     print("\n  Interpretation (alpha=0.05):")
-    for i, (raw, adj) in enumerate(zip(raw_p_values, adjusted)):
+    for i, (raw, adj) in enumerate(zip(raw_p_values, adjusted, strict=True)):
         sig_raw = "sig" if raw < 0.05 else "not sig"
         sig_adj = "sig" if adj < 0.05 else "not sig"
         change = "CHANGED" if sig_raw != sig_adj else ""
@@ -161,7 +157,7 @@ def demonstrate_promotion_gate():
         print("  No promotion policy in spec!")
         return
 
-    print(f"\n  Promotion Policy:")
+    print("\n  Promotion Policy:")
     print(f"    Dominance: {policy.dominance}")
     print(f"    Alpha: {policy.alpha}")
     print(f"    Min effects: {policy.min_effect}")
