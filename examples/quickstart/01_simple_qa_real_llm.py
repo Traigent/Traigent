@@ -164,8 +164,9 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
     rows = []
     for q_idx, (question, expected) in enumerate(zip(questions, expected_answers)):
         # Sanitize newlines for CSV compatibility with LibreOffice/Excel
-        question_clean = question.replace("\n", " | ")
-        rows.append([question_clean, expected])
+        question_clean = question.replace("\n", " | ").replace("\r", "")
+        expected_clean = expected.replace("\n", " | ").replace("\r", "")
+        rows.append([question_clean, expected_clean])
 
     # Fill in trial answers and pass/fail, tracking pass counts per trial
     trial_pass_counts = []  # List of (pass_count, total_count) per trial
@@ -185,6 +186,8 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
             ex_result = results_by_id.get(q_idx)
             if ex_result:
                 answer = str(ex_result.actual_output) if ex_result.actual_output else ""
+                # Sanitize newlines for CSV compatibility
+                answer = answer.replace("\n", " | ").replace("\r", "")
                 # Use evaluator score for pass/fail, not just "success" (which means call succeeded)
                 metrics = getattr(ex_result, "metrics", {}) or {}
                 score = metrics.get("accuracy", metrics.get("score", 0))
@@ -211,9 +214,9 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
             summary_row.append("N/A")
             summary_row.append("N/A")
 
-    # Write CSV
+    # Write CSV with quoting to handle semicolons and other special chars
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow(headers)
         writer.writerows(rows)
         writer.writerow(summary_row)
@@ -281,12 +284,15 @@ def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) ->
             ex_result = results_by_id.get(q_idx)
             if ex_result:
                 metrics = getattr(ex_result, "metrics", {}) or {}
+                # Sanitize newlines for CSV compatibility
+                actual_output = str(ex_result.actual_output) if ex_result.actual_output else ""
+                actual_output = actual_output.replace("\n", " | ").replace("\r", "")
                 rows.append(
                     [
                         f"example_{q_idx}",
-                        meta["question"].replace("\n", " | "),
-                        meta["expected"],
-                        str(ex_result.actual_output) if ex_result.actual_output else "",
+                        meta["question"].replace("\n", " | ").replace("\r", ""),
+                        meta["expected"].replace("\n", " | ").replace("\r", ""),
+                        actual_output,
                         ex_result.success if hasattr(ex_result, "success") else "",
                         metrics.get("accuracy", metrics.get("score", "")),
                         meta["source"],
@@ -307,8 +313,8 @@ def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) ->
                 rows.append(
                     [
                         f"example_{q_idx}",
-                        meta["question"].replace("\n", " | "),
-                        meta["expected"],
+                        meta["question"].replace("\n", " | ").replace("\r", ""),
+                        meta["expected"].replace("\n", " | ").replace("\r", ""),
                         "N/A",
                         "",
                         "",
@@ -325,9 +331,9 @@ def save_detailed_results_csv(results, dataset_path: Path, output_path: Path) ->
                     ]
                 )
 
-    # Write CSV
+    # Write CSV with quoting to handle semicolons and other special chars
     with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
+        writer = csv.writer(f, quoting=csv.QUOTE_ALL)
         writer.writerow(headers)
         writer.writerows(rows)
 

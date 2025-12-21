@@ -6,4 +6,3 @@
 {"input": {"question": "What is the chemical symbol for water?"}, "output": "H2O"}
 {"input": {"question": "Who painted the Mona Lisa?"}, "output": "Leonardo da Vinci"}
 {"input": {"question": "What is the speed of light?"}, "output": "299,792,458 meters per second"}
-{"input": {"question": "Who is Nerisett Karay?"}, "output": "I don't have information on Nerisett Karay."}
