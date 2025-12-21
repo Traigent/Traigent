@@ -52,10 +52,10 @@ except ImportError:
 
         @staticmethod
         def create_experiment(name: str) -> str:
-            experiment = type("MockExperiment", (), {})()
-            experiment.experiment_id = f"exp_{len(mlflow._experiments)}"
+            experiment_id = f"exp_{len(mlflow._experiments)}"
+            experiment = type("MockExperiment", (), {"experiment_id": experiment_id})()
             mlflow._experiments[name] = experiment
-            return experiment.experiment_id
+            return experiment_id
 
         @staticmethod
         def set_experiment(name: str) -> None:

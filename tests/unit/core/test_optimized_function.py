@@ -187,10 +187,14 @@ class TestOptimizedFunction:
                 objectives=sample_objectives,
             )
 
-    def test_optimized_function_creation_empty_config_space(self, mock_function, sample_objectives):
+    def test_optimized_function_creation_empty_config_space(
+        self, mock_function, sample_objectives
+    ):
         """Test OptimizedFunction creation with empty config space."""
         with pytest.raises((ValueError, ValidationError)):
-            OptimizedFunction(func=mock_function, config_space={}, objectives=sample_objectives)
+            OptimizedFunction(
+                func=mock_function, config_space={}, objectives=sample_objectives
+            )
 
     def test_optimized_function_creation_invalid_objectives(
         self, mock_function, sample_config_space
@@ -203,7 +207,9 @@ class TestOptimizedFunction:
                 objectives="not_a_list",
             )
 
-    def test_optimized_function_creation_empty_objectives(self, mock_function, sample_config_space):
+    def test_optimized_function_creation_empty_objectives(
+        self, mock_function, sample_config_space
+    ):
         """Test OptimizedFunction creation with empty objectives defaults to accuracy."""
         # Empty objectives list defaults to ["accuracy"] as fallback
         opt_func = OptimizedFunction(
@@ -217,7 +223,9 @@ class TestOptimizedFunction:
     async def test_scoring_function_overrides_exact_match(self) -> None:
         """scoring_function should override exact-match accuracy."""
 
-        def contains_accuracy(output: str, expected: str, llm_metrics: dict | None = None) -> float:
+        def contains_accuracy(
+            output: str, expected: str, llm_metrics: dict | None = None
+        ) -> float:
             if not output or not expected:
                 return 0.0
             return 1.0 if expected.lower() in output.lower() else 0.0
@@ -255,9 +263,13 @@ class TestOptimizedFunction:
         )
 
         assert result.aggregated_metrics["accuracy"] == 1.0
-        assert [obj.name for obj in opt_func.objective_schema.objectives] == ["accuracy"]
+        assert [obj.name for obj in opt_func.objective_schema.objectives] == [
+            "accuracy"
+        ]
 
-    def test_global_objective_default_applies_when_decorator_omits(self, sample_dataset):
+    def test_global_objective_default_applies_when_decorator_omits(
+        self, sample_dataset
+    ):
         """Global configure() objectives should fill in when decorator omits them."""
         traigent.configure(objectives=["cost"])
 
@@ -273,7 +285,9 @@ class TestOptimizedFunction:
         assert [obj.name for obj in decorated.objective_schema.objectives] == ["cost"]
 
     @pytest.mark.asyncio
-    async def test_runtime_objective_override_is_temporary(self, sample_dataset, monkeypatch):
+    async def test_runtime_objective_override_is_temporary(
+        self, sample_dataset, monkeypatch
+    ):
         """Runtime objectives override for a single call without persisting."""
 
         @traigent.optimize(
@@ -363,7 +377,9 @@ class TestOptimizedFunction:
                 objectives=sample_objectives,
             )
 
-            with patch("traigent.evaluators.base.Dataset.from_jsonl") as mock_from_jsonl:
+            with patch(
+                "traigent.evaluators.base.Dataset.from_jsonl"
+            ) as mock_from_jsonl:
                 mock_dataset = Dataset(
                     [
                         EvaluationExample({"text": "hello"}, "HELLO"),
@@ -383,7 +399,9 @@ class TestOptimizedFunction:
         finally:
             Path(temp_path).unlink()
 
-    def test_load_dataset_from_list(self, mock_function, sample_config_space, sample_objectives):
+    def test_load_dataset_from_list(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test loading dataset from list of file paths."""
         # Create temporary JSONL files
         file_paths = []
@@ -393,7 +411,9 @@ class TestOptimizedFunction:
                 '{"input": {"text": "world"}, "output": "WORLD"}',
             ]
         ):
-            with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            with tempfile.NamedTemporaryFile(
+                mode="w", suffix=".jsonl", delete=False
+            ) as f:
                 f.write(data + "\n")
                 file_paths.append(f.name)
 
@@ -404,7 +424,9 @@ class TestOptimizedFunction:
                 objectives=sample_objectives,
             )
 
-            with patch("traigent.evaluators.base.Dataset.from_jsonl") as mock_from_jsonl:
+            with patch(
+                "traigent.evaluators.base.Dataset.from_jsonl"
+            ) as mock_from_jsonl:
                 # Mock individual dataset loading
                 mock_dataset1 = Mock()
                 mock_dataset1.examples = [EvaluationExample({"text": "hello"}, "HELLO")]
@@ -425,7 +447,9 @@ class TestOptimizedFunction:
             for path in file_paths:
                 Path(path).unlink()
 
-    def test_load_dataset_invalid_type(self, mock_function, sample_config_space, sample_objectives):
+    def test_load_dataset_invalid_type(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test loading dataset with invalid type."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -669,7 +693,9 @@ class TestOptimizedFunction:
             eval_dataset=sample_dataset,
         )
 
-        with patch.object(opt_func, "_optimize_with_cloud_service") as mock_cloud_optimize:
+        with patch.object(
+            opt_func, "_optimize_with_cloud_service"
+        ) as mock_cloud_optimize:
             from datetime import datetime
 
             mock_result = OptimizationResult(
@@ -710,14 +736,18 @@ class TestOptimizedFunction:
         )
 
         with (
-            patch.object(opt_func, "_optimize_with_cloud_service") as mock_cloud_optimize,
+            patch.object(
+                opt_func, "_optimize_with_cloud_service"
+            ) as mock_cloud_optimize,
             patch("traigent.optimizers.get_optimizer") as mock_get_optimizer,
             patch(
                 "traigent.core.optimized_function.OptimizationOrchestrator"
             ) as mock_orchestrator_class,
         ):
             # Cloud service fails
-            mock_cloud_optimize.side_effect = OptimizationError("Cloud service unavailable")
+            mock_cloud_optimize.side_effect = OptimizationError(
+                "Cloud service unavailable"
+            )
 
             # Setup local fallback
             mock_optimizer = Mock()
@@ -863,7 +893,9 @@ class TestOptimizedFunction:
 
     # Configuration Tests
 
-    def test_configuration_injection(self, mock_function, sample_config_space, sample_objectives):
+    def test_configuration_injection(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test configuration injection from context."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -884,7 +916,9 @@ class TestOptimizedFunction:
             # This would happen during actual optimization call
             assert opt_func.algorithm == "random"  # Original value
 
-    def test_cloud_mode_activation(self, mock_function, sample_config_space, sample_objectives):
+    def test_cloud_mode_activation(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test cloud execution activation."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -954,7 +988,9 @@ class TestOptimizedFunction:
             EvaluationExample({"text": "hello"}, "HELLO"),
             EvaluationExample({"text": "test"}, "TEST"),
         ]
-        dataset = Dataset(examples, name="integration_test", description="Integration test dataset")
+        dataset = Dataset(
+            examples, name="integration_test", description="Integration test dataset"
+        )
 
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1252,7 +1288,9 @@ class TestOptimizedFunctionLifecycle:
 
         assert opt_func.best_config == {"temperature": 0.7, "model": "gpt-4"}
 
-    def test_best_config_returns_copy(self, mock_function, sample_config_space, sample_objectives):
+    def test_best_config_returns_copy(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test that best_config returns a copy, not the original."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1307,7 +1345,9 @@ class TestOptimizedFunctionLifecycle:
         assert opt_func._best_config == {"temperature": 0.7}
         assert opt_func._state == OptimizationState.OPTIMIZED
 
-    def test_cleanup_can_reset_config(self, mock_function, sample_config_space, sample_objectives):
+    def test_cleanup_can_reset_config(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test that cleanup(preserve_config=False) resets config."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1327,7 +1367,9 @@ class TestOptimizedFunctionLifecycle:
         # current_config should be reset to default
         assert opt_func._current_config == opt_func.default_config
 
-    def test_cleanup_clears_stats(self, mock_function, sample_config_space, sample_objectives):
+    def test_cleanup_clears_stats(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test that cleanup() clears accumulated stats."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1345,7 +1387,9 @@ class TestOptimizedFunctionLifecycle:
 
     # reset() Tests
 
-    def test_reset_fully_resets_state(self, mock_function, sample_config_space, sample_objectives):
+    def test_reset_fully_resets_state(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test that reset() fully resets to initial state."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1366,7 +1410,9 @@ class TestOptimizedFunctionLifecycle:
         assert len(opt_func._optimization_history) == 0
         assert opt_func._current_config == opt_func.default_config
 
-    def test_reset_is_idempotent(self, mock_function, sample_config_space, sample_objectives):
+    def test_reset_is_idempotent(
+        self, mock_function, sample_config_space, sample_objectives
+    ):
         """Test that calling reset() multiple times is safe."""
         opt_func = OptimizedFunction(
             func=mock_function,
@@ -1552,11 +1598,17 @@ class TestReOptimization:
             mock_orchestrator_class.return_value = mock_orchestrator
 
             # First optimization returns first_config with score 0.7
-            first_result = self._create_mock_result(sample_objectives, first_config, 0.7, "opt_1")
+            first_result = self._create_mock_result(
+                sample_objectives, first_config, 0.7, "opt_1"
+            )
             # Second optimization returns second_config with score 0.9
-            second_result = self._create_mock_result(sample_objectives, second_config, 0.9, "opt_2")
+            second_result = self._create_mock_result(
+                sample_objectives, second_config, 0.9, "opt_2"
+            )
 
-            mock_orchestrator.optimize = AsyncMock(side_effect=[first_result, second_result])
+            mock_orchestrator.optimize = AsyncMock(
+                side_effect=[first_result, second_result]
+            )
 
             # First optimization
             result1 = await opt_func.optimize(algorithm="random")

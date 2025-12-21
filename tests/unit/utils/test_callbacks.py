@@ -367,7 +367,9 @@ class TestLoggingCallback:
         algorithm = "grid"
 
         # Should not raise exception
-        callback_without_logger.on_optimization_start(config_space, objectives, algorithm)
+        callback_without_logger.on_optimization_start(
+            config_space, objectives, algorithm
+        )
 
     def test_on_trial_start(
         self, callback_with_logger: LoggingCallback, mock_logger: MagicMock
@@ -528,7 +530,9 @@ class TestStatisticsCallback:
         assert "gpt-4" in callback.stats["parameter_values"]["model"]
         assert 0.7 in callback.stats["parameter_values"]["temperature"]
 
-    def test_on_trial_start_ignores_unknown_parameters(self, callback: StatisticsCallback) -> None:
+    def test_on_trial_start_ignores_unknown_parameters(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test trial start callback ignores parameters not in config space."""
         config = {"model": "gpt-4", "unknown_param": "value"}
 
@@ -605,7 +609,9 @@ class TestStatisticsCallback:
         assert callback.stats["best_score"] == 0.92
         assert callback.stats["best_config"] == {"model": "gpt-4"}
 
-    def test_get_parameter_importance_with_variance(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_with_variance(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance calculation with varied scores."""
         callback.stats["parameter_values"] = {
             "model": ["gpt-4", "gpt-3.5", "gpt-4", "gpt-3.5"],
@@ -620,7 +626,9 @@ class TestStatisticsCallback:
         assert 0.0 <= importance["model"] <= 1.0
         assert 0.0 <= importance["temperature"] <= 1.0
 
-    def test_get_parameter_importance_with_single_value(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_with_single_value(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance with single parameter value."""
         callback.stats["parameter_values"] = {
             "model": ["gpt-4"],
@@ -631,7 +639,9 @@ class TestStatisticsCallback:
 
         assert importance["model"] == 0.0
 
-    def test_get_parameter_importance_with_no_scores(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_with_no_scores(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance with no scores."""
         callback.stats["parameter_values"] = {
             "model": ["gpt-4", "gpt-3.5"],
@@ -642,7 +652,9 @@ class TestStatisticsCallback:
 
         assert importance["model"] == 0.0
 
-    def test_get_parameter_importance_with_single_group(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_with_single_group(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance with single value group."""
         callback.stats["parameter_values"] = {
             "model": ["gpt-4", "gpt-4"],
@@ -653,7 +665,9 @@ class TestStatisticsCallback:
 
         assert importance["model"] == 0.0
 
-    def test_get_parameter_importance_normalization(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_normalization(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance values are normalized."""
         callback.stats["parameter_values"] = {
             "model": ["gpt-4", "gpt-3.5", "gpt-4", "gpt-3.5"],
@@ -667,7 +681,9 @@ class TestStatisticsCallback:
         max_importance = max(importance.values())
         assert max_importance == 1.0
 
-    def test_get_parameter_importance_with_empty_stats(self, callback: StatisticsCallback) -> None:
+    def test_get_parameter_importance_with_empty_stats(
+        self, callback: StatisticsCallback
+    ) -> None:
         """Test parameter importance with empty stats."""
         importance = callback.get_parameter_importance()
 
@@ -731,7 +747,9 @@ class TestSimpleProgressCallback:
             current_algorithm="grid",
         )
 
-    def test_initialization_with_print(self, callback_print: SimpleProgressCallback) -> None:
+    def test_initialization_with_print(
+        self, callback_print: SimpleProgressCallback
+    ) -> None:
         """Test initialization with print output."""
         assert callback_print.output == "print"
         assert callback_print.show_details is True
@@ -739,7 +757,9 @@ class TestSimpleProgressCallback:
         assert callback_print.current_trial == 0
         assert callback_print.best_score is None
 
-    def test_initialization_with_log(self, callback_log: SimpleProgressCallback) -> None:
+    def test_initialization_with_log(
+        self, callback_log: SimpleProgressCallback
+    ) -> None:
         """Test initialization with log output."""
         assert callback_log.output == "log"
 
@@ -1104,7 +1124,8 @@ class TestDetailedProgressCallback:
         assert "Total configurations to test: unknown" in captured.out
         assert callback.total_trials == 0
         assert any(
-            "configuration combinations is zero" in record.message for record in caplog.records
+            "configuration combinations is zero" in record.message
+            for record in caplog.records
         )
 
     def test_on_optimization_start_with_non_list_values(
@@ -1343,7 +1364,9 @@ class TestCallbackManager:
         assert mock_callback1 in manager_with_callbacks.callbacks
         assert mock_callback2 in manager_with_callbacks.callbacks
 
-    def test_add_callback(self, manager: CallbackManager, mock_callback1: MagicMock) -> None:
+    def test_add_callback(
+        self, manager: CallbackManager, mock_callback1: MagicMock
+    ) -> None:
         """Test adding a callback."""
         manager.add_callback(mock_callback1)
 
@@ -1381,7 +1404,9 @@ class TestCallbackManager:
         objectives = ["accuracy"]
         algorithm = "grid"
 
-        manager_with_callbacks.on_optimization_start(config_space, objectives, algorithm)
+        manager_with_callbacks.on_optimization_start(
+            config_space, objectives, algorithm
+        )
 
         mock_callback1.on_optimization_start.assert_called_once_with(
             config_space, objectives, algorithm
@@ -1401,7 +1426,9 @@ class TestCallbackManager:
         mock_callback1.on_optimization_start.side_effect = Exception("Callback error")
         caplog.set_level(logging.WARNING)
 
-        manager_with_callbacks.on_optimization_start({"model": ["gpt-4"]}, ["accuracy"], "grid")
+        manager_with_callbacks.on_optimization_start(
+            {"model": ["gpt-4"]}, ["accuracy"], "grid"
+        )
 
         # Second callback should still be called
         mock_callback2.on_optimization_start.assert_called_once()
@@ -1540,7 +1567,9 @@ class TestCallbackManager:
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test on_optimization_complete continues after callback exception."""
-        mock_callback1.on_optimization_complete.side_effect = Exception("Callback error")
+        mock_callback1.on_optimization_complete.side_effect = Exception(
+            "Callback error"
+        )
         caplog.set_level(logging.WARNING)
 
         result = OptimizationResult(
