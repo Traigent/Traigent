@@ -235,15 +235,73 @@ def _parse_configuration_space(
             name, parameter_type, definition
         )
 
-        if "default" in definition:
+        # For conditional parameters, 'default' is used for default_constraint,
+        # so we use 'default_value' for the TVAR's default value.
+        # For other parameter types, 'default' is the TVAR's default value.
+        if "default_value" in definition:
+            # Prefer 'default_value' key (used for conditional params)
+            defaults[name] = definition["default_value"]
+        elif "default" in definition and parameter_type != "conditional":
+            # Use 'default' only for non-conditional params
             defaults[name] = definition["default"]
 
     return configuration_space, defaults, units
 
 
+@dataclass(slots=True)
+class NumericalDomain:
+    """Rich numerical domain with optional log_scale and step.
+
+    This is returned by _normalize_parameter for continuous/integer types
+    when log_scale or step are specified, enabling full TVL round-trip.
+    """
+
+    min: float | int
+    max: float | int
+    log_scale: bool = False
+    step: float | int | None = None
+    is_integer: bool = False
+
+    def to_tuple(self) -> tuple[float | int, float | int]:
+        """Convert to simple (min, max) tuple for backwards compatibility."""
+        return (self.min, self.max)
+
+
+@dataclass(slots=True)
+class ConditionalDomain:
+    """Conditional domain where child constraint depends on parent value.
+
+    This is returned by _normalize_parameter for conditional types,
+    enabling TVL conditional parameter support.
+    """
+
+    parent: str
+    conditions: dict[Any, list[Any] | tuple[Any, Any] | NumericalDomain]
+    default: list[Any] | tuple[Any, Any] | NumericalDomain | None = None
+
+
+@dataclass(slots=True)
+class FixedDomain:
+    """Fixed domain for parameters that should not be tuned.
+
+    This is returned by _normalize_parameter for type: fixed,
+    enabling proper TVL round-trip where fixed params stay fixed.
+    """
+
+    value: Any
+
+
 def _normalize_parameter(
     name: str, parameter_type: str, definition: dict[str, Any]
-) -> list[Any] | tuple[Any, Any]:
+) -> list[Any] | tuple[Any, Any] | NumericalDomain | ConditionalDomain:
+    """Normalize a parameter definition to a domain representation.
+
+    Returns:
+        - list[Any] for categorical/discrete/boolean types
+        - tuple[Any, Any] for simple continuous/integer ranges
+        - NumericalDomain for ranges with log_scale or step
+        - ConditionalDomain for conditional parameters
+    """
     if parameter_type in {"categorical", "discrete"}:
         values = definition.get("values")
         if not isinstance(values, list) or not values:
@@ -254,28 +312,149 @@ def _normalize_parameter(
 
     if parameter_type in {"continuous", "float"}:
         lower, upper = _resolve_range(definition.get("range"), name)
+        log_scale = definition.get("log_scale", False)
+        step = definition.get("step")
+        # Return rich domain if advanced options are used
+        if log_scale or step is not None:
+            return NumericalDomain(
+                min=float(lower),
+                max=float(upper),
+                log_scale=bool(log_scale),
+                step=float(step) if step is not None else None,
+                is_integer=False,
+            )
         return float(lower), float(upper)
 
     if parameter_type == "integer":
         lower, upper = _resolve_range(definition.get("range"), name)
+        log_scale = definition.get("log_scale", False)
+        step = definition.get("step")
+        # Return rich domain if advanced options are used
+        if log_scale or step is not None:
+            return NumericalDomain(
+                min=int(lower),
+                max=int(upper),
+                log_scale=bool(log_scale),
+                step=int(step) if step is not None else None,
+                is_integer=True,
+            )
         return int(lower), int(upper)
 
     if parameter_type == "boolean":
         return [True, False]
+
+    if parameter_type == "conditional":
+        return _parse_conditional_parameter(name, definition)
+
+    if parameter_type == "fixed":
+        # Fixed parameters return a FixedDomain to preserve non-tunable status
+        value = definition.get("value")
+        return FixedDomain(value=value)
 
     raise TVLValidationError(
         f"Unsupported parameter type '{parameter_type}' for '{name}'"
     )
 
 
-def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
+def _parse_conditional_parameter(
+    name: str, definition: dict[str, Any]
+) -> ConditionalDomain:
+    """Parse a conditional parameter definition.
+
+    Expected format:
+        type: conditional
+        parent: "generator.model"
+        conditions:
+          gpt-4o:
+            range: [100, 8192]
+          gpt-4o-mini:
+            range: [100, 4096]
+        default:
+          range: [100, 2048]
+    """
+    parent = definition.get("parent")
+    if not isinstance(parent, str):
+        raise TVLValidationError(
+            f"Conditional parameter '{name}' requires a 'parent' string"
+        )
+
+    conditions_raw = definition.get("conditions")
+    if not isinstance(conditions_raw, dict) or not conditions_raw:
+        raise TVLValidationError(
+            f"Conditional parameter '{name}' requires a 'conditions' mapping"
+        )
+
+    conditions: dict[Any, list[Any] | tuple[Any, Any] | NumericalDomain] = {}
+    for parent_value, child_spec in conditions_raw.items():
+        conditions[parent_value] = _parse_conditional_child_spec(name, child_spec)
+
+    default_spec = definition.get("default")
+    default = None
+    if default_spec is not None:
+        default = _parse_conditional_child_spec(name, default_spec)
+
+    return ConditionalDomain(parent=parent, conditions=conditions, default=default)
+
+
+def _parse_conditional_child_spec(
+    name: str, spec: dict[str, Any]
+) -> list[Any] | tuple[Any, Any] | NumericalDomain:
+    """Parse a child constraint specification within a conditional."""
+    if not isinstance(spec, dict):
+        raise TVLValidationError(
+            f"Conditional child spec for '{name}' must be a mapping"
+        )
+
+    # Check for categorical (values list)
+    if "values" in spec:
+        values = spec["values"]
+        if isinstance(values, list):
+            return values
+        raise TVLValidationError(
+            f"Conditional child 'values' for '{name}' must be a list"
+        )
+
+    # Check for numerical (range)
+    if "range" in spec:
+        lower, upper = _resolve_range(spec.get("range"), name)
+        log_scale = spec.get("log_scale", False)
+        step = spec.get("step")
+        # Determine if integer based on values
+        is_integer = isinstance(lower, int) and isinstance(upper, int)
+        if log_scale or step is not None:
+            return NumericalDomain(
+                min=lower,
+                max=upper,
+                log_scale=bool(log_scale),
+                step=step,
+                is_integer=is_integer,
+            )
+        return (lower, upper)
+
+    raise TVLValidationError(
+        f"Conditional child spec for '{name}' must have 'values' or 'range'"
+    )
+
+
+def _resolve_range(range_value: Any, name: str) -> tuple[int | float, int | float]:
+    """Resolve a range specification, preserving integer types when possible."""
     if isinstance(range_value, (list, tuple)) and len(range_value) == 2:
-        return float(range_value[0]), float(range_value[1])
+        low, high = range_value[0], range_value[1]
+        # Preserve integer type if both values are integers
+        if isinstance(low, int) and isinstance(high, int):
+            return low, high
+        return float(low), float(high)
     if isinstance(range_value, dict):
         if "min" in range_value and "max" in range_value:
-            return float(range_value["min"]), float(range_value["max"])
+            low, high = range_value["min"], range_value["max"]
+            if isinstance(low, int) and isinstance(high, int):
+                return low, high
+            return float(low), float(high)
         if "start" in range_value and "end" in range_value:
-            return float(range_value["start"]), float(range_value["end"])
+            low, high = range_value["start"], range_value["end"]
+            if isinstance(low, int) and isinstance(high, int):
+                return low, high
+            return float(low), float(high)
     raise TVLValidationError(
         f"Parameter '{name}' requires a numeric range with min/max values"
     )

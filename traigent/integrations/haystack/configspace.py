@@ -597,12 +597,24 @@ class ExplorationSpace:
 
         Args:
             qualified_name: Full parameter path like 'generator.model'.
-            domain: TVL domain - list for categorical or tuple for numerical.
+            domain: TVL domain - can be:
+                - list for categorical
+                - tuple (min, max) for simple numerical
+                - NumericalDomain for numerical with log_scale/step
+                - ConditionalDomain for conditional parameters
+                - FixedDomain for fixed (non-tunable) parameters
             default_value: Default value from the TVL spec.
 
         Returns:
             A TVAR with appropriate constraint.
         """
+        # Import here to avoid circular imports
+        from traigent.tvl.spec_loader import (
+            ConditionalDomain,
+            FixedDomain,
+            NumericalDomain,
+        )
+
         # Extract scope and name from qualified name
         parts = qualified_name.rsplit(".", 1)
         if len(parts) == 2:
@@ -611,7 +623,37 @@ class ExplorationSpace:
             scope, name = "default", qualified_name
 
         # Determine constraint and python_type based on domain format
-        if isinstance(domain, list):
+        constraint: TVARConstraint | None
+        python_type: str
+        is_optional: bool
+        is_tunable: bool = True  # Default to tunable
+
+        if isinstance(domain, FixedDomain):
+            # Fixed domain - not tunable, no constraint
+            constraint = None
+            fixed_val = domain.value
+            python_type = type(fixed_val).__name__ if fixed_val is not None else "Any"
+            is_optional = fixed_val is None
+            is_tunable = False
+            # Use the fixed value as default if no explicit default provided
+            if default_value is None:
+                default_value = fixed_val
+        elif isinstance(domain, NumericalDomain):
+            # Rich numerical domain with log_scale/step
+            constraint = NumericalConstraint(
+                min=domain.min,
+                max=domain.max,
+                log_scale=domain.log_scale,
+                step=domain.step,
+            )
+            python_type = "int" if domain.is_integer else "float"
+            is_optional = False
+        elif isinstance(domain, ConditionalDomain):
+            # Conditional domain
+            constraint = cls._convert_conditional_domain(domain)
+            python_type = cls._infer_conditional_type(domain)
+            is_optional = False
+        elif isinstance(domain, list):
             # Categorical constraint
             constraint = CategoricalConstraint(choices=domain)
             # Infer python_type from first non-None choice
@@ -632,6 +674,7 @@ class ExplorationSpace:
             constraint = None
             python_type = type(domain).__name__ if domain is not None else "Any"
             is_optional = domain is None
+            is_tunable = False
 
         return TVAR(
             name=name,
@@ -639,9 +682,101 @@ class ExplorationSpace:
             python_type=python_type,
             default_value=default_value if default_value is not None else domain,
             constraint=constraint,
-            is_tunable=constraint is not None,
+            is_tunable=is_tunable,
             is_optional=is_optional,
         )
+
+    @classmethod
+    def _infer_conditional_type(cls, domain: Any) -> str:
+        """Infer the python_type from a ConditionalDomain's child domains.
+
+        Returns 'int' if all child domains are integer ranges,
+        'float' if any are float ranges, or infers from categorical choices.
+        Falls back to 'Any' if mixed or undetermined.
+        """
+        from traigent.tvl.spec_loader import NumericalDomain
+
+        inferred_types: set[str] = set()
+
+        # Check all child domains
+        all_domains = list(domain.conditions.values())
+        if domain.default is not None:
+            all_domains.append(domain.default)
+
+        for child_domain in all_domains:
+            if isinstance(child_domain, NumericalDomain):
+                inferred_types.add("int" if child_domain.is_integer else "float")
+            elif isinstance(child_domain, tuple) and len(child_domain) == 2:
+                min_val, max_val = child_domain
+                if isinstance(min_val, int) and isinstance(max_val, int):
+                    inferred_types.add("int")
+                else:
+                    inferred_types.add("float")
+            elif isinstance(child_domain, list):
+                # Categorical - infer from choices
+                inferred_types.add(_infer_type_from_choices(child_domain))
+
+        # Return consistent type or 'Any' if mixed
+        if len(inferred_types) == 1:
+            return inferred_types.pop()
+        elif inferred_types == {"int", "float"}:
+            return "float"  # Promote to float if mixed numeric
+        return "Any"
+
+    @classmethod
+    def _convert_conditional_domain(
+        cls, domain: Any  # ConditionalDomain
+    ) -> ConditionalConstraint:
+        """Convert a ConditionalDomain to a ConditionalConstraint.
+
+        Args:
+            domain: A ConditionalDomain from TVL parsing.
+
+        Returns:
+            A ConditionalConstraint for use in optimization.
+        """
+
+        conditions: dict[Any, CategoricalConstraint | NumericalConstraint] = {}
+        for parent_val, child_domain in domain.conditions.items():
+            conditions[parent_val] = cls._convert_child_domain(child_domain)
+
+        default_constraint = None
+        if domain.default is not None:
+            default_constraint = cls._convert_child_domain(domain.default)
+
+        return ConditionalConstraint(
+            parent_qualified_name=domain.parent,
+            conditions=conditions,
+            default_constraint=default_constraint,
+        )
+
+    @classmethod
+    def _convert_child_domain(
+        cls, child_domain: Any
+    ) -> CategoricalConstraint | NumericalConstraint:
+        """Convert a child domain specification to a constraint.
+
+        Args:
+            child_domain: A list, tuple, or NumericalDomain.
+
+        Returns:
+            CategoricalConstraint or NumericalConstraint.
+        """
+        from traigent.tvl.spec_loader import NumericalDomain
+
+        if isinstance(child_domain, NumericalDomain):
+            return NumericalConstraint(
+                min=child_domain.min,
+                max=child_domain.max,
+                log_scale=child_domain.log_scale,
+                step=child_domain.step,
+            )
+        elif isinstance(child_domain, list):
+            return CategoricalConstraint(choices=child_domain)
+        elif isinstance(child_domain, tuple) and len(child_domain) == 2:
+            return NumericalConstraint(min=child_domain[0], max=child_domain[1])
+        else:
+            raise ValueError(f"Unknown child domain type: {type(child_domain)}")
 
     def to_tvl(
         self,
@@ -704,9 +839,15 @@ class ExplorationSpace:
         """
         spec = self._constraint_to_tvl_spec(tvar)
 
-        # Add default value
+        # Add default value (but not for conditional constraints which use 'default'
+        # for the default_constraint - use 'default_value' key instead for those)
         if tvar.default_value is not None:
-            spec["default"] = tvar.default_value
+            if isinstance(tvar.constraint, ConditionalConstraint):
+                # For conditional constraints, 'default' means default_constraint
+                # Use 'default_value' for the TVAR's default value
+                spec["default_value"] = tvar.default_value
+            else:
+                spec["default"] = tvar.default_value
 
         return spec
 
