@@ -1580,10 +1580,16 @@ class OptimizationOrchestrator:
         stop_triggered, reason = self._stop_condition_manager.should_stop(self._trials)
         if stop_triggered:
             if not self._stop_reason:
-                if reason == "max_samples":
-                    self._stop_reason = "max_samples_reached"
-                else:
-                    self._stop_reason = reason or "condition"
+                # Map stop condition reasons to StopReason literals
+                reason_mapping: dict[str | None, StopReason] = {
+                    "max_samples": "max_samples_reached",
+                    "max_trials": "max_trials_reached",
+                    "plateau": "plateau",
+                    "cost_limit": "cost_limit",
+                    "timeout": "timeout",
+                    "budget": "cost_limit",
+                }
+                self._stop_reason = reason_mapping.get(reason, "condition")
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True
 

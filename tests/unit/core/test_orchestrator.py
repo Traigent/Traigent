@@ -1493,7 +1493,7 @@ class TestOptimizationOrchestrator:
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
-        assert orchestrator._stop_reason == "budget"
+        assert orchestrator._stop_reason == "cost_limit"
         total_cost = sum(tr.metrics.get("total_cost", 0.0) for tr in result.trials)
         assert total_cost >= 0.15
         assert len(result.trials) <= 4
