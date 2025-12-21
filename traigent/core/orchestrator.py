@@ -815,7 +815,19 @@ class OptimizationOrchestrator:
             tuple[dict[str, Any], dict[str, Any] | Any, Dataset, int | None]
         ],
     ) -> list[int | None]:
-        """Allocate sample ceilings for parallel trials."""
+        """Allocate sample ceilings for parallel trials.
+
+        This is a safety mechanism to ensure that when spinning up N parallel
+        trials with X remaining budget, each trial gets at most X/N samples.
+        This prevents any single trial from consuming more than its fair share
+        when running in parallel.
+
+        Args:
+            trial_descriptors: List of trial descriptor tuples
+
+        Returns:
+            List of sample ceilings for each trial
+        """
         if self._sample_budget_manager is None:
             return [len(desc[2].examples) for desc in trial_descriptors]
 

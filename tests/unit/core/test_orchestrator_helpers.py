@@ -570,6 +570,89 @@ class TestModuleAllocateParallelCeilings:
         assert sum(result) == 30
 
 
+class TestAllocateParallelCeilingsSafetyMechanism:
+    """Test allocate_parallel_ceilings as a safety mechanism for parallel trials.
+
+    These tests verify that when spinning up N parallel trials with X remaining
+    budget, each trial gets at most X/N samples. This prevents any single trial
+    from consuming more than its fair share when running in parallel.
+    """
+
+    def test_single_trial_gets_full_budget(self):
+        """Test that a single trial can use the full remaining budget."""
+        # Single trial with 150 examples, budget of 10000
+        # Should get full dataset size (capped by dataset, not budget)
+        result = allocate_parallel_ceilings([150], 10000)
+        assert result == [150]
+
+    def test_parallel_trials_split_budget_evenly(self):
+        """Test that parallel trials split the budget evenly."""
+        # 3 parallel trials, each with 150 examples, budget of 300
+        # Each trial should get 100 samples (300 / 3)
+        result = allocate_parallel_ceilings([150, 150, 150], 300)
+        assert result == [100, 100, 100]
+        assert sum(result) == 300
+
+    def test_parallel_trials_dont_exceed_budget(self):
+        """Test that parallel trials don't exceed total budget."""
+        # 5 parallel trials with large datasets, limited budget
+        result = allocate_parallel_ceilings([1000, 1000, 1000, 1000, 1000], 100)
+        # Each gets 20 (100 / 5)
+        assert result == [20, 20, 20, 20, 20]
+        assert sum(result) == 100
+
+    def test_dataset_size_caps_allocation(self):
+        """Test that dataset size still caps allocation."""
+        # 2 parallel trials, one with small dataset
+        # Budget of 200, but first dataset only has 50
+        result = allocate_parallel_ceilings([50, 200], 200)
+        # First gets 50 (capped by dataset), second gets 100 + leftover
+        assert result[0] == 50
+        assert result[1] == 150  # Gets its share (100) plus leftover (50)
+        assert sum(result) == 200
+
+    def test_leftover_redistribution(self):
+        """Test that leftover from small datasets is redistributed."""
+        # 3 trials: first two have small datasets, third has large
+        result = allocate_parallel_ceilings([10, 20, 1000], 300)
+        # Base allocation: 100, 100, 100
+        # First capped at 10 (leftover 90), second capped at 20 (leftover 80)
+        # Third gets 100 + 90 + 80 = 270
+        assert result[0] == 10
+        assert result[1] == 20
+        assert result[2] == 270
+        assert sum(result) == 300
+
+    def test_all_datasets_smaller_than_share(self):
+        """Test when all datasets are smaller than their budget share."""
+        # 3 trials with small datasets, large budget
+        result = allocate_parallel_ceilings([10, 20, 30], 1000)
+        # Each gets capped at their dataset size
+        assert result == [10, 20, 30]
+        assert sum(result) == 60  # Total is less than budget
+
+    def test_budget_exactly_divisible(self):
+        """Test when budget divides evenly among trials."""
+        result = allocate_parallel_ceilings([100, 100, 100], 30)
+        assert result == [10, 10, 10]
+
+    def test_budget_with_remainder(self):
+        """Test when budget doesn't divide evenly."""
+        result = allocate_parallel_ceilings([100, 100, 100], 10)
+        # 10 / 3 = 3 with remainder 1, first trial gets extra
+        assert sum(result) == 10
+        assert result[0] == 4
+        assert result[1] == 3
+        assert result[2] == 3
+
+    def test_small_budget_still_allocates(self):
+        """Test allocation with very small budget."""
+        result = allocate_parallel_ceilings([100, 100, 100], 5)
+        # 5 / 3 = 1 with remainder 2
+        assert result == [2, 2, 1]
+        assert sum(result) == 5
+
+
 # =============================================================================
 # New Helper Functions (Phase 4)
 # =============================================================================
