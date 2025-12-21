@@ -1307,7 +1307,10 @@ class OptimizedFunction:
                 )
             except (AuthenticationError, ConfigurationError, ValidationError):
                 raise
-            except (OSError, TimeoutError, ConnectionError) as e:
+            except (
+                OSError,
+                TimeoutError,
+            ) as e:  # ConnectionError is subclass of OSError
                 logger.warning(
                     "Cloud optimization failed (transient), falling back to local: %s",
                     e,
@@ -1661,7 +1664,10 @@ class OptimizedFunction:
                         else:
                             logger.warning("Token signature validation failed")
 
-            except (json.JSONDecodeError, ValueError, KeyError) as e:
+            except (
+                ValueError,
+                KeyError,
+            ) as e:  # JSONDecodeError is subclass of ValueError
                 logger.debug(f"Invalid approval token: {e}")
 
         # No valid approval found
