@@ -23,11 +23,8 @@ from traigent.tvl import (
 )
 from traigent.tvl.objectives import (
     BandedObjectiveSpec,
-    TOSTResult,
-    band_deviation,
     compare_banded_objectives,
     compare_banded_with_tost,
-    is_in_band,
     tost_equivalence_test,
 )
 
@@ -216,7 +213,7 @@ def demonstrate_banded_with_tost():
 
     winner, tost_a, tost_b = compare_banded_with_tost(samples_a, samples_b, band)
 
-    print(f"\n  TOST Results:")
+    print("\n  TOST Results:")
     print(f"    A equivalent to band: {tost_a.is_equivalent}")
     print(f"    B equivalent to band: {tost_b.is_equivalent}")
     print(f"    Winner: {winner}")

@@ -9,7 +9,6 @@ Run with: python run_optimization.py
 """
 
 import random
-import time
 from pathlib import Path
 
 import traigent
