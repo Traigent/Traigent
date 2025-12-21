@@ -15,6 +15,7 @@ from typing import Any, cast
 from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
+    StopReason,
     TrialResult,
     TrialStatus,
 )
@@ -355,7 +356,7 @@ class OptimizationOrchestrator:
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
-        self._stop_reason: str | None = None
+        self._stop_reason: StopReason | None = None
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -466,7 +467,7 @@ class OptimizationOrchestrator:
 
     def _remaining_sample_budget(self) -> float:
         if self._sample_budget_manager is not None:
-            return self._sample_budget_manager.remaining()
+            return float(self._sample_budget_manager.remaining())
         if self._max_total_examples is None:
             return float("inf")
         return max(self._max_total_examples - self._consumed_examples, 0)
@@ -821,7 +822,7 @@ class OptimizationOrchestrator:
         remaining_float = self._sample_budget_manager.remaining()
         if math.isfinite(remaining_float):
             dataset_sizes = [len(desc[2].examples) for desc in trial_descriptors]
-            return allocate_parallel_ceilings(dataset_sizes, int(remaining_float))
+            return list(allocate_parallel_ceilings(dataset_sizes, int(remaining_float)))
         return cast(
             list[int | None], [len(desc[2].examples) for desc in trial_descriptors]
         )
@@ -1045,7 +1046,7 @@ class OptimizationOrchestrator:
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
             # Build a map from optuna_trial_id to config before filtering
             id_to_config: dict[int, dict[str, Any]] = {
-                cfg.get("_optuna_trial_id"): cfg
+                cast(int, cfg.get("_optuna_trial_id")): cfg
                 for cfg in configs
                 if isinstance(cfg, dict)
                 and isinstance(cfg.get("_optuna_trial_id"), int)
