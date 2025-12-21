@@ -45,10 +45,10 @@ from traigent.api.decorators import (
 from scorers import custom_accuracy_scorer
 
 # Path to dataset (relative to this file)
-# Use qa_samples.jsonl for quick test, llm_eval_mixed.jsonl for full run
+# Use llm_eval_mixed_20.jsonl for quick test, llm_eval_mixed.jsonl for full run
 DATASET_PATH = (
-    # Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
+    Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed_20.jsonl"
+    # Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
 )
 
 
