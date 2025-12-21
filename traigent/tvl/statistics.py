@@ -726,7 +726,7 @@ def _hypervolume_simple(
     # Monte Carlo sampling with local RNG (don't affect global state)
     import random  # noqa: PLC0415 - local import for sampling
 
-    rng = random.Random(42)  # NOSONAR
+    rng = random.Random(42)  # NOSONAR(S2245) - Monte Carlo, not security
 
     count_dominated = 0
     for _ in range(n_samples):
