@@ -54,37 +54,26 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 ```python
 import traigent
 from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-
-# Load environment variables (API keys, etc.)
-load_dotenv()
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # 🎯 Adaptive Variable #1
-        "temperature": [0.1, 0.5, 0.9]                         # 🎯 Adaptive Variable #2
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.1, 0.5, 0.9]
     },
-    objectives=["accuracy", "cost"],    # What to optimize for
-    # Dataset file path (relative to examples/datasets/quickstart/)
-    evaluation=EvaluationOptions(eval_dataset="examples/datasets/quickstart/qa_samples.jsonl"),
+    objectives=["accuracy", "cost"],
+    evaluation=EvaluationOptions(eval_dataset="qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def simple_qa_agent(question: str) -> str:
-    """Simple Q&A agent with Tuned Variables"""
-
-    # These values will be automatically optimized by TraiGent!
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",     # 🎯 TraiGent tests: gpt-3.5-turbo, gpt-4o-mini, gpt-4o
-        temperature=0.7            # 🎯 TraiGent tests: 0.1, 0.5, 0.9
-    )
-
-    # Normal LLM invocation - TraiGent intercepts and optimizes
+    """Simple Q&A agent - TraiGent automatically optimizes LLM parameters"""
+    # Your existing code stays unchanged - TraiGent intercepts and overrides
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
     response = llm.invoke(f"Question: {question}\nAnswer:")
-    print(f"🔧 Using: model={llm.model_name}, temp={llm.temperature}")
     return response.content
 
-# That's it! TraiGent will find the best model & temperature for YOUR specific use case
+# TraiGent intercepts ChatOpenAI calls and tests all configurations automatically
+# The hardcoded values above are your defaults - TraiGent overrides them during optimization
 ```
 
 ## 📊 Full Customer Support Example with RAG
@@ -94,13 +83,8 @@ import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
 from langchain_chroma import Chroma
-from dotenv import load_dotenv
 from traigent.api.decorators import EvaluationOptions
 
-# Load environment variables (API keys, etc.)
-load_dotenv()
-
-# Define your knowledge base (used during optimization and inference)
 KNOWLEDGE_BASE = [
     "Returns accepted within 30 days with original receipt",
     "Free shipping on orders over $50",
@@ -111,25 +95,21 @@ KNOWLEDGE_BASE = [
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
         "temperature": [0.1, 0.5, 0.9],
-        "k": [3, 5, 10]  # RAG retrieval depth
+        "k": [3, 5, 10]
     },
-    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl")  # Provide your dataset
+    objectives=["accuracy", "cost"],
+    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl"),
 )
 def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
-
-    # Your existing code - TraiGent optimizes these automatically!
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",     # Current: gpt-3.5-turbo
-        temperature=0.7            # Current: 0.7
-    )
+    # Your existing code - TraiGent optimizes model, temperature, and k automatically
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
 
     vectorstore = Chroma.from_texts(knowledge_base)
-    docs = vectorstore.similarity_search(query, k=5)  # Current: k=5
+    docs = vectorstore.similarity_search(query, k=5)
     context = "\n".join([doc.page_content for doc in docs])
 
     response = llm.invoke(f"Context: {context}\nQuestion: {query}\nAnswer:")
-    print(f"🔧 Using: {llm.model_name}, temp={llm.temperature}, k={len(docs)}")
     return response.content
 
 # Step 1: Find optimal configuration
@@ -142,9 +122,8 @@ results = asyncio.run(customer_support_agent.optimize(
 # Step 2: Apply best configuration
 customer_support_agent.apply_best_config(results)
 
-# Step 3: Use optimized agent (uses default KNOWLEDGE_BASE, or pass custom)
+# Step 3: Use optimized agent
 answer = customer_support_agent("What's your return policy?")
-# 🔧 Using: gpt-4o-mini, temp=0.1, k=3  # ← Shows optimized parameters!
 
 # Step 4: View optimization results
 print(f"Best config: {results.best_config}")
@@ -156,33 +135,7 @@ print(f"Best score: {results.best_score}")
 
 ### Need custom weights or minimize a different metric?
 
-Lists like `["accuracy", "cost"]` are fine for most runs—TraiGent automatically infers sensible orientations and equal weights. When you want explicit control, provide an `ObjectiveSchema`:
-
-```python
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-
-custom_objectives = ObjectiveSchema.from_objectives(
-    [
-        ObjectiveDefinition("accuracy", orientation="maximize", weight=0.7),
-        ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
-    ]
-)
-
-@traigent.optimize(
-    objectives=custom_objectives,
-    configuration_space={
-        # Use tuples for continuous ranges, lists for categorical values
-        "temperature": (0.0, 1.0),  # Continuous range
-        "top_p": (0.1, 1.0),        # Continuous range
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],  # Categorical
-    },
-    eval_dataset="qa_samples.jsonl",
-)
-def weighted_agent(question: str) -> str:
-    ...
-```
-
-> **Tip**: See `examples/quickstart/03_custom_objectives.py` for a complete working example.
+Lists like `["accuracy", "cost"]` are fine for most runs—TraiGent automatically infers sensible orientations and equal weights. For explicit control over weights and orientations, see the [Advanced Objectives Guide](docs/guides/advanced-objectives.md) or the working example at `examples/quickstart/03_custom_objectives.py`.
 
 ### Injection modes & default values
 
@@ -193,21 +146,9 @@ TraiGent can inject parameters in two ways:
 
 **↗️ Try TraiGent now - see the results above in under 5 minutes!**
 
-### TVL Specs: The Foundation Layer
+### TVL Specs: Declarative Configuration
 
-TVL (TraiGent Validation Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
-
-```python
-@traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
-def rag_agent(query: str) -> str:
-    ...
-```
-
-TVL sections control the configuration space, objectives, constraints, and budgets—no
-extra arguments required. The CLI also accepts `traigent optimize ... --tvl-spec path`
-and an optional `--tvl-environment staging` flag.
-
-> 💡 **Why specifications matter**: A TVL spec can be validated by any conformant tool—TraiGent today, your internal optimizer tomorrow. The foundation is the contract, not the implementation.
+For YAML-based declarative configuration of optimization parameters, objectives, and constraints, see the [TVL Guide](docs/guides/tvl.md).
 
 ## 📦 Quick Installation
 
@@ -274,8 +215,10 @@ Optimization results are stored in `.traigent_local/` in your working directory 
 After running an optimization, you can access and reuse results in several ways:
 
 ```python
-# During or after optimization - get the current config
-result = await my_agent.optimize(algorithm="random", max_trials=10)
+import asyncio
+
+# Run optimization and get results
+result = asyncio.run(my_agent.optimize(algorithm="random", max_trials=10))
 print(result.best_config)   # {'model': 'gpt-4o-mini', 'temperature': 0.1}
 print(result.best_score)    # 0.94
 
@@ -386,22 +329,6 @@ The TraiGent Control Center provides a user-friendly interface to:
 
 TraiGent evaluates your AI agent's performance by comparing outputs to expected results using semantic similarity, custom evaluators, or mock mode for testing.
 
-**Quick Start:**
-
-```python
-# Simple evaluation with default semantic similarity
-@traigent.optimize(
-    configuration_space={
-        "temperature": [0.1, 0.5, 0.9],
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"]
-    },
-    eval_dataset="qa_samples.jsonl",  # JSONL format
-    objectives=["accuracy", "cost"]
-)
-def my_agent(question: str) -> str:
-    return process_question(question)
-```
-
 **Dataset Format (JSONL):** Each line must be valid JSON with these fields:
 
 ```jsonl
@@ -411,6 +338,27 @@ def my_agent(question: str) -> str:
 
 - `input` (required): Dictionary with your function's parameter names as keys
 - `output` (optional): Expected output for accuracy evaluation
+
+**Custom Evaluator:** For non-exact-match evaluation (e.g., semantic similarity, classification):
+
+```python
+from traigent.api.decorators import EvaluationOptions
+
+def my_scorer(output: str, expected: str) -> float:
+    """Return 0.0-1.0 score based on your criteria"""
+    return 1.0 if expected.lower() in output.lower() else 0.0
+
+@traigent.optimize(
+    configuration_space={"temperature": [0.1, 0.5, 0.9]},
+    evaluation=EvaluationOptions(
+        eval_dataset="data.jsonl",
+        scoring_function=my_scorer,
+    ),
+    objectives=["accuracy"],
+)
+def my_agent(question: str) -> str:
+    ...
+```
 
 **Learn More:** See the [Evaluation Guide](docs/guides/evaluation.md) for:
 
@@ -431,18 +379,7 @@ TraiGent supports local execution with cloud modes planned:
 | **Hybrid**                   | 🚧 Coming Soon | ✅ Execution local | Bayesian             | Balanced approach |
 
 > Open-source builds run in `edge_analytics` today. Keep `execution_mode` at its default unless you're on a managed backend.
-
-**Quick Start - Local Mode (Recommended):**
-
-```python
-@traigent.optimize(
-    execution_mode="edge_analytics",  # Full privacy, works today
-    local_storage_path="./my_optimizations"
-)
-def my_agent(query: str) -> str:
-    return process_query(query)
-```
-
+>
 > **Local Storage**: When using `edge_analytics` mode, TraiGent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
 
 **Learn More:** See the [Execution Modes Guide](docs/guides/execution-modes.md) for:
@@ -489,20 +426,23 @@ TraiGent works with your existing code through a simple decorator. Here's how th
 | `max_trials` | `.optimize()` method call | Number of configurations to test |
 
 ```python
+import asyncio
+from traigent.api.decorators import EvaluationOptions
+
 # Decorator defines WHAT to optimize
 @traigent.optimize(
     configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
     objectives=["accuracy", "cost"],
-    eval_dataset="data.jsonl"
+    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
 )
 def my_agent(query: str) -> str:
     ...
 
 # Method call defines HOW to optimize
-results = await my_agent.optimize(
+results = asyncio.run(my_agent.optimize(
     algorithm="random",  # Search strategy
     max_trials=20        # Number of trials
-)
+))
 ```
 
 ### 🧠 Tuned Variables: The Core Concept
@@ -548,8 +488,12 @@ TraiGent supports two ways to inject optimized parameters into your code:
 Perfect for optimizing existing agents without refactoring:
 
 ```python
+from traigent.api.decorators import EvaluationOptions
+
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]}
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
+    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
+    objectives=["accuracy", "cost"],
 )
 def my_agent(query: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)  # Auto-optimized!
@@ -564,10 +508,13 @@ For new development with full type safety:
 
 ```python
 from traigent import TraigentConfig
+from traigent.api.decorators import EvaluationOptions, InjectionOptions
 
 @traigent.optimize(
-    injection_mode="parameter",
-    configuration_space={"model": ["gpt-4o-mini"], "k": [3, 5, 10]}
+    configuration_space={"model": ["gpt-4o-mini"], "k": [3, 5, 10]},
+    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
+    objectives=["accuracy"],
+    injection=InjectionOptions(injection_mode="parameter"),
 )
 def my_agent(query: str, config: TraigentConfig) -> str:
     llm = ChatOpenAI(model=config.get("model"))  # Explicit access
@@ -581,32 +528,7 @@ def my_agent(query: str, config: TraigentConfig) -> str:
 
 ## 🌟 Natural Language Problem Definition
 
-### Define Problems with AI Understanding
-
-```python
-# Use the UI or programmatically define problems
-from playground.problem_management import SmartProblemAnalyzer
-
-analyzer = SmartProblemAnalyzer()
-result = await analyzer.analyze_and_generate(
-    description="I need to classify customer emails by department",
-    count=50  # AI generates 50 test examples
-)
-
-# AI automatically:
-# - Detects this is a classification problem
-# - Generates relevant test examples
-# - Suggests appropriate metrics
-# - Creates optimal prompt templates
-```
-
-### 🔍 Smart Agent Discovery Process
-
-1. **Describe Your Problem**: "I need to analyze customer feedback sentiment"
-2. **AI Generates Test Cases**: Automatically creates diverse examples
-3. **Test Multiple Agents**: Compare GPT-3.5, GPT-4, Claude, etc.
-4. **See Clear Results**: Visual comparison of accuracy, cost, and speed
-5. **Export Best Config**: Use the optimal settings in production
+The TraiGent Playground supports natural language problem definition with AI-powered test case generation. See the [Playground README](playground/README.md) for programmatic usage with `SmartProblemAnalyzer`.
 
 ## 💻 CLI Commands
 
@@ -701,52 +623,7 @@ llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)  # 95% accuracy at 10x 
 - **🌐 Comprehensive Testing**: Compare accuracy, cost, and speed
 - **🏗️ Platform Agnostic**: Works with any LLM provider
 - **💰 Transparent Pricing**: See exactly what each agent costs
-- **🚀 Parallel Testing**: Test multiple configurations simultaneously
-  - Example-level concurrency: set `parallel_config={"example_concurrency": 8}` in `@traigent.optimize(...)` or override per run
-  - Trial-level concurrency: set `parallel_config={"trial_concurrency": 4}` (e.g., `.optimize(parallel_config={...})`) to evaluate multiple configs at once
-
-#### Parallel Execution Examples
-
-```python
-import traigent
-from traigent.evaluators.base import Dataset, EvaluationExample
-
-# Small dataset
-ds = Dataset(examples=[
-    EvaluationExample(input_data={"x": i}, expected_output=f"val-{i}") for i in range(8)
-])
-
-@traigent.optimize(
-    eval_dataset=ds,
-    objectives=["accuracy"],
-    configuration_space={"p": [1, 2, 3, 4]},
-    execution_mode="edge_analytics",
-    parallel_config={"example_concurrency": 4, "trial_concurrency": 2},
-)
-def fn(x: int) -> str:
-    import time; time.sleep(0.1)  # Simulate work
-    return f"val-{x}"
-
-# Override at call-site if needed
-# results = await fn.optimize(
-#     parallel_config={"example_concurrency": 8, "trial_concurrency": 4}
-# )
-```
-
-#### Hybrid + Privacy
-
-```python
-@traigent.optimize(
-    eval_dataset=ds,
-    objectives=["accuracy"],
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
-    execution_mode="hybrid",
-    privacy_enabled=True   # Never transmit input/output/prompts
-)
-def agent(x: int) -> str:
-    return f"val-{x}"
-```
-
+- **🚀 Parallel Testing**: Test multiple configurations simultaneously (see [Performance Guide](docs/guides/performance.md))
 - **🔐 Privacy Options**: Keep sensitive data on your servers
 
 ### 💰 **Cost Tracking & Optimization**
@@ -761,8 +638,10 @@ TraiGent includes professional-grade cost tracking powered by the **tokencost** 
 - **Cost Objectives**: Optimize for cost alongside accuracy and performance
 
 ```python
+import asyncio
+
 # Cost information is automatically tracked during optimization
-results = await my_agent.optimize()
+results = asyncio.run(my_agent.optimize())
 print(f"Total optimization cost: ${results.total_cost:.4f}")
 print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 ```
@@ -796,32 +675,24 @@ print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 ### 💻 Programmatic Usage
 
 ```python
-# Your proprietary function stays local
-def analyze_customer_data(customer_id: str, query: str) -> str:
-    # Sensitive business logic here
-    customer = load_customer_data(customer_id)  # Private data
-    return generate_response(customer, query)
+from traigent.api.decorators import EvaluationOptions
 
-# Optimize with cloud guidance, execute locally
 @traigent.optimize(
-    eval_dataset="customer_queries.jsonl",
-    objectives=["accuracy", "response_time"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
         "temperature": (0.0, 0.5),
-        "response_style": ["concise", "detailed", "friendly"]
     },
-    execution_mode="interactive"  # Model 1
+    evaluation=EvaluationOptions(eval_dataset="customer_queries.jsonl"),
+    objectives=["accuracy", "response_time"],
 )
 def optimized_analyzer(customer_id: str, query: str) -> str:
-    config = traigent.get_config()  # Works during optimization and after apply_best_config()
+    config = traigent.get_config()  # Access current config
     # Your logic with optimized parameters
-    return analyze_customer_data(customer_id, query)
+    return process_query(customer_id, query)
 
-# Run optimization and reuse the best settings later
+# Run optimization
 # result = await optimized_analyzer.optimize()
-# print(result.best_config)                 # Best trial config
-# print(optimized_analyzer.current_config)  # Applied to future calls
+# print(result.best_config)
 ```
 
 **Config access: during vs. after**
@@ -923,24 +794,26 @@ def analyze_sentiment_optimized(text: str) -> str:
 ### 🔥 Multi-Framework Optimization
 
 ```python
-# Works with any framework - OpenAI SDK example
-import openai
+# Works with any framework - OpenAI SDK (v1.0+) example
+from openai import OpenAI
+from traigent.api.decorators import EvaluationOptions
+
+client = OpenAI()  # Uses OPENAI_API_KEY env var
 
 @traigent.optimize(
-    eval_dataset="translations.jsonl",
-    objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4o"],
         "temperature": [0.1, 0.5, 0.9],
         "max_tokens": [100, 500, 1000]
-    }
-    # Seamless framework override is automatic!
+    },
+    evaluation=EvaluationOptions(eval_dataset="translations.jsonl"),
+    objectives=["accuracy", "cost"],
+)
 def translate_text(text: str, target_language: str) -> str:
-    # Your existing OpenAI code - no changes needed!
-    response = openai.chat.completions.create(
-        model="gpt-4o-mini",  # Will be overridden during optimization
-        temperature=0.3,         # Will be overridden during optimization
-        max_tokens=500,          # Will be overridden during optimization
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.3,
+        max_tokens=500,
         messages=[
             {"role": "system", "content": f"Translate to {target_language}"},
             {"role": "user", "content": text}
@@ -949,29 +822,9 @@ def translate_text(text: str, target_language: str) -> str:
     return response.choices[0].message.content
 ```
 
-### 📊 Advanced: Multi-Objective with Cost Optimization
+### 📊 Advanced: Budget Constraints & Optimization Strategies
 
-```python
-@traigent.optimize(
-    eval_dataset="complex_tasks.jsonl",
-    objectives=["accuracy", "cost"],
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o", "claude-2"],
-        "temperature": [0.0, 0.5, 1.0],
-        "max_tokens": [100, 500, 2000]
-    },
-    optimization_strategy={
-        "max_cost_budget": 100.0,  # Stop when $100 spent
-        "exploration_ratio": 0.3,   # 30% exploration, 70% exploitation
-        "adaptive_sample_size": True  # Smart dataset subset selection
-    }
-)
-def complex_reasoning_task(query: str) -> str:
-    # Your production code stays exactly the same!
-    llm = OpenAI(model="gpt-4o", temperature=0.7, max_tokens=1000)
-    # ... rest of your complex logic ...
-    return result
-```
+For advanced features like cost budgets, exploration strategies, and adaptive sampling, see the [Advanced Optimization Guide](docs/guides/advanced-optimization.md).
 
 ## 📚 Pre-built Examples
 
@@ -1039,13 +892,28 @@ python examples/core/simple-prompt/run.py
 
 ## 📚 Documentation
 
+### Getting Started
+
 - **[Quick Start Guide](docs/getting-started/GETTING_STARTED.md)**: Get started in 5 minutes
 - **[Playground UI Guide](playground/README.md)**: Interactive Playground
-- **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
-- **[Secrets Management](docs/guides/secrets_management.md)**: Secure AWS-backed workflow
 - **[Examples](examples/)**: Working code examples
+
+### Core Guides
+
 - **[Evaluation Guide](docs/guides/evaluation.md)**: Dataset formats and custom evaluators
 - **[Execution Modes](docs/guides/execution-modes.md)**: Local, cloud, and hybrid modes
+
+### Advanced Features
+
+- **[Advanced Objectives](docs/guides/advanced-objectives.md)**: Weighted multi-objective optimization
+- **[Advanced Optimization](docs/guides/advanced-optimization.md)**: Budget constraints and strategies
+- **[Performance Tuning](docs/guides/performance.md)**: Parallel execution and concurrency
+- **[TVL Specifications](docs/guides/tvl.md)**: Declarative YAML configuration
+
+### Reference
+
+- **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
+- **[Secrets Management](docs/guides/secrets_management.md)**: Secure AWS-backed workflow
 
 ## 🛠️ Development
 
@@ -1186,13 +1054,18 @@ python examples/quickstart/03_custom_objectives.py     # Custom weights
 The `@traigent.optimize` decorator **requires** a `configuration_space` parameter:
 
 ```python
+from traigent.api.decorators import EvaluationOptions
+
 # ❌ This will fail - missing configuration_space
-@traigent.optimize(eval_dataset="data.jsonl", objectives=["accuracy"])
+@traigent.optimize(
+    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
+    objectives=["accuracy"]
+)
 
 # ✅ This works - configuration_space is required
 @traigent.optimize(
     configuration_space={"temperature": [0.1, 0.5, 0.9]},
-    eval_dataset="data.jsonl",
+    evaluation=EvaluationOptions(eval_dataset="data.jsonl"),
     objectives=["accuracy"]
 )
 ```

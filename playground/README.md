@@ -38,6 +38,24 @@ playground/
 - Problem validation and quality analysis
 - Import/export capabilities
 
+#### Programmatic Problem Generation
+
+```python
+from playground.problem_management import SmartProblemAnalyzer
+
+analyzer = SmartProblemAnalyzer()
+result = await analyzer.analyze_and_generate(
+    description="I need to classify customer emails by department",
+    count=50  # AI generates 50 test examples
+)
+
+# AI automatically:
+# - Detects this is a classification problem
+# - Generates relevant test examples
+# - Suggests appropriate metrics
+# - Creates optimal prompt templates
+```
+
 ### Optimization Execution
 
 - Run optimizations with various strategies (grid, random, adaptive) in local (`edge_analytics`) mode

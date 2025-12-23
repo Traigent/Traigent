@@ -64,6 +64,32 @@ def my_agent(query: str) -> str:
 - `hybrid`: Local execution with cloud-guided trial selection and privacy toggles.
 - Until a managed backend is provisioned, keep `execution_mode="edge_analytics"` in OSS builds.
 
+## Privacy-Enabled Execution
+
+For sensitive data handling, use the `privacy_enabled` flag:
+
+```python
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
+
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
+    evaluation=EvaluationOptions(eval_dataset="sensitive_data.jsonl"),
+    objectives=["accuracy"],
+    execution=ExecutionOptions(
+        execution_mode="edge_analytics",
+        privacy_enabled=True,  # Never transmit input/output/prompts
+    ),
+)
+def agent(query: str) -> str:
+    return process_sensitive_query(query)
+```
+
+With `privacy_enabled=True`:
+
+- Input data stays local
+- Output data stays local
+- Only anonymized metrics are transmitted (when using cloud features)
+
 ## Privacy-Safe Analytics
 
 Analytics are optional and privacy-safe; disable with `enable_usage_analytics=False` or `export TRAIGENT_DISABLE_ANALYTICS=true`. No prompts, inputs, outputs, or code are transmitted in OSS local mode.
