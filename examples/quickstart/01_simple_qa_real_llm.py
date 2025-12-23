@@ -45,16 +45,19 @@ from traigent.api.decorators import (
 from scorers import custom_accuracy_scorer
 
 # Path to dataset (relative to this file)
+# Use hle_20.jsonl for quick HLE test, hle.jsonl for full HLE run
 # Use llm_eval_mixed_20.jsonl for quick test, llm_eval_mixed.jsonl for full run
 DATASET_PATH = (
+    Path(__file__).parent.parent / "datasets" / "quickstart" / "hle_20.jsonl"
+    # Path(__file__).parent.parent / "datasets" / "quickstart" / "hle.jsonl"
     # Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed_20.jsonl"
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
+    # Path(__file__).parent.parent / "datasets" / "quickstart" / "llm_eval_mixed.jsonl"
 )
 
 
 # Configuration space - single source of truth for all config values
 CONFIGURATION_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"], # try 5.2
     "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
     "max_tokens": [50, 100, 200],
 }
