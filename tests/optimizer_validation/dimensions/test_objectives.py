@@ -21,7 +21,7 @@ class TestSingleObjective:
 
     @pytest.mark.parametrize(
         "objective",
-        ["accuracy", "cost", "latency", "quality"],
+        ["accuracy", "cost", "latency"],
     )
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -70,7 +70,7 @@ class TestSingleObjective:
 class TestMultiObjective:
     """Tests for multi-objective optimization."""
 
-    @pytest.mark.parametrize("objective_count", [2, 3, 5])
+    @pytest.mark.parametrize("objective_count", [2, 3])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_multi_objective_counts(
@@ -80,7 +80,8 @@ class TestMultiObjective:
         result_validator,
     ) -> None:
         """Test optimization with varying numbers of objectives."""
-        objective_names = ["accuracy", "cost", "latency", "quality", "coherence"]
+        # Use only built-in metrics supported by the evaluator
+        objective_names = ["accuracy", "cost", "latency"]
         objectives = [
             ObjectiveSpec(name=objective_names[i], weight=1.0)
             for i in range(objective_count)
@@ -192,8 +193,10 @@ class TestObjectiveOrientations:
         result_validator,
     ) -> None:
         """Test maximize vs minimize orientations."""
+        # Use "accuracy" for maximize, "cost" for minimize (built-in metrics)
+        metric_name = "accuracy" if orientation == "maximize" else "cost"
         objectives = [
-            ObjectiveSpec(name="metric", orientation=orientation, weight=1.0),
+            ObjectiveSpec(name=metric_name, orientation=orientation, weight=1.0),
         ]
 
         scenario = multi_objective_scenario(

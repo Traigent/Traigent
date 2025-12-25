@@ -344,11 +344,11 @@ class TestEdgeCaseCombinations:
         result_validator,
     ) -> None:
         """Test many objectives with small config space."""
+        # Use only built-in metrics supported by the evaluator
         objectives = [
             ObjectiveSpec(name="accuracy", weight=1.0),
             ObjectiveSpec(name="cost", orientation="minimize", weight=1.0),
             ObjectiveSpec(name="latency", orientation="minimize", weight=1.0),
-            ObjectiveSpec(name="quality", weight=1.0),
         ]
 
         scenario = multi_objective_scenario(

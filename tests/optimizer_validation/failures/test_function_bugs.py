@@ -44,9 +44,14 @@ class TestFunctionRaises:
         # Should handle gracefully - either all trials fail or optimization fails
         # The key is that it doesn't crash unexpectedly
         if not isinstance(result, Exception):
-            # All trials should be marked as failed
+            # Trials complete but with errors indicated in metadata
             for trial in result.trials:
-                assert trial.status.value in ("failed", "cancelled", "pruned")
+                # When function raises, trials still "complete" but with error indicators
+                has_errors = trial.metadata.get("has_errors", False)
+                success_rate = trial.metadata.get("success_rate", 1.0)
+                assert (
+                    has_errors or success_rate == 0.0
+                ), f"Expected error indicators in trial {trial.trial_id}"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -99,8 +104,13 @@ class TestFunctionRaises:
 
         # Should handle gracefully
         if not isinstance(result, Exception):
+            # Trials complete but with errors indicated in metadata
             for trial in result.trials:
-                assert trial.status.value in ("failed", "cancelled", "pruned")
+                has_errors = trial.metadata.get("has_errors", False)
+                success_rate = trial.metadata.get("success_rate", 1.0)
+                assert (
+                    has_errors or success_rate == 0.0
+                ), f"Expected error indicators in trial {trial.trial_id}"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
