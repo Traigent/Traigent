@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
@@ -145,12 +146,36 @@ class TrialLifecycle:
 
         config_for_run = prepare_evaluation_config(config)
 
-        enforce_constraints(
-            config_for_run,
-            None,
-            orchestrator._constraints_pre_eval,
-            stage="pre",
-        )
+        # Phase 2: Enforce pre-evaluation constraints
+        try:
+            enforce_constraints(
+                config_for_run,
+                None,
+                orchestrator._constraints_pre_eval,
+                stage="pre",
+            )
+        except TVLConstraintError as e:
+            # Constraint failed - create a failed trial without running evaluation
+            logger.info("Pre-constraint failed for config %s: %s", config_for_run, e)
+            failed_trial = TrialResult(
+                trial_id=str(trial_count),
+                config=config_for_run,
+                metrics={},
+                status=TrialStatus.FAILED,
+                duration=0.0,
+                timestamp=datetime.now(tz=UTC),
+                error_message=str(e),
+                metadata={"constraint_failure": True},
+            )
+            trial_count = await orchestrator._handle_trial_result(
+                trial_result=failed_trial,
+                optimizer_config=config,
+                current_trial_index=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                log_on_success=False,
+            )
+            return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
         # This ensures sequential trials respect cost limits proactively

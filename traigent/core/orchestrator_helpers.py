@@ -116,21 +116,59 @@ def prepare_objectives(
     return prepared, schema
 
 
+def _redistribute_leftover(
+    allocations: list[int],
+    dataset_sizes: list[int],
+    leftover: int,
+) -> None:
+    """Redistribute leftover budget to trials with remaining capacity.
+
+    Modifies allocations in-place.
+
+    Args:
+        allocations: Current allocation list (modified in-place)
+        dataset_sizes: Maximum sizes for each trial
+        leftover: Remaining budget to distribute
+    """
+    for idx, size in enumerate(dataset_sizes):
+        if leftover <= 0:
+            break
+        available_room = size - allocations[idx]
+        if available_room <= 0:
+            continue
+        increment = min(available_room, leftover)
+        allocations[idx] += increment
+        leftover -= increment
+
+
 def allocate_parallel_ceilings(
-    dataset_sizes: list[int], remaining_budget: int
+    dataset_sizes: list[int],
+    remaining_budget: int,
 ) -> list[int | None]:
     """Allocate sample budget across parallel trials.
 
-    Distributes the remaining sample budget evenly across trials, respecting
-    individual dataset sizes. Any leftover budget is redistributed to trials
+    This is a safety mechanism to ensure that when spinning up N parallel
+    trials with X remaining budget, each trial gets at most X/N samples.
+    This prevents any single trial from consuming more than its fair share
+    of the budget when running in parallel.
+
+    The function distributes the remaining sample budget evenly across trials
+    in the current batch, respecting individual dataset sizes. Any leftover
+    budget (from trials with smaller datasets) is redistributed to trials
     that have room for more samples.
 
     Args:
-        dataset_sizes: List of dataset sizes for each trial
+        dataset_sizes: List of dataset sizes for each trial in the batch
         remaining_budget: Total remaining sample budget to allocate
 
     Returns:
         List of ceiling values for each trial (0 if budget exhausted)
+
+    Example:
+        With 3 parallel trials and 300 remaining budget:
+        - Each trial gets at most 100 samples (300 / 3)
+        - If a trial's dataset has only 50 samples, it gets 50
+        - The leftover 50 is redistributed to other trials
     """
     if remaining_budget <= 0:
         return cast(list[int | None], [0 for _ in dataset_sizes])
@@ -138,32 +176,21 @@ def allocate_parallel_ceilings(
     if not dataset_sizes:
         return []
 
-    trial_count = len(dataset_sizes)
-    base = remaining_budget // trial_count
-    remainder = remaining_budget % trial_count
+    batch_size = len(dataset_sizes)
+
+    # Safety: each trial in the batch gets at most remaining_budget / batch_size
+    # This ensures parallel trials don't exceed the total budget
+    base = remaining_budget // batch_size
+    remainder = remaining_budget % batch_size
     allocations: list[int] = []
 
     for idx, size in enumerate(dataset_sizes):
-        allocation = base
-        if idx < remainder:
-            allocation += 1
+        allocation = base + (1 if idx < remainder else 0)
         allocations.append(min(size, allocation))
 
-    allocated_total = sum(allocations)
-    leftover = max(remaining_budget - allocated_total, 0)
-
-    if leftover <= 0:
-        return cast(list[int | None], allocations)
-
-    for idx, size in enumerate(dataset_sizes):
-        if leftover <= 0:
-            break
-        available_room = max(size - allocations[idx], 0)
-        if available_room <= 0:
-            continue
-        increment = min(available_room, leftover)
-        allocations[idx] += increment
-        leftover -= increment
+    leftover = max(remaining_budget - sum(allocations), 0)
+    if leftover > 0:
+        _redistribute_leftover(allocations, dataset_sizes, leftover)
 
     return cast(list[int | None], allocations)
 

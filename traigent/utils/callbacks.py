@@ -543,10 +543,7 @@ class DetailedProgressCallback(OptimizationCallback):
         print("🔧 Configuration Space:")
 
         for param, values in config_space.items():
-            if isinstance(values, list):
-                print(f"   • {param}: {values}")
-            else:
-                print(f"   • {param}: {values}")
+            print(f"   • {param}: {values}")
 
         if self.total_trials > 0:
             print(f"\n📈 Total configurations to test: {self.total_trials}")
