@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -39,6 +39,15 @@ test-unit:  ## Run unit tests only
 
 test-integration:  ## Run integration tests only
 	$(PYTEST) $(TEST_DIR)/integration -v
+
+test-validation:  ## Run optimizer validation tests
+	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v
+
+test-validation-unit:  ## Run optimizer validation unit tests only
+	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v -m "unit"
+
+test-validation-failures:  ## Run optimizer validation failure tests
+	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation/failures -v
 
 test-coverage:  ## Run tests with coverage report
 	$(COVERAGE) run -m pytest $(TEST_DIR) -v
