@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
