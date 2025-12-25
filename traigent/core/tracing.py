@@ -51,6 +51,47 @@ if TYPE_CHECKING:
 _tracer: Tracer | None = None
 _initialized = False
 
+# Test context for adding metadata to spans
+_test_context: dict[str, Any] = {}
+
+
+def set_test_context(
+    test_name: str | None = None,
+    test_description: str | None = None,
+    test_module: str | None = None,
+    **extra_attributes: Any,
+) -> None:
+    """Set test context that will be added to all subsequent spans.
+
+    This allows test frameworks to add informative metadata to traces.
+
+    Args:
+        test_name: Name of the test (e.g., "test_injection_mode_basic[context]")
+        test_description: Human-readable description of what the test validates
+        test_module: Module path (e.g., "test_injection_modes")
+        **extra_attributes: Additional attributes to include
+    """
+    global _test_context
+    _test_context = {}
+    if test_name:
+        _test_context["test.name"] = test_name
+    if test_description:
+        _test_context["test.description"] = test_description
+    if test_module:
+        _test_context["test.module"] = test_module
+    _test_context.update({f"test.{k}": v for k, v in extra_attributes.items()})
+
+
+def clear_test_context() -> None:
+    """Clear the test context."""
+    global _test_context
+    _test_context = {}
+
+
+def get_test_context() -> dict[str, Any]:
+    """Get the current test context."""
+    return _test_context.copy()
+
 
 def _initialize_tracer() -> Tracer | None:
     """Initialize the OpenTelemetry tracer if not already done."""
@@ -134,7 +175,19 @@ def optimization_session_span(
         yield None
         return
 
-    with tracer.start_as_current_span("optimization_session") as span:
+    # Build a descriptive span name
+    test_ctx = get_test_context()
+    if test_ctx.get("test.name"):
+        span_name = f"optimization: {test_ctx['test.name']}"
+    else:
+        span_name = f"optimization: {function_name}"
+
+    with tracer.start_as_current_span(span_name) as span:
+        # Add test context attributes first (so they appear at top in Jaeger)
+        for key, value in test_ctx.items():
+            if isinstance(value, (str, int, float, bool)):
+                span.set_attribute(key, value)
+
         span.set_attribute("traigent.function_name", function_name)
         if max_trials is not None:
             span.set_attribute("traigent.max_trials", max_trials)
@@ -154,6 +207,97 @@ def optimization_session_span(
             except (TypeError, ValueError):
                 pass
         yield span
+
+
+def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
+    """Format config dict into a readable summary for span names.
+
+    Args:
+        config: Trial configuration dictionary
+        max_length: Maximum length of the summary
+
+    Returns:
+        Formatted string like "model=gpt-4, temp=0.3"
+    """
+    if not config:
+        return ""
+
+    # Priority keys to show first (common LLM config params)
+    priority_keys = ["model", "temperature", "temp", "max_tokens", "provider"]
+
+    parts = []
+    seen_keys = set()
+
+    # Add priority keys first
+    for key in priority_keys:
+        if key in config:
+            value = config[key]
+            # Shorten key names for readability
+            short_key = key[:5] if len(key) > 5 else key
+            if short_key == "tempe":
+                short_key = "temp"
+            parts.append(f"{short_key}={value}")
+            seen_keys.add(key)
+
+    # Add remaining keys if there's room
+    for key, value in config.items():
+        if key in seen_keys or key.startswith("_"):
+            continue
+        short_key = key[:5] if len(key) > 5 else key
+        parts.append(f"{short_key}={value}")
+        if len(", ".join(parts)) > max_length:
+            break
+
+    result = ", ".join(parts)
+    if len(result) > max_length:
+        result = result[: max_length - 3] + "..."
+    return result
+
+
+def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
+    """Format input data into a preview for span names.
+
+    Args:
+        input_data: Input data (dict, string, or other)
+        max_length: Maximum length of the preview
+
+    Returns:
+        Formatted string preview of the input
+    """
+    if input_data is None:
+        return ""
+
+    try:
+        if isinstance(input_data, str):
+            preview = input_data
+        elif isinstance(input_data, dict):
+            # Try to get a meaningful value from common keys
+            for key in ["text", "input", "query", "prompt", "message", "content"]:
+                if key in input_data:
+                    preview = str(input_data[key])
+                    break
+            else:
+                # Just show first value or the dict itself
+                if input_data:
+                    first_value = next(iter(input_data.values()))
+                    preview = str(first_value)
+                else:
+                    preview = "{}"
+        else:
+            preview = str(input_data)
+
+        # Clean up and truncate
+        preview = preview.replace("\n", " ").strip()
+        if len(preview) > max_length:
+            preview = preview[: max_length - 3] + "..."
+
+        # Add quotes if it looks like text
+        if preview and not preview.startswith("{") and not preview.startswith("["):
+            preview = f'"{preview}"'
+
+        return preview
+    except Exception:
+        return ""
 
 
 @contextmanager
@@ -177,7 +321,14 @@ def trial_span(
         yield None
         return
 
-    with tracer.start_as_current_span("trial_execution") as span:
+    # Build descriptive span name
+    config_summary = _format_config_summary(config)
+    if config_summary:
+        span_name = f"trial {trial_number}: {config_summary}"
+    else:
+        span_name = f"trial {trial_number}"
+
+    with tracer.start_as_current_span(span_name) as span:
         span.set_attribute("trial.id", trial_id)
         span.set_attribute("trial.number", trial_number)
         try:
@@ -270,7 +421,14 @@ def example_evaluation_span(
         yield None
         return
 
-    with tracer.start_as_current_span("example_evaluation") as span:
+    # Build descriptive span name with input preview
+    input_preview = _format_input_preview(input_data)
+    if input_preview:
+        span_name = f"example {example_index}: {input_preview}"
+    else:
+        span_name = f"example {example_index}"
+
+    with tracer.start_as_current_span(span_name) as span:
         span.set_attribute("example.id", example_id)
         span.set_attribute("example.index", example_index)
         if input_data:

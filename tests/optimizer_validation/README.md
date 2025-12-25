@@ -204,11 +204,46 @@ docker run -d --name traigent-jaeger \
 3. Click **Find Traces**
 4. Click on any trace to see the span hierarchy
 
+### Trace Naming
+
+Each trace now includes informative test metadata automatically:
+
+**Operation Name Format:**
+
+```text
+optimization: <test_name>
+```
+
+For example:
+
+- `optimization: test_injection_mode_basic[context]`
+- `optimization: test_multi_objective_weighted`
+- `optimization: test_constraint_enforcement`
+
+This makes it easy to find traces for specific tests in the Jaeger UI.
+
+**Test Metadata Attributes:**
+
+Each optimization span includes these test-related attributes:
+
+| Attribute | Description | Example |
+| --------- | ----------- | ------- |
+| `test.name` | Full test name with parameters | `test_injection_mode_basic[context]` |
+| `test.description` | Test docstring (first line) | `Test each injection mode works...` |
+| `test.module` | Python module path | `tests.optimizer_validation.dimensions.test_injection_modes` |
+| `test.class` | Test class name (if applicable) | `TestInjectionModeMatrix` |
+| `test.param.*` | Parametrized test values | `test.param.injection_mode: context` |
+
 ### Trace Hierarchy
 
-```
-optimization_session (root)
+```text
+optimization: test_injection_mode_basic[context] (root)
 ├── Attributes:
+│   ├── test.name: "test_injection_mode_basic[context]"
+│   ├── test.description: "Test each injection mode works..."
+│   ├── test.module: "tests.optimizer_validation.dimensions.test_injection_modes"
+│   ├── test.class: "TestInjectionModeMatrix"
+│   ├── test.param.injection_mode: "context"
 │   ├── traigent.function_name: "test_func"
 │   ├── traigent.max_trials: 3
 │   ├── traigent.objectives: "accuracy,cost"

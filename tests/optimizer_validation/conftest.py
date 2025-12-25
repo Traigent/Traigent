@@ -36,6 +36,63 @@ def ensure_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MOCK_MODE", "true")
 
 
+@pytest.fixture(autouse=True)
+def set_trace_test_context(
+    request: pytest.FixtureRequest,
+) -> Generator[None, None, None]:
+    """Automatically set test context for tracing before each test.
+
+    This adds informative metadata to traces so you can identify
+    which test generated which trace in Jaeger.
+    """
+    try:
+        from traigent.core.tracing import clear_test_context, set_test_context
+    except ImportError:
+        yield
+        return
+
+    # Extract test information from pytest request
+    test_name = request.node.name  # e.g., "test_injection_mode_basic[context]"
+    test_module = request.node.module.__name__ if request.node.module else None
+
+    # Try to get docstring as description
+    test_description = None
+    if hasattr(request.node, "function") and request.node.function:
+        test_description = request.node.function.__doc__
+        if test_description:
+            # Take first line only
+            test_description = test_description.strip().split("\n")[0]
+
+    # Extract class name if it's a method
+    test_class = None
+    if request.node.cls:
+        test_class = request.node.cls.__name__
+
+    # Build extra attributes
+    extra: dict[str, Any] = {}
+    if test_class:
+        extra["class"] = test_class
+
+    # Extract parametrize values if present
+    if hasattr(request.node, "callspec"):
+        params = request.node.callspec.params
+        for key, value in params.items():
+            if isinstance(value, (str, int, float, bool)):
+                extra[f"param.{key}"] = value
+
+    set_test_context(
+        test_name=test_name,
+        test_description=test_description,
+        test_module=test_module,
+        **extra,
+    )
+
+    yield
+
+    # Clear context after test
+    clear_test_context()
+
+
 @pytest.fixture
 def temp_dataset_dir() -> Path:
     """Create temporary directory for test datasets within the project.
