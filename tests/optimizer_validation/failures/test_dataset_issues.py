@@ -306,3 +306,441 @@ class TestDatasetEdgeCases:
         func, result = await scenario_runner(scenario)
 
         # Should handle empty strings
+        assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+
+class TestMalformedInputShapes:
+    """Tests for various malformed input/output shapes and types."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_input_as_string_instead_of_dict(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test when input is a string instead of expected dict."""
+        path = temp_dataset_dir / "input_string.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": "just a string", "output": "expected"}\n')
+            f.write('{"input": {"text": "valid dict"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="input_string",
+            description="Input is string instead of dict",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle gracefully - string input may be valid for some functions
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_input_as_array(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test when input is an array instead of dict."""
+        path = temp_dataset_dir / "input_array.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": ["item1", "item2"], "output": "expected"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="input_array",
+            description="Input is array instead of dict",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle gracefully
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_input_as_number(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test when input is a number instead of dict."""
+        path = temp_dataset_dir / "input_number.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": 12345, "output": "expected"}\n')
+            f.write('{"input": 3.14159, "output": "float"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="input_number",
+            description="Input is number instead of dict",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle gracefully
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_input_as_boolean(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test when input is a boolean."""
+        path = temp_dataset_dir / "input_boolean.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": true, "output": "expected"}\n')
+            f.write('{"input": false, "output": "false"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="input_boolean",
+            description="Input is boolean instead of dict",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle gracefully
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_nested_null_values(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test deeply nested null values in input."""
+        path = temp_dataset_dir / "nested_nulls.jsonl"
+        with open(path, "w") as f:
+            f.write(
+                '{"input": {"text": null, "meta": {"score": null}}, "output": "nested nulls"}\n'
+            )
+            f.write(
+                '{"input": {"nested": {"deeply": {"value": null}}}, "output": "deep null"}\n'
+            )
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="nested_nulls",
+            description="Nested null values in input",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle nested nulls gracefully
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_dict_input(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with empty dict as input."""
+        path = temp_dataset_dir / "empty_dict.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": {}, "output": "empty input"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="empty_dict",
+            description="Empty dict as input",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle empty dict input
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_array_input(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with empty array as input."""
+        path = temp_dataset_dir / "empty_array.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": [], "output": "empty array"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="empty_array",
+            description="Empty array as input",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle empty array input
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_output_as_complex_object(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test when expected output is a complex object instead of string."""
+        path = temp_dataset_dir / "output_complex.jsonl"
+        with open(path, "w") as f:
+            f.write(
+                '{"input": {"text": "test1"}, "output": {"key": "value", "nested": {"a": 1}}}\n'
+            )
+            f.write('{"input": {"text": "test2"}, "output": ["item1", "item2"]}\n')
+            f.write('{"input": {"text": "test3"}, "output": "simple string"}\n')
+
+        scenario = TestScenario(
+            name="output_complex",
+            description="Output is complex object",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle complex expected outputs
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_mixed_input_types_in_dataset(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test dataset with mixed input types across examples."""
+        path = temp_dataset_dir / "mixed_types.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": {"text": "dict input"}, "output": "dict"}\n')
+            f.write('{"input": "string input", "output": "string"}\n')
+            f.write('{"input": 42, "output": "number"}\n')
+            f.write('{"input": ["array", "input"], "output": "array"}\n')
+            f.write('{"input": null, "output": "null"}\n')
+
+        scenario = TestScenario(
+            name="mixed_types",
+            description="Mixed input types across examples",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle mixed types gracefully
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_special_characters_in_keys(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test input with special characters in dictionary keys."""
+        path = temp_dataset_dir / "special_keys.jsonl"
+        with open(path, "w") as f:
+            f.write(
+                '{"input": {"key with spaces": "value", "key-with-dashes": "value2"}, "output": "special"}\n'
+            )
+            f.write(
+                '{"input": {"key.with.dots": "value", "key:with:colons": "value2"}, "output": "dots"}\n'
+            )
+            f.write('{"input": {"": "empty key"}, "output": "empty key"}\n')
+
+        scenario = TestScenario(
+            name="special_keys",
+            description="Special characters in input keys",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle special characters in keys
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_deeply_nested_input(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with deeply nested input structure."""
+        path = temp_dataset_dir / "deep_nested.jsonl"
+        with open(path, "w") as f:
+            deep_input = {
+                "level1": {
+                    "level2": {"level3": {"level4": {"level5": {"text": "deep"}}}}
+                }
+            }
+            json.dump({"input": deep_input, "output": "deep"}, f)
+            f.write("\n")
+            f.write('{"input": {"text": "shallow"}, "output": "shallow"}\n')
+
+        scenario = TestScenario(
+            name="deep_nested",
+            description="Deeply nested input structure",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle deeply nested structures
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_large_array_input(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with large array as input value."""
+        path = temp_dataset_dir / "large_array.jsonl"
+        with open(path, "w") as f:
+            large_array = list(range(1000))
+            json.dump({"input": {"items": large_array}, "output": "large"}, f)
+            f.write("\n")
+            f.write('{"input": {"text": "small"}, "output": "small"}\n')
+
+        scenario = TestScenario(
+            name="large_array",
+            description="Large array in input",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle large arrays
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_binary_like_strings(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with strings that look like binary/encoded data."""
+        path = temp_dataset_dir / "binary_strings.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": {"text": "SGVsbG8gV29ybGQ="}, "output": "base64"}\n')
+            f.write('{"input": {"text": "\\x00\\x01\\x02"}, "output": "escape"}\n')
+            f.write('{"input": {"text": "normal"}, "output": "normal"}\n')
+
+        scenario = TestScenario(
+            name="binary_strings",
+            description="Binary-like string values",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle binary-like strings
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_numeric_string_keys(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with numeric strings as dictionary keys."""
+        path = temp_dataset_dir / "numeric_keys.jsonl"
+        with open(path, "w") as f:
+            f.write(
+                '{"input": {"0": "first", "1": "second", "2": "third"}, "output": "numeric keys"}\n'
+            )
+            f.write('{"input": {"123": "value"}, "output": "single numeric"}\n')
+
+        scenario = TestScenario(
+            name="numeric_keys",
+            description="Numeric strings as keys",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle numeric string keys
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_whitespace_only_values(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test with whitespace-only string values."""
+        path = temp_dataset_dir / "whitespace.jsonl"
+        with open(path, "w") as f:
+            f.write('{"input": {"text": "   "}, "output": "spaces"}\n')
+            f.write('{"input": {"text": "\\t\\n"}, "output": "tabs and newlines"}\n')
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="whitespace",
+            description="Whitespace-only values",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle whitespace-only values
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_duplicate_keys_in_entry(
+        self,
+        scenario_runner,
+        result_validator,
+        temp_dataset_dir: Path,
+    ) -> None:
+        """Test JSON with duplicate keys (last value wins per JSON spec)."""
+        path = temp_dataset_dir / "duplicate_keys.jsonl"
+        with open(path, "w") as f:
+            # Note: JSON parsers typically take the last value for duplicate keys
+            f.write(
+                '{"input": {"text": "first"}, "input": {"text": "second"}, "output": "dup"}\n'
+            )
+            f.write('{"input": {"text": "valid"}, "output": "valid"}\n')
+
+        scenario = TestScenario(
+            name="duplicate_keys",
+            description="Duplicate keys in JSON entry",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            dataset_path=str(path),
+            max_trials=2,
+        )
+
+        func, result = await scenario_runner(scenario)
+        # Should handle duplicate keys (uses last value)

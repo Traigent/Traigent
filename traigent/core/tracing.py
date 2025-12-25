@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Generator
+from typing import TYPE_CHECKING, Any
 
 # Check if tracing is enabled and OpenTelemetry is available
 TRACING_ENABLED = os.environ.get("TRAIGENT_TRACE_ENABLED", "false").lower() in (
@@ -29,6 +30,7 @@ TRACING_ENABLED = os.environ.get("TRAIGENT_TRACE_ENABLED", "false").lower() in (
 )
 
 try:
+    from opentelemetry import context as otel_context
     from opentelemetry import trace
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
         OTLPSpanExporter as OTLPHttpSpanExporter,
@@ -36,16 +38,48 @@ try:
     from opentelemetry.sdk.resources import Resource
     from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.sdk.trace.id_generator import IdGenerator
 
     OTEL_AVAILABLE = True
 except ImportError:
     OTEL_AVAILABLE = False
     trace = None  # type: ignore
+    otel_context = None  # type: ignore
     TracerProvider = None  # type: ignore
     OTLPHttpSpanExporter = None  # type: ignore
+    IdGenerator = None  # type: ignore
 
 if TYPE_CHECKING:
     from opentelemetry.trace import Span, Tracer
+
+
+class SecureIdGenerator(IdGenerator if IdGenerator else object):
+    """ID generator using os.urandom for cryptographically secure random IDs.
+
+    This generator is immune to random.seed() calls that could cause
+    deterministic trace IDs, ensuring each trace gets a unique ID.
+    """
+
+    def generate_span_id(self) -> int:
+        """Generate a cryptographically secure 64-bit span ID."""
+        import os
+
+        span_id = int.from_bytes(os.urandom(8), byteorder="big")
+        # Ensure non-zero (INVALID_SPAN_ID is 0)
+        while span_id == 0:
+            span_id = int.from_bytes(os.urandom(8), byteorder="big")
+        return span_id
+
+    def generate_trace_id(self) -> int:
+        """Generate a cryptographically secure 128-bit trace ID."""
+        import os
+
+        trace_id = int.from_bytes(os.urandom(16), byteorder="big")
+        # Ensure non-zero (INVALID_TRACE_ID is 0)
+        while trace_id == 0:
+            trace_id = int.from_bytes(os.urandom(16), byteorder="big")
+        return trace_id
+
 
 # Global tracer instance
 _tracer: Tracer | None = None
@@ -119,8 +153,12 @@ def _initialize_tracer() -> Tracer | None:
             }
         )
 
-        # Create tracer provider
-        provider = TracerProvider(resource=resource)
+        # Create tracer provider with secure ID generator
+        # This ensures trace IDs are not affected by random.seed() calls
+        provider = TracerProvider(
+            resource=resource,
+            id_generator=SecureIdGenerator(),
+        )
 
         # Add OTLP exporter
         otlp_exporter = OTLPHttpSpanExporter(
@@ -159,6 +197,9 @@ def optimization_session_span(
 ) -> Generator[Span | None, None, None]:
     """Create a root span for an optimization session.
 
+    This creates a NEW trace for each optimization session, ensuring
+    that each test/optimization run appears as a separate trace in Jaeger.
+
     Args:
         function_name: Name of the function being optimized
         max_trials: Maximum number of trials
@@ -182,31 +223,47 @@ def optimization_session_span(
     else:
         span_name = f"optimization: {function_name}"
 
-    with tracer.start_as_current_span(span_name) as span:
-        # Add test context attributes first (so they appear at top in Jaeger)
-        for key, value in test_ctx.items():
-            if isinstance(value, (str, int, float, bool)):
-                span.set_attribute(key, value)
+    # CRITICAL: Create a fresh context and attach it to start a NEW trace
+    # This ensures each optimization session (test) gets its own trace ID
+    # rather than being nested under a shared parent context
+    fresh_context = otel_context.Context() if otel_context else None
 
-        span.set_attribute("traigent.function_name", function_name)
-        if max_trials is not None:
-            span.set_attribute("traigent.max_trials", max_trials)
-        if timeout is not None:
-            span.set_attribute("traigent.timeout", timeout)
-        if algorithm:
-            span.set_attribute("traigent.algorithm", algorithm)
-        if objectives:
-            span.set_attribute("traigent.objectives", ",".join(objectives))
-        if config_space:
-            try:
-                # Serialize config space (truncate if too large)
-                config_str = json.dumps(config_space)
-                if len(config_str) > 1000:
-                    config_str = config_str[:1000] + "..."
-                span.set_attribute("traigent.config_space", config_str)
-            except (TypeError, ValueError):
-                pass
-        yield span
+    # Attach the fresh context to make it the active context
+    # This detaches us from any existing trace context
+    token = (
+        otel_context.attach(fresh_context) if otel_context and fresh_context else None
+    )
+
+    try:
+        with tracer.start_as_current_span(span_name) as span:
+            # Add test context attributes first (so they appear at top in Jaeger)
+            for key, value in test_ctx.items():
+                if isinstance(value, (str, int, float, bool)):
+                    span.set_attribute(key, value)
+
+            span.set_attribute("traigent.function_name", function_name)
+            if max_trials is not None:
+                span.set_attribute("traigent.max_trials", max_trials)
+            if timeout is not None:
+                span.set_attribute("traigent.timeout", timeout)
+            if algorithm:
+                span.set_attribute("traigent.algorithm", algorithm)
+            if objectives:
+                span.set_attribute("traigent.objectives", ",".join(objectives))
+            if config_space:
+                try:
+                    # Serialize config space (truncate if too large)
+                    config_str = json.dumps(config_space)
+                    if len(config_str) > 1000:
+                        config_str = config_str[:1000] + "..."
+                    span.set_attribute("traigent.config_space", config_str)
+                except (TypeError, ValueError):
+                    pass
+            yield span
+    finally:
+        # Detach the fresh context to restore previous context
+        if token is not None and otel_context:
+            otel_context.detach(token)
 
 
 def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
