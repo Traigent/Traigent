@@ -75,6 +75,13 @@ from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
 
+from .tracing import (
+    optimization_session_span,
+    record_optimization_complete,
+    record_trial_result,
+    trial_span,
+)
+
 logger = get_logger(__name__)
 
 # Orchestrator constants
@@ -1318,6 +1325,35 @@ class OptimizationOrchestrator:
             else function_name
         )
 
+        # Start tracing span for the optimization session
+        with optimization_session_span(
+            function_name=function_identifier or func.__name__,
+            max_trials=self.max_trials,
+            timeout=self.timeout,
+            algorithm=getattr(self.optimizer, "name", None),
+            objectives=self.objectives,
+            config_space=getattr(self.optimizer, "config_space", None),
+        ) as session_span:
+            return await self._run_optimization_with_tracing(
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+                function_identifier=function_identifier,
+                session_span=session_span,
+            )
+
+    async def _run_optimization_with_tracing(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str,
+        function_identifier: str | None,
+        session_span: Any,
+    ) -> OptimizationResult:
+        """Run optimization with tracing enabled.
+
+        This is the inner implementation that runs within the tracing span.
+        """
         # Pre-optimization cost approval check
         # Skip if mock mode or already approved
         if not self.cost_enforcer.is_mock_mode:
@@ -1403,6 +1439,15 @@ class OptimizationOrchestrator:
 
             # Create final result
             result = self._create_optimization_result()
+
+            # Record optimization completion in tracing span
+            record_optimization_complete(
+                session_span,
+                trial_count=len(self._trials),
+                best_score=result.best_score,
+                best_config=result.best_config,
+                stop_reason=self._stop_reason,
+            )
 
             merge_run_metrics_into_session_summary(result)
 
