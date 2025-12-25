@@ -116,6 +116,13 @@ test = [
     "hypothesis>=6.0.0",  # Property-based stateful testing for cost enforcement
 ]
 
+# OpenTelemetry tracing for test observability
+tracing = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+
 # Development dependencies
 dev = [
     "pytest>=7.0.0",

@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Callable, Literal
+
+if TYPE_CHECKING:
+    from .trace_expectations import TraceExpectations
 
 
 class ExpectedOutcome(Enum):
@@ -184,6 +187,9 @@ class TestScenario:
     function_should_raise: type[Exception] | None = None
     function_raise_on_call: int | None = None  # 1-based call number
     function_return_value: Any = None
+
+    # Trace expectations (for tracing validation)
+    trace_expectations: TraceExpectations | None = None
 
     def __post_init__(self) -> None:
         """Validate scenario configuration."""

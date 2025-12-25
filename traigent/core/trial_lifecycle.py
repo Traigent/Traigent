@@ -41,6 +41,8 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.logging import get_logger
 
+from .tracing import record_trial_result, trial_span
+
 if TYPE_CHECKING:
     from traigent.core.orchestrator import OptimizationOrchestrator
 
@@ -270,8 +272,6 @@ class TrialLifecycle:
         Returns:
             TrialResult with evaluation results
         """
-        orchestrator = self._orchestrator
-
         # Phase 1: Setup trial context
         optuna_trial_id = extract_optuna_trial_id(config, optuna_trial_id)
         trial_id = self._generate_trial_id(
@@ -287,6 +287,37 @@ class TrialLifecycle:
             optuna_trial_id, dataset, trial_id
         )
         lease = self._setup_trial_budget_lease(dataset, trial_id, sample_ceiling)
+
+        # Wrap trial execution in tracing span
+        with trial_span(trial_id, trial_number, evaluation_config) as span:
+            return await self._execute_trial_with_tracing(
+                func=func,
+                dataset=dataset,
+                trial_id=trial_id,
+                evaluation_config=evaluation_config,
+                start_time=start_time,
+                optuna_trial_id=optuna_trial_id,
+                progress_callback=progress_callback,
+                progress_state=progress_state,
+                lease=lease,
+                span=span,
+            )
+
+    async def _execute_trial_with_tracing(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        trial_id: str,
+        evaluation_config: dict[str, Any],
+        start_time: float,
+        optuna_trial_id: int | None,
+        progress_callback: Any,
+        progress_state: Any,
+        lease: SampleBudgetLease | None,
+        span: Any,
+    ) -> TrialResult:
+        """Execute trial with tracing span active."""
+        orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
 
         try:
@@ -343,10 +374,17 @@ class TrialLifecycle:
                 optuna_trial_id=optuna_trial_id,
             )
             self._apply_budget_metadata(result, closure, budget_exhausted)
+
+            # Record success in tracing span
+            record_trial_result(
+                span,
+                status="completed",
+                metrics=result.metrics,
+            )
             return result
 
         except TrialPrunedError as prune_error:
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -356,9 +394,11 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
+            record_trial_result(span, status="pruned", error=str(prune_error))
+            return result
 
         except TVLConstraintError as constraint_error:
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -367,10 +407,12 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
+            record_trial_result(span, status="failed", error=str(constraint_error))
+            return result
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -379,6 +421,8 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            record_trial_result(span, status="failed", error=str(exc))
+            return result
 
         finally:
             if lease is not None and closure is None:
