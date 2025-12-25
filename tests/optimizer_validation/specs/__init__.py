@@ -16,6 +16,12 @@ from .scenario import (
     ObjectiveSpec,
     TestScenario,
 )
+from .trace_expectations import (
+    TraceExpectations,
+    basic_expectations,
+    failure_expectations,
+    multi_objective_expectations,
+)
 from .validators import ResultValidator
 
 __all__ = [
@@ -26,6 +32,11 @@ __all__ = [
     "EvaluatorSpec",
     "ExpectedResult",
     "ExpectedOutcome",
+    # Trace expectations
+    "TraceExpectations",
+    "basic_expectations",
+    "multi_objective_expectations",
+    "failure_expectations",
     # Builders
     "basic_scenario",
     "multi_objective_scenario",

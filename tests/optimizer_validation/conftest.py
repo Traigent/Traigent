@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Generator
 
 import pytest
 
@@ -23,6 +23,9 @@ from .specs.validators import ResultValidator, ValidationResult
 
 if TYPE_CHECKING:
     from traigent.api.types import OptimizationResult
+
+    from .tracing.analyzer import TraceAnalyzer, TraceValidationResult
+    from .tracing.capture import CapturedTrace, TraceCapture
 
 
 # Ensure mock mode is enabled for all tests in this module
@@ -363,3 +366,121 @@ def load_scenario_overrides(path: Path) -> dict[str, Any]:
     except ImportError:
         # YAML not installed, return empty
         return {}
+
+
+# ============================================================================
+# Tracing Fixtures
+# ============================================================================
+
+
+@pytest.fixture
+def trace_capture(request: pytest.FixtureRequest) -> Generator[Any, None, None]:
+    """Fixture for capturing and analyzing traces during test execution.
+
+    Usage:
+        def test_example(trace_capture):
+            trace_capture.start()
+            # Run optimization...
+            trace_capture.start_scenario(scenario)
+            # After test...
+            captured = trace_capture.finish()
+            # Analyze trace...
+    """
+    try:
+        from .tracing.capture import TraceCapture
+    except ImportError:
+        pytest.skip(
+            "OpenTelemetry not installed. Install with: pip install traigent[tracing]"
+        )
+        return
+
+    test_name = request.node.name
+    capture = TraceCapture(test_name)
+    yield capture
+    capture.shutdown()
+
+
+@pytest.fixture
+def traced_scenario_runner(
+    scenario_runner: Callable[..., tuple[Any, OptimizationResult | Exception]],
+    trace_capture: Any,
+) -> Callable[..., tuple[Any, OptimizationResult | Exception, Any]]:
+    """Scenario runner that also captures traces.
+
+    Returns a function that takes a TestScenario and returns
+    (decorated_function, result_or_exception, captured_trace).
+
+    Usage:
+        func, result, trace = await traced_scenario_runner(scenario)
+        if isinstance(result, Exception):
+            # Handle expected failure
+        else:
+            # Validate result and trace
+    """
+
+    async def run_with_trace(
+        scenario: TestScenario,
+    ) -> tuple[Any, OptimizationResult | Exception, Any]:
+        """Execute a test scenario with trace capture.
+
+        Args:
+            scenario: The test scenario specification
+
+        Returns:
+            Tuple of (decorated_function, result_or_exception, captured_trace)
+        """
+        trace_capture.start()
+        trace_capture.start_scenario(scenario)
+
+        func, result = await scenario_runner(scenario)
+
+        captured = trace_capture.finish()
+        return func, result, captured
+
+    return run_with_trace
+
+
+@pytest.fixture
+def trace_validator() -> Callable[..., Any]:
+    """Validator for trace data.
+
+    Returns a function that validates a trace against scenario expectations.
+
+    Usage:
+        validation = trace_validator(scenario, trace, result)
+        assert validation.passed, validation.errors
+    """
+    try:
+        from .tracing.analyzer import TraceAnalyzer
+    except ImportError:
+        pytest.skip(
+            "OpenTelemetry not installed. Install with: pip install traigent[tracing]"
+        )
+        return
+
+    def validate(
+        scenario: TestScenario,
+        trace: CapturedTrace,
+        result: OptimizationResult | None = None,
+    ) -> TraceValidationResult:
+        """Validate trace against scenario expectations.
+
+        Args:
+            scenario: Test scenario with trace expectations
+            trace: Captured trace data
+            result: Optimization result for consistency checks
+
+        Returns:
+            TraceValidationResult with errors and warnings
+        """
+        analyzer = TraceAnalyzer(trace, result=result)
+        return analyzer.validate(
+            expectations=scenario.trace_expectations,
+            skip_invariants=(
+                scenario.trace_expectations.skip_invariants
+                if scenario.trace_expectations
+                else None
+            ),
+        )
+
+    return validate

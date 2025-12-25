@@ -42,6 +42,45 @@ from traigent.utils.logging import get_logger
 if TYPE_CHECKING:
     from traigent.core.sample_budget import SampleBudgetLease
 
+# Tracing utilities are imported lazily to avoid circular imports
+# The actual import happens in _get_tracing_functions()
+_tracing_functions_cache: dict[str, Any] | None = None
+
+
+def _get_tracing_functions() -> tuple[Any, Any, bool]:
+    """Lazily import tracing functions to avoid circular imports.
+
+    Returns:
+        Tuple of (example_evaluation_span, record_example_result, is_available)
+    """
+    global _tracing_functions_cache
+    if _tracing_functions_cache is not None:
+        return (
+            _tracing_functions_cache.get("example_evaluation_span"),
+            _tracing_functions_cache.get("record_example_result"),
+            _tracing_functions_cache.get("available", False),
+        )
+
+    try:
+        from traigent.core.tracing import example_evaluation_span as ees
+        from traigent.core.tracing import record_example_result as rer
+
+        _tracing_functions_cache = {
+            "example_evaluation_span": ees,
+            "record_example_result": rer,
+            "available": True,
+        }
+        return ees, rer, True
+    except Exception:
+        _tracing_functions_cache = {"available": False}
+        return None, None, False
+
+
+# Legacy compatibility - these will be None, use _get_tracing_functions() instead
+TRACING_AVAILABLE = False  # Will be checked dynamically
+example_evaluation_span = None  # type: ignore
+record_example_result = None  # type: ignore
+
 logger = get_logger(__name__)
 
 try:  # pragma: no cover - import guard for optional dependency
@@ -1063,9 +1102,32 @@ class BaseEvaluator(ABC):
                 outputs.append(result.actual_output)
                 errors.append(result.error_message)
             else:
-                output, error = await self._execute_function(
-                    func, config, example.input_data, executor=None
+                # Non-detailed mode: still add tracing if available
+                example_id = (
+                    example.metadata.get("example_id", f"example_{i}")
+                    if example.metadata
+                    else f"example_{i}"
                 )
+                start_time = time.time()
+
+                with self._example_trace_context(example_id, i, example) as span:
+                    output, error = await self._execute_function(
+                        func, config, example.input_data, executor=None
+                    )
+                    execution_time = time.time() - start_time
+
+                    # Record to tracing span if available
+                    if span is not None:
+                        _, record_fn, available = _get_tracing_functions()
+                        if available and record_fn is not None:
+                            record_fn(
+                                span,
+                                success=(error is None),
+                                actual_output=output,
+                                error=error,
+                                execution_time=execution_time,
+                            )
+
                 outputs.append(output)
                 errors.append(error)
                 if progress_callback:
@@ -1513,6 +1575,68 @@ class BaseEvaluator(ABC):
             "output": result.actual_output,
         }
 
+    def _record_example_trace(
+        self,
+        span: Any,
+        result: ExampleResult,
+    ) -> None:
+        """Record example result to tracing span if tracing is available.
+
+        Args:
+            span: The tracing span (may be None)
+            result: The example result to record
+        """
+        if span is None:
+            return
+
+        _, record_fn, available = _get_tracing_functions()
+        if not available or record_fn is None:
+            return
+
+        record_fn(
+            span,
+            success=result.success,
+            actual_output=result.actual_output,
+            metrics=result.metrics,
+            error=result.error_message,
+            execution_time=result.execution_time,
+        )
+
+    @contextmanager
+    def _example_trace_context(
+        self,
+        example_id: str,
+        example_index: int,
+        example: EvaluationExample,
+    ) -> Any:
+        """Create example tracing context if tracing is available.
+
+        Args:
+            example_id: Unique example identifier
+            example_index: Index of example in dataset
+            example: The evaluation example
+
+        Yields:
+            Tracing span or None if tracing not available
+        """
+        span_fn, _, available = _get_tracing_functions()
+        if not available or span_fn is None:
+            yield None
+            return
+
+        # Get input data for tracing (respect privacy settings)
+        input_data = (
+            None if getattr(self, "privacy_enabled", False) else (example.input_data)
+        )
+
+        with span_fn(
+            example_id=example_id,
+            example_index=example_index,
+            input_data=input_data,
+            expected_output=example.expected_output,
+        ) as span:
+            yield span
+
     async def _evaluate_single_detailed(
         self,
         func: Callable[..., Any],
@@ -1545,82 +1669,91 @@ class BaseEvaluator(ABC):
         else:
             logger.debug(f"Evaluating example {example_id}: {example.input_data}")
 
-        # Use custom evaluator if available
-        if self.custom_eval_func:
-            try:
-                result = await self._run_custom_evaluator(
-                    func, config, example, example_id
-                )
-                if progress_callback:
-                    progress_callback(
-                        example_index,
-                        {
-                            "success": result.success,
-                            "error": result.error_message,
-                            "metrics": result.metrics,
-                            "output": result.actual_output,
-                        },
+        # Wrap example evaluation in tracing span
+        with self._example_trace_context(example_id, example_index, example) as span:
+            # Use custom evaluator if available
+            if self.custom_eval_func:
+                try:
+                    result = await self._run_custom_evaluator(
+                        func, config, example, example_id
                     )
-                return result
-            except TrialPrunedError:
-                raise
-            except asyncio.CancelledError:
-                raise
-            except (
-                APIKeyError,
-                FriendlyTraiGentError,
-                CoreTraigentError,
-                ConfigurationError,
-            ):
-                raise
-            except Exception as e:
-                execution_time = time.time() - start_time
-                logger.warning(
-                    f"Custom evaluation failed for example {example_id}: {e}"
+                    self._record_example_trace(span, result)
+                    if progress_callback:
+                        progress_callback(
+                            example_index,
+                            {
+                                "success": result.success,
+                                "error": result.error_message,
+                                "metrics": result.metrics,
+                                "output": result.actual_output,
+                            },
+                        )
+                    return result
+                except TrialPrunedError:
+                    raise
+                except asyncio.CancelledError:
+                    raise
+                except (
+                    APIKeyError,
+                    FriendlyTraiGentError,
+                    CoreTraigentError,
+                    ConfigurationError,
+                ):
+                    raise
+                except Exception as e:
+                    execution_time = time.time() - start_time
+                    logger.warning(
+                        f"Custom evaluation failed for example {example_id}: {e}"
+                    )
+                    result = ExampleResult(
+                        example_id=example_id,
+                        input_data=example.input_data,
+                        expected_output=example.expected_output,
+                        actual_output=None,
+                        metrics=dict.fromkeys(self.metrics, 0.0),
+                        execution_time=execution_time,
+                        success=False,
+                        error_message=str(e),
+                        metadata=example.metadata.copy() if example.metadata else {},
+                    )
+                    self._record_example_trace(span, result)
+                    return result
+
+            # Default evaluation with correlation key
+            capture_key = self._get_capture_key_context()
+            with capture_key(example_id):
+                output, error = await self._execute_function(
+                    func, config, example.input_data, executor
                 )
-                return ExampleResult(
-                    example_id=example_id,
-                    input_data=example.input_data,
-                    expected_output=example.expected_output,
-                    actual_output=None,
-                    metrics=dict.fromkeys(self.metrics, 0.0),
-                    execution_time=execution_time,
-                    success=False,
-                    error_message=str(e),
-                    metadata=example.metadata.copy() if example.metadata else {},
+            execution_time = time.time() - start_time
+
+            result = ExampleResult(
+                example_id=example_id,
+                input_data=example.input_data,
+                expected_output=example.expected_output,
+                actual_output=output,
+                metrics={},
+                execution_time=execution_time,
+                success=(error is None),
+                error_message=error,
+                metadata=example.metadata.copy() if example.metadata else {},
+            )
+
+            # Record to tracing span
+            self._record_example_trace(span, result)
+
+            if progress_callback:
+                progress_payload = self._build_progress_payload(
+                    example_id, example, result, config, error
                 )
+                progress_callback(example_index, progress_payload)
 
-        # Default evaluation with correlation key
-        capture_key = self._get_capture_key_context()
-        with capture_key(example_id):
-            output, error = await self._execute_function(
-                func, config, example.input_data, executor
-            )
-        execution_time = time.time() - start_time
-
-        result = ExampleResult(
-            example_id=example_id,
-            input_data=example.input_data,
-            expected_output=example.expected_output,
-            actual_output=output,
-            metrics={},
-            execution_time=execution_time,
-            success=(error is None),
-            error_message=error,
-            metadata=example.metadata.copy() if example.metadata else {},
-        )
-
-        if progress_callback:
-            progress_payload = self._build_progress_payload(
-                example_id, example, result, config, error
-            )
-            progress_callback(example_index, progress_payload)
-
-        if error is None:
-            logger.debug(
-                f"Example {example_id} completed successfully in {execution_time:.2f}s"
-            )
-        return result
+            if error is None:
+                logger.debug(
+                    f"Example {example_id} completed successfully in "
+                    f"{execution_time:.2f}s"
+                )
+            return result
 
     def validate_function(self, func: Callable[..., Any]) -> None:
         """Validate that function is callable and has expected signature.

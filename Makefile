@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -48,6 +48,28 @@ test-validation-unit:  ## Run optimizer validation unit tests only
 
 test-validation-failures:  ## Run optimizer validation failure tests
 	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation/failures -v
+
+test-validation-traced:  ## Run validation tests with OpenTelemetry tracing (requires Jaeger)
+	TRAIGENT_MOCK_MODE=true \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
+	TRAIGENT_TRACE_ENABLED=true \
+	$(PYTEST) $(TEST_DIR)/optimizer_validation -v
+
+jaeger-start:  ## Start Jaeger for trace visualization (requires Docker)
+	@echo "Starting Jaeger all-in-one container..."
+	@docker run -d --name traigent-jaeger \
+		-p 16686:16686 \
+		-p 4317:4317 \
+		-p 4318:4318 \
+		jaegertracing/all-in-one:latest || echo "Jaeger may already be running"
+	@echo "Jaeger UI available at: http://localhost:16686"
+
+jaeger-stop:  ## Stop Jaeger container
+	@echo "Stopping Jaeger container..."
+	@docker stop traigent-jaeger && docker rm traigent-jaeger || echo "Jaeger not running"
+
+analyze-traces:  ## Analyze trace files from test runs
+	$(PYTHON) scripts/analyze_traces.py $(TEST_DIR)/optimizer_validation/traces
 
 test-coverage:  ## Run tests with coverage report
 	$(COVERAGE) run -m pytest $(TEST_DIR) -v
