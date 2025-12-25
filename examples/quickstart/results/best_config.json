@@ -1,0 +1,8 @@
+{
+  "best_score": 0.2,
+  "best_config": {
+    "model": "gpt-3.5-turbo",
+    "temperature": 0.5,
+    "max_tokens": 200
+  }
+}

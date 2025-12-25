@@ -481,6 +481,15 @@ async def main():
     )
     save_detailed_results_csv(results, DATASET_PATH, detailed_csv_path)
 
+    # Save best config to JSON for proof of selection
+    best_config_path = Path(__file__).parent / "results" / "best_config.json"
+    with open(best_config_path, "w") as f:
+        json.dump({
+            "best_score": results.best_score,
+            "best_config": results.best_config,
+        }, f, indent=2)
+    print(f"Best config saved to: {best_config_path}")
+
     # Print category summary
     print_category_summary(results, DATASET_PATH)
 
