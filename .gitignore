@@ -264,6 +264,8 @@ CLAUDE.local.md
 fix_*.py
 cleanup_*.py
 validate_*.py
+# But keep test validation tools
+!tests/optimizer_validation/tools/validate_*.py
 *_REPORT.md
 *_COMPLETE.md
 *_TRACKER.md
