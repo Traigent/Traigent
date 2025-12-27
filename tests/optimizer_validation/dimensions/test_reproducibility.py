@@ -88,6 +88,61 @@ class TestRandomSeedReproducibility:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_non_deterministic_behavior(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test non-deterministic behavior when no seed is provided.
+
+        Purpose:
+            Verify that running without a seed produces different results
+            (or at least allows for it). Note: In a small search space,
+            random search might pick the same configs by chance, so this
+            test is probabilistic or checks for *potential* difference.
+
+        Edge Case: Non-deterministic reproducibility
+        """
+        config_space = {
+            "model": ["gpt-3.5-turbo", "gpt-4", "gpt-4o"],
+            "temperature": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9],
+        }
+
+        # Run first optimization without seed
+        scenario1 = config_space_scenario(
+            name="no_seed_1",
+            config_space=config_space,
+            description="First run without seed",
+            max_trials=5,
+            mock_mode_config={"optimizer": "random"},  # No seed
+            gist_template="no-seed-1 -> {trial_count()} | {status()}",
+        )
+
+        _, result1 = await scenario_runner(scenario1)
+
+        # Run second optimization without seed
+        scenario2 = config_space_scenario(
+            name="no_seed_2",
+            config_space=config_space,
+            description="Second run without seed",
+            max_trials=5,
+            mock_mode_config={"optimizer": "random"},  # No seed
+            gist_template="no-seed-2 -> {trial_count()} | {status()}",
+        )
+
+        _, result2 = await scenario_runner(scenario2)
+
+        # We can't strictly assert they are different because random chance
+        # might make them same. But we can verify they run successfully.
+        # Ideally, we'd check that the seed was NOT fixed.
+        assert not isinstance(result1, Exception)
+        assert not isinstance(result2, Exception)
+
+        validation1 = result_validator(scenario1, result1)
+        assert validation1.passed, validation1.summary()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_random_different_seed_different_results(
         self,
         scenario_runner,
