@@ -11,10 +11,9 @@ package validation, and environment configuration detection.
 from __future__ import annotations
 
 import os
-import socket
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
@@ -468,7 +467,7 @@ class TestTraiGentDiagnostics:
     def test_check_network_failure(self, mock_socket: MagicMock) -> None:
         """Test network connectivity check when connection fails."""
         report = DiagnosticReport()
-        mock_socket.side_effect = socket.timeout("Connection timeout")
+        mock_socket.side_effect = TimeoutError("Connection timeout")
 
         TraiGentDiagnostics._check_network(report)
 

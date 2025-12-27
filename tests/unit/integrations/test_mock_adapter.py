@@ -3,8 +3,6 @@
 import os
 from unittest.mock import patch
 
-import pytest
-
 from traigent.integrations.utils.mock_adapter import (
     MOCK_ENV_VARS,
     MockAdapter,

@@ -362,7 +362,7 @@ class TestIntegration:
 
         scores = [0.75, 0.85, 0.82, 0.88]
 
-        for i, (config, score) in enumerate(zip(configs, scores)):
+        for i, (config, score) in enumerate(zip(configs, scores, strict=False)):
             trial = Trial(
                 configuration=config,
                 score=score,

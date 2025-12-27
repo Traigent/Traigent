@@ -7,10 +7,10 @@ Tests for version compatibility management for framework integrations.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
-from packaging.version import InvalidVersion, Version
+from packaging.version import Version
 
 from traigent.integrations.utils.version_compat import (
     VersionCompatibilityManager,
@@ -477,7 +477,7 @@ class TestVersionCompatibilityManager:
         migrated = manager.migrate_parameters("openai", "1.0.0", "1.5.0", params)
 
         # All values should be preserved
-        for key, value in params.items():
+        for _key, value in params.items():
             # Check the value exists in migrated dict (might have different key)
             assert value in migrated.values()
 

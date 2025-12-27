@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -252,7 +252,7 @@ class TestLangChainMetadataCapture:
                     results.append(result)
 
         # Create and start multiple threads
-        for i in range(10):
+        for _ in range(10):
             thread = threading.Thread(target=get_response)
             threads.append(thread)
             thread.start()

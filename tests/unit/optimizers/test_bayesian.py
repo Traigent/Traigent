@@ -553,7 +553,7 @@ class TestBayesianOptimizer:
         # For now, just verify that both optimizers produce valid configs
         # Random seed behavior may be affected by multiple randomness sources
 
-        for c1, c2 in zip(configs1, configs2):
+        for c1, c2 in zip(configs1, configs2, strict=False):
             # Both should produce valid configurations
             assert 0.0 <= c1["x"] <= 1.0
             assert 0.0 <= c1["y"] <= 1.0

@@ -6,6 +6,8 @@ and the configure_integrations function with extensive edge case coverage.
 
 from __future__ import annotations
 
+from dataclasses import fields
+
 import pytest
 
 import traigent.integrations.config as config_module
@@ -17,6 +19,29 @@ from traigent.integrations.config import (
     integration_config,
 )
 from traigent.utils.exceptions import ValidationError
+
+
+@pytest.fixture(autouse=True)
+def reset_integration_config():
+    """Reset integration_config to defaults before and after each test.
+
+    This ensures test isolation when tests modify the global integration_config.
+    Handles both property modifications and complete object replacement.
+    """
+    # Save the original object reference and its values
+    original_config = config_module.integration_config
+    original_values = {
+        f.name: getattr(original_config, f.name) for f in fields(IntegrationConfig)
+    }
+
+    yield
+
+    # Restore original object reference if it was replaced
+    config_module.integration_config = original_config
+
+    # Restore original values
+    for name, value in original_values.items():
+        setattr(config_module.integration_config, name, value)
 
 
 class TestIntegrationConfig:

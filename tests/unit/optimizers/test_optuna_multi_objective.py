@@ -51,8 +51,12 @@ class TestOptunaMultiObjective:
             for other in pareto_trials:
                 if trial != other:
                     dominates = all(
-                        v1 <= v2 for v1, v2 in zip(other.values, trial.values)
-                    ) and any(v1 < v2 for v1, v2 in zip(other.values, trial.values))
+                        v1 <= v2
+                        for v1, v2 in zip(other.values, trial.values, strict=False)
+                    ) and any(
+                        v1 < v2
+                        for v1, v2 in zip(other.values, trial.values, strict=False)
+                    )
                     assert not dominates
 
     def test_multi_objective_with_constraints(self):
@@ -121,7 +125,7 @@ class TestOptunaMultiObjective:
             raw_configs, trials = coordinator.ask_batch(n_suggestions=2)
             configs = [materialize_config(cfg) for cfg in raw_configs]
 
-            for config, _trial in zip(configs, trials):
+            for config, _trial in zip(configs, trials, strict=False):
                 trial_id = config["_trial_id"]
 
                 # Simulate different objectives based on model size
