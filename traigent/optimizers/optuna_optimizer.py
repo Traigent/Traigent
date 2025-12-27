@@ -63,6 +63,8 @@ class OptunaBaseOptimizer(BaseOptimizer):
     """Base implementation shared across specific Optuna optimizers."""
 
     sampler: optuna.samplers.BaseSampler | None = None
+    # Sampler class to use when random_seed is provided (allows seeded reproducibility)
+    sampler_class: type | None = None
 
     def __init__(
         self,
@@ -78,6 +80,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
         checkpoint_manager: OptunaCheckpointManager | None = None,
         metrics_emitter: OptunaMetricsEmitter | None = None,
         mock_mode: bool = False,
+        random_seed: int | None = None,
         **kwargs: Any,
     ) -> None:
         ensure_optuna_available()
@@ -91,11 +94,26 @@ class OptunaBaseOptimizer(BaseOptimizer):
         self._metrics_emitter = metrics_emitter
         self._mock_mode = mock_mode
         self._mock_config = self._build_mock_config() if mock_mode else None
+        self.random_seed = random_seed
 
         self._distributions = config_space_to_distributions(config_space)
         inferred = list(directions) if directions else infer_directions(objectives)
 
-        sampler = sampler or self.sampler or optuna.samplers.TPESampler()
+        # Create sampler with seed if provided for reproducibility
+        if sampler is not None:
+            # Explicit sampler provided, use it directly
+            pass
+        elif random_seed is not None and self.sampler_class is not None:
+            # Create a new seeded instance of the sampler class
+            sampler = self.sampler_class(seed=random_seed)
+            logger.debug(
+                "Created seeded %s with seed=%s",
+                self.sampler_class.__name__,
+                random_seed,
+            )
+        else:
+            # Fall back to class-level sampler or default TPESampler
+            sampler = self.sampler or optuna.samplers.TPESampler()
         self._sampler = sampler
 
         if pruner is None:
@@ -158,6 +176,10 @@ class OptunaBaseOptimizer(BaseOptimizer):
         self._active_trials[trial.number] = trial
         self._pending_configs[trial.number] = config
         self._trial_count += 1
+
+        # Track this config for exhaustion detection (exclude internal trial ID)
+        config_for_hash = {k: v for k, v in config.items() if k != "_optuna_trial_id"}
+        self.register_tried_config(config_for_hash)
 
         logger.debug("Optuna suggested trial %s -> %s", trial.number, config)
 
@@ -331,9 +353,28 @@ class OptunaBaseOptimizer(BaseOptimizer):
         self._synced_trials.add(str(trial_id))
 
     def should_stop(self, history: list[TrialResult]) -> bool:
-        """Stop when the configured maximum number of trials is reached."""
+        """Stop when the configured maximum number of trials is reached or space exhausted.
 
-        return self.trial_count >= self.max_trials
+        For discrete configuration spaces (only categorical parameters), optimization
+        stops early when all unique configurations have been tried, preventing wasteful
+        duplicate trials.
+        """
+        if self.trial_count >= self.max_trials:
+            return True
+
+        # Early termination for exhausted discrete config spaces
+        if self.is_config_space_exhausted():
+            cardinality = self.config_space_cardinality
+            logger.info(
+                "Config space exhausted after %d unique configurations. "
+                "Stopping early (requested %d trials, but only %d possible).",
+                self.unique_configs_tried,
+                self.max_trials,
+                cardinality,
+            )
+            return True
+
+        return False
 
     # ------------------------------------------------------------------
     # Internal utilities
@@ -597,24 +638,32 @@ class OptunaTPEOptimizer(OptunaBaseOptimizer):
     """Tree-structured Parzen Estimator sampler backed by Optuna."""
 
     sampler = optuna.samplers.TPESampler() if optuna else None  # pragma: no cover
+    sampler_class = optuna.samplers.TPESampler if optuna else None  # pragma: no cover
 
 
 class OptunaRandomOptimizer(OptunaBaseOptimizer):
     """Optuna random sampler."""
 
     sampler = optuna.samplers.RandomSampler() if optuna else None  # pragma: no cover
+    sampler_class = (
+        optuna.samplers.RandomSampler if optuna else None
+    )  # pragma: no cover
 
 
 class OptunaCMAESOptimizer(OptunaBaseOptimizer):
     """CMA-ES sampler for continuous optimisation problems."""
 
     sampler = optuna.samplers.CmaEsSampler() if optuna else None  # pragma: no cover
+    sampler_class = optuna.samplers.CmaEsSampler if optuna else None  # pragma: no cover
 
 
 class OptunaNSGAIIOptimizer(OptunaBaseOptimizer):
     """NSGA-II sampler for multi-objective optimisation."""
 
     sampler = optuna.samplers.NSGAIISampler() if optuna else None  # pragma: no cover
+    sampler_class = (
+        optuna.samplers.NSGAIISampler if optuna else None
+    )  # pragma: no cover
 
 
 class OptunaGridOptimizer(OptunaBaseOptimizer):

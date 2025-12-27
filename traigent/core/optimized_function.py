@@ -1168,6 +1168,10 @@ class OptimizedFunction:
 
         orchestrator_kwargs["samples_include_pruned"] = samples_include_pruned_value
 
+        # Pass constraints to orchestrator
+        if self.constraints:
+            orchestrator_kwargs["constraints"] = self.constraints
+
         # Pass plateau stop condition parameters
         if "plateau_window" in algorithm_kwargs:
             orchestrator_kwargs["plateau_window"] = algorithm_kwargs["plateau_window"]
@@ -1331,6 +1335,27 @@ class OptimizedFunction:
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials and algorithm == "random":
             optimizer_kwargs["max_trials"] = max_trials
+
+        # Extract optimizer configuration from mock_mode_config if present
+        # This allows tests to specify optimizer type and random_seed via mock config
+        mock_config = getattr(self, "mock_mode_config", None) or {}
+        if isinstance(mock_config, dict):
+            # Override algorithm if specified in mock config
+            mock_optimizer = mock_config.get("optimizer")
+            if mock_optimizer and isinstance(mock_optimizer, str):
+                algorithm = mock_optimizer
+                logger.debug(
+                    "Using optimizer '%s' from mock_mode_config", mock_optimizer
+                )
+
+            # Extract and pass random_seed to optimizer for reproducibility
+            random_seed = mock_config.get("random_seed")
+            if random_seed is not None:
+                optimizer_kwargs["random_seed"] = random_seed
+                logger.debug(
+                    "Passing random_seed=%s to optimizer from mock_mode_config",
+                    random_seed,
+                )
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
