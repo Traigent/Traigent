@@ -7,10 +7,9 @@ global invariants and per-test expectations.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from .capture import CapturedTrace
-from .exporters import SpanData
 from .invariants import GLOBAL_INVARIANTS, check_invariant
 
 if TYPE_CHECKING:
