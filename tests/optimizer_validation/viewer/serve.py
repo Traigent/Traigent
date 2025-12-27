@@ -604,6 +604,10 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         elif path.startswith("/api/run/status/"):
             job_id = path.split("/")[-1]
             self._handle_get_status(job_id)
+        elif path.startswith("/api/open"):
+            self._handle_open_file()
+        elif path.startswith("/api/file/"):
+            self._handle_get_file_content()
         elif path == "/" or path == "/index.html":
             self._serve_file("index.html")
         elif path == "/favicon.ico":
@@ -751,6 +755,97 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._send_json(result)
         except Exception as e:
             self._send_json({"error": str(e)}, 500)
+
+    def _handle_open_file(self) -> None:
+        """Handle GET /api/open?file=path&line=N - open file in system editor."""
+        from urllib.parse import parse_qs
+
+        query = parse_qs(urlparse(self.path).query)
+        file_path = query.get("file", [""])[0]
+        line_num = query.get("line", ["1"])[0]
+
+        if not file_path:
+            self._send_json({"error": "No file specified"}, 400)
+            return
+
+        # Security: Validate file path is within project
+        full_path = PROJECT_ROOT / file_path
+        try:
+            full_path = full_path.resolve()
+            if not str(full_path).startswith(str(PROJECT_ROOT.resolve())):
+                self._send_json({"error": "Invalid file path"}, 403)
+                return
+        except (OSError, ValueError):
+            self._send_json({"error": "Invalid file path"}, 400)
+            return
+
+        if not full_path.exists():
+            self._send_json({"error": "File not found"}, 404)
+            return
+
+        # Try to open in VS Code (if available)
+        try:
+            # Try 'code' command (VS Code CLI)
+            subprocess.run(
+                ["code", "--goto", f"{full_path}:{line_num}"],
+                check=False,
+                timeout=2,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._send_json(
+                {"success": True, "editor": "vscode", "file": str(full_path)}
+            )
+            return
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Fallback: Return file content for built-in viewer
+        self._send_json(
+            {
+                "success": True,
+                "editor": "browser",
+                "file": str(file_path),
+                "line": int(line_num) if line_num.isdigit() else 1,
+            }
+        )
+
+    def _handle_get_file_content(self) -> None:
+        """Handle GET /api/file/path/to/file.py - get file content for viewer."""
+        # Extract file path from URL (everything after /api/file/)
+        file_path = self.path.replace("/api/file/", "", 1)
+
+        if not file_path:
+            self._send_json({"error": "No file specified"}, 400)
+            return
+
+        # Security: Validate file path is within project
+        full_path = PROJECT_ROOT / file_path
+        try:
+            full_path = full_path.resolve()
+            if not str(full_path).startswith(str(PROJECT_ROOT.resolve())):
+                self._send_json({"error": "Invalid file path"}, 403)
+                return
+        except (OSError, ValueError):
+            self._send_json({"error": "Invalid file path"}, 400)
+            return
+
+        if not full_path.exists():
+            self._send_json({"error": "File not found"}, 404)
+            return
+
+        # Read and return file content
+        try:
+            content = full_path.read_text()
+            self._send_json(
+                {
+                    "file": file_path,
+                    "content": content,
+                    "lines": content.count("\n") + 1,
+                }
+            )
+        except (OSError, UnicodeDecodeError) as e:
+            self._send_json({"error": f"Failed to read file: {e}"}, 500)
 
     def log_message(self, format: str, *args: Any) -> None:
         """Log HTTP requests."""
