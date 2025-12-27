@@ -800,12 +800,18 @@ class TestConstraintRequiresMetrics:
 
     def test_lambda_single_param(self):
         """Test lambda with single parameter."""
-        single = lambda c: True
+
+        def single(c):
+            return True
+
         assert constraint_requires_metrics(single) is False
 
     def test_lambda_two_params(self):
         """Test lambda with two parameters."""
-        double = lambda c, m: True
+
+        def double(c, m):
+            return True
+
         assert constraint_requires_metrics(double) is True
 
     def test_non_callable_returns_false(self):

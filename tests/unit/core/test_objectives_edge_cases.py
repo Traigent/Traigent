@@ -466,7 +466,9 @@ class TestSerializationRoundTrips:
         assert restored.weights_sum == 1.0
 
         # Verify each objective
-        for orig_obj, rest_obj in zip(original.objectives, restored.objectives):
+        for orig_obj, rest_obj in zip(
+            original.objectives, restored.objectives, strict=False
+        ):
             assert rest_obj.name == orig_obj.name
             assert rest_obj.orientation == orig_obj.orientation
             assert rest_obj.weight == orig_obj.weight
@@ -499,7 +501,7 @@ class TestSerializationRoundTrips:
 
         # Verify all objectives preserved
         assert len(restored.objectives) == 10
-        for orig, rest in zip(original.objectives, restored.objectives):
+        for orig, rest in zip(original.objectives, restored.objectives, strict=False):
             assert rest.to_dict() == orig.to_dict()
 
         # Verify computed fields

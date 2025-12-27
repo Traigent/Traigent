@@ -307,7 +307,6 @@ async def test_executor_batch_execute_invalid_concurrency_type():
 
 def test_local_storage_lock_timeout_graceful_degradation():
     """Test acquire_lock degrades gracefully on timeout."""
-    import tempfile
     import time
 
     from traigent.storage.local_storage import LocalStorageManager
@@ -335,7 +334,6 @@ def test_local_storage_lock_timeout_graceful_degradation():
 
 def test_local_storage_export_session_unsupported_format():
     """Test export_session returns False for unsupported format."""
-    import tempfile
 
     from traigent.storage.local_storage import LocalStorageManager
 

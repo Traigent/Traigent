@@ -8,13 +8,11 @@ with multiple execution modes (edge analytics, standard/hybrid, cloud/SaaS).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from traigent.api.types import TrialResult, TrialStatus
-from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.config.types import ExecutionMode
 from traigent.optigen_integration import OptiGenClient
 from traigent.utils.exceptions import OptimizationError
 

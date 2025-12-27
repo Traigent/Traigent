@@ -28,7 +28,7 @@ from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.exceptions import TrialPrunedError, TVLConstraintError
+from traigent.utils.exceptions import TrialPrunedError
 
 # =============================================================================
 # Mock Classes
@@ -339,7 +339,7 @@ class TestSetupTrialBudgetLease:
         lifecycle = TrialLifecycle(orchestrator)
         dataset = create_mock_dataset(size=50)
 
-        lease = lifecycle._setup_trial_budget_lease(
+        lifecycle._setup_trial_budget_lease(
             dataset=dataset,
             trial_id="test-trial",
             sample_ceiling=25,  # Explicit ceiling

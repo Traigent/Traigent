@@ -211,7 +211,6 @@ class TestStoreTokens:
                 "expires_in": 3600,
             }
         )
-        first_token = token_manager.current_token
 
         token_manager.store_tokens(
             {

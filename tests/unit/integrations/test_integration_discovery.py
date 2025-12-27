@@ -10,7 +10,6 @@ This test suite covers:
 """
 
 import inspect
-from typing import Optional, Union
 from unittest.mock import patch
 
 import pytest
@@ -203,12 +202,12 @@ class TestParameterDiscoveryInit:
 
         # Check Union type handling
         timeout_param = params["timeout"]
-        assert timeout_param.annotation == Union[int, float]
+        assert timeout_param.annotation == int | float
         assert timeout_param.default == 30
 
         # Check Optional type handling
         base_url_param = params["base_url"]
-        assert base_url_param.annotation == Optional[str]
+        assert base_url_param.annotation == str | None
         assert base_url_param.default is None
 
     def test_discover_private_parameters(self, discovery):
@@ -273,7 +272,7 @@ class TestMethodParameterDiscovery:
         assert prompt_param.default == inspect.Parameter.empty
 
         temperature_param = params["temperature"]
-        assert temperature_param.annotation == Optional[float]
+        assert temperature_param.annotation == float | None
         assert temperature_param.default is None
 
     def test_discover_nested_method_parameters(self, discovery, mock_complex_framework):
@@ -298,7 +297,7 @@ class TestMethodParameterDiscovery:
 
         # Check Optional type handling
         max_tokens_param = params["max_tokens"]
-        assert max_tokens_param.annotation == Optional[int]
+        assert max_tokens_param.annotation == int | None
 
     def test_discover_nonexistent_method(self, discovery, mock_framework_instance):
         """Test discovering parameters from non-existent method."""

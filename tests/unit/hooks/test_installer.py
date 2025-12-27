@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import stat
 import tempfile
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest

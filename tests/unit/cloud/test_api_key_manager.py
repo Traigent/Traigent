@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.cloud.api_key_manager import API_KEY_TOKEN_TTL, APIKeyManager
-from traigent.cloud.auth import APIKey, AuthCredentials, SecureToken, UnifiedAuthConfig
+from traigent.cloud.api_key_manager import APIKeyManager
+from traigent.cloud.auth import APIKey, AuthCredentials, UnifiedAuthConfig
 
 
 @pytest.fixture

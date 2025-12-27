@@ -13,7 +13,7 @@ import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -226,7 +226,7 @@ class TestIncentiveManagerStateManagement:
         self, manager: IncentiveManager
     ) -> None:
         """Test saving state handles IO errors gracefully."""
-        with patch("builtins.open", side_effect=IOError("Permission denied")):
+        with patch("builtins.open", side_effect=OSError("Permission denied")):
             # Should not raise exception
             manager._save_state()
 
