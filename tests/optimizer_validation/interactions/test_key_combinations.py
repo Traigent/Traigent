@@ -16,7 +16,6 @@ from tests.optimizer_validation.specs import (
     ObjectiveSpec,
     TestScenario,
     basic_scenario,
-    constrained_scenario,
     multi_objective_scenario,
 )
 
@@ -40,9 +39,10 @@ class TestKeyInjectionExecutionCombinations:
             injection_mode="context",
             execution_mode="edge_analytics",
             max_trials=3,
+            gist_template="context+edge -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         validation = result_validator(scenario, result)
@@ -64,9 +64,10 @@ class TestKeyInjectionExecutionCombinations:
             injection_mode="seamless",
             execution_mode="hybrid",
             max_trials=3,
+            gist_template="seamless+hybrid -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         validation = result_validator(scenario, result)
@@ -88,9 +89,10 @@ class TestKeyInjectionExecutionCombinations:
             injection_mode="parameter",
             execution_mode="cloud",
             max_trials=3,
+            gist_template="parameter+cloud -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         validation = result_validator(scenario, result)
@@ -112,9 +114,10 @@ class TestKeyInjectionExecutionCombinations:
             injection_mode="attribute",
             execution_mode="edge_analytics",
             max_trials=3,
+            gist_template="attribute+edge -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         validation = result_validator(scenario, result)
@@ -134,7 +137,7 @@ class TestMultiObjectiveWithConstraints:
         """Test weighted multi-objective with config-only constraint."""
 
         def temp_limit(config: dict[str, Any]) -> bool:
-            return config.get("temperature", 0) < 0.9
+            return bool(config.get("temperature", 0) < 0.9)
 
         objectives = [
             ObjectiveSpec(name="accuracy", orientation="maximize", weight=0.7),
@@ -156,9 +159,10 @@ class TestMultiObjectiveWithConstraints:
             },
             max_trials=4,
             expected=ExpectedResult(required_metrics=["accuracy", "cost"]),
+            gist_template=("weighted+constraint -> {trial_count()} | {status()}"),
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         validation = result_validator(scenario, result)
@@ -178,7 +182,7 @@ class TestMultiObjectiveWithConstraints:
         ) -> bool:
             if metrics is None:
                 return True
-            return metrics.get("cost", 0) <= 0.15
+            return bool(metrics.get("cost", 0) <= 0.15)
 
         objectives = [
             ObjectiveSpec(name="accuracy", orientation="maximize", weight=1.0),
@@ -201,9 +205,12 @@ class TestMultiObjectiveWithConstraints:
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
             max_trials=4,
             expected=ExpectedResult(required_metrics=["accuracy", "latency"]),
+            gist_template=(
+                "multi-obj+metric-constraint -> {trial_count()} | {status()}"
+            ),
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
         validation = result_validator(scenario, result)
@@ -232,7 +239,7 @@ class TestComplexWorkflows:
         def model_temp_constraint(config: dict[str, Any]) -> bool:
             # GPT-4 should use lower temperature
             if config.get("model") == "gpt-4":
-                return config.get("temperature", 0) <= 0.7
+                return bool(config.get("temperature", 0) <= 0.7)
             return True
 
         objectives = [
@@ -261,9 +268,10 @@ class TestComplexWorkflows:
                 min_trials=3,
                 required_metrics=["accuracy", "cost"],
             ),
+            gist_template="full-workflow -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
@@ -286,6 +294,7 @@ class TestComplexWorkflows:
             injection_mode="context",
             execution_mode="edge_analytics",
             max_trials=3,
+            gist_template="apply-best -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
@@ -314,7 +323,7 @@ class TestEdgeCaseCombinations:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test single-value config with multi-objective (limited optimization)."""
+        """Test single-value config with multi-objective."""
         objectives = [
             ObjectiveSpec(name="accuracy", orientation="maximize", weight=1.0),
             ObjectiveSpec(name="cost", orientation="minimize", weight=1.0),
@@ -328,9 +337,10 @@ class TestEdgeCaseCombinations:
                 "temperature": [0.5, 0.7],  # Multiple values
             },
             max_trials=2,
+            gist_template=("single-val+multi-obj -> {trial_count()} | {status()}"),
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
         validation = result_validator(scenario, result)
@@ -358,9 +368,10 @@ class TestEdgeCaseCombinations:
                 "model": ["gpt-3.5-turbo", "gpt-4"],
             },
             max_trials=3,
+            gist_template="3-obj+small-space -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
         validation = result_validator(scenario, result)
