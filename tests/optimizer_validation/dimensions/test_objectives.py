@@ -68,6 +68,46 @@ class TestSingleObjective:
         assert validation.passed, validation.summary()
 
 
+class TestBoundedObjective:
+    """Tests for bounded objective configurations."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_bounded_objective(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test objective with defined bounds (thresholds).
+
+        Purpose:
+            Verify that objectives with bounds are handled correctly.
+            (Note: Current implementation might treat bounds as constraints or just metadata)
+
+        Edge Case: Bounded objective
+        """
+        scenario = TestScenario(
+            name="bounded_objective",
+            description="Objective with bounds",
+            objectives=[
+                ObjectiveSpec(
+                    name="accuracy",
+                    orientation="maximize",
+                    bounds=(0.5, 1.0),  # Min 0.5, Max 1.0
+                )
+            ],
+            config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
+            max_trials=2,
+            gist_template="bounded-obj -> {trial_count()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        assert not isinstance(result, Exception)
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+
 class TestMultiObjective:
     """Tests for multi-objective optimization."""
 
@@ -84,17 +124,14 @@ class TestMultiObjective:
         # Use only built-in metrics supported by the evaluator
         objective_names = ["accuracy", "cost", "latency"]
         objectives = [
-            ObjectiveSpec(name=objective_names[i], weight=1.0)
-            for i in range(objective_count)
+            ObjectiveSpec(name=objective_names[i], weight=1.0) for i in range(objective_count)
         ]
 
         scenario = multi_objective_scenario(
             name=f"multi_{objective_count}_objectives",
             objectives=objectives,
             max_trials=3,
-            gist_template=(
-                f"multi-{objective_count} -> {{trial_count()}} | {{status()}}"
-            ),
+            gist_template=(f"multi-{objective_count} -> {{trial_count()}} | {{status()}}"),
         )
 
         _, result = await scenario_runner(scenario)
@@ -634,9 +671,7 @@ class TestMultiObjectiveWithAlgorithms:
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         if hasattr(result, "trials"):
             # Grid should have tried all 4 combinations
-            assert (
-                len(result.trials) == 4
-            ), f"Expected 4 trials, got {len(result.trials)}"
+            assert len(result.trials) == 4, f"Expected 4 trials, got {len(result.trials)}"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 

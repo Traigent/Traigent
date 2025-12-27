@@ -77,14 +77,12 @@ class TestRandomSeedReproducibility:
             configs2 = [t.config for t in result2.trials]
 
             # With same seed, should get same configs in same order
-            assert len(configs1) == len(
-                configs2
-            ), f"Different trial counts: {len(configs1)} vs {len(configs2)}"
+            assert len(configs1) == len(configs2), (
+                f"Different trial counts: {len(configs1)} vs {len(configs2)}"
+            )
 
             for i, (c1, c2) in enumerate(zip(configs1, configs2, strict=False)):
-                assert (
-                    c1 == c2
-                ), f"Trial {i + 1} configs differ with same seed: {c1} vs {c2}"
+                assert c1 == c2, f"Trial {i + 1} configs differ with same seed: {c1} vs {c2}"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -450,9 +448,9 @@ class TestOptunaSeedReproducibility:
             # At minimum, first trial should be identical
             if len(configs1) > 0 and len(configs2) > 0:
                 # Categorical part should definitely match
-                assert configs1[0].get("model") == configs2[0].get(
-                    "model"
-                ), "First trial model should match with same seed"
+                assert configs1[0].get("model") == configs2[0].get("model"), (
+                    "First trial model should match with same seed"
+                )
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -572,16 +570,12 @@ class TestContinuousParameterReproducibility:
 
         # Compare floating point values
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
-            for i, (t1, t2) in enumerate(
-                zip(result1.trials, result2.trials, strict=False)
-            ):
+            for i, (t1, t2) in enumerate(zip(result1.trials, result2.trials, strict=False)):
                 temp1 = t1.config.get("temperature")
                 temp2 = t2.config.get("temperature")
 
                 if temp1 is not None and temp2 is not None:
-                    assert (
-                        abs(temp1 - temp2) < 1e-10
-                    ), f"Trial {i + 1} temperature differs"
+                    assert abs(temp1 - temp2) < 1e-10, f"Trial {i + 1} temperature differs"
 
                 top_p1 = t1.config.get("top_p")
                 top_p2 = t2.config.get("top_p")
@@ -642,24 +636,20 @@ class TestMixedSpaceReproducibility:
 
         # Compare all config values
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
-            for i, (t1, t2) in enumerate(
-                zip(result1.trials, result2.trials, strict=False)
-            ):
+            for i, (t1, t2) in enumerate(zip(result1.trials, result2.trials, strict=False)):
                 # Categorical should match exactly
-                assert t1.config.get("model") == t2.config.get(
-                    "model"
-                ), f"Trial {i + 1} model differs"
-                assert t1.config.get("max_tokens") == t2.config.get(
-                    "max_tokens"
-                ), f"Trial {i + 1} max_tokens differs"
+                assert t1.config.get("model") == t2.config.get("model"), (
+                    f"Trial {i + 1} model differs"
+                )
+                assert t1.config.get("max_tokens") == t2.config.get("max_tokens"), (
+                    f"Trial {i + 1} max_tokens differs"
+                )
 
                 # Continuous should match within epsilon
                 temp1 = t1.config.get("temperature")
                 temp2 = t2.config.get("temperature")
                 if temp1 is not None and temp2 is not None:
-                    assert (
-                        abs(temp1 - temp2) < 1e-10
-                    ), f"Trial {i + 1} temperature differs"
+                    assert abs(temp1 - temp2) < 1e-10, f"Trial {i + 1} temperature differs"
 
 
 class TestSeedEdgeCases:
@@ -788,9 +778,9 @@ class TestSeedEdgeCases:
         if isinstance(result, Exception):
             # If it fails, should be a clear error about invalid seed
             error_msg = str(result).lower()
-            assert (
-                "seed" in error_msg or "negative" in error_msg
-            ), f"Error should mention seed issue: {result}"
+            assert "seed" in error_msg or "negative" in error_msg, (
+                f"Error should mention seed issue: {result}"
+            )
         else:
             # If it works, that's fine too
             result_validator(scenario, result)

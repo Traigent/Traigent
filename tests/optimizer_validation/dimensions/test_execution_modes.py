@@ -48,6 +48,44 @@ class TestExecutionModeMatrix:
         assert validation.passed, validation.summary()
 
 
+class TestInvalidExecutionMode:
+    """Tests for invalid execution mode configurations."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_invalid_execution_mode(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test behavior with an invalid execution mode string.
+
+        Purpose:
+            Verify that providing an unknown execution mode raises a ValueError
+            or handled gracefully.
+
+        Edge Case: Invalid execution mode
+        """
+        scenario = TestScenario(
+            name="invalid_execution_mode",
+            description="Invalid execution mode string",
+            execution_mode="invalid_mode_xyz",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            max_trials=1,
+            expected=ExpectedResult(
+                outcome=ExpectedOutcome.FAILURE,
+                error_type=ValueError,
+            ),
+            gist_template="invalid-mode -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        # Should fail with ValueError
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+
 class TestEdgeAnalyticsMode:
     """Tests specific to EDGE_ANALYTICS execution mode."""
 
