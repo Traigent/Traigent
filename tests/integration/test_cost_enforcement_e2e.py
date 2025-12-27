@@ -17,10 +17,9 @@ Reference: REDACTED_HOME/.claude/plans/snazzy-whistling-kettle.md
 
 from __future__ import annotations
 
-import asyncio
 import os
 from typing import Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import Mock
 
 import pytest
 
@@ -28,15 +27,9 @@ import pytest
 os.environ["TRAIGENT_MOCK_MODE"] = "false"
 
 from traigent.api.types import (
-    OptimizationStatus,
     TrialResult,
-    TrialStatus,
 )
 from traigent.config.types import TraigentConfig
-from traigent.core.cost_enforcement import (
-    CostEnforcer,
-    CostEnforcerConfig,
-)
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.core.stop_conditions import CostLimitStopCondition
 from traigent.evaluators.base import (
@@ -325,7 +318,7 @@ class TestE2ECostEnforcementFlow:
             cost_approved=True,
         )
 
-        result = await orchestrator.optimize(
+        await orchestrator.optimize(
             func=mock_function,
             dataset=sample_dataset,
         )
@@ -476,7 +469,6 @@ class TestE2ECostEnforcementFlow:
         )
 
         # Track state during optimization
-        initial_accumulated = orchestrator.cost_enforcer._accumulated_cost
 
         await orchestrator.optimize(
             func=mock_function,

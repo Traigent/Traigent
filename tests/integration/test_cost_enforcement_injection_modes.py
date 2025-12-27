@@ -8,8 +8,6 @@ decorator-level injection coverage.
 
 from __future__ import annotations
 
-import pytest
-
 from traigent.api.decorators import optimize
 from traigent.config.context import get_config
 from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig

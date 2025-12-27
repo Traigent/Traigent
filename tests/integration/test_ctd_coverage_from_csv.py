@@ -244,7 +244,7 @@ class CTDTestGenerator:
         if n >= len(parameters):
             # Full factorial when n >= number of parameters
             for combo in itertools.product(*param_values):
-                all_combinations.append(dict(zip(param_names, combo)))
+                all_combinations.append(dict(zip(param_names, combo, strict=False)))
         else:
             # n-wise coverage
             # Get all n-tuples of parameters
@@ -255,7 +255,7 @@ class CTDTestGenerator:
                 # Generate combinations for this subset
                 for combo in itertools.product(*subset_values):
                     # Create a partial test case
-                    partial_case = dict(zip(subset_names, combo))
+                    partial_case = dict(zip(subset_names, combo, strict=False))
 
                     # Check if this combination is already covered
                     combo_key = tuple(sorted(partial_case.items()))
