@@ -6,8 +6,6 @@ with invalid configurations that should fail at decoration time.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from tests.optimizer_validation.specs import (
@@ -27,21 +25,25 @@ class TestInvalidConfigSpace:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test with empty configuration space."""
+        """Test with empty configuration space.
+
+        Note: TestScenario provides default config if empty,
+        so this documents that behavior - empty config is handled gracefully.
+        """
         scenario = TestScenario(
             name="empty_config_space",
             description="Empty configuration space",
-            config_space={},  # Empty
+            config_space={},  # Empty - will get defaults
             max_trials=2,
-            expected=ExpectedResult(
-                outcome=ExpectedOutcome.FAILURE,
-            ),
+            # TestScenario provides default config if empty, so this succeeds
+            expected=ExpectedResult(),
+            gist_template="empty-config -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
-        # Should fail - empty config space is invalid
-        # Note: TestScenario provides default config if empty, so this tests that
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -61,9 +63,13 @@ class TestInvalidConfigSpace:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="wrong-type -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail with validation error
 
@@ -85,9 +91,13 @@ class TestInvalidConfigSpace:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="empty-list -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail - empty list is invalid
 
@@ -109,9 +119,13 @@ class TestInvalidConfigSpace:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="invalid-range -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail - min > max is invalid
 
@@ -133,9 +147,13 @@ class TestInvalidConfigSpace:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="non-numeric -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail - non-numeric range is invalid
 
@@ -150,21 +168,24 @@ class TestInvalidObjectives:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test with empty objectives list."""
+        """Test with empty objectives list.
+
+        Documents behavior: empty objectives uses default objectives.
+        """
         scenario = TestScenario(
             name="empty_objectives",
             description="Empty objectives list",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-            objectives=[],  # Empty
+            objectives=[],  # Empty - uses defaults
             max_trials=2,
-            expected=ExpectedResult(
-                outcome=ExpectedOutcome.FAILURE,
-            ),
+            expected=ExpectedResult(),  # Succeeds with defaults
+            gist_template="empty-objectives -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
-        # Should fail or use default objectives
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -183,9 +204,13 @@ class TestInvalidObjectives:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="dup-objectives -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail - duplicate objectives invalid
 
@@ -201,14 +226,19 @@ class TestInvalidObjectives:
             name="non_string_objective",
             description="Non-string objective",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
-            objectives=[123, "accuracy"],  # type: ignore[list-item]  # 123 is not string
+            # type: ignore[list-item]
+            objectives=[123, "accuracy"],
             max_trials=2,
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="non-string-obj -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail - non-string objective invalid
 
@@ -239,13 +269,21 @@ class TestInvalidConstraints:
                 )
             ],
             max_trials=2,
+            gist_template="non-callable -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # This should work since we used a valid lambda
         # The test validates constraints work at all
+
+        # Emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
         assert not isinstance(result, Exception)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestInvalidMockConfig:
@@ -268,9 +306,13 @@ class TestInvalidMockConfig:
                 "base_accuracy": 2.0,  # Should be 0-1, but might be handled
             },
             max_trials=2,
+            gist_template="invalid-mock -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # May or may not fail depending on validation
 
@@ -294,9 +336,13 @@ class TestInvalidExecutionConfig:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="negative-trials -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail or be handled
 
@@ -317,9 +363,13 @@ class TestInvalidExecutionConfig:
                 min_trials=0,
                 max_trials=0,
             ),
+            gist_template="zero-trials -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should complete with zero trials or fail
 
@@ -340,8 +390,352 @@ class TestInvalidExecutionConfig:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="negative-timeout -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
         # Should fail or be handled
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_zero_timeout(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test with zero timeout.
+
+        Documents behavior: zero timeout results in 0 trials due to
+        immediate timeout.
+        """
+        scenario = TestScenario(
+            name="zero_timeout",
+            description="Zero timeout",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            timeout=0.0,  # Zero timeout - immediate timeout
+            max_trials=2,
+            expected=ExpectedResult(
+                min_trials=0,  # Zero timeout means 0 trials possible
+                max_trials=2,
+            ),
+            gist_template="zero-timeout -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_very_large_max_trials(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test with very large max_trials value."""
+        scenario = TestScenario(
+            name="large_trials",
+            description="Very large max_trials",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            max_trials=1000000,  # 1 million - should be accepted
+            timeout=0.1,  # Short timeout to avoid long test
+            gist_template="large-trials -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should accept the value but timeout quickly
+
+
+class TestInvalidConfigKeyNames:
+    """Tests for invalid configuration key names."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_string_config_key(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test config space with empty string as key."""
+        scenario = TestScenario(
+            name="empty_key",
+            description="Empty string config key",
+            config_space={
+                "": ["value1", "value2"],  # Empty key
+                "model": ["gpt-3.5-turbo"],
+            },
+            max_trials=2,
+            gist_template="empty-key -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should fail or handle empty key
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_config_key_with_dots(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test config key with dots (may conflict with nested notation)."""
+        scenario = TestScenario(
+            name="dotted_key",
+            description="Config key with dots",
+            config_space={
+                "model.name": ["gpt-3.5-turbo", "gpt-4"],
+                "model.version": ["v1", "v2"],
+            },
+            max_trials=2,
+            gist_template="dotted-key -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Document behavior with dotted keys
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_config_key_with_spaces(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test config key with spaces."""
+        scenario = TestScenario(
+            name="space_key",
+            description="Config key with spaces",
+            config_space={
+                "model name": ["gpt-3.5-turbo", "gpt-4"],
+            },
+            max_trials=2,
+            gist_template="space-key -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Document behavior with space in keys
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_config_key_reserved_word(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test config key that might be a reserved word."""
+        scenario = TestScenario(
+            name="reserved_key",
+            description="Config key is reserved word",
+            config_space={
+                "class": ["a", "b"],  # Python reserved word
+                "model": ["gpt-3.5-turbo"],
+            },
+            max_trials=2,
+            gist_template="reserved-key -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should handle reserved words as keys
+
+
+class TestInvalidObjectiveNames:
+    """Tests for invalid objective name specifications."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_objective_name_empty_string(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test with empty string as objective name.
+
+        Documents behavior: empty objective name is handled gracefully
+        (with a warning) rather than raising an error.
+        """
+        scenario = TestScenario(
+            name="empty_objective_name",
+            description="Empty string objective name",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            objectives=[""],  # Empty string - handled with warning
+            max_trials=2,
+            expected=ExpectedResult(),  # Succeeds with warning
+            gist_template="empty-obj-name -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_objective_name_with_spaces(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test objective name containing spaces."""
+        scenario = TestScenario(
+            name="spaced_objective",
+            description="Objective name with spaces",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            objectives=["my accuracy"],  # Space in name
+            max_trials=2,
+            gist_template="spaced-obj -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Document behavior with spaced objective names
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_objective_name_with_special_chars(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test objective name with special characters."""
+        scenario = TestScenario(
+            name="special_objective",
+            description="Objective name with special chars",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            objectives=["accuracy@v1", "cost$total"],  # Special chars
+            max_trials=2,
+            gist_template="special-obj -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Document behavior with special chars in objectives
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_objective_name_none(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test with None in objectives list."""
+        scenario = TestScenario(
+            name="none_objective",
+            description="None in objectives list",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            objectives=[None, "accuracy"],  # type: ignore[list-item]  # None
+            max_trials=2,
+            expected=ExpectedResult(
+                outcome=ExpectedOutcome.FAILURE,
+            ),
+            gist_template="none-obj -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should fail validation
+
+
+class TestInvalidConstraintSignatures:
+    """Tests for constraints with invalid signatures."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_constraint_no_parameters(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test constraint function with no parameters."""
+        from tests.optimizer_validation.specs import ConstraintSpec
+
+        def no_params() -> bool:
+            return True
+
+        scenario = TestScenario(
+            name="no_param_constraint",
+            description="Constraint with no parameters",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            constraints=[
+                ConstraintSpec(
+                    name="no_params",
+                    constraint_fn=no_params,  # type: ignore[arg-type]
+                )
+            ],
+            max_trials=2,
+            gist_template="no-param-const -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should fail when calling constraint
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_constraint_too_many_parameters(
+        self,
+        scenario_runner,
+        result_validator,
+    ) -> None:
+        """Test constraint function with too many required parameters."""
+        from tests.optimizer_validation.specs import ConstraintSpec
+
+        def too_many_params(config: dict, metrics: dict, extra: str) -> bool:
+            return True
+
+        scenario = TestScenario(
+            name="extra_param_constraint",
+            description="Constraint with extra required parameter",
+            config_space={"model": ["gpt-3.5-turbo"]},
+            constraints=[
+                ConstraintSpec(
+                    name="too_many",
+                    constraint_fn=too_many_params,  # type: ignore[arg-type]
+                    requires_metrics=True,
+                )
+            ],
+            max_trials=2,
+            gist_template="extra-param-const -> {error_type()} | {status()}",
+        )
+
+        _, result = await scenario_runner(scenario)
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
+
+        # Should fail when calling constraint

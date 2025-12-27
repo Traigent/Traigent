@@ -43,18 +43,16 @@ class TestEmptyDataset:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="empty-dataset -> {error_type()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
         # Should fail gracefully with appropriate error
         # Either raises exception or produces failed trials
-        if isinstance(result, Exception):
-            # Expected - empty dataset should cause error
-            pass
-        else:
-            # If it completes, trials should fail or be empty
-            pass
+        # Emit evidence regardless of outcome
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestMalformedDataset:
@@ -81,11 +79,17 @@ class TestMalformedDataset:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(malformed_path),
             max_trials=2,
+            expected=ExpectedResult(
+                outcome=ExpectedOutcome.FAILURE,
+            ),
+            gist_template="malformed-json -> {error_type()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
-        # Should handle gracefully
+        # Should handle gracefully - emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -108,11 +112,17 @@ class TestMalformedDataset:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(missing_input_path),
             max_trials=2,
+            expected=ExpectedResult(
+                outcome=ExpectedOutcome.FAILURE,
+            ),
+            gist_template="missing-input -> {error_type()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
-        # Should handle gracefully
+        # Should handle gracefully - emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -135,11 +145,14 @@ class TestMalformedDataset:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(missing_output_path),
             max_trials=2,
+            gist_template="missing-output -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
-        # Should handle gracefully
+        # Should handle gracefully - emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -162,11 +175,14 @@ class TestMalformedDataset:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(null_values_path),
             max_trials=2,
+            gist_template="null-values -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
-        # Should handle gracefully
+        # Should handle gracefully - emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestMissingDataset:
@@ -189,12 +205,17 @@ class TestMissingDataset:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
             ),
+            gist_template="missing-file -> {error_type()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
         # Should fail with file not found error
         assert isinstance(result, Exception), "Expected exception for missing file"
+
+        # Emit evidence for expected failure
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestDatasetEdgeCases:
@@ -212,6 +233,7 @@ class TestDatasetEdgeCases:
             name="single_example",
             dataset_size=1,
             max_trials=2,
+            gist_template="single-example -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
@@ -244,12 +266,17 @@ class TestDatasetEdgeCases:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(unicode_path),
             max_trials=2,
+            gist_template="unicode -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
         # Should handle unicode correctly
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -275,11 +302,14 @@ class TestDatasetEdgeCases:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(long_input_path),
             max_trials=2,
+            gist_template="long-input -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
-        # Should handle long inputs
+        # Should handle long inputs - emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -301,12 +331,17 @@ class TestDatasetEdgeCases:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(empty_strings_path),
             max_trials=2,
+            gist_template="empty-strings -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
 
         # Should handle empty strings
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Emit evidence
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestMalformedInputShapes:
@@ -332,10 +367,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="input-string -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully - string input may be valid for some functions
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -357,10 +395,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="input-array -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -383,10 +424,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="input-number -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -409,10 +453,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="input-boolean -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -439,10 +486,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="nested-nulls -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle nested nulls gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -464,10 +514,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="empty-dict -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle empty dict input
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -489,10 +542,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="empty-array -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle empty array input
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -517,10 +573,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="output-complex -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle complex expected outputs
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -545,10 +604,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="mixed-types -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle mixed types gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -575,10 +637,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="special-keys -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle special characters in keys
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -606,10 +671,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="deep-nested -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle deeply nested structures
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -633,10 +701,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="large-array -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle large arrays
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -659,10 +730,17 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            # Note: \x escape sequences are not valid JSON, so this file fails to parse
+            expected=ExpectedResult(
+                outcome=ExpectedOutcome.FAILURE,
+            ),
+            gist_template="binary-strings -> {error_type()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle binary-like strings
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -686,10 +764,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="numeric-keys -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle numeric string keys
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -712,10 +793,13 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="whitespace -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle whitespace-only values
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -740,7 +824,10 @@ class TestMalformedInputShapes:
             config_space={"model": ["gpt-3.5-turbo"]},
             dataset_path=str(path),
             max_trials=2,
+            gist_template="duplicate-keys -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)
         # Should handle duplicate keys (uses last value)
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
