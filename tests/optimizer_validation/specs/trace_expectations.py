@@ -6,8 +6,9 @@ what a test's trace should look like.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from tests.optimizer_validation.tracing.capture import CapturedTrace

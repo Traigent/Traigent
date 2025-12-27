@@ -27,6 +27,9 @@ from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.utils.logging import get_logger
 
+# Import rate limit fixtures for all tests
+pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
+
 # Increase recursion limit to handle complex test scenarios
 sys.setrecursionlimit(2000)
 

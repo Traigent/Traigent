@@ -6,9 +6,10 @@ including inputs, expected outputs, and failure injection settings.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .trace_expectations import TraceExpectations
@@ -187,9 +188,17 @@ class TestScenario:
     function_should_raise: type[Exception] | None = None
     function_raise_on_call: int | None = None  # 1-based call number
     function_return_value: Any = None
+    custom_function: Callable[..., Any] | None = None
 
     # Trace expectations (for tracing validation)
     trace_expectations: TraceExpectations | None = None
+
+    # Gist template for tooltip display in viewer
+    # Format: Plain text with dynamic placeholders like {status()}, {error_type()}, etc.
+    # Example: "empty-dataset -> {error_type()} | {status()}"
+    # Available functions: status(), outcome(), error_type(), trial_count(), best_score(),
+    #                      stop_reason(), duration(), config_space_size(), injection_mode(), algorithm()
+    gist_template: str | None = None
 
     def __post_init__(self) -> None:
         """Validate scenario configuration."""
