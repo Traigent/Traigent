@@ -349,6 +349,7 @@ reports/
 tests/optimizer_validation/viewer/graph_data.json
 tests/optimizer_validation/viewer/_results/
 tests/optimizer_validation/viewer/*.html
+!tests/optimizer_validation/viewer/index.html
 tests/optimizer_validation/viewer/ontology/*.ttl
 !tests/optimizer_validation/viewer/ontology/schema.ttl
 
