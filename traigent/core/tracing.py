@@ -367,7 +367,7 @@ def trial_span(
 
     Args:
         trial_id: Unique trial identifier
-        trial_number: Trial number (1-based)
+        trial_number: Trial number (0-based internally, displayed as 1-based)
         config: Trial configuration
 
     Yields:
@@ -378,16 +378,22 @@ def trial_span(
         yield None
         return
 
-    # Build descriptive span name
+    # Build descriptive span name (display as 1-based for readability)
+    display_number = trial_number + 1
     config_summary = _format_config_summary(config)
     if config_summary:
-        span_name = f"trial {trial_number}: {config_summary}"
+        span_name = f"trial {display_number}: {config_summary}"
     else:
-        span_name = f"trial {trial_number}"
+        span_name = f"trial {display_number}"
 
     with tracer.start_as_current_span(span_name) as span:
         span.set_attribute("trial.id", trial_id)
-        span.set_attribute("trial.number", trial_number)
+        span.set_attribute(
+            "trial.number", trial_number
+        )  # Keep 0-based for programmatic access
+        span.set_attribute(
+            "trial.display_number", display_number
+        )  # 1-based for display
         try:
             span.set_attribute("trial.config", json.dumps(config))
         except (TypeError, ValueError):
