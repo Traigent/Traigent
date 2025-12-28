@@ -1,5 +1,5 @@
 #!/bin/bash
-# TraiGent Quick Start Bash Wrapper
+# Traigent Quick Start Bash Wrapper
 # Simple wrapper to run the Python quickstart script
 
 # Colors
@@ -8,7 +8,7 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║     TraiGent Quick Start Installer     ║${NC}"
+echo -e "${BLUE}║     Traigent Quick Start Installer     ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 

@@ -191,10 +191,10 @@ class TestInstallDevScript(unittest.TestCase):
 
         # Check for key messages
         expected_messages = [
-            "Setting up TraiGent SDK for development",
+            "Setting up Traigent SDK for development",
             "Checking Python version",
             "Creating virtual environment",
-            "Installing TraiGent SDK in development mode",
+            "Installing Traigent SDK in development mode",
             "Running initial tests",
             "Development setup complete",
         ]

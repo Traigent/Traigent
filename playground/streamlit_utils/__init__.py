@@ -1,5 +1,5 @@
 """
-Streamlit utilities for TraiGent Playground.
+Streamlit utilities for Traigent Playground.
 
 This package provides utility functions and classes for Streamlit-specific
 functionality like progress tracking and example validation.

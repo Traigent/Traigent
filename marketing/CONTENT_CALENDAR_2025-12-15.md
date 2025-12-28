@@ -1,11 +1,11 @@
-# TraiGent Launch Content Calendar (6 Weeks)
+# Traigent Launch Content Calendar (6 Weeks)
 
 Start date: **2025-12-15** (adjust freely).
 
 ## Launch State (copy/paste into posts as needed)
 
 **Available at launch (OSS):**
-- TraiGent SDK (current repo) + local execution (`edge_analytics`)
+- Traigent SDK (current repo) + local execution (`edge_analytics`)
 - Mock mode (`TRAIGENT_MOCK_MODE=true`) for zero-cost dry runs
 - CI/CD example and docs paths you can point people to (`examples/integrations/ci-cd/README.md`, `docs/api-reference/*`)
 
@@ -56,7 +56,7 @@ Run a 20-minute review every Friday:
 ## Week 1 (Paradigm shift + launch framing)
 
 - 2025-12-15 (LI, core): Agents need specs (not vibes). Asset: `docs/demos/output/optimize.svg`
-- 2025-12-18 (Medium, core): Agents under specification (approach + how TraiGent implements it). Asset: `docs/demos/output/optimize.svg`
+- 2025-12-18 (Medium, core): Agents under specification (approach + how Traigent implements it). Asset: `docs/demos/output/optimize.svg`
 - 2025-12-19 (LI, core): Agent CI/CD gates: regression + missed improvement. Asset: `docs/demos/output/github-hooks.svg`
 - 2025-12-17 (LI, optional): Tuned Variables: static vs tuned config. Asset: snippet screenshot
 

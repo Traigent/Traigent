@@ -1,5 +1,5 @@
 """
-Constrained Example Generators for TraiGent SDK.
+Constrained Example Generators for Traigent SDK.
 
 This module provides type-specific example generators that follow strict
 templates and constraints for each problem type. This ensures consistency

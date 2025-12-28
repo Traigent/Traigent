@@ -8,7 +8,7 @@
   </a>
 </p>
 
-This use case demonstrates optimizing a **Sales Development Representative (SDR) outbound message generator** using TraiGent.
+This use case demonstrates optimizing a **Sales Development Representative (SDR) outbound message generator** using Traigent.
 
 ## Overview
 

@@ -1,4 +1,4 @@
-"""Authentication providers for TraiGent.
+"""Authentication providers for Traigent.
 
 This package provides complete implementations of SAML, OIDC, TOTP, and SMS
 authentication methods with enterprise security features.

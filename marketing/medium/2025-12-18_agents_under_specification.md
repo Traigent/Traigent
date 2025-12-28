@@ -4,7 +4,7 @@ Most teams don’t have an “agent problem”.
 
 They have a *software engineering problem*—because agent behavior changes, but their process doesn’t.
 
-We built TraiGent to help teams ship AI agents with the same discipline they apply to production systems: specifications, measurable objectives, constraints, and gates.
+We built Traigent to help teams ship AI agents with the same discipline they apply to production systems: specifications, measurable objectives, constraints, and gates.
 
 > Suggested visual: `docs/demos/output/optimize.svg` (optimization loop) or `docs/demos/output/github-hooks.svg` (gates in practice)
 
@@ -44,7 +44,7 @@ But other variables directly shape behavior, and their best values change over t
 
 These are **Tuned Variables**. They should be optimized against a specification.
 
-## What TraiGent looks like in code (minimal)
+## What Traigent looks like in code (minimal)
 
 At a high level, you define:
 
@@ -83,9 +83,9 @@ A practical agent spec typically includes:
 3. **Budgets**: how much evaluation you’re willing to spend to validate a change
 4. **Promotion rules**: how you decide to ship (meaningful deltas + confidence)
 
-This is the mental model behind TVL specs in TraiGent: the spec is the authoritative definition of what matters, and the tooling turns that into a repeatable tuning + gating workflow.
+This is the mental model behind TVL specs in Traigent: the spec is the authoritative definition of what matters, and the tooling turns that into a repeatable tuning + gating workflow.
 
-We call this approach **Agents Under Specification**. TraiGent implements it via **Tuned Variable Language (TVL)** specs.
+We call this approach **Agents Under Specification**. Traigent implements it via **Tuned Variable Language (TVL)** specs.
 
 ## Where CI/CD fits: quality gates for behavior
 
@@ -95,7 +95,7 @@ Once objectives and constraints are explicit, you can make CI do what it’s goo
 - surface “missed improvements” (so you don’t ship suboptimal configs)
 - make cost/latency tradeoffs explicit, not accidental
 
-TraiGent ships an example CI integration that implements two gates:
+Traigent ships an example CI integration that implements two gates:
 
 - **Regression Gate**: fail if you degrade baseline beyond a threshold
 - **Improvement Gate**: alert if tuning finds a materially better config than the one you’re shipping
@@ -117,9 +117,9 @@ See: `docs/api-reference/telemetry.md`
 3. Add a regression gate in CI (start with accuracy; add cost/latency next).
 4. Promote only when the gate passes, then track drift and re-tune.
 
-## Try TraiGent locally (no API spend)
+## Try Traigent locally (no API spend)
 
-TraiGent includes mock mode so you can test the workflow without provider calls:
+Traigent includes mock mode so you can test the workflow without provider calls:
 
 - `export TRAIGENT_MOCK_MODE=true`
 - `python examples/quickstart/01_simple_qa.py`

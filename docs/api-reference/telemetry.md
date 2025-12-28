@@ -1,16 +1,16 @@
-# TraiGent Telemetry Documentation
+# Traigent Telemetry Documentation
 
-This document describes what telemetry data TraiGent SDK collects, how it's used, retention policies, and how to opt-out.
+This document describes what telemetry data Traigent SDK collects, how it's used, retention policies, and how to opt-out.
 
 ## Overview
 
-TraiGent SDK collects telemetry data to improve the optimization experience and help diagnose issues. All telemetry collection respects user privacy and can be completely disabled.
+Traigent SDK collects telemetry data to improve the optimization experience and help diagnose issues. All telemetry collection respects user privacy and can be completely disabled.
 
 ## What Data is Collected
 
 ### Optimization Metrics
 
-During optimization runs, TraiGent collects:
+During optimization runs, Traigent collects:
 
 **Trial Lifecycle Events**:
 - Trial start/completion timestamps
@@ -35,7 +35,7 @@ During optimization runs, TraiGent collects:
 
 ### What is NOT Collected
 
-TraiGent does **not** collect:
+Traigent does **not** collect:
 
 - **User prompts or inputs** (unless explicitly logged in debug mode)
 - **LLM responses or outputs** (unless explicitly logged in debug mode)
@@ -57,7 +57,7 @@ When `privacy_enabled=True` is set in ExecutionOptions:
 )
 ```
 
-TraiGent will:
+Traigent will:
 - Redact all prompts and responses from logs
 - Minimize telemetry data collection
 - Store results only locally
@@ -81,10 +81,10 @@ Telemetry data is used for:
 - No data is sent to external servers
 
 **Cloud Mode** (when available):
-- Metadata is sent to TraiGent backend for optimization coordination
+- Metadata is sent to Traigent backend for optimization coordination
 - Trial results are retained for 90 days
 - You can request data deletion at any time
-- See TraiGent Cloud Privacy Policy for details
+- See Traigent Cloud Privacy Policy for details
 
 ## Opting Out of Telemetry
 
@@ -96,7 +96,7 @@ To completely disable all telemetry collection, set the environment variable:
 export TRAIGENT_DISABLE_TELEMETRY=true
 ```
 
-Or in Python before importing TraiGent:
+Or in Python before importing Traigent:
 
 ```python
 import os
@@ -270,7 +270,7 @@ Telemetry failures never crash your optimization:
 
 ### GDPR
 
-TraiGent SDK is designed to be GDPR-compliant:
+Traigent SDK is designed to be GDPR-compliant:
 
 - **Right to Access**: All data is stored locally by default
 - **Right to Deletion**: Delete files in `~/.traigent/` at any time
@@ -339,7 +339,7 @@ print(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
 **A**: In edge_analytics mode, check the JSON files in `~/.traigent/results/`. They contain the same data sent to telemetry listeners.
 
-### Q: Can I contribute telemetry data to improve TraiGent?
+### Q: Can I contribute telemetry data to improve Traigent?
 
 **A**: Currently, telemetry is local-only in the open-source version. Future versions may offer optional anonymous telemetry reporting with explicit opt-in.
 

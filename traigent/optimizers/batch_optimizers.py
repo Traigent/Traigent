@@ -1,4 +1,4 @@
-"""Batch-optimized optimization strategies for TraiGent SDK.
+"""Batch-optimized optimization strategies for Traigent SDK.
 
 This module provides optimization algorithms specifically designed for batch processing,
 including parallel optimization, multi-objective batch optimization, and distributed strategies.

@@ -2,7 +2,7 @@
 
 ## 🎉 Polish Complete!
 
-All TraiGent examples and documentation have been comprehensively polished and are **ready for review**.
+All Traigent examples and documentation have been comprehensively polished and are **ready for review**.
 
 ## 📋 What Was Done
 

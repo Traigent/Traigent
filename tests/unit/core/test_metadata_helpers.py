@@ -36,7 +36,7 @@ def mock_trial_result():
 
 @pytest.fixture
 def mock_config():
-    """Create mock TraiGent config."""
+    """Create mock Traigent config."""
     config = Mock(spec=TraigentConfig)
     config.execution_mode = "edge_analytics"
     config.minimal_logging = False

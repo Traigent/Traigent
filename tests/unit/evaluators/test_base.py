@@ -163,7 +163,7 @@ class TestDataset:
         dataset = Dataset(examples)
 
         assert dataset.name == "dataset"
-        assert dataset.description == "TraiGent evaluation dataset"
+        assert dataset.description == "Traigent evaluation dataset"
         assert len(dataset.examples) == 1
 
     def test_dataset_creation_none_examples(self):

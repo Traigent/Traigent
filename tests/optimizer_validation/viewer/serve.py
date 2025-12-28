@@ -332,7 +332,7 @@ def process_chat_message(message: str, history: list[dict[str, Any]]) -> dict[st
     history_context = "\n".join(context_lines) if context_lines else "No prior context."
 
     # Build the prompt for Claude Code CLI
-    cli_prompt = f"""You are a test suite assistant for TraiGent's optimizer validation tests.
+    cli_prompt = f"""You are a test suite assistant for Traigent's optimizer validation tests.
 
 ## Your Role
 Answer questions about the test suite using the chatbot tools module.

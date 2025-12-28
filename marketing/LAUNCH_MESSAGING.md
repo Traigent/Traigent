@@ -1,8 +1,8 @@
-# TraiGent SDK Launch Messaging (Working Doc)
+# Traigent SDK Launch Messaging (Working Doc)
 
 ## One-liner
 
-TraiGent helps teams **treat AI agents like production software**: define behavior under specification, tune measurable variables, and ship behind CI/CD quality gates.
+Traigent helps teams **treat AI agents like production software**: define behavior under specification, tune measurable variables, and ship behind CI/CD quality gates.
 
 ## Launch state (keep it explicit)
 
@@ -44,7 +44,7 @@ Pick 1–2 per post/article and keep it concrete:
 
 ## Competitive framing (one-liner)
 
-- Observability tools help you **see** agent behavior; TraiGent helps you **systematically improve and gate** it against a spec. More in `marketing/AUDIENCE_CHANNEL_STRATEGY.md`.
+- Observability tools help you **see** agent behavior; Traigent helps you **systematically improve and gate** it against a spec. More in `marketing/AUDIENCE_CHANNEL_STRATEGY.md`.
 
 ## Claims to avoid (until explicitly true)
 

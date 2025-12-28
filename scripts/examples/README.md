@@ -4,7 +4,7 @@ Scripts for launching demonstrations, running examples, and showcasing functiona
 
 ## Scripts
 
-- **`launch_control_center.py`** - Launch TraiGent Playground (Streamlit UI)
+- **`launch_control_center.py`** - Launch Traigent Playground (Streamlit UI)
 - **`launch_control_center.sh`** - Shell script launcher for control center
 - **`run_examples.py`** - Run all example scripts with comprehensive testing
 - **`build_gallery.py`** - Regenerate `examples/docs/index.html` from `catalog.yaml`
@@ -29,7 +29,7 @@ python scripts/examples/build_gallery.py
 
 ## Features
 
-### TraiGent Control Center
+### Traigent Control Center
 - Interactive Streamlit dashboard
 - Real-time optimization monitoring
 - Configuration management

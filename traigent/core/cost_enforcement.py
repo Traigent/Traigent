@@ -1,4 +1,4 @@
-"""Cost enforcement module for TraiGent SDK.
+"""Cost enforcement module for Traigent SDK.
 
 Provides thread-safe real-time cost tracking with user handshake approval.
 This is the single source of truth for cost tracking - shared by orchestrator
@@ -368,7 +368,7 @@ class CostEnforcer:
         # Check if stdin is a TTY (interactive terminal)
         if not sys.stdin.isatty():
             print(
-                f"\nTraiGent: Estimated cost ${estimated:.2f} exceeds limit "
+                f"\nTraigent: Estimated cost ${estimated:.2f} exceeds limit "
                 f"${self.config.limit:.2f}.\n"
                 f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT.\n",
                 file=sys.stderr,
@@ -384,7 +384,7 @@ class CostEnforcer:
         print(
             f"""
 ================================================================================
-TraiGent Cost Warning
+Traigent Cost Warning
 ================================================================================
 
 Estimated optimization cost: ${estimated:.2f} USD

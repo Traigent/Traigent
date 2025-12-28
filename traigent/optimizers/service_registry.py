@@ -877,7 +877,7 @@ def register_service(
     _global_registry.register_service(service, auto_connect)
 
 
-def register_mock_service(service_name: str = "MockTraiGentService") -> None:
+def register_mock_service(service_name: str = "MockTraigentService") -> None:
     """Register a mock service for testing and development."""
     mock_service = MockRemoteService(service_name=service_name)
     register_service(mock_service, auto_connect=True)

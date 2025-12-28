@@ -1,13 +1,13 @@
 """⚠️  EXPERIMENTAL: Simple base platform executor - NOT FOR PRODUCTION.
 
 🚨 WARNING: This is a NAIVE, simplified implementation for local testing only.
-This is NOT the real TraiGent cloud implementation and does NOT represent
-TraiGent's proprietary IP.
+This is NOT the real Traigent cloud implementation and does NOT represent
+Traigent's proprietary IP.
 
 This module provides a basic base class for experimental platform executors
 used during development and testing while the OptiGen backend is being built.
 
-Real TraiGent cloud execution happens in the OptiGen backend (proprietary).
+Real Traigent cloud execution happens in the OptiGen backend (proprietary).
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-AGENTS FUNC-INTEGRATIONS REQ-AGNT-013 REQ-INT-008 SYNC-OptimizationFlow
@@ -33,7 +33,7 @@ logger = get_logger(__name__)
 class BasePlatformExecutor(AgentExecutor):
     """⚠️  EXPERIMENTAL: Simple base class for naive platform testing.
 
-    🚨 WARNING: This is NOT the real TraiGent cloud architecture!
+    🚨 WARNING: This is NOT the real Traigent cloud architecture!
 
     This is a simplified base class for local testing and development.
     Real platform execution happens in the OptiGen backend.
@@ -314,7 +314,7 @@ class BasePlatformExecutor(AgentExecutor):
         """Translate unified parameters to platform-specific format.
 
         Args:
-            unified_params: Parameters in TraiGent's unified format
+            unified_params: Parameters in Traigent's unified format
             platform_kwargs: Additional platform-specific parameters
 
         Returns:

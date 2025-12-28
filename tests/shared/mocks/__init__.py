@@ -1,4 +1,4 @@
-"""Shared mock classes for TraiGent SDK test suite.
+"""Shared mock classes for Traigent SDK test suite.
 
 This module provides reusable mock implementations to eliminate duplication
 across test files and ensure consistent behavior in tests.
@@ -7,8 +7,8 @@ across test files and ensure consistent behavior in tests.
 from .cloud_services import (
     MockHybridCloudClient,
     MockPrivacyCloudClient,
-    MockTraiGentCloudClient,
-    MockTraiGentCloudClientWithAuth,
+    MockTraigentCloudClient,
+    MockTraigentCloudClientWithAuth,
 )
 from .data_generators import (
     create_config_space,
@@ -51,8 +51,8 @@ __all__ = [
     "MockCohere",
     "ConfigurationLogger",
     # Cloud Services
-    "MockTraiGentCloudClient",
-    "MockTraiGentCloudClientWithAuth",
+    "MockTraigentCloudClient",
+    "MockTraigentCloudClientWithAuth",
     "MockPrivacyCloudClient",
     "MockHybridCloudClient",
     # Data Generators

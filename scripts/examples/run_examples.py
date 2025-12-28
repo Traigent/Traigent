@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Example Runner - Test and validate TraiGent examples
+Example Runner - Test and validate Traigent examples
 
 This script runs examples with proper error handling, timing,
 and validation to ensure they work correctly.
@@ -17,7 +17,7 @@ from typing import Any, Dict, List
 
 
 class ExampleRunner:
-    """Runner for TraiGent examples with validation and reporting."""
+    """Runner for Traigent examples with validation and reporting."""
 
     def __init__(self, base_dir: str = "examples", verbose: bool = False):
         self.verbose = verbose
@@ -105,7 +105,7 @@ class ExampleRunner:
                 issues.append("Missing main section")
 
             if "@traigent.optimize" not in content and "traigent." not in content:
-                issues.append("No TraiGent usage detected")
+                issues.append("No Traigent usage detected")
 
             if not content.startswith("#!/usr/bin/env python3"):
                 issues.append("Missing shebang")
@@ -193,7 +193,7 @@ Total Examples: {total}
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Run TraiGent examples with validation"
+        description="Run Traigent examples with validation"
     )
     parser.add_argument(
         "--pattern",
@@ -230,7 +230,7 @@ def main():
 
     runner = ExampleRunner(base_dir=str(base_path), verbose=args.verbose)
 
-    print("🚀 TraiGent Example Runner")
+    print("🚀 Traigent Example Runner")
     print(f"Pattern: {args.pattern}")
     print(f"Timeout: {args.timeout}s")
     print(f"Base directory: {base_path}")

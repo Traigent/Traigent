@@ -1,8 +1,8 @@
 """
-LangChain optimization problems for TraiGent SDK demonstrations.
+LangChain optimization problems for Traigent SDK demonstrations.
 
 This package provides a collection of realistic, challenging optimization problems
-that demonstrate TraiGent's capabilities across different domains and use cases.
+that demonstrate Traigent's capabilities across different domains and use cases.
 """
 
 from typing import Dict, List, Type

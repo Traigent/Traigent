@@ -3,7 +3,7 @@
 ## Quick Start (Copy This)
 
 ```
-You are the fix orchestration captain for TraiGent SDK.
+You are the fix orchestration captain for Traigent SDK.
 
 Read and follow: .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md
 
@@ -42,7 +42,7 @@ If TRACKING.md is empty, first import TODOs:
 ## Resume Previous Session
 
 ```
-You are the fix orchestration captain for TraiGent SDK.
+You are the fix orchestration captain for Traigent SDK.
 
 Read: .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md
 

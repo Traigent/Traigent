@@ -1,4 +1,4 @@
-"""Standalone API functions for TraiGent SDK."""
+"""Standalone API functions for Traigent SDK."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
@@ -55,7 +55,7 @@ def configure(
     parallel_config: ParallelConfig | dict[str, Any] | None = None,
     objectives: ObjectiveSchema | Sequence[str] | None = None,
 ) -> bool:
-    """Configure global TraiGent SDK settings.
+    """Configure global Traigent SDK settings.
 
     Args:
         default_storage_backend: Default storage ("edge_analytics", "s3", "gcs")
@@ -156,7 +156,7 @@ def initialize(  # noqa: C901
     config: TraigentConfig | None = None,
     **kwargs: Any,
 ) -> bool:
-    """Initialize TraiGent SDK for local or cloud operation.
+    """Initialize Traigent SDK for local or cloud operation.
 
     This function configures the SDK for integration with the Traigent backend,
     enabling seamless optimization with experiment tracking and storage.
@@ -199,7 +199,7 @@ def initialize(  # noqa: C901
     _apply_additional_overrides(kwargs)
     _configure_logging_settings(config)
 
-    logger.info("TraiGent SDK initialized successfully")
+    logger.info("Traigent SDK initialized successfully")
     return True
 
 
@@ -256,7 +256,7 @@ def _apply_config_settings(config: TraigentConfig) -> None:
         "edge_analytics" if config.is_edge_analytics_mode() else "cloud"
     )
 
-    logger.info(f"TraiGent configured for {config.execution_mode} mode")
+    logger.info(f"Traigent configured for {config.execution_mode} mode")
 
 
 def _apply_additional_overrides(overrides: dict[str, Any]) -> None:
@@ -691,14 +691,14 @@ def _check_integration(module_path: str) -> bool:
 
 
 def get_version_info() -> dict[str, Any]:
-    """Get TraiGent SDK version and capability information.
+    """Get Traigent SDK version and capability information.
 
     Returns:
         Dict with version, supported features, and system info
 
     Example:
         >>> info = traigent.get_version_info()
-        >>> print(f"TraiGent SDK v{info['version']}")
+        >>> print(f"Traigent SDK v{info['version']}")
         >>> print(f"Available algorithms: {info['algorithms']}")
     """
     import platform

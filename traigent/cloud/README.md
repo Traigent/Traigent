@@ -1,6 +1,6 @@
-# TraiGent Cloud Integration Module
+# Traigent Cloud Integration Module
 
-This module provides the cloud integration capabilities for TraiGent SDK, enabling communication with the OptiGen backend for optimization tracking and analytics.
+This module provides the cloud integration capabilities for Traigent SDK, enabling communication with the OptiGen backend for optimization tracking and analytics.
 
 ## Components
 
@@ -56,7 +56,7 @@ assert experiment.metadata["execution_mode"] == "edge_analytics"
 
 ## Usage
 
-The cloud module is automatically used by the TraiGent orchestrator. No direct interaction is typically needed:
+The cloud module is automatically used by the Traigent orchestrator. No direct interaction is typically needed:
 
 ```python
 from traigent import optimize

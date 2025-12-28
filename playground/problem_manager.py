@@ -4,7 +4,7 @@ LangChain Problem Management Tool
 ===============================
 
 A powerful CLI tool that uses Claude Code SDK to intelligently generate, modify,
-and manage LangChain optimization problems for the TraiGent framework.
+and manage LangChain optimization problems for the Traigent framework.
 
 This tool provides multiple modes for comprehensive problem management:
 - CREATE: Generate new problems from natural language descriptions
@@ -34,9 +34,9 @@ Requirements:
 ------------
 - Claude Code SDK access
 - LangChain and dependencies
-- TraiGent SDK
+- Traigent SDK
 
-Author: TraiGent SDK / Claude Code
+Author: Traigent SDK / Claude Code
 """
 
 import argparse
@@ -94,7 +94,7 @@ Examples:
   # Clone existing problem with modifications
   python problem_manager.py clone customer_support --name tech_support --domain technical
 
-For more information, see the TraiGent SDK documentation.
+For more information, see the Traigent SDK documentation.
         """,
     )
 

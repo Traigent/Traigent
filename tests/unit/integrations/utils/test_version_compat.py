@@ -347,7 +347,7 @@ class TestVersionCompatibilityManager:
         """Test validation detects deprecated parameters.
 
         Note: The openai 2.0.0 mapping has deprecated_params={"max_tokens"},
-        which means the TraiGent parameter "max_tokens" is deprecated in favor
+        which means the Traigent parameter "max_tokens" is deprecated in favor
         of "max_completion_tokens" in the parameter_mapping.
         """
         # Create a custom test mapping with clear deprecated parameter

@@ -492,7 +492,7 @@ class ParameterDiscovery:
 
         Args:
             cls: The framework class
-            traigent_params: TraiGent parameters to validate
+            traigent_params: Traigent parameters to validate
 
         Returns:
             Dictionary with compatible, incompatible, and missing parameters
@@ -537,10 +537,10 @@ class ParameterDiscovery:
 
         Args:
             cls: The framework class
-            traigent_params: List of TraiGent parameter names
+            traigent_params: List of Traigent parameter names
 
         Returns:
-            Dictionary mapping TraiGent params to framework params
+            Dictionary mapping Traigent params to framework params
         """
         try:
             framework_params = ParameterDiscovery.discover_init_parameters(cls)

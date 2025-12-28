@@ -14,7 +14,7 @@ Model choice, temperature, top_p, retrieval depth, tool thresholds… these are 
 The practical question is simple:
 Can you justify your current agent settings with measurements and gates?
 
-TraiGent treats Tuned Variables as first-class:
+Traigent treats Tuned Variables as first-class:
 - Define the space to explore
 - Evaluate on a dataset (or harness)
 - Optimize for accuracy/cost/latency together

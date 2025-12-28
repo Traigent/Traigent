@@ -3,7 +3,7 @@ Navigation and Header Module
 ===========================
 
 This module handles the main navigation, header, and layout orchestration
-for the TraiGent control center application.
+for the Traigent control center application.
 """
 
 from typing import Dict, List
@@ -146,7 +146,7 @@ def render_header():
     with header_col1:
         # App branding
         st.markdown(
-            '<h1 style="font-size: 1.5rem; color: #10b981; font-weight: 700; margin: 0;">TraiGent</h1>',
+            '<h1 style="font-size: 1.5rem; color: #10b981; font-weight: 700; margin: 0;">Traigent</h1>',
             unsafe_allow_html=True,
         )
 
@@ -205,7 +205,7 @@ def render_footer():
         """
         <div style="margin-top: 3rem; padding: 1.5rem 0; border-top: 1px solid #374151; text-align: center;">
             <p style="color: #9ca3af; font-size: 0.875rem; margin: 0;">
-                🤖 TraiGent SDK - AI Agent Discovery Platform |
+                🤖 Traigent SDK - AI Agent Discovery Platform |
                 <a href="https://github.com/Traigent/Traigent" style="color: #10b981;">GitHub</a> |
                 <a href="mailto:support@traigent.ai" style="color: #10b981;">Support</a>
             </p>
@@ -334,7 +334,7 @@ def render_page_layout():
     """Render the main page layout with header, navigation, and footer."""
     # Configure page
     st.set_page_config(
-        page_title="TraiGent - AI Agent Discovery",
+        page_title="Traigent - AI Agent Discovery",
         page_icon="🤖",
         layout="wide",
         initial_sidebar_state="auto",

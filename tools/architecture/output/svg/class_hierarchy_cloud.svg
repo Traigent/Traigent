@@ -548,23 +548,23 @@
 <text text-anchor="middle" x="6170" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">CloudOptimizationResult</text>
 <text text-anchor="middle" x="6170" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(0 methods)</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient -->
+<!-- traigent_cloud_client_TraigentCloudClient -->
 <g id="node51" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient</title>
+<title>traigent_cloud_client_TraigentCloudClient</title>
 <polygon fill="#c8e6c9" stroke="black" points="6082.5,-75 5969.5,-75 5969.5,-39 6082.5,-39 6082.5,-75"/>
-<text text-anchor="middle" x="6026" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentCloudClient</text>
+<text text-anchor="middle" x="6026" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentCloudClient</text>
 <text text-anchor="middle" x="6026" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(46 methods)</text>
 </g>
-<!-- traigent_cloud_client_BaseTraiGentClient -->
+<!-- traigent_cloud_client_BaseTraigentClient -->
 <g id="node53" class="node">
-<title>traigent_cloud_client_BaseTraiGentClient</title>
+<title>traigent_cloud_client_BaseTraigentClient</title>
 <polygon fill="#bbdefb" stroke="black" points="6107,-147 5997,-147 5997,-111 6107,-111 6107,-147"/>
-<text text-anchor="middle" x="6052" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">BaseTraiGentClient</text>
+<text text-anchor="middle" x="6052" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">BaseTraigentClient</text>
 <text text-anchor="middle" x="6052" y="-121" font-family="Helvetica,sans-Serif" font-size="10.00">(6 methods)</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient&#45;&gt;traigent_cloud_client_BaseTraiGentClient -->
+<!-- traigent_cloud_client_TraigentCloudClient&#45;&gt;traigent_cloud_client_BaseTraigentClient -->
 <g id="edge7" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient&#45;&gt;traigent_cloud_client_BaseTraiGentClient</title>
+<title>traigent_cloud_client_TraigentCloudClient&#45;&gt;traigent_cloud_client_BaseTraigentClient</title>
 <path fill="none" stroke="black" d="M6032.43,-75.3C6035.36,-83.19 6038.89,-92.7 6042.14,-101.45"/>
 <polygon fill="none" stroke="black" points="6038.88,-102.74 6045.65,-110.9 6045.45,-100.3 6038.88,-102.74"/>
 </g>
@@ -966,11 +966,11 @@
 <text text-anchor="middle" x="13787" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">OptimizationRequest</text>
 <text text-anchor="middle" x="13787" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(0 methods)</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService -->
+<!-- traigent_cloud_service_TraigentCloudService -->
 <g id="node109" class="node">
-<title>traigent_cloud_service_TraiGentCloudService</title>
+<title>traigent_cloud_service_TraigentCloudService</title>
 <polygon fill="#c8e6c9" stroke="black" points="13709.5,-75 13588.5,-75 13588.5,-39 13709.5,-39 13709.5,-75"/>
-<text text-anchor="middle" x="13649" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentCloudService</text>
+<text text-anchor="middle" x="13649" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentCloudService</text>
 <text text-anchor="middle" x="13649" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(8 methods)</text>
 </g>
 <!-- traigent_cloud_session_operations_SessionOperations -->

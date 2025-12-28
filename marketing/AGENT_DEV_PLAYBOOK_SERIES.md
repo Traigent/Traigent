@@ -2,7 +2,7 @@
 
 Source material: `docs/agent_development_script.md`
 
-Goal: turn “TraiGent technology” into a **repeatable agent development process** people can adopt (define → evaluate → tune → gate → ship → operate).
+Goal: turn “Traigent technology” into a **repeatable agent development process** people can adopt (define → evaluate → tune → gate → ship → operate).
 
 ## Series format (6 + capstone)
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# TraiGent Interactive Walkthrough Script
-# This script provides an interactive learning experience for TraiGent SDK
+# Traigent Interactive Walkthrough Script
+# This script provides an interactive learning experience for Traigent SDK
 
 set -e
 
@@ -141,7 +141,7 @@ check_api_keys() {
         echo -e "${YELLOW}║                    ⚠️  NO API KEYS DETECTED              ║${NC}"
         echo -e "${YELLOW}╠══════════════════════════════════════════════════════════╣${NC}"
         echo -e "${YELLOW}║                                                          ║${NC}"
-        echo -e "${YELLOW}║  You can still use MOCK mode to see how TraiGent works! ║${NC}"
+        echo -e "${YELLOW}║  You can still use MOCK mode to see how Traigent works! ║${NC}"
         echo -e "${YELLOW}║                                                          ║${NC}"
         echo -e "${YELLOW}║  To use real APIs, set your keys:                       ║${NC}"
         echo -e "${YELLOW}║    export OPENAI_API_KEY=\"sk-...\"                       ║${NC}"
@@ -365,7 +365,7 @@ show_menu() {
             ;;
         6)
             save_progress
-            echo -e "${GREEN}Thanks for learning TraiGent! See you next time! 👋${NC}"
+            echo -e "${GREEN}Thanks for learning Traigent! See you next time! 👋${NC}"
             exit 0
             ;;
         7)
@@ -390,7 +390,7 @@ show_completion() {
 ╠══════════════════════════════════════════════════════════════════════════════╣
 ║                                                                              ║
 ║  You've learned:                                                            ║
-║  ✅ How TraiGent optimizes AI applications without code changes             ║
+║  ✅ How Traigent optimizes AI applications without code changes             ║
 ║  ✅ Different optimization modes (seamless vs parameter)                    ║
 ║  ✅ Multi-objective optimization strategies                                 ║
 ║  ✅ Privacy and execution modes                                             ║
@@ -402,7 +402,7 @@ show_completion() {
 ║  🚀 Next Steps:                                                             ║
 ║  • Explore more examples in the /examples directory                         ║
 ║  • Read the architecture documentation                                      ║
-║  • Join the TraiGent community                                              ║
+║  • Join the Traigent community                                              ║
 ║  • Start optimizing your own AI applications!                               ║
 ║                                                                              ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
@@ -429,13 +429,13 @@ check_dependencies() {
         exit 1
     fi
 
-    # Check if TraiGent is installed
+    # Check if Traigent is installed
     if ! python -c "import traigent" &> /dev/null; then
-        echo -e "${YELLOW}⚠ TraiGent not installed. Installing...${NC}"
+        echo -e "${YELLOW}⚠ Traigent not installed. Installing...${NC}"
         cd "$TRAIGENT_ROOT"
         pip install -e . > /dev/null 2>&1
         if [ $? -ne 0 ]; then
-            echo -e "${RED}❌ Failed to install TraiGent${NC}"
+            echo -e "${RED}❌ Failed to install Traigent${NC}"
             echo "Please run: pip install -e ."
             exit 1
         fi
@@ -469,8 +469,8 @@ main_loop() {
 # Main execution
 main() {
     show_header
-    echo -e "${CYAN}Welcome to the TraiGent Interactive Walkthrough!${NC}"
-    echo -e "${CYAN}This will guide you through learning TraiGent step by step.${NC}"
+    echo -e "${CYAN}Welcome to the Traigent Interactive Walkthrough!${NC}"
+    echo -e "${CYAN}This will guide you through learning Traigent step by step.${NC}"
     echo ""
 
     # Check dependencies

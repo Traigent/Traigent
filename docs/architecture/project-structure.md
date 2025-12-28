@@ -1,6 +1,6 @@
-# TraiGent SDK Project Structure
+# Traigent SDK Project Structure
 
-This document outlines the current structure of the TraiGent SDK project.
+This document outlines the current structure of the Traigent SDK project.
 
 ## Root Directory (current)
 

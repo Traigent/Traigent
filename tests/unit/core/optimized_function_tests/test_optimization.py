@@ -444,7 +444,7 @@ class TestOptimization:
         )
 
         # In cloud execution, should use cloud services
-        with patch("traigent.cloud.client.TraiGentCloudClient") as mock_cloud_client:
+        with patch("traigent.cloud.client.TraigentCloudClient") as mock_cloud_client:
             mock_client_instance = Mock()
             mock_cloud_client.return_value = mock_client_instance
 

@@ -1,4 +1,4 @@
-"""API key management module for TraiGent authentication.
+"""API key management module for Traigent authentication.
 
 This module handles API key lifecycle, validation, rotation, and secure storage.
 Extracted from AuthManager to follow Single Responsibility Principle.

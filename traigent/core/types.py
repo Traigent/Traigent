@@ -1,4 +1,4 @@
-"""Core type definitions for TraiGent optimization system.
+"""Core type definitions for Traigent optimization system.
 
 This module provides essential data structures for optimization configuration,
 parameter definition, and trial management.

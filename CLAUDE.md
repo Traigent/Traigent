@@ -1,7 +1,7 @@
-# TraiGent SDK Claude Instructions
+# Traigent SDK Claude Instructions
 
 ## 🧠 Project Context
-TraiGent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
+Traigent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
 
 ## 🏗️ Architecture & Patterns
 - **Entry Point**: `traigent/api/decorators.py` (`@optimize`) wraps user functions in `OptimizedFunction` (`traigent/core/optimized_function.py`).

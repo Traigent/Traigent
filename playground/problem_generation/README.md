@@ -1,6 +1,6 @@
 # Problem Generation Package
 
-This package provides tools for generating large-scale, diverse problem sets for LangChain optimization with the TraiGent SDK.
+This package provides tools for generating large-scale, diverse problem sets for LangChain optimization with the Traigent SDK.
 
 ## Overview
 

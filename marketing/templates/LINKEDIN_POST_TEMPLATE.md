@@ -1,4 +1,4 @@
-# LinkedIn Post Template (TraiGent)
+# LinkedIn Post Template (Traigent)
 
 ## Voice (default)
 
@@ -15,7 +15,7 @@ One clarifying sentence.
 
 - Name the problem in production terms (regressions, budgets, drift, gates).
 - Contrast “old way” vs “spec-driven way”.
-- Introduce one TraiGent concept (Tuned Variables / TVL spec / promotion gate / CI gate).
+- Introduce one Traigent concept (Tuned Variables / TVL spec / promotion gate / CI gate).
 - Give one concrete example (a metric, a gate, a snippet).
 
 ## CTA (1 line)

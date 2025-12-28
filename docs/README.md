@@ -1,8 +1,8 @@
-# TraiGent SDK Documentation
+# Traigent SDK Documentation
 
 **The first optimization platform that enhances your LLM applications without changing your code.**
 
-![TraiGent Logo](assets/traigent.png)
+![Traigent Logo](assets/traigent.png)
 
 ## 🚀 Quick Start
 
@@ -20,20 +20,20 @@ def answer_question(question: str) -> str:
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
     return llm.invoke(question).content
 
-# Async-safe in TraiGent
+# Async-safe in Traigent
 # results = await answer_question.optimize(max_trials=5)
 ```
 
 ## 📚 Documentation
 
 ### 🎯 [Getting Started](getting-started/)
-- **[Installation](getting-started/installation.md)** - Install TraiGent SDK
+- **[Installation](getting-started/installation.md)** - Install Traigent SDK
 - **[Getting Started](getting-started/GETTING_STARTED.md)** - Your first optimization in 5 minutes
 
 ### 📖 [User Guide](user-guide/)
 - **[Agent Optimization](user-guide/agent_optimization.md)** - Optimize AI agents and workflows
 - **[Choosing Models](user-guide/choosing_optimization_model.md)** - Select the right optimization model
-- **[Injection Modes](user-guide/injection_modes.md)** - Different ways to integrate TraiGent
+- **[Injection Modes](user-guide/injection_modes.md)** - Different ways to integrate Traigent
 - **[Interactive Optimization](user-guide/interactive_optimization.md)** - Real-time optimization workflows
 - **[Evaluation Guide](user-guide/evaluation_guide.md)** - Measure and improve performance
 - **[Optuna Integration](user-guide/optuna_integration.md)** - Optuna-backed optimizers, coordinator, and adapter
@@ -42,17 +42,17 @@ def answer_question(question: str) -> str:
 - **[Complete Function Specification](api-reference/complete-function-specification.md)** - Full API documentation
 
 ### 🏗️ [Architecture](architecture/)
-- **[System Architecture](architecture/ARCHITECTURE.md)** - How TraiGent works internally
+- **[System Architecture](architecture/ARCHITECTURE.md)** - How Traigent works internally
 - **[Project Structure](architecture/project-structure.md)** - Codebase organization
 
 ### 🤝 [Contributing](contributing/)
-- **[Contributing Guide](contributing/CONTRIBUTING.md)** - How to contribute to TraiGent
+- **[Contributing Guide](contributing/CONTRIBUTING.md)** - How to contribute to Traigent
 - **[Code of Conduct](contributing/CODE_OF_CONDUCT.md)** - Community guidelines
 - **[Security Policy](contributing/SECURITY.md)** - Security reporting and practices
 
-## 🎯 What is TraiGent?
+## 🎯 What is Traigent?
 
-TraiGent is a **zero-code optimization platform** that automatically finds the best configurations for your LLM applications. Simply add a decorator to your existing functions, and TraiGent will:
+Traigent is a **zero-code optimization platform** that automatically finds the best configurations for your LLM applications. Simply add a decorator to your existing functions, and Traigent will:
 
 - 🎯 **Optimize multiple objectives** (accuracy, cost, speed, etc.)
 - 🔄 **Test different configurations** automatically
@@ -77,7 +77,7 @@ TraiGent is a **zero-code optimization platform** that automatically finds the b
 
 ## 🚀 Next Steps
 
-1. **[Install TraiGent](getting-started/installation.md)** - Get set up in minutes
+1. **[Install Traigent](getting-started/installation.md)** - Get set up in minutes
 2. **[Follow the Getting Started Guide](getting-started/GETTING_STARTED.md)** - Your first optimization
 3. **Open the Examples** – `examples/index.html` and try the sections
 4. **[Explore User Guides](user-guide/)** - Learn advanced features

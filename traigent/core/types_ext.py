@@ -1,4 +1,4 @@
-"""Extended type definitions for TraiGent optimization system.
+"""Extended type definitions for Traigent optimization system.
 
 This module provides additional type definitions that extend the core types
 with more specific and structured data types for better type safety and

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Claude Agent Helper for TraiGent/OptiGen Multi-Project Communication
+Claude Agent Helper for Traigent/OptiGen Multi-Project Communication
 
 This module provides a helper class for Claude Code to communicate between
 projects using Redis as a message broker. It enables Claude to report issues,
 notify about dependencies, suggest improvements, and coordinate work across
-the entire TraiGent/OptiGen ecosystem.
+the entire Traigent/OptiGen ecosystem.
 
 Usage:
     from tools.claude_agent import ClaudeAgent

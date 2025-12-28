@@ -1,4 +1,4 @@
-"""Consolidated validation utilities for TraiGent SDK.
+"""Consolidated validation utilities for Traigent SDK.
 
 This module combines the best features from the three existing validation systems:
 - validation.py: Simple validation functions
@@ -511,11 +511,11 @@ class Validators:
         except ValueError:
             return False
 
-    # ===== TraiGent-specific Validators =====
+    # ===== Traigent-specific Validators =====
 
     @staticmethod
     def validate_configuration_space(config_space: Any) -> ValidationResult:
-        """Validate TraiGent configuration space."""
+        """Validate Traigent configuration space."""
         result = ValidationResult()
 
         # Type check

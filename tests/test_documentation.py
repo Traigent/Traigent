@@ -2,7 +2,7 @@
 Test suite for documentation consistency validation.
 
 This module tests that all documentation is accurate, consistent, and
-aligned with the actual implementation of the TraiGent SDK.
+aligned with the actual implementation of the Traigent SDK.
 """
 
 import ast
@@ -31,7 +31,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         self.assertTrue(self.readme_path.exists(), "README.md not found")
         content = self.readme_path.read_text()
         self.assertGreater(len(content), 100, "README.md is too short")
-        self.assertIn("TraiGent", content, "README doesn't mention TraiGent")
+        self.assertIn("Traigent", content, "README doesn't mention Traigent")
 
     def test_code_examples_in_readme(self):
         """Test that code examples in README are syntactically correct."""

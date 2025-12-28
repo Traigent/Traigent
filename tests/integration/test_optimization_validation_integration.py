@@ -1,7 +1,7 @@
 """
-Integration tests for TraiGent Optimization Validation System.
+Integration tests for Traigent Optimization Validation System.
 
-Tests the complete validation workflow with real TraiGent decorators and functions.
+Tests the complete validation workflow with real Traigent decorators and functions.
 """
 
 import os
@@ -21,10 +21,10 @@ class TestValidationSystemIntegration:
 
     @pytest.fixture
     def sample_module_content(self):
-        """Content for a sample module with TraiGent optimized functions."""
+        """Content for a sample module with Traigent optimized functions."""
         return '''
 """
-Sample module for testing TraiGent optimization validation.
+Sample module for testing Traigent optimization validation.
 """
 import os
 import sys
@@ -158,7 +158,7 @@ def helper_function():
 
     @pytest.fixture
     def test_module(self, sample_module_content, sample_datasets, tmp_path):
-        """Create a test module file with TraiGent optimized functions."""
+        """Create a test module file with Traigent optimized functions."""
         # Create module file
         module_file = tmp_path / "test_optimization_module.py"
 
@@ -173,7 +173,7 @@ def helper_function():
         return str(module_file)
 
     def test_function_discovery_integration(self, test_module):
-        """Test function discovery with real TraiGent decorators."""
+        """Test function discovery with real Traigent decorators."""
         with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
             try:
                 functions = discover_optimized_functions(test_module)
@@ -200,7 +200,7 @@ def helper_function():
 
     @pytest.mark.asyncio
     async def test_optimization_validation_integration(self, test_module):
-        """Test optimization validation with real TraiGent functions."""
+        """Test optimization validation with real Traigent functions."""
         validator = OptimizationValidator(threshold_pct=10)
 
         with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):

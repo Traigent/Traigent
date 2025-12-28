@@ -12,7 +12,7 @@ Two CI gates we think every agent repo should have:
 
 This turns “agent quality” into something your pipeline can enforce, not debate.
 
-We put a working CI/CD example in the TraiGent repo (uses SDK evaluation; no custom scoring functions required for the example):
+We put a working CI/CD example in the Traigent repo (uses SDK evaluation; no custom scoring functions required for the example):
 `examples/integrations/ci-cd/README.md`
 (link: https://github.com/Traigent/Traigent/blob/main/examples/integrations/ci-cd/README.md)
 

@@ -504,7 +504,7 @@ class CTDTestGenerator:
             # Verify overrides were applied
             param_mappings = plugin.get_parameter_mappings()
 
-            # Build reverse mapping to find all TraiGent params that map to each framework param
+            # Build reverse mapping to find all Traigent params that map to each framework param
             framework_to_traigent = {}
             for traigent_param, framework_param in param_mappings.items():
                 if framework_param not in framework_to_traigent:
@@ -527,7 +527,7 @@ class CTDTestGenerator:
                         if value is not None:
                             possible_values.append(value)
 
-                # If any TraiGent params were set for this framework param
+                # If any Traigent params were set for this framework param
                 if possible_values:
                     # Check top-level kwargs first
                     if framework_param in overridden_kwargs:
@@ -552,7 +552,7 @@ class CTDTestGenerator:
                             return False
 
                     # The actual value should be one of the possible values
-                    # (when multiple TraiGent params map to same framework param, last one wins)
+                    # (when multiple Traigent params map to same framework param, last one wins)
                     if actual_value not in possible_values:
                         print(
                             f"  ✗ Parameter {framework_param} has unexpected value: "

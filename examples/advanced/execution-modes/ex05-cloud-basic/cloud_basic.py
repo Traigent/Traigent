@@ -67,7 +67,7 @@ def _ensure_dataset():
         return DATASET_FILE
     rows = [
         {
-            "input": {"article": "TraiGent helps optimize LLM parameters."},
+            "input": {"article": "Traigent helps optimize LLM parameters."},
             "output": "Summary",
         },
         {
@@ -118,4 +118,4 @@ def text_summarizer(article: str) -> str:
 
 
 if __name__ == "__main__":
-    print(text_summarizer("TraiGent helps optimize LLM parameters."))
+    print(text_summarizer("Traigent helps optimize LLM parameters."))

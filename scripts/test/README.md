@@ -1,6 +1,6 @@
 # Scripts Test Suite
 
-This directory contains comprehensive tests for all scripts in the TraiGent SDK.
+This directory contains comprehensive tests for all scripts in the Traigent SDK.
 
 ## Overview
 

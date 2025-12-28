@@ -1,6 +1,6 @@
 # TVL Constraint Expressions (SDK Semantics)
 
-TraiGent compiles TVL `constraints` expressions into a safe subset of Python.
+Traigent compiles TVL `constraints` expressions into a safe subset of Python.
 This applies to both:
 
 - Legacy constraints (`constraints: [{id, type, rule/when/then, ...}]`)

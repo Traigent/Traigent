@@ -1,1 +1,1 @@
-"""Tests for TraiGent Cloud Service."""
+"""Tests for Traigent Cloud Service."""

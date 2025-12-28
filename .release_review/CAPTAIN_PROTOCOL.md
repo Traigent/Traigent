@@ -407,7 +407,7 @@ See `.release_review/START_REVIEW.md` for copy-paste prompts to start a review.
 
 Quick start:
 ```
-You are the release-review captain for TraiGent SDK version <VERSION>.
+You are the release-review captain for Traigent SDK version <VERSION>.
 Read and follow: .release_review/CAPTAIN_PROTOCOL.md
 Execute complete review start-to-finish. Do NOT stop until complete.
 Start now.

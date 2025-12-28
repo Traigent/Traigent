@@ -1,11 +1,11 @@
 # Onboarding Plan: Head of AI
 
-**Welcome to TraiGent!**
+**Welcome to Traigent!**
 
-This document is designed to get you up to speed with the TraiGent SDK, our mission, and the current state of our AI/Optimization stack.
+This document is designed to get you up to speed with the Traigent SDK, our mission, and the current state of our AI/Optimization stack.
 
 ## 1. Mission & Vision
-TraiGent is a **zero-code LLM optimization SDK**. We allow developers to optimize their LLM calls (prompts, models, parameters) using simple Python decorators, without changing their core logic.
+Traigent is a **zero-code LLM optimization SDK**. We allow developers to optimize their LLM calls (prompts, models, parameters) using simple Python decorators, without changing their core logic.
 
 **Core Value Proposition:**
 - **Decorate & Forget:** `@traigent.optimize` handles the complexity.
@@ -17,7 +17,7 @@ The SDK is built on a few key pillars:
 1.  **Interception:** We use Python decorators to intercept function calls.
 2.  **Injection:** We inject optimized parameters into the function at runtime.
 3.  **Optimization Loop:** We run experiments (trials) to find the best parameters.
-4.  **Backend Sync:** We sync results to the TraiGent Cloud (or local storage in dev mode).
+4.  **Backend Sync:** We sync results to the Traigent Cloud (or local storage in dev mode).
 
 ### Key Directories
 - `traigent/api/`: Public facing decorators (`@optimize`).
@@ -82,6 +82,6 @@ Here is a technical breakdown of our current optimization capabilities:
 
 ### Phase 3: Explore the Codebase
 1.  **Key File**: Open `traigent/optimizers/optuna_adapter.py`.
-    *   *Task*: Understand how we map TraiGent's `ConfigurationSpace` to Optuna's `Trial` object.
+    *   *Task*: Understand how we map Traigent's `ConfigurationSpace` to Optuna's `Trial` object.
 2.  **Key File**: Open `traigent/core/orchestrator.py`.
     *   *Task*: Trace the `run_optimization_loop` method to see how trials are executed.

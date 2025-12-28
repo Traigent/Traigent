@@ -130,7 +130,7 @@ class TestParameterNormalizerCore:
 
 @pytest.mark.unit
 class TestToCanonical:
-    """Test conversion to canonical TraiGent format."""
+    """Test conversion to canonical Traigent format."""
 
     def test_openai_to_canonical(self) -> None:
         """Test converting OpenAI parameters to canonical."""

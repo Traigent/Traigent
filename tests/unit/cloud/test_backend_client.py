@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Backend Client."""
+"""Tests for Traigent Cloud Backend Client."""
 
 import time
 from datetime import UTC

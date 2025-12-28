@@ -137,7 +137,7 @@ class TestDecoratorBasics(DecoratorTestBase):
     def test_decorator_with_complex_configuration_space(self):
         """Test decorator with flattened configuration space."""
 
-        # TraiGent expects flat configuration spaces, not nested
+        # Traigent expects flat configuration spaces, not nested
         @optimize(
             configuration_space={
                 "model": ["gpt-3.5", "gpt-4"],

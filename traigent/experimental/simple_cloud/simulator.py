@@ -1,13 +1,13 @@
 """⚠️  EXPERIMENTAL: Simple Cloud Simulator - NOT FOR PRODUCTION.
 
 🚨 WARNING: This is a NAIVE simulation of cloud execution for local testing only.
-This is NOT the real TraiGent cloud implementation and does NOT represent
-TraiGent's proprietary IP.
+This is NOT the real Traigent cloud implementation and does NOT represent
+Traigent's proprietary IP.
 
 This module provides a simple orchestrator for testing platform integrations
 locally while the OptiGen backend is under development.
 
-Real TraiGent cloud execution happens in the OptiGen backend (proprietary).
+Real Traigent cloud execution happens in the OptiGen backend (proprietary).
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -47,12 +47,12 @@ logger = get_logger(__name__)
 class SimpleCloudSimulator:
     """⚠️  EXPERIMENTAL: Naive cloud simulation for local testing.
 
-    🚨 WARNING: This is NOT the real TraiGent cloud!
+    🚨 WARNING: This is NOT the real Traigent cloud!
 
     This is a simplified simulator that helps test platform integrations
     locally while the OptiGen backend is being developed.
 
-    Features that are MISSING (present in real TraiGent cloud):
+    Features that are MISSING (present in real Traigent cloud):
     - Advanced optimization algorithms
     - Smart subset selection
     - Cost optimization
@@ -68,7 +68,7 @@ class SimpleCloudSimulator:
         # Issue warning
         warnings.warn(
             "SimpleCloudSimulator is experimental and NOT for production use. "
-            "This is NOT the real TraiGent cloud implementation.",
+            "This is NOT the real Traigent cloud implementation.",
             UserWarning,
             stacklevel=2,
         )
@@ -127,7 +127,7 @@ class SimpleCloudSimulator:
                 "prompt": prompt,
                 "result": result,
                 "success": True,
-                "warning": "🚨 This is experimental testing, not real TraiGent cloud!",
+                "warning": "🚨 This is experimental testing, not real Traigent cloud!",
             }
         except Exception as e:
             return {
@@ -136,7 +136,7 @@ class SimpleCloudSimulator:
                 "result": None,
                 "success": False,
                 "error": str(e),
-                "warning": "🚨 This is experimental testing, not real TraiGent cloud!",
+                "warning": "🚨 This is experimental testing, not real Traigent cloud!",
             }
 
     async def test_parameter_mapping(self, platform: str) -> dict[str, Any]:
@@ -169,7 +169,7 @@ class SimpleCloudSimulator:
                 "unified_params": test_params,
                 "mapped_params": mapped_params,
                 "success": True,
-                "warning": "🚨 This is experimental testing, not real TraiGent cloud!",
+                "warning": "🚨 This is experimental testing, not real Traigent cloud!",
             }
         except Exception as e:
             return {
@@ -178,7 +178,7 @@ class SimpleCloudSimulator:
                 "mapped_params": None,
                 "success": False,
                 "error": str(e),
-                "warning": "🚨 This is experimental testing, not real TraiGent cloud!",
+                "warning": "🚨 This is experimental testing, not real Traigent cloud!",
             }
 
     def get_disclaimer(self) -> str:
@@ -191,9 +191,9 @@ class SimpleCloudSimulator:
 ⚠️  EXPERIMENTAL SIMPLE CLOUD SIMULATOR - NOT FOR PRODUCTION
 
 🚨 IMPORTANT DISCLAIMERS:
-- This is NOT the real TraiGent cloud implementation
+- This is NOT the real Traigent cloud implementation
 - This is NOT suitable for production use
-- This does NOT represent TraiGent's proprietary IP
+- This does NOT represent Traigent's proprietary IP
 - This is a naive, simplified testing utility only
 
 REAL TRAIGENT FEATURES (not in this simulator):
@@ -208,7 +208,7 @@ REAL TRAIGENT FEATURES (not in this simulator):
 
 For production use:
 1. Use @traigent.optimize(auto_override_frameworks=True) for seamless integration
-2. Use TraiGent cloud services (via OptiGen backend) when available
+2. Use Traigent cloud services (via OptiGen backend) when available
 3. Do NOT rely on this experimental simulator
 
 This module exists only to help with local development and testing

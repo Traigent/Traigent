@@ -88,7 +88,7 @@ try:
     print("\n✅ Context-based test completed!")
     print("✅ apply_best_config() method works correctly")
     print("✅ get_optimization_insights() generates business intelligence")
-    print("✅ Both functions integrate properly with TraiGent framework")
+    print("✅ Both functions integrate properly with Traigent framework")
 
 except Exception as e:
     import traceback

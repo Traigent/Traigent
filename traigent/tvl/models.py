@@ -1,4 +1,4 @@
-"""TVL 0.9 data models for the TraiGent SDK.
+"""TVL 0.9 data models for the Traigent SDK.
 
 This module provides typed data models aligned with the TVL 0.9 specification,
 including TVAR declarations, domain specifications, banded objectives,
@@ -61,7 +61,7 @@ class DomainSpec:
     def to_configuration_space_entry(
         self,
     ) -> list[Any] | tuple[int, int] | tuple[float, float]:
-        """Convert to TraiGent configuration space format.
+        """Convert to Traigent configuration space format.
 
         Returns:
             List of values for categorical types, or (min, max) tuple for numeric.
@@ -103,7 +103,7 @@ class TVarDecl:
     def to_configuration_space_entry(
         self,
     ) -> tuple[str, list[Any] | tuple[int, int] | tuple[float, float]]:
-        """Convert to TraiGent configuration space format.
+        """Convert to Traigent configuration space format.
 
         Returns:
             Tuple of (name, domain_spec) for configuration space.
@@ -372,7 +372,7 @@ class DerivedConstraint:
     environment snapshot is known. They compile to decidable SMT fragments
     (QF_LIA/LRA).
 
-    Note: These constraints are stored as data only in TraiGent. Actual
+    Note: These constraints are stored as data only in Traigent. Actual
     SMT compilation and solving is handled by TVL tools, not the SDK.
 
     Attributes:

@@ -1,4 +1,4 @@
-"""TraiGent Hooks - Agent configuration validation for Git workflows.
+"""Traigent Hooks - Agent configuration validation for Git workflows.
 
 This module provides Git hooks that validate agent configurations
 against constraints before allowing pushes to production.

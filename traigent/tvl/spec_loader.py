@@ -1,4 +1,4 @@
-"""Load and normalize TVL specifications for the TraiGent SDK."""
+"""Load and normalize TVL specifications for the Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-TVLSPEC REQ-TVLSPEC-012 SYNC-OptimizationFlow
 

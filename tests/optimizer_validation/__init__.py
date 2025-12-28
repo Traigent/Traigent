@@ -1,4 +1,4 @@
-"""TraiGent Optimizer Validation Test Suite.
+"""Traigent Optimizer Validation Test Suite.
 
 Comprehensive test infrastructure for validating the @traigent.optimize decorator
 across all configuration combinations, ensuring correctness of OptimizationResult,

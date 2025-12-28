@@ -1,7 +1,7 @@
 /*
  * Cost Enforcement Alloy Specification
  *
- * Formal model for verifying cost enforcement invariants in TraiGent SDK.
+ * Formal model for verifying cost enforcement invariants in Traigent SDK.
  * Based on Daniel Jackson's concept-based design methodology.
  *
  * Reference: docs/traceability/concepts/cost_enforcement.yml

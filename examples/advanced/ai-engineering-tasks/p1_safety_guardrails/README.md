@@ -2,7 +2,7 @@
 
 **Achieve 95%+ PII detection accuracy and effective hallucination prevention while preserving maximum utility for legitimate queries.**
 
-This example demonstrates how TraiGent systematically optimizes safety guardrails to balance protection against privacy violations and misinformation with user experience and system utility.
+This example demonstrates how Traigent systematically optimizes safety guardrails to balance protection against privacy violations and misinformation with user experience and system utility.
 
 ## 🎯 What This Optimizes
 
@@ -13,7 +13,7 @@ This example demonstrates how TraiGent systematically optimizes safety guardrail
 - Poor user experience from excessive safety friction
 - Inconsistent safety-utility tradeoffs across different contexts
 
-**TraiGent Solution**: Systematically explore PII detection methods, redaction strategies, hallucination prevention approaches, and context-aware safety measures to achieve optimal safety-utility balance.
+**Traigent Solution**: Systematically explore PII detection methods, redaction strategies, hallucination prevention approaches, and context-aware safety measures to achieve optimal safety-utility balance.
 
 ## 🚀 Key Results
 
@@ -25,7 +25,7 @@ This example demonstrates how TraiGent systematically optimizes safety guardrail
 
 ## 📊 Optimization Results
 
-### Sample Results from TraiGent Optimization
+### Sample Results from Traigent Optimization
 
 ```
 Safety Optimization Results - Balanced Safety
@@ -35,7 +35,7 @@ Safety Optimization Results - Balanced Safety
 │ Minimal Safety       │ 0.550       │ 50.0%     │ 30.0%                │ 80.0%               │ 📊 Baseline │
 │ Balanced Safety      │ 0.700       │ 70.0%     │ 20.0%                │ 70.0%               │ 📊 Baseline │
 │ Strict Safety        │ 0.850       │ 85.0%     │ 10.0%                │ 60.0%               │ 📊 Baseline │
-│ TraiGent Optimized   │ 0.920       │ 96.0%     │ 4.0%                 │ 82.0%               │ 🚀 Optimized │
+│ Traigent Optimized   │ 0.920       │ 96.0%     │ 4.0%                 │ 82.0%               │ 🚀 Optimized │
 └──────────────────────┴─────────────┴───────────┴─────────────────────┴─────────────────────┴──────────┘
 
 Success Criteria Analysis:
@@ -50,7 +50,7 @@ Success Criteria Analysis:
 
 ### 1. Configuration Space Exploration
 
-TraiGent explores multiple safety dimensions:
+Traigent explores multiple safety dimensions:
 
 ```python
 SAFETY_SEARCH_SPACE = {
@@ -95,7 +95,7 @@ SAFETY_SEARCH_SPACE = {
 
 ### 2. Multi-Objective Optimization
 
-TraiGent optimizes for:
+Traigent optimizes for:
 - **Safety Score**: Overall protection effectiveness
 - **Detection Precision**: Accurate PII identification
 - **Hallucination Prevention**: Block risky content
@@ -165,7 +165,7 @@ Tests across diverse risk scenarios:
 - Mixed scenario testing
 
 ### Main Application (`main.py`)
-- TraiGent optimization setup and execution
+- Traigent optimization setup and execution
 - Results visualization and success criteria analysis
 - Insights generation for different safety scenarios
 
@@ -232,6 +232,6 @@ This example demonstrates achieving:
 - **Configuration Space**: See `safety_config.py` for complete safety parameter definitions
 - **Evaluation Methods**: Check `evaluator.py` for safety assessment techniques
 - **Test Scenarios**: Review `dataset.py` for comprehensive safety test cases
-- **TraiGent Integration**: Examine `main.py` for safety optimization patterns
+- **Traigent Integration**: Examine `main.py` for safety optimization patterns
 - **PII Patterns**: Explore regex patterns and detection algorithms
 - **Risk Assessment**: Understand hallucination risk scoring methods

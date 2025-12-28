@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Cost estimator for TraiGent optimization runs."""
+"""Cost estimator for Traigent optimization runs."""
 
 from typing import Any, Dict, List
 
@@ -36,7 +36,7 @@ def estimate_cost(
     num_trials: int = None,
 ) -> Dict[str, Any]:
     """
-    Estimate the cost of running TraiGent optimization.
+    Estimate the cost of running Traigent optimization.
 
     Args:
         models: List of model names to test

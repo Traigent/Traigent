@@ -1,1 +1,1 @@
-"""Test utility modules for TraiGent test suite."""
+"""Test utility modules for Traigent test suite."""

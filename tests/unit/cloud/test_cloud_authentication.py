@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Service authentication."""
+"""Tests for Traigent Cloud Service authentication."""
 
 import asyncio
 import time

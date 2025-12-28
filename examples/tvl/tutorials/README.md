@@ -1,11 +1,11 @@
 # TVL 0.9 Tutorials
 
-Welcome to the TVL (Tuned Variables Language) 0.9 tutorials! These hands-on examples will teach you how to use TVL with TraiGent for LLM optimization.
+Welcome to the TVL (Tuned Variables Language) 0.9 tutorials! These hands-on examples will teach you how to use TVL with Traigent for LLM optimization.
 
 ## Prerequisites
 
 - Python 3.10+
-- TraiGent SDK installed: `pip install traigent`
+- Traigent SDK installed: `pip install traigent`
 - Set `TRAIGENT_MOCK_MODE=true` for tutorials (no API costs)
 
 ## Tutorial Overview
@@ -146,7 +146,7 @@ import traigent
 
 @traigent.optimize(tvl_spec="my_config.tvl.yml")
 def my_llm_function(query: str, *, model: str, temperature: float):
-    # TraiGent injects optimized parameters
+    # Traigent injects optimized parameters
     return call_llm(model, temperature, query)
 ```
 
@@ -167,6 +167,6 @@ def my_llm_function(query: str, *, model: str, temperature: float):
 1. Complete these tutorials in order
 2. Read the [TVL 0.9 Specification](../../docs/tvl/)
 3. Explore the [Advanced Examples](../advanced/)
-4. Join the TraiGent community for support
+4. Join the Traigent community for support
 
 Happy optimizing! 🚀

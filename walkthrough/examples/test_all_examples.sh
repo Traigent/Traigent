@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Test all TraiGent walkthrough examples in mock mode
+# Test all Traigent walkthrough examples in mock mode
 
 set -uo pipefail
 
@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR"
 export TRAIGENT_MOCK_MODE=true
 
 echo "====================================="
-echo "Testing TraiGent Walkthrough Examples"
+echo "Testing Traigent Walkthrough Examples"
 echo "====================================="
 echo ""
 

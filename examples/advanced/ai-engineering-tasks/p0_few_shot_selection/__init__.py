@@ -2,7 +2,7 @@
 P0-3: Few-Shot Example Selection Strategies
 ===========================================
 
-This example demonstrates how TraiGent optimizes few-shot example selection strategies
+This example demonstrates how Traigent optimizes few-shot example selection strategies
 to significantly improve task performance without additional model training.
 
 The optimization explores modern selection strategies including semantic similarity,

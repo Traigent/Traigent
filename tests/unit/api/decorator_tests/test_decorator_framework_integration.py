@@ -1,6 +1,6 @@
 """Tests for decorator integration with various LLM frameworks.
 
-Tests TraiGent decorator integration with:
+Tests Traigent decorator integration with:
 - OpenAI (sync and async)
 - LangChain
 - Anthropic

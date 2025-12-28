@@ -1,4 +1,4 @@
-"""Integration tests for TraiGent SDK and OptiGen Backend integration."""
+"""Integration tests for Traigent SDK and OptiGen Backend integration."""
 
 import time
 from copy import deepcopy

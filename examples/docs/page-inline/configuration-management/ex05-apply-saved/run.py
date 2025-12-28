@@ -34,7 +34,7 @@ def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    print("Running TraiGent Apply Saved Configuration Example (MCQ)")
+    print("Running Traigent Apply Saved Configuration Example (MCQ)")
     print("=" * 60)
 
     # Run optimization and produce standard results for UI table

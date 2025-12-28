@@ -1,5 +1,5 @@
 #!/bin/bash
-# TraiGent Architecture Analysis Runner
+# Traigent Architecture Analysis Runner
 #
 # Runs the complete architecture analysis pipeline:
 # 1. Main architecture analysis (diagrams, complexity, class hierarchy)
@@ -68,7 +68,7 @@ if [ ! -f "$VENV_PYTHON" ]; then
     VENV_PYTHON="python3"
 fi
 
-echo "🏗️  TraiGent Architecture Analysis"
+echo "🏗️  Traigent Architecture Analysis"
 echo "=================================="
 echo ""
 

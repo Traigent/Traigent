@@ -96,7 +96,7 @@ duplicates:
     notes: "Security-critical - test thoroughly after change"
 
   - id: DUP-006
-    exception_name: TraigentError vs TraiGentError
+    exception_name: TraigentError vs TraigentError
     description: "Two root error classes with different capitalization"
     locations:
       - file: traigent/utils/exceptions.py
@@ -107,10 +107,10 @@ duplicates:
 
       - file: traigent/utils/error_handler.py
         line: 11
-        class_name: TraiGentError
+        class_name: TraigentError
         parent: Exception
         status: duplicate
-    recommendation: "Consolidate to TraigentError (lowercase 'i'), deprecate TraiGentError"
+    recommendation: "Consolidate to TraigentError (lowercase 'i'), deprecate TraigentError"
     priority: critical
     notes: "Root class - affects entire exception hierarchy"
 
@@ -124,7 +124,7 @@ duplicates:
 
       - file: traigent/utils/error_handler.py
         line: 57
-        parent: TraiGentError
+        parent: TraigentError
         status: duplicate
     recommendation: "Import from utils/exceptions.py"
     priority: high
@@ -139,7 +139,7 @@ duplicates:
 
       - file: traigent/utils/error_handler.py
         line: 68
-        parent: TraiGentError
+        parent: TraigentError
         status: duplicate
     recommendation: "Import from utils/exceptions.py"
     priority: high
@@ -237,11 +237,11 @@ consolidation_plan:
     priority: critical
     status: DEFERRED
     notes: |
-      TraiGentError in error_handler.py is intentionally different - it provides
+      TraigentError in error_handler.py is intentionally different - it provides
       user-friendly error messages with 'fix' and 'docs_link' parameters.
       This is a specialized UX class, not a duplicate. Keep as-is.
     actions:
-      - action: "Document TraiGentError as UX-specialized class"
+      - action: "Document TraigentError as UX-specialized class"
         file: traigent/utils/error_handler.py
         status: documented
       - action: "Update all imports from error_handler to use exceptions"
@@ -260,7 +260,7 @@ impact:
 summary:
   total_duplicates_identified: 9
   duplicates_consolidated: 4  # RetryableError, NonRetryableError, RateLimitError, NetworkError
-  intentionally_different: 3  # TraiGentError, ConfigurationError, EvaluationError (UX variants)
+  intentionally_different: 3  # TraigentError, ConfigurationError, EvaluationError (UX variants)
   pending: 2  # ServiceUnavailableError (different inheritance), JWTValidationError
   action_required: false
   last_updated: "2025-12-02"

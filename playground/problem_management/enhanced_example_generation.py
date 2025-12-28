@@ -322,7 +322,7 @@ def add_examples_to_content(content: str, new_examples: List[Dict[str, Any]]) ->
         # Could not find examples_data, append to end of file
         return (
             content
-            + "\n\n# Additional examples added by TraiGent Playground\n"
+            + "\n\n# Additional examples added by Traigent Playground\n"
             + "# You may need to manually integrate these into your examples_data list:\n"
             + f"additional_examples = [{examples_code}]"
         )

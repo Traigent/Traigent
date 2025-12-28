@@ -1,4 +1,4 @@
-"""Data encryption and privacy controls for TraiGent Enterprise."""
+"""Data encryption and privacy controls for Traigent Enterprise."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Security CONC-Quality-Reliability FUNC-SECURITY REQ-SEC-010 SYNC-CloudHybrid
 

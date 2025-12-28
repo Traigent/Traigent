@@ -1,4 +1,4 @@
-# Medium Article Template (TraiGent)
+# Medium Article Template (Traigent)
 
 ## Voice (default)
 

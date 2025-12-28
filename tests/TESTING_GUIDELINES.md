@@ -1,8 +1,8 @@
-# Testing Guidelines for TraiGent SDK
+# Testing Guidelines for Traigent SDK
 
 ## Overview
 
-This document provides guidelines for writing robust, isolated tests in the TraiGent SDK test suite. Following these guidelines ensures tests are reliable, maintainable, and free from flakiness.
+This document provides guidelines for writing robust, isolated tests in the Traigent SDK test suite. Following these guidelines ensures tests are reliable, maintainable, and free from flakiness.
 
 ## Key Principle: Test Isolation
 
@@ -16,7 +16,7 @@ This document provides guidelines for writing robust, isolated tests in the Trai
 
 ### The Problem
 
-TraiGent SDK uses several global singletons that can cause test interference:
+Traigent SDK uses several global singletons that can cause test interference:
 
 1. **`_API_KEY_MANAGER`** (in `traigent.config.api_keys`)
    - Stores API keys globally

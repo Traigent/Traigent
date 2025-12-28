@@ -1,4 +1,4 @@
-"""Enhanced CLI interface for TraiGent SDK."""
+"""Enhanced CLI interface for Traigent SDK."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
@@ -42,16 +42,16 @@ def _resolve_workspace_path(path: Path, description: str) -> Path:
 @click.group()
 @click.version_option(
     version=get_version_info()["version"],
-    prog_name="TraiGent",
+    prog_name="Traigent",
     message="%(prog)s %(version)s",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
 @click.option("--debug", is_flag=True, help="Enable debug logging")
 @click.option("--quiet", "-q", is_flag=True, help="Suppress all logging (errors only)")
 def cli(verbose: bool, debug: bool, quiet: bool) -> None:
-    """TraiGent SDK - Open-source LLM optimization toolkit.
+    """Traigent SDK - Open-source LLM optimization toolkit.
 
-    TraiGent makes it effortless to optimize your LLM applications with
+    Traigent makes it effortless to optimize your LLM applications with
     a simple decorator.
 
     Examples:
@@ -72,10 +72,10 @@ def cli(verbose: bool, debug: bool, quiet: bool) -> None:
 
 @cli.command()
 def info() -> None:
-    """Show TraiGent SDK version and system information."""
+    """Show Traigent SDK version and system information."""
     version_info = get_version_info()
 
-    console.print("\n[bold blue]TraiGent SDK[/bold blue]")
+    console.print("\n[bold blue]Traigent SDK[/bold blue]")
     console.print(f"Version: [green]{version_info['version']}[/green]")
     console.print(f"Python: {version_info['python_version'].split()[0]}")
     console.print(f"Platform: {version_info['platform']}")
@@ -434,11 +434,11 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
 
 @cli.command()
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="TraiGent storage directory"
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
 )
 def results(storage_dir: str) -> None:
     """List and manage optimization results."""
-    console.print("\n[bold blue]TraiGent Optimization Results[/bold blue]\n")
+    console.print("\n[bold blue]Traigent Optimization Results[/bold blue]\n")
 
     persistence = PersistenceManager(storage_dir)
     all_results = persistence.list_results()
@@ -475,7 +475,7 @@ def results(storage_dir: str) -> None:
 @cli.command()
 @click.argument("result_name")
 @click.option(
-    "--storage-dir", "-d", default=".traigent", help="TraiGent storage directory"
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
 )
 @click.option(
     "--plot-type",
@@ -596,7 +596,7 @@ def generate(template: str, output: str) -> None:
 @cli.command()
 def examples() -> None:
     """Show comprehensive usage examples."""
-    console.print("\n[bold blue]TraiGent SDK Usage Examples[/bold blue]\n")
+    console.print("\n[bold blue]Traigent SDK Usage Examples[/bold blue]\n")
 
     examples = [
         {
@@ -700,7 +700,7 @@ print(f"Best config: {results.best_config}")""",
 
 def _get_basic_template() -> str:
     """Get basic optimization template."""
-    return '''"""Basic TraiGent optimization example."""
+    return '''"""Basic Traigent optimization example."""
 
 import asyncio
 import traigent
@@ -756,7 +756,7 @@ if __name__ == "__main__":
 
 def _get_multi_objective_template() -> str:
     """Get multi-objective optimization template."""
-    return '''"""Multi-objective optimization with TraiGent."""
+    return '''"""Multi-objective optimization with Traigent."""
 
 import asyncio
 import traigent
@@ -785,11 +785,11 @@ custom_objectives = ObjectiveSchema.from_objectives([
 def multi_objective_function(question: str, **config) -> str:
     """Function with multiple objectives to optimize.
 
-    TraiGent automatically tracks:
+    Traigent automatically tracks:
     - accuracy: compared against expected output
     - cost: token usage costs
     """
-    # Your LLM call here - TraiGent tracks metrics automatically
+    # Your LLM call here - Traigent tracks metrics automatically
     model = config.get("model", "gpt-4o-mini")
     return f"Answer to '{question}' using {model}"
 
@@ -823,7 +823,7 @@ if __name__ == "__main__":
 
 def _get_langchain_template() -> str:
     """Get LangChain integration template."""
-    return '''"""LangChain integration with TraiGent."""
+    return '''"""LangChain integration with Traigent."""
 
 import asyncio
 import traigent
@@ -849,15 +849,15 @@ DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
     }
 )
 def langchain_agent(question: str) -> str:
-    """LangChain-based agent that TraiGent will optimize.
+    """LangChain-based agent that Traigent will optimize.
 
-    TraiGent automatically intercepts ChatOpenAI parameters and
+    Traigent automatically intercepts ChatOpenAI parameters and
     injects optimized values during trials.
     """
     llm = ChatOpenAI(
-        model="gpt-4o-mini",  # TraiGent will override
-        temperature=0.7,      # TraiGent will override
-        max_tokens=150        # TraiGent will override
+        model="gpt-4o-mini",  # Traigent will override
+        temperature=0.7,      # Traigent will override
+        max_tokens=150        # Traigent will override
     )
     response = llm.invoke(f"Question: {question}\\nAnswer:")
     return response.content
@@ -890,7 +890,7 @@ if __name__ == "__main__":
 
 def _get_openai_template() -> str:
     """Get OpenAI integration template."""
-    return '''"""OpenAI SDK integration with TraiGent."""
+    return '''"""OpenAI SDK integration with Traigent."""
 
 import asyncio
 import traigent
@@ -915,18 +915,18 @@ DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
     max_trials=15
 )
 def chat_agent(question: str) -> str:
-    """Chat function that TraiGent will optimize."""
+    """Chat function that Traigent will optimize."""
     from openai import OpenAI
     client = OpenAI()
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  # TraiGent will override this
+        model="gpt-4o-mini",  # Traigent will override this
         messages=[
             {"role": "system", "content": "You are a helpful assistant."},
             {"role": "user", "content": question}
         ],
-        temperature=0.7,  # TraiGent will override this
-        max_tokens=150    # TraiGent will override this
+        temperature=0.7,  # Traigent will override this
+        max_tokens=150    # Traigent will override this
     )
     return response.choices[0].message.content
 
@@ -969,7 +969,7 @@ if __name__ == "__main__":
 def check(
     module_path: str, functions: str, threshold: int, objectives: str, dry_run: bool
 ) -> None:
-    """Validate TraiGent optimization improves over default parameters.
+    """Validate Traigent optimization improves over default parameters.
 
     This command automatically discovers functions decorated with @traigent.optimize
     and validates that optimization actually improves over the function's default parameters
@@ -993,7 +993,7 @@ def check(
     )
     from traigent.cli.optimization_validator import OptimizationValidator
 
-    console.print("\n[bold blue]🔍 TraiGent Optimization Validation[/bold blue]")
+    console.print("\n[bold blue]🔍 Traigent Optimization Validation[/bold blue]")
     console.print(f"Module: [cyan]{module_path}[/cyan]")
     console.print(f"Threshold: [yellow]{threshold}%[/yellow]")
 

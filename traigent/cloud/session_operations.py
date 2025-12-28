@@ -1,4 +1,4 @@
-"""Session management operations for TraiGent Cloud Client.
+"""Session management operations for Traigent Cloud Client.
 
 This module handles session creation, lifecycle management, and hybrid mode
 operations for both privacy-preserving and cloud-based optimization.
@@ -245,9 +245,9 @@ class SessionOperations:
 
             try:
                 # Always use session endpoints - no fallback to old experiment endpoints
-                logger.info("Creating session via TraiGent session endpoints")
+                logger.info("Creating session via Traigent session endpoints")
 
-                # Use new TraiGent session endpoints
+                # Use new Traigent session endpoints
                 (
                     session_id,
                     experiment_id,

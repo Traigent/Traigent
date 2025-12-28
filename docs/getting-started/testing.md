@@ -1,6 +1,6 @@
 # Testing Guide
 
-This guide covers running tests in the TraiGent SDK project.
+This guide covers running tests in the Traigent SDK project.
 
 ## 🧪 Quick Start
 
@@ -109,7 +109,7 @@ pytest --cov=traigent --cov-report=xml
 
 ## 🚀 Mock Mode Testing
 
-TraiGent includes a mock mode for testing without real API calls:
+Traigent includes a mock mode for testing without real API calls:
 
 ```bash
 # Enable mock mode

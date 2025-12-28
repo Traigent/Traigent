@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-P0-3: Few-Shot Example Selection Optimization with TraiGent
+P0-3: Few-Shot Example Selection Optimization with Traigent
 =========================================================
 
-This example demonstrates how TraiGent systematically optimizes few-shot example
+This example demonstrates how Traigent systematically optimizes few-shot example
 selection strategies to improve accuracy by 8-15% and reduce variance by 30%.
 
 The optimization explores various selection methods (semantic similarity, diversity,
@@ -67,20 +67,20 @@ def print_header() -> None:
     console.print(
         Panel.fit(
             "[bold blue]P0-3: Few-Shot Example Selection Optimization[/bold blue]\n"
-            "[dim]Discover optimal example selection strategies with TraiGent[/dim]",
+            "[dim]Discover optimal example selection strategies with Traigent[/dim]",
             border_style="blue",
         )
     )
 
 
 def create_evaluation_function(tasks: list[FewShotTask]) -> Callable:
-    """Create the evaluation function for TraiGent optimization."""
+    """Create the evaluation function for Traigent optimization."""
 
     def evaluate_selection_strategy(**config_params) -> dict[str, float]:
         """
         Evaluate example selection strategy on the task dataset.
 
-        This function is called by TraiGent for each configuration trial.
+        This function is called by Traigent for each configuration trial.
         It tests the selection strategy across all tasks and returns metrics.
         """
 
@@ -198,14 +198,14 @@ def optimize_few_shot_selection(
     **kwargs,
 ) -> None:
     """
-    TraiGent-optimized function for few-shot example selection.
+    Traigent-optimized function for few-shot example selection.
 
-    This function will be called by TraiGent with different parameter combinations
+    This function will be called by Traigent with different parameter combinations
     to find the optimal selection strategy for few-shot learning.
     """
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
-    # TraiGent will inject the optimal parameters and track results
+    # Traigent will inject the optimal parameters and track results
     pass
 
 
@@ -288,7 +288,7 @@ def display_results(
         status = "🚀 Optimized"
 
         table.add_row(
-            "TraiGent Optimized",
+            "Traigent Optimized",
             f"{best_metrics.get('accuracy', 0):.3f}",
             f"{best_metrics.get('consistency', 0):.3f}",
             f"{best_metrics.get('selection_latency_ms', 0):.1f}",
@@ -427,10 +427,10 @@ async def main() -> None:
     # Run baseline comparisons
     baseline_results = run_baseline_comparison(tasks)
 
-    # Set up TraiGent evaluation
+    # Set up Traigent evaluation
     create_evaluation_function(tasks)
 
-    # Configure TraiGent optimization
+    # Configure Traigent optimization
     # traigent.configure(
     #     evaluator=evaluation_function,
     #     execution_mode="edge_analytics",  # Run in Edge Analytics mode for demo
@@ -438,7 +438,7 @@ async def main() -> None:
     # )
     # Note: evaluator, execution_mode, and verbose parameters don't exist in traigent.configure() API
 
-    console.print("\n[yellow]Starting TraiGent optimization...[/yellow]")
+    console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(
         "[dim]This will systematically explore different selection strategies...[/dim]\n"
     )
@@ -514,7 +514,7 @@ if __name__ == "__main__":
         console.print(f"✅ Generated {len(tasks)} sample tasks\n")
 
         # Show configuration space
-        console.print("[bold]TraiGent Configuration Space:[/bold]")
+        console.print("[bold]Traigent Configuration Space:[/bold]")
         for key, values in EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 

@@ -1,4 +1,4 @@
-# TraiGent Pre-Release Review Plan (SDK v0.8.0)
+# Traigent Pre-Release Review Plan (SDK v0.8.0)
 
 This plan breaks the repo into reviewable components with concrete checklists and required evidence.
 Assignments and sign-offs live in `.release_review/PRE_RELEASE_REVIEW_TRACKING.md`.

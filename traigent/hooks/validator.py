@@ -1,4 +1,4 @@
-"""Agent configuration validator for TraiGent hooks.
+"""Agent configuration validator for Traigent hooks.
 
 Validates @traigent.optimize decorated functions against constraints
 defined in traigent.yml.
@@ -122,7 +122,7 @@ class AgentInfo:
 
 
 class AgentValidator:
-    """Validates agent configurations against TraiGent constraints."""
+    """Validates agent configurations against Traigent constraints."""
 
     def __init__(self, config: HooksConfig | None = None) -> None:
         """Initialize validator with configuration.
@@ -405,7 +405,7 @@ def validate_agents_for_push(
     config = load_hooks_config(config_path)
 
     if not config.enabled:
-        logger.info("TraiGent hooks are disabled")
+        logger.info("Traigent hooks are disabled")
         return True, []
 
     validator = AgentValidator(config)

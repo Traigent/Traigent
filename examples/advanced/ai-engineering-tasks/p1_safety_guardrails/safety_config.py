@@ -119,7 +119,7 @@ class SafetyConfig:
         }
 
 
-# TraiGent search space for safety guardrails optimization
+# Traigent search space for safety guardrails optimization
 SAFETY_SEARCH_SPACE = {
     # PII Detection Pipeline
     "pii_detection": [

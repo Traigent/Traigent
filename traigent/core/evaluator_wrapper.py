@@ -1,4 +1,4 @@
-"""Custom evaluator wrapper for TraiGent optimization system.
+"""Custom evaluator wrapper for Traigent optimization system.
 
 This module provides the CustomEvaluatorWrapper class that adapts user-provided
 custom evaluation functions to conform to the BaseEvaluator interface.

@@ -36,7 +36,7 @@ Planned derivatives (same core ideas, different language level):
 
 Builders will compare to evaluation/observability tools and to “we can build this ourselves”.
 
-**Position TraiGent as:**
+**Position Traigent as:**
 - A **spec + tuning + gating** layer for agent behavior (not just logging).
 - A way to turn “what matters” into a **declarative contract** (TVL spec) that drives tuning and promotion decisions.
 
@@ -44,17 +44,17 @@ Builders will compare to evaluation/observability tools and to “we can build t
 - Tracing / observability: LangSmith, Humanloop, “prompt management” platforms
 - Evaluation harnesses: Braintrust, bespoke pytest + scripts
 
-**What TraiGent does particularly well**
+**What Traigent does particularly well**
 - **TVL spec as contract**: objectives, constraints, budgets, promotion rules (portable + reviewable).
 - **Multi-objective tradeoffs**: balance quality/cost/latency rather than optimizing one metric in isolation.
 - **Promotion gates**: explicit “ship/no-ship” decisions tied to meaningful improvement thresholds.
 
-**What TraiGent does not promise (unless provisioned)**
+**What Traigent does not promise (unless provisioned)**
 - Managed eval infrastructure or production SLAs for cloud/hybrid backends (roadmap-compatible in OSS, not “available now”).
 
 **If someone asks “How is this different from X?”**
-- Logging/observability tools (e.g., tracing) help you **see** behavior; TraiGent helps you **systematically improve** it against a spec and gate changes.
-- Custom harnesses can replicate pieces, but TraiGent aims to make the workflow **repeatable**, **spec-driven**, and **team-friendly** (shared contract, standard gates).
+- Logging/observability tools (e.g., tracing) help you **see** behavior; Traigent helps you **systematically improve** it against a spec and gate changes.
+- Custom harnesses can replicate pieces, but Traigent aims to make the workflow **repeatable**, **spec-driven**, and **team-friendly** (shared contract, standard gates).
 
 ## Audience Segments (primary messages + channels)
 
@@ -107,7 +107,7 @@ Builders will compare to evaluation/observability tools and to “we can build t
 
 | Objection | Response angle | Proof/asset |
 | --- | --- | --- |
-| “I can build this with pytest + scripts.” | You can—TraiGent packages repeatable patterns: spec-driven knobs, built-in evaluators, and standard gates so teams don’t reinvent. | `examples/integrations/ci-cd/README.md`, `docs/api-reference/decorator-reference.md` |
+| “I can build this with pytest + scripts.” | You can—Traigent packages repeatable patterns: spec-driven knobs, built-in evaluators, and standard gates so teams don’t reinvent. | `examples/integrations/ci-cd/README.md`, `docs/api-reference/decorator-reference.md` |
 | “Works only for certain stacks.” | True: low friction for common LangChain/OpenAI SDK patterns; custom stacks may need adapter code. Be explicit early. | (Add matrix) `marketing/INTEGRATION_COMPATIBILITY_MATRIX.md` |
 
 ### 3) ML / Evaluation / Applied Research Engineers

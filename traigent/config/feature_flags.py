@@ -1,4 +1,4 @@
-"""Feature flag management for TraiGent.
+"""Feature flag management for Traigent.
 
 Provides a lightweight registry for runtime-togglable flags with support for
 environment variables, configuration mappings, and test overrides.

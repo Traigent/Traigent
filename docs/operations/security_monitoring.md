@@ -1,6 +1,6 @@
 # Security Monitoring Runbook
 
-This runbook lists key telemetry emitted by the TraiGent SDK when security features
+This runbook lists key telemetry emitted by the Traigent SDK when security features
 trigger defensive behaviors. Operators can wire the log messages or exported
 metrics into their observability stack to satisfy SOC2 monitoring controls.
 

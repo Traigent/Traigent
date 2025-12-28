@@ -1,4 +1,4 @@
-"""Configuration loading for TraiGent hooks.
+"""Configuration loading for Traigent hooks.
 
 Loads and validates traigent.yml configuration files that define
 agent validation constraints.
@@ -66,7 +66,7 @@ class HooksConstraints:
 
 @dataclass
 class HooksConfig:
-    """Configuration for TraiGent hooks loaded from traigent.yml."""
+    """Configuration for Traigent hooks loaded from traigent.yml."""
 
     # Validation settings
     enabled: bool = True
@@ -203,7 +203,7 @@ def find_config_file(start_path: Path | None = None) -> Path | None:
 
 
 def load_hooks_config(config_path: Path | str | None = None) -> HooksConfig:
-    """Load TraiGent hooks configuration from YAML file.
+    """Load Traigent hooks configuration from YAML file.
 
     Args:
         config_path: Path to config file, or None to auto-detect
@@ -249,7 +249,7 @@ def create_default_config(output_path: Path | str | None = None) -> Path:
     else:
         output_path = Path(output_path)
 
-    default_config = """# TraiGent Agent Configuration Constraints
+    default_config = """# Traigent Agent Configuration Constraints
 # This file defines validation rules for agent configurations
 # that are enforced by Git hooks before pushes.
 

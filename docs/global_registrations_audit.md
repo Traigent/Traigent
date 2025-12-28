@@ -2,7 +2,7 @@
 
 ## Summary
 
-Audit of all global registration systems in the TraiGent codebase to identify potential issues similar to the Spider grid optimizer problem.
+Audit of all global registration systems in the Traigent codebase to identify potential issues similar to the Spider grid optimizer problem.
 
 **Date:** 2025-10-18
 
@@ -28,7 +28,7 @@ register_optuna_optimizers()     # Registers: optuna_tpe, optuna_random, etc.
 
 **Why this is acceptable:**
 - Part of core SDK, not case-study-specific
-- Registers built-in optimizers that are part of the TraiGent API
+- Registers built-in optimizers that are part of the Traigent API
 - Clear documentation and logging
 - Has `clear_registry()` for testing
 - Warning when overriding: `logger.warning(f"Overriding existing optimizer registration for '{name}'")`

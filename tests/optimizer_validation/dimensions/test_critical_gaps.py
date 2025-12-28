@@ -374,7 +374,7 @@ class TestLLMIntegrationPatterns:
 
     Why This Matters:
         The first thing users will do is wrap their existing LLM code with
-        @traigent.optimize. If this doesn't work, they won't use TraiGent.
+        @traigent.optimize. If this doesn't work, they won't use Traigent.
 
     Patterns Tested:
         1. OpenAI-style config space (model, temperature, max_tokens)
@@ -684,7 +684,7 @@ class TestDefaultsAndMinimalConfig:
     """Tests for default values and minimal configuration.
 
     Purpose:
-        Verify that TraiGent works with minimal user configuration.
+        Verify that Traigent works with minimal user configuration.
         First-time users shouldn't need to specify everything.
 
     Why This Matters:

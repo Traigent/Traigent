@@ -1,4 +1,4 @@
-"""Credential resolution module for TraiGent authentication.
+"""Credential resolution module for Traigent authentication.
 
 This module handles credential loading, caching, and resolution from multiple sources.
 Extracted from AuthManager to follow Single Responsibility Principle.

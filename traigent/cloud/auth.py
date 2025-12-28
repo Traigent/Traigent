@@ -167,7 +167,7 @@ class UnifiedAuthConfig:
 
 @dataclass
 class APIKey:
-    """TraiGent Cloud API key configuration."""
+    """Traigent Cloud API key configuration."""
 
     key: str
     name: str
@@ -335,7 +335,7 @@ class SecureToken:
 class AuthManager:
     """Authentication manager for SDK and backend integration.
 
-    This manager handles authentication for both TraiGent Cloud services and
+    This manager handles authentication for both Traigent Cloud services and
     backend integrations, providing a single entry point for acquiring
     credentials and generating request headers.
     """
@@ -873,10 +873,10 @@ class AuthManager:
 
         # Add target-specific headers
         if target in ["cloud", "both"]:
-            headers["X-TraiGent-Client"] = "sdk"
+            headers["X-Traigent-Client"] = "sdk"
 
         if target in ["backend", "both"]:
-            headers["X-TraiGent-Service"] = "sdk"
+            headers["X-Traigent-Service"] = "sdk"
             headers["X-Backend-Integration"] = "true"
 
         return headers

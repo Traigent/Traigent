@@ -227,7 +227,7 @@ class TestOptimizedFunctionCloudMode:
                 execution_mode="cloud",
             )
 
-            # Mock the TraiGentCloudClient
+            # Mock the TraigentCloudClient
             mock_cloud_result = CloudOptimizationResult(
                 best_config={"param": 2},
                 best_metrics={"accuracy": 0.85},
@@ -244,7 +244,7 @@ class TestOptimizedFunctionCloudMode:
             mock_client.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient", return_value=mock_client
+                "traigent.cloud.client.TraigentCloudClient", return_value=mock_client
             ):
                 result = await optimized_func._optimize_with_cloud_service(
                     dataset=sample_dataset, max_trials=50
@@ -293,7 +293,7 @@ class TestOptimizedFunctionCloudMode:
             mock_client.__aexit__ = AsyncMock(return_value=None)
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient", return_value=mock_client
+                "traigent.cloud.client.TraigentCloudClient", return_value=mock_client
             ) as mock_client_class:
                 await optimized_func._optimize_with_cloud_service(sample_dataset)
 

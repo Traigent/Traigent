@@ -1,4 +1,4 @@
-# Pre-Release Review Tracking (TraiGent SDK v0.9.0)
+# Pre-Release Review Tracking (Traigent SDK v0.9.0)
 
 Update this file as reviews complete. Link evidence (PRs, issues, CI runs) so release readiness is auditable.
 

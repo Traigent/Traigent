@@ -1,4 +1,4 @@
-"""Consolidated retry utilities for TraiGent SDK.
+"""Consolidated retry utilities for Traigent SDK.
 
 This module combines the best features from both retry systems:
 - retry.py: Simple decorator-based API for external users

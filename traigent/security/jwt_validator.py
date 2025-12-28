@@ -1,4 +1,4 @@
-"""Secure JWT token validation for TraiGent SDK - Production Hardened Version."""
+"""Secure JWT token validation for Traigent SDK - Production Hardened Version."""
 
 # Traceability: CONC-Security CONC-Quality-Security FUNC-SECURITY FUNC-SEC-TOKEN-MGMT REQ-SEC-010 REQ-CLOUD-009 SYNC-CloudHybrid
 

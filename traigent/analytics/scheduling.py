@@ -1,4 +1,4 @@
-"""Smart scheduling components for TraiGent analytics.
+"""Smart scheduling components for Traigent analytics.
 
 This module contains intelligent scheduling functionality for optimizing
 resource usage and cost management.

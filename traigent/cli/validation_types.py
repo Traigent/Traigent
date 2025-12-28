@@ -1,4 +1,4 @@
-"""Data structures for TraiGent optimization validation system."""
+"""Data structures for Traigent optimization validation system."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Usability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 

@@ -1,4 +1,4 @@
-"""Tests for TraiGent cloud trial tracking module."""
+"""Tests for Traigent cloud trial tracking module."""
 
 import time
 

@@ -1,4 +1,4 @@
-"""Visualization utilities for TraiGent optimization results."""
+"""Visualization utilities for Traigent optimization results."""
 
 # Traceability: CONC-Layer-Tooling CONC-Quality-Usability CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 

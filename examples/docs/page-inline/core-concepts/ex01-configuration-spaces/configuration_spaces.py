@@ -110,7 +110,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 def intelligent_assistant(query: str) -> str:
     """An intelligent assistant that answers queries with optimal parameters."""
 
-    # Get the current configuration from TraiGent
+    # Get the current configuration from Traigent
     current = traigent.get_config()
     config = current if isinstance(current, dict) else {}
 
@@ -194,7 +194,7 @@ def demonstrate_configuration_types() -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TraiGent Core Concepts: Configuration Spaces")
+    print("Traigent Core Concepts: Configuration Spaces")
     print("=" * 60)
 
     # Show configuration types

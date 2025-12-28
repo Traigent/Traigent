@@ -1,4 +1,4 @@
-"""Environment configuration utility for TraiGent.
+"""Environment configuration utility for Traigent.
 
 This module provides secure access to environment variables and configuration.
 """

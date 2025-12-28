@@ -1,5 +1,5 @@
 """
-Intelligent Error Handler for TraiGent SDK
+Intelligent Error Handler for Traigent SDK
 
 Provides helpful error messages with actionable fixes and documentation links.
 """
@@ -10,8 +10,8 @@ from collections.abc import Callable
 from typing import Any
 
 
-class TraiGentError(Exception):
-    """Base exception for TraiGent errors with helpful messages."""
+class TraigentError(Exception):
+    """Base exception for Traigent errors with helpful messages."""
 
     def __init__(
         self, message: str, fix: str | None = None, docs_link: str | None = None
@@ -34,7 +34,7 @@ class TraiGentError(Exception):
         return "\n".join(parts)
 
 
-class DependencyError(TraiGentError):
+class DependencyError(TraigentError):
     """Error for missing dependencies."""
 
     def __init__(self, package: str) -> None:
@@ -45,7 +45,7 @@ class DependencyError(TraiGentError):
         )
 
 
-class APIKeyError(TraiGentError):
+class APIKeyError(TraigentError):
     """Error for missing or invalid API keys."""
 
     def __init__(self, key_name: str) -> None:
@@ -56,7 +56,7 @@ class APIKeyError(TraiGentError):
         )
 
 
-class ConfigurationError(TraiGentError):
+class ConfigurationError(TraigentError):
     """Error for invalid configuration."""
 
     def __init__(self, param: str, issue: str) -> None:
@@ -67,7 +67,7 @@ class ConfigurationError(TraiGentError):
         )
 
 
-class EvaluationError(TraiGentError):
+class EvaluationError(TraigentError):
     """Error during evaluation."""
 
     def __init__(self, reason: str) -> None:
@@ -154,7 +154,7 @@ class ErrorHandler:
                 if module_name in cls.IMPORT_FIXES:
                     raise DependencyError(module_name) from error
                 else:
-                    raise TraiGentError(
+                    raise TraigentError(
                         message=f"Cannot import {module_name}",
                         fix=f"Try: pip install {module_name}",
                         docs_link="https://github.com/Traigent/Traigent#dependencies",
@@ -173,7 +173,7 @@ class ErrorHandler:
         elif "traigent" in error_str:
             raise APIKeyError("TRAIGENT_API_KEY or legacy OPTIGEN_API_KEY") from error
         else:
-            raise TraiGentError(
+            raise TraigentError(
                 message="API authentication failed",
                 fix="Check your API keys in .env file",
                 docs_link="https://github.com/Traigent/Traigent#api-keys",
@@ -185,14 +185,14 @@ class ErrorHandler:
         error_str = str(error)
 
         if "localhost:5000" in error_str or "backend" in error_str.lower():
-            raise TraiGentError(
-                message="Cannot connect to TraiGent backend",
+            raise TraigentError(
+                message="Cannot connect to Traigent backend",
                 fix="1. Start backend: cd backend && python app.py\n"
                 "   2. Or use mock mode: TRAIGENT_MOCK_MODE=true",
                 docs_link="https://github.com/Traigent/Traigent#backend-setup",
             ) from error
         else:
-            raise TraiGentError(
+            raise TraigentError(
                 message="Connection failed",
                 fix="Check your internet connection and firewall settings",
                 docs_link="https://github.com/Traigent/Traigent#troubleshooting",
@@ -201,7 +201,7 @@ class ErrorHandler:
     @classmethod
     def handle_permission_error(cls, error: Exception) -> None:
         """Handle permission errors."""
-        raise TraiGentError(
+        raise TraigentError(
             message="Permission denied",
             fix="1. Check file permissions\n"
             "   2. Run in virtual environment\n"
@@ -212,7 +212,7 @@ class ErrorHandler:
     @classmethod
     def handle_zero_accuracy(cls, error: Exception) -> None:
         """Handle zero accuracy issues."""
-        raise TraiGentError(
+        raise TraigentError(
             message="Optimization showing 0.0% accuracy",
             fix="1. Enable mock mode: TRAIGENT_MOCK_MODE=true\n"
             "   2. Check evaluation dataset format\n"
@@ -224,7 +224,7 @@ class ErrorHandler:
     @classmethod
     def handle_unknown_error(cls, error: Exception) -> None:
         """Handle unknown errors with general troubleshooting."""
-        raise TraiGentError(
+        raise TraigentError(
             message=f"Unexpected error: {str(error)}",
             fix="1. Check the stack trace above\n"
             "   2. Verify all dependencies: python scripts/verify_installation.py\n"
@@ -240,7 +240,7 @@ def wrap_with_error_handler(func: Callable[..., Any]) -> Callable[..., Any]:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         try:
             return func(*args, **kwargs)
-        except TraiGentError:
+        except TraigentError:
             # Re-raise our custom errors as-is
             raise
         except Exception as e:

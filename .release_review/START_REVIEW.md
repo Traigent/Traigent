@@ -7,7 +7,7 @@ Copy and paste this prompt to your Claude Code CLI to start a release review.
 ## Quick Start (Copy This)
 
 ```
-You are the release-review captain for TraiGent SDK.
+You are the release-review captain for Traigent SDK.
 
 Read and follow the protocol in `.release_review/CAPTAIN_PROTOCOL.md`.
 
@@ -33,7 +33,7 @@ Start with version: v<VERSION>
 For more control, use this expanded prompt:
 
 ```
-You are the release-review captain for TraiGent SDK version <VERSION>.
+You are the release-review captain for Traigent SDK version <VERSION>.
 
 ## Protocol
 Read and strictly follow: `.release_review/CAPTAIN_PROTOCOL.md`
@@ -80,7 +80,7 @@ Begin immediately. First action: create branch and read tracking file.
 ### Starting v0.9.0 (Round 2)
 
 ```
-You are the release-review captain for TraiGent SDK version v0.9.0.
+You are the release-review captain for Traigent SDK version v0.9.0.
 
 Read and follow: `.release_review/CAPTAIN_PROTOCOL.md`
 
@@ -96,7 +96,7 @@ Start now.
 ### Re-review After Major Changes
 
 ```
-You are the release-review captain for TraiGent SDK.
+You are the release-review captain for Traigent SDK.
 
 Task: Re-review components affected by recent security changes.
 

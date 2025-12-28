@@ -14,17 +14,17 @@ from traigent.utils.error_handler import (
     DependencyError,
     ErrorHandler,
     EvaluationError,
-    TraiGentError,
+    TraigentError,
     wrap_with_error_handler,
 )
 
 
-class TestTraiGentError:
-    """Test TraiGentError base exception."""
+class TestTraigentError:
+    """Test TraigentError base exception."""
 
     def test_basic_error(self):
         """Test basic error with message only."""
-        error = TraiGentError("Something went wrong")
+        error = TraigentError("Something went wrong")
 
         assert "Something went wrong" in str(error)
         assert error.message == "Something went wrong"
@@ -33,7 +33,7 @@ class TestTraiGentError:
 
     def test_error_with_fix(self):
         """Test error with fix suggestion."""
-        error = TraiGentError("Config invalid", fix="Check your settings")
+        error = TraigentError("Config invalid", fix="Check your settings")
 
         assert "Something went wrong" in str(error) or "Config invalid" in str(error)
         assert "Fix:" in str(error)
@@ -41,7 +41,7 @@ class TestTraiGentError:
 
     def test_error_with_docs_link(self):
         """Test error with documentation link."""
-        error = TraiGentError(
+        error = TraigentError(
             "Config invalid",
             fix="Check your settings",
             docs_link="https://example.com/docs",
@@ -52,7 +52,7 @@ class TestTraiGentError:
 
     def test_format_message_structure(self):
         """Test formatted message structure."""
-        error = TraiGentError(
+        error = TraigentError(
             "Test error", fix="Test fix", docs_link="https://example.com"
         )
         formatted = error.format_message()
@@ -64,7 +64,7 @@ class TestTraiGentError:
 
     def test_error_attributes(self):
         """Test error attributes are accessible."""
-        error = TraiGentError("Test", fix="Fix it", docs_link="https://docs.com")
+        error = TraigentError("Test", fix="Fix it", docs_link="https://docs.com")
 
         assert hasattr(error, "message")
         assert hasattr(error, "fix")
@@ -215,7 +215,7 @@ class TestErrorHandlerImportErrors:
         """Test handling of import error for unknown package."""
         error = ImportError("No module named 'unknown_package'")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_import_error(error)
 
         assert "unknown_package" in str(exc_info.value)
@@ -224,7 +224,7 @@ class TestErrorHandlerImportErrors:
         """Test module name extraction from import error."""
         error = ImportError("No module named 'package.submodule'")
 
-        with pytest.raises(TraiGentError):
+        with pytest.raises(TraigentError):
             ErrorHandler.handle_import_error(error)
 
 
@@ -250,8 +250,8 @@ class TestErrorHandlerAPIKeyErrors:
         assert "ANTHROPIC_API_KEY" in str(exc_info.value)
 
     def test_handle_api_key_error_traigent(self):
-        """Test handling of TraiGent API key error."""
-        error = Exception("TraiGent API key missing")
+        """Test handling of Traigent API key error."""
+        error = Exception("Traigent API key missing")
 
         with pytest.raises(APIKeyError) as exc_info:
             ErrorHandler.handle_api_key_error(error)
@@ -264,7 +264,7 @@ class TestErrorHandlerAPIKeyErrors:
         """Test handling of generic API key error."""
         error = Exception("API authentication failed")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_api_key_error(error)
 
         assert "authentication" in str(exc_info.value).lower()
@@ -277,7 +277,7 @@ class TestErrorHandlerConnectionErrors:
         """Test handling of backend connection error."""
         error = ConnectionRefusedError("Connection refused to localhost:5000")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_connection_error(error)
 
         assert "backend" in str(exc_info.value).lower()
@@ -289,7 +289,7 @@ class TestErrorHandlerConnectionErrors:
         """Test handling of generic connection error."""
         error = ConnectionError("Connection failed")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_connection_error(error)
 
         assert "connection" in str(exc_info.value).lower()
@@ -302,7 +302,7 @@ class TestErrorHandlerPermissionErrors:
         """Test handling of permission error."""
         error = PermissionError("Permission denied")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_permission_error(error)
 
         assert "permission" in str(exc_info.value).lower()
@@ -318,7 +318,7 @@ class TestErrorHandlerZeroAccuracy:
         """Test handling of 0.0% accuracy error."""
         error = ValueError("Accuracy: 0.0%")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_zero_accuracy(error)
 
         assert "accuracy" in str(exc_info.value).lower()
@@ -327,7 +327,7 @@ class TestErrorHandlerZeroAccuracy:
         """Test zero accuracy error suggests mock mode."""
         error = ValueError("accuracy: 0.0")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_zero_accuracy(error)
 
         assert "mock mode" in str(
@@ -342,7 +342,7 @@ class TestErrorHandlerUnknownErrors:
         """Test handling of unknown error."""
         error = RuntimeError("Unexpected issue")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_unknown_error(error)
 
         assert "unexpected" in str(exc_info.value).lower()
@@ -370,23 +370,23 @@ class TestErrorHandlerMain:
         """Test handle_error detects and routes connection errors."""
         error = ConnectionRefusedError("Connection refused")
 
-        with pytest.raises(TraiGentError):
+        with pytest.raises(TraigentError):
             ErrorHandler.handle_error(error)
 
     def test_handle_error_unknown_pattern(self):
         """Test handle_error handles unknown error patterns."""
         error = ValueError("Some random error")
 
-        with pytest.raises(TraiGentError):
+        with pytest.raises(TraigentError):
             ErrorHandler.handle_error(error)
 
     def test_handle_error_preserves_traigent_errors(self):
-        """Test handle_error preserves TraiGent custom errors."""
+        """Test handle_error preserves Traigent custom errors."""
         original_error = DependencyError("test")
 
         # Should re-raise as-is in real usage, but handle_error doesn't do this
-        # So we test that it would raise some TraiGent error
-        with pytest.raises(TraiGentError):
+        # So we test that it would raise some Traigent error
+        with pytest.raises(TraigentError):
             ErrorHandler.handle_error(original_error)
 
 
@@ -409,11 +409,11 @@ class TestWrapWithErrorHandler:
         def failing_func():
             raise ImportError("No module named 'test_package'")
 
-        with pytest.raises(TraiGentError):
+        with pytest.raises(TraigentError):
             failing_func()
 
     def test_decorator_preserves_traigent_errors(self):
-        """Test decorator re-raises TraiGent errors as-is."""
+        """Test decorator re-raises Traigent errors as-is."""
 
         @wrap_with_error_handler
         def custom_error_func():
@@ -449,7 +449,7 @@ class TestErrorHandlerIntegration:
         """Test that error chaining is preserved."""
         original = ValueError("Original error")
 
-        with pytest.raises(TraiGentError) as exc_info:
+        with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_unknown_error(original)
 
         assert exc_info.value.__cause__ is original
@@ -463,7 +463,7 @@ class TestErrorHandlerIntegration:
         ]
 
         for error in errors:
-            with pytest.raises(TraiGentError):
+            with pytest.raises(TraigentError):
                 ErrorHandler.handle_error(error)
 
     def test_nested_errors(self):
@@ -478,5 +478,5 @@ class TestErrorHandlerIntegration:
             except Exception as e:
                 ErrorHandler.handle_error(e)
 
-        with pytest.raises(TraiGentError):
+        with pytest.raises(TraigentError):
             outer()

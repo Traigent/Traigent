@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summary of TraiGent SDK Backend Integration with DTOs."""
+"""Summary of Traigent SDK Backend Integration with DTOs."""
 
 
 from traigent.cloud.dtos import (
@@ -12,7 +12,7 @@ from traigent.cloud.dtos import (
 def print_integration_summary():
     """Print a summary of the integration implementation."""
 
-    print("TraiGent SDK Backend Integration Summary")
+    print("Traigent SDK Backend Integration Summary")
     print("=" * 60)
 
     print("\n📋 IMPLEMENTATION OVERVIEW:")

@@ -1,4 +1,4 @@
-"""Agent Specification Generator for TraiGent SDK.
+"""Agent Specification Generator for Traigent SDK.
 
 This module provides utilities to generate backend agent specifications
 from SDK optimized functions, enabling seamless integration between

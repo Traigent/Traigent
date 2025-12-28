@@ -1,6 +1,6 @@
 id: CONC-Integrations
 name: Integrations
-purpose: "Bridge TraiGent with LLM providers, frameworks, vector stores, and observability backends via plugins."
+purpose: "Bridge Traigent with LLM providers, frameworks, vector stores, and observability backends via plugins."
 state:
   - name: plugin_registry
     type: "PluginRegistry"

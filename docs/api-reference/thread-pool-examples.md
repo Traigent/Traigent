@@ -1,10 +1,10 @@
 # Thread Pool Usage with Context Propagation
 
-This document provides examples of using thread pools within TraiGent-optimized functions while properly propagating context.
+This document provides examples of using thread pools within Traigent-optimized functions while properly propagating context.
 
 ## Overview
 
-Python's `contextvars` (used by TraiGent for configuration management) don't automatically propagate to `ThreadPoolExecutor` workers. This guide shows how to manually propagate TraiGent's context to worker threads.
+Python's `contextvars` (used by Traigent for configuration management) don't automatically propagate to `ThreadPoolExecutor` workers. This guide shows how to manually propagate Traigent's context to worker threads.
 
 ## When Do You Need This?
 
@@ -14,11 +14,11 @@ You need manual context propagation when:
 2. **You submit work to threads** that need access to `traigent.get_config()`
 3. **You're parallelizing work** within a single trial
 
-**Note**: TraiGent's built-in parallel evaluator already handles context propagation automatically. You only need this when creating your own thread pools.
+**Note**: Traigent's built-in parallel evaluator already handles context propagation automatically. You only need this when creating your own thread pools.
 
 ## Context Propagation API
 
-TraiGent provides utilities in `traigent.config.context`:
+Traigent provides utilities in `traigent.config.context`:
 
 ```python
 from traigent.config.context import copy_context_to_thread
@@ -285,7 +285,7 @@ def analyze_large_document(document: str, chunk_size: int = 1000) -> str:
 
 ### `copy_context_to_thread()`
 
-Captures all TraiGent context variables for propagation to worker threads.
+Captures all Traigent context variables for propagation to worker threads.
 
 ```python
 from traigent.config.context import copy_context_to_thread
@@ -417,7 +417,7 @@ Consider your optimization's parallelism:
 @traigent.optimize(
     execution={
         "parallel_config": {
-            "thread_workers": 4,  # TraiGent's parallel trial execution
+            "thread_workers": 4,  # Traigent's parallel trial execution
         }
     },
     ...

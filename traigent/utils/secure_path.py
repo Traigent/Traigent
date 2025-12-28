@@ -1,4 +1,4 @@
-"""Secure path validation utilities for TraiGent SDK.
+"""Secure path validation utilities for Traigent SDK.
 
 This module provides utilities to prevent path traversal attacks and ensure
 file operations stay within allowed directories.

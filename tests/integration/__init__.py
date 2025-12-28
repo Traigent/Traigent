@@ -1,1 +1,1 @@
-"""Integration tests for TraiGent SDK."""
+"""Integration tests for Traigent SDK."""

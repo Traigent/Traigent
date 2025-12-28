@@ -1,6 +1,6 @@
 ## HotpotQA Walkthrough — What This Demo Shows
 
-This walkthrough lets you experience how TraiGent optimizes a multi‑hop question‑answering agent on the HotpotQA distractor setting. You will see TraiGent explore different agent configurations (models, prompting, retrieval depth, etc.), automatically score answers, and surface the best trade‑offs between quality, cost, and latency.
+This walkthrough lets you experience how Traigent optimizes a multi‑hop question‑answering agent on the HotpotQA distractor setting. You will see Traigent explore different agent configurations (models, prompting, retrieval depth, etc.), automatically score answers, and surface the best trade‑offs between quality, cost, and latency.
 
 ### What you’ll see
 
@@ -12,11 +12,11 @@ This walkthrough lets you experience how TraiGent optimizes a multi‑hop questi
 
 ### Why HotpotQA?
 
-HotpotQA requires combining evidence from multiple passages to answer a single question. That makes it perfect for demonstrating how TraiGent tunes retrieval and reasoning “knobs” and measures the impact on outcomes.
+HotpotQA requires combining evidence from multiple passages to answer a single question. That makes it perfect for demonstrating how Traigent tunes retrieval and reasoning “knobs” and measures the impact on outcomes.
 
 ## How the demo works
 
-We use the HotpotQA “distractor” format (each question ships with 10 paragraphs: 2 relevant + 8 distractors). TraiGent tests variations such as:
+We use the HotpotQA “distractor” format (each question ships with 10 paragraphs: 2 relevant + 8 distractors). Traigent tests variations such as:
 
 - Retrieval depth `k` (how many paragraphs to include).
 - Prompt style (direct answer vs. step‑by‑step reasoning).
@@ -37,11 +37,11 @@ You can explore HotpotQA optimization in two ways.
 
 ### Quick setup script
 
-Run `./install.sh` to provision a dedicated virtual environment, install TraiGent with all walkthrough dependencies, and generate a sample HotpotQA dataset if needed. Re-run the script any time; it skips completed steps (use `FORCE_REINSTALL=1` to force dependency reinstalls).
+Run `./install.sh` to provision a dedicated virtual environment, install Traigent with all walkthrough dependencies, and generate a sample HotpotQA dataset if needed. Re-run the script any time; it skips completed steps (use `FORCE_REINSTALL=1` to force dependency reinstalls).
 
 #### What the script does
 - Prompts you to **use your currently activated virtual environment** (make sure it’s active before answering “yes”) or to let the script create a dedicated `.venv` inside this folder.
-- Installs TraiGent plus the integration requirements into the selected environment (skipped if already present unless `FORCE_REINSTALL=1`). If you’d rather install manually, run `pip install -r walkthrough/hotpotQA/requirements.txt` followed by `pip install -e .` inside the environment of your choice.
+- Installs Traigent plus the integration requirements into the selected environment (skipped if already present unless `FORCE_REINSTALL=1`). If you’d rather install manually, run `pip install -r walkthrough/hotpotQA/requirements.txt` followed by `pip install -e .` inside the environment of your choice.
 - Generates a lightweight HotpotQA sample dataset the first time it runs. We default to `validation[:50]`, i.e., the first 50 examples from the official validation split, because it is quick to download (via Hugging Face `datasets`) and still showcases multi-hop behavior. Adjust `HOTPOT_SAMPLE_SLICE` for larger samples or replace the file with the official distractor dev set when you need full fidelity.
 - No large Wikipedia dump is required. The HotpotQA distractor format already includes the supporting paragraphs inside the dataset, so the walkthrough operates entirely on local files—models do not reach out to the live web unless you modify the pipeline to do so.
 
@@ -123,7 +123,7 @@ Artifacts are written under `paper_experiments/artifacts/hotpotqa/<run-id>/`:
 - `trial_history.json` — per‑trial metrics (used for figure export).
 - `figure_data/` — optional data for charts (hypervolume over time, feasible vs. pruned trials).
 
-When reading the tables, compare how increasing `k` or enabling step‑by‑step prompting changes EM/F1, cost, and latency. TraiGent’s optimizer will highlight configurations that improve quality without unnecessary cost or delay.
+When reading the tables, compare how increasing `k` or enabling step‑by‑step prompting changes EM/F1, cost, and latency. Traigent’s optimizer will highlight configurations that improve quality without unnecessary cost or delay.
 
 ## Customizing the demo
 

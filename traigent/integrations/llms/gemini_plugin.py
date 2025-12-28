@@ -1,4 +1,4 @@
-"""Google Gemini integration plugin for TraiGent.
+"""Google Gemini integration plugin for Traigent.
 
 This module provides the Google Gemini-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -55,7 +55,7 @@ class GeminiPlugin(LLMPlugin):
             supported_packages=["google-generativeai"],
             priority=IntegrationPriority.NORMAL,
             description="Google Gemini integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["google-generativeai>=0.3.0"],
             supports_versions={"google-generativeai": "0."},
         )

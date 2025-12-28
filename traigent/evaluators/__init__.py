@@ -1,4 +1,4 @@
-"""Evaluation strategies for TraiGent SDK."""
+"""Evaluation strategies for Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-EVAL-METRICS REQ-EVAL-005 SYNC-OptimizationFlow
 

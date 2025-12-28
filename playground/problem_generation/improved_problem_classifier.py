@@ -1,5 +1,5 @@
 """
-Improved Problem Type Classifier for TraiGent SDK.
+Improved Problem Type Classifier for Traigent SDK.
 
 This module provides an enhanced problem classifier that combines:
 1. LLM-based classification for nuanced understanding (when available)

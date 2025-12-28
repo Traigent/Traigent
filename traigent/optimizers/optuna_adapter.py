@@ -1,4 +1,4 @@
-"""Adapter utilities that expose Optuna through the TraiGent API surface."""
+"""Adapter utilities that expose Optuna through the Traigent API surface."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Compatibility CONC-Quality-Maintainability FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 SYNC-OptimizationFlow
 
@@ -32,7 +32,7 @@ def _require_optuna() -> None:
 
 
 class OptunaAdapter:
-    """Expose Optuna's optimisation loop in a TraiGent-friendly way."""
+    """Expose Optuna's optimisation loop in a Traigent-friendly way."""
 
     @staticmethod
     def optimize(

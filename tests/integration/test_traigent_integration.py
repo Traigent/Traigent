@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TraiGent Integration Test Suite
+Traigent Integration Test Suite
 
 Comprehensive integration tests covering:
 - Core API functionality (apply_best_config, get_optimization_insights)
@@ -77,14 +77,14 @@ except ImportError:
 
 @pytest.mark.skipif(not CORE_API_AVAILABLE, reason="Core API modules not available")
 class TestCoreAPIIntegration:
-    """Test core TraiGent API functionality."""
+    """Test core Traigent API functionality."""
 
     def test_apply_best_config_integration(self):
-        """Test apply_best_config with actual TraiGent classes."""
+        """Test apply_best_config with actual Traigent classes."""
 
         # Create a simple test function that works with seamless mode
         def test_function(text: str) -> str:
-            # These will be overridden by TraiGent
+            # These will be overridden by Traigent
             model = "default"
             temperature = 0.5
             return f"{model}({temperature}): {text.upper()}"
@@ -143,7 +143,7 @@ class TestCoreAPIIntegration:
         assert "HELLO WORLD" in output
 
     def test_optimization_insights_integration(self):
-        """Test get_optimization_insights with actual TraiGent classes."""
+        """Test get_optimization_insights with actual Traigent classes."""
         # Create comprehensive optimization result
         trials = [
             TrialResult(
@@ -210,7 +210,7 @@ class TestCoreAPIIntegration:
         """Test complete workflow: create function -> apply config -> get insights."""
 
         def customer_support_agent(query: str) -> str:
-            # These will be overridden by TraiGent
+            # These will be overridden by Traigent
             model = "default"
             # Simulate different model performance
             quality = "high" if model == "GPT-4o" else "medium"
@@ -659,13 +659,13 @@ class TestPlatformSupport:
 def main():
     """Run all integration tests as a script."""
     if not CORE_API_AVAILABLE:
-        print("❌ Core TraiGent API not available - install dependencies:")
+        print("❌ Core Traigent API not available - install dependencies:")
         print("pip install numpy pandas scikit-learn")
         return False
 
-    print("🚀 TraiGent Integration Test Suite")
+    print("🚀 Traigent Integration Test Suite")
     print("=" * 60)
-    print("Testing complete TraiGent integration functionality\n")
+    print("Testing complete Traigent integration functionality\n")
 
     # Run pytest programmatically
     exit_code = pytest.main([__file__, "-v"])

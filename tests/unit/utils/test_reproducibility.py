@@ -169,7 +169,7 @@ class TestReproducibilityMetadata:
         assert git_info["remote"] == "https://github.com/test/repo.git"
 
     def test_collect_traigent_info(self, temp_dir):
-        """Test TraiGent information collection."""
+        """Test Traigent information collection."""
         collector = ReproducibilityMetadata(temp_dir)
         traigent_info = collector._collect_traigent_info()
 

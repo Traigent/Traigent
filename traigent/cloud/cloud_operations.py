@@ -1,4 +1,4 @@
-"""Cloud SaaS optimization operations for TraiGent Cloud Client.
+"""Cloud SaaS optimization operations for Traigent Cloud Client.
 
 This module handles cloud-based optimization operations where agents are
 executed in the cloud with full data transmission.
