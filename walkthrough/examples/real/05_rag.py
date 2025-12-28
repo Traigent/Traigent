@@ -34,7 +34,7 @@ def get_vectorstore() -> FAISS:
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/rag_questions.jsonl",
+    eval_dataset="./rag_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -69,7 +69,7 @@ async def main() -> None:
     print("=" * 50)
     print("Optimizing retrieval (k) and generation (model, temp).\n")
 
-    results = await rag_qa.optimize(algorithm="random", max_trials=15)
+    results = await rag_qa.optimize(algorithm="random", max_trials=10, random_seed=42)
 
     print("\nOptimal RAG Configuration:")
     print(f"  Retrieval k: {results.best_config.get('k')}")

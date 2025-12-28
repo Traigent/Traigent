@@ -1,55 +1,269 @@
 #!/bin/bash
 
-# Test all Traigent walkthrough examples in mock mode
+# Test Traigent walkthrough examples in mock or real mode
+# Usage: ./test_all_examples.sh [--mock|--real]
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
-export TRAIGENT_MOCK_MODE=true
+# Find Python - prefer venv, fallback to python3
+if [ -x "$REPO_ROOT/.venv/bin/python" ]; then
+    PYTHON="$REPO_ROOT/.venv/bin/python"
+elif command -v python3 &> /dev/null; then
+    PYTHON="python3"
+elif command -v python &> /dev/null; then
+    PYTHON="python"
+else
+    echo "ERROR: No Python interpreter found"
+    exit 1
+fi
 
-echo "====================================="
-echo "Testing Traigent Walkthrough Examples"
-echo "====================================="
-echo ""
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
 
-# Array of example files
-examples=(
-    "01_simple_optimization.py"
+# Default to mock mode
+MODE="${1:---mock}"
+
+# Example definitions with cost estimates (for real mode)
+declare -A EXAMPLES=(
+    ["01_simple.py"]="Simple Optimization|grid|10 trials x 20 examples|~\$0.15"
+    ["02_zero_code_change.py"]="Zero Code Change (Seamless)|random|10 trials x 20 examples|~\$0.20"
+    ["03_parameter_mode.py"]="Parameter Mode|random|10 trials x 20 examples|~\$0.25"
+    ["04_multi_objective.py"]="Multi-Objective|random|10 trials x 20 examples|~\$0.30"
+    ["05_rag.py"]="RAG Optimization|random|10 trials x 20 examples|~\$0.40"
+    ["06_custom_evaluator.py"]="LLM-as-Judge|random|10 trials x 20 examples|~\$0.80"
+    ["07_privacy_modes.py"]="Privacy Modes|mixed|20 trials x 20 examples|~\$0.50"
+)
+
+EXAMPLE_ORDER=(
+    "01_simple.py"
     "02_zero_code_change.py"
     "03_parameter_mode.py"
     "04_multi_objective.py"
-    "05_rag_example.py"
+    "05_rag.py"
     "06_custom_evaluator.py"
     "07_privacy_modes.py"
 )
 
-# Test each example
-EXAMPLE_TIMEOUT=25
-for example in "${examples[@]}"; do
-    echo "-------------------------------------"
-    echo "Testing: $example"
-    echo "-------------------------------------"
+print_header() {
+    echo ""
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}  Traigent Walkthrough Examples - ${1} Mode${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+}
 
-    if [ -f "$example" ]; then
-        # Run with timeout and capture result
-        timeout "$EXAMPLE_TIMEOUT" python "$example" 2>&1 | tail -10
+print_example_info() {
+    local example=$1
+    local info="${EXAMPLES[$example]}"
+    IFS='|' read -r name algo details cost <<< "$info"
 
-        if [ ${PIPESTATUS[0]} -eq 0 ]; then
-            echo "✅ $example - PASSED"
-        elif [ ${PIPESTATUS[0]} -eq 124 ]; then
-            echo "⚠️  $example - TIMEOUT (but likely working)"
-        else
-            echo "❌ $example - FAILED"
-        fi
-    else
-        echo "❌ $example - FILE NOT FOUND"
+    echo -e "${BLUE}Example:${NC} $example"
+    echo -e "${BLUE}Description:${NC} $name"
+    echo -e "${BLUE}Algorithm:${NC} $algo"
+    echo -e "${BLUE}Scope:${NC} $details"
+    if [ "$MODE" == "--real" ]; then
+        echo -e "${YELLOW}Estimated Cost:${NC} $cost"
+    fi
+}
+
+confirm_example() {
+    local example=$1
+
+    if [ "$MODE" == "--mock" ]; then
+        return 0  # No confirmation needed for mock mode
     fi
 
     echo ""
-done
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    print_example_info "$example"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
 
-echo "====================================="
-echo "Testing Complete!"
-echo "====================================="
+    read -p "Run this example? [y/N/q(quit)] " -n 1 -r
+    echo ""
+
+    case $REPLY in
+        [Yy]) return 0 ;;
+        [Qq]) echo -e "${YELLOW}Exiting...${NC}"; exit 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+run_example() {
+    local example=$1
+    local dir=$2
+    local timeout_secs=$3
+
+    echo -e "${BLUE}Running:${NC} $dir/$example"
+    echo ""
+
+    if [ -f "$dir/$example" ]; then
+        # Run from the example directory so relative paths work
+        pushd "$dir" > /dev/null
+        timeout "$timeout_secs" "$PYTHON" "$example" 2>&1
+        local exit_code=${PIPESTATUS[0]}
+        popd > /dev/null
+
+        echo ""
+        if [ $exit_code -eq 0 ]; then
+            echo -e "${GREEN}✅ $example - PASSED${NC}"
+            return 0
+        elif [ $exit_code -eq 124 ]; then
+            echo -e "${YELLOW}⚠️  $example - TIMEOUT (may still be working)${NC}"
+            return 0
+        else
+            echo -e "${RED}❌ $example - FAILED (exit code: $exit_code)${NC}"
+            return 1
+        fi
+    else
+        echo -e "${RED}❌ $example - FILE NOT FOUND${NC}"
+        return 1
+    fi
+}
+
+calculate_total_cost() {
+    echo ""
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  REAL MODE - Cost Estimate Summary${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    echo "  Example                      | Est. Cost"
+    echo "  -----------------------------|----------"
+    for example in "${EXAMPLE_ORDER[@]}"; do
+        local info="${EXAMPLES[$example]}"
+        IFS='|' read -r name algo details cost <<< "$info"
+        printf "  %-29s | %s\n" "$example" "$cost"
+    done
+    echo "  -----------------------------|----------"
+    echo -e "  ${YELLOW}Total Estimated:${NC}              | ~\$2.60"
+    echo ""
+    echo -e "${RED}WARNING: Real mode makes actual API calls and incurs costs!${NC}"
+    echo ""
+}
+
+# Main execution
+case "$MODE" in
+    --mock)
+        print_header "MOCK"
+        echo -e "${GREEN}Mock mode: No API keys needed, instant results${NC}"
+        echo ""
+
+        export TRAIGENT_MOCK_MODE=true
+        EXAMPLE_DIR="mock"
+        TIMEOUT=60
+
+        passed=0
+        failed=0
+        skipped=0
+
+        for example in "${EXAMPLE_ORDER[@]}"; do
+            echo ""
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+            print_example_info "$example"
+            echo -e "${BLUE}───────────────────────────────────────────────────────────${NC}"
+
+            if run_example "$example" "$EXAMPLE_DIR" "$TIMEOUT"; then
+                ((passed++))
+            else
+                ((failed++))
+            fi
+        done
+        ;;
+
+    --real)
+        print_header "REAL"
+        echo -e "${RED}Real mode: Requires OPENAI_API_KEY, makes actual API calls${NC}"
+        echo ""
+
+        # Check for API key
+        if [ -f "real/.env" ]; then
+            echo -e "${GREEN}Found .env file - loading environment...${NC}"
+            set -a
+            source real/.env
+            set +a
+        fi
+
+        if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo -e "${RED}ERROR: OPENAI_API_KEY not set${NC}"
+            echo ""
+            echo "Set it via environment variable or create real/.env with:"
+            echo "  OPENAI_API_KEY=your-key-here"
+            echo "  TRAIGENT_COST_APPROVED=true"
+            echo "  TRAIGENT_RUN_COST_LIMIT=10"
+            exit 1
+        fi
+
+        # Show cost summary and get approval
+        calculate_total_cost
+
+        read -p "Do you want to proceed with REAL mode? This will incur API costs. [y/N] " -n 1 -r
+        echo ""
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}Aborted. Use --mock for cost-free testing.${NC}"
+            exit 0
+        fi
+
+        # Set cost approval
+        export TRAIGENT_COST_APPROVED=true
+        export TRAIGENT_RUN_COST_LIMIT=${TRAIGENT_RUN_COST_LIMIT:-10}
+
+        EXAMPLE_DIR="real"
+        TIMEOUT=300  # 5 minutes for real API calls
+
+        passed=0
+        failed=0
+        skipped=0
+
+        for example in "${EXAMPLE_ORDER[@]}"; do
+            if confirm_example "$example"; then
+                echo ""
+                if run_example "$example" "$EXAMPLE_DIR" "$TIMEOUT"; then
+                    ((passed++))
+                else
+                    ((failed++))
+                fi
+            else
+                echo -e "${YELLOW}⏭️  $example - SKIPPED${NC}"
+                ((skipped++))
+            fi
+        done
+        ;;
+
+    *)
+        echo "Usage: $0 [--mock|--real]"
+        echo ""
+        echo "  --mock  Run examples in mock mode (default, no API keys needed)"
+        echo "  --real  Run examples with real API calls (requires OPENAI_API_KEY)"
+        exit 1
+        ;;
+esac
+
+# Summary
+echo ""
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+echo -e "${CYAN}  Summary${NC}"
+echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
+echo ""
+echo -e "  ${GREEN}Passed:${NC}  $passed"
+echo -e "  ${RED}Failed:${NC}  $failed"
+if [ "$MODE" == "--real" ]; then
+    echo -e "  ${YELLOW}Skipped:${NC} $skipped"
+fi
+echo ""
+
+if [ $failed -eq 0 ]; then
+    echo -e "${GREEN}All examples completed successfully!${NC}"
+    exit 0
+else
+    echo -e "${RED}Some examples failed. Check output above for details.${NC}"
+    exit 1
+fi

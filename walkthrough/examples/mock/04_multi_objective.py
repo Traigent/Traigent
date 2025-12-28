@@ -17,7 +17,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/classification.jsonl",
+    eval_dataset="./classification.jsonl",
     objectives=OBJECTIVES,
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],

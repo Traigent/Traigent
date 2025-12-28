@@ -21,7 +21,7 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/classification.jsonl",
+    eval_dataset="./classification.jsonl",
     objectives=OBJECTIVES,
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -55,7 +55,7 @@ async def main() -> None:
     print("=" * 50)
     print("Balancing accuracy (50%), cost (30%), latency (20%).\n")
 
-    results = await classify_text.optimize(algorithm="random", max_trials=12)
+    results = await classify_text.optimize(algorithm="random", max_trials=10, random_seed=42)
 
     print("\nOptimal Configuration:")
     print(f"  Model: {results.best_config.get('model')}")

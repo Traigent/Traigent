@@ -56,13 +56,13 @@ class TestMaxTrialsStopCondition:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
-        assert len(result.trials) == max_trials, (
-            f"Expected exactly {max_trials} trials, got {len(result.trials)}"
-        )
+        assert (
+            len(result.trials) == max_trials
+        ), f"Expected exactly {max_trials} trials, got {len(result.trials)}"
         # Hitting max_trials should set stop_reason to max_trials_reached
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
         # Validate with result_validator
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -93,9 +93,9 @@ class TestMaxTrialsStopCondition:
 
         assert not isinstance(result, Exception)
         assert len(result.trials) == 1
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -125,9 +125,9 @@ class TestMaxTrialsStopCondition:
 
         assert not isinstance(result, Exception)
         assert len(result.trials) == 2
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -165,9 +165,9 @@ class TestMaxTrialsStopCondition:
         assert not isinstance(result, Exception)
         # Should stop at exactly 3 trials even though space is larger
         assert len(result.trials) == 3
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected stop_reason 'max_trials_reached', got '{result.stop_reason}'"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -229,9 +229,9 @@ class TestTimeoutStopCondition:
         assert len(result.trials) <= scenario.max_trials
         # If timeout was triggered, verify elapsed time is reasonable
         if result.stop_reason == "timeout":
-            assert elapsed >= scenario.timeout * 0.8, (
-                f"Stopped too early: elapsed={elapsed:.2f}s, timeout={scenario.timeout}s"
-            )
+            assert (
+                elapsed >= scenario.timeout * 0.8
+            ), f"Stopped too early: elapsed={elapsed:.2f}s, timeout={scenario.timeout}s"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -291,9 +291,9 @@ class TestTimeoutStopCondition:
         ), f"Expected 'timeout', 'max_trials_reached' or 'optimizer', got '{result.stop_reason}'"
         # If timeout was triggered, verify timing is reasonable
         if result.stop_reason == "timeout":
-            assert elapsed >= scenario.timeout * 0.8, (
-                f"Stopped too early: elapsed={elapsed:.2f}s, timeout={scenario.timeout}s"
-            )
+            assert (
+                elapsed >= scenario.timeout * 0.8
+            ), f"Stopped too early: elapsed={elapsed:.2f}s, timeout={scenario.timeout}s"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -414,15 +414,15 @@ class TestConfigSpaceExhaustionStopCondition:
         # Verify all configs are from the valid space
         unique_configs = set()
         for trial in result.trials:
-            assert trial.config.get("model") in config_space["model"], (
-                f"Invalid config model: {trial.config.get('model')}"
-            )
+            assert (
+                trial.config.get("model") in config_space["model"]
+            ), f"Invalid config model: {trial.config.get('model')}"
             unique_configs.add(tuple(sorted(trial.config.items())))
 
         # Should have at most config_space_size unique configs
-        assert len(unique_configs) <= config_space_size, (
-            f"Expected at most {config_space_size} unique configs, got {len(unique_configs)}"
-        )
+        assert (
+            len(unique_configs) <= config_space_size
+        ), f"Expected at most {config_space_size} unique configs, got {len(unique_configs)}"
 
         # stop_reason should be set (not None)
         assert result.stop_reason in (
@@ -476,14 +476,14 @@ class TestConfigSpaceExhaustionStopCondition:
         assert len(result.trials) >= 1, "Should complete at least one trial"
         # All trials should use the same config
         for i, trial in enumerate(result.trials):
-            assert trial.config.get("model") == "gpt-3.5-turbo", (
-                f"Trial {i} should use 'gpt-3.5-turbo', got {trial.config.get('model')}"
-            )
+            assert (
+                trial.config.get("model") == "gpt-3.5-turbo"
+            ), f"Trial {i} should use 'gpt-3.5-turbo', got {trial.config.get('model')}"
         # Only one unique config should exist
         unique_configs = {tuple(sorted(t.config.items())) for t in result.trials}
-        assert len(unique_configs) == 1, (
-            f"Expected exactly 1 unique config, got {len(unique_configs)}"
-        )
+        assert (
+            len(unique_configs) == 1
+        ), f"Expected exactly 1 unique config, got {len(unique_configs)}"
         # stop_reason should be set (not None)
         assert result.stop_reason in (
             "optimizer",
@@ -580,9 +580,9 @@ class TestStopReasonValues:
 
         assert not isinstance(result, Exception)
         assert result.stop_reason is not None, "stop_reason should not be None"
-        assert result.stop_reason in valid_stop_reasons, (
-            f"Invalid stop_reason: {result.stop_reason}"
-        )
+        assert (
+            result.stop_reason in valid_stop_reasons
+        ), f"Invalid stop_reason: {result.stop_reason}"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -628,9 +628,9 @@ class TestStopReasonValues:
         assert hasattr(result, "stop_reason"), "Result should have stop_reason"
         # Stop reason should be valid (not None)
         assert result.stop_reason is not None, "stop_reason should not be None"
-        assert result.stop_reason in valid_stop_reasons, (
-            f"Invalid stop_reason: {result.stop_reason}"
-        )
+        assert (
+            result.stop_reason in valid_stop_reasons
+        ), f"Invalid stop_reason: {result.stop_reason}"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -665,9 +665,9 @@ class TestStopReasonValues:
         assert len(result.trials) == max_trials
         # When we hit max_trials exactly, stop_reason must be
         # max_trials_reached
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected 'max_trials_reached' when hitting max_trials, got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected 'max_trials_reached' when hitting max_trials, got '{result.stop_reason}'"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -702,9 +702,9 @@ class TestStopReasonValues:
 
         # Verify config space was actually limited
         unique_configs = {tuple(sorted(t.config.items())) for t in result.trials}
-        assert len(unique_configs) <= config_space_size, (
-            f"Expected at most {config_space_size} unique configs, got {len(unique_configs)}"
-        )
+        assert (
+            len(unique_configs) <= config_space_size
+        ), f"Expected at most {config_space_size} unique configs, got {len(unique_configs)}"
 
         # When config space is exhausted, stop_reason should indicate this
         # - "optimizer" (optimizer decided to stop due to exhaustion)
@@ -760,9 +760,9 @@ class TestStopConditionInteraction:
         assert not isinstance(result, Exception)
         assert len(result.trials) == 2
         # Stop reason should be max_trials_reached, not timeout
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected 'max_trials_reached', got '{result.stop_reason}'"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -1121,9 +1121,9 @@ class TestTrialCountAccuracy:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
-        assert len(result.trials) == expected_trials, (
-            f"Expected {expected_trials} trials, got {len(result.trials)}"
-        )
+        assert (
+            len(result.trials) == expected_trials
+        ), f"Expected {expected_trials} trials, got {len(result.trials)}"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -1260,13 +1260,13 @@ class TestStopConditionsWithParallelModes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
-        assert len(result.trials) == max_trials, (
-            f"Expected {max_trials} trials with {parallel_mode} mode, got {len(result.trials)}"
-        )
+        assert (
+            len(result.trials) == max_trials
+        ), f"Expected {max_trials} trials with {parallel_mode} mode, got {len(result.trials)}"
         # stop_reason should be max_trials_reached
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected 'max_trials_reached', got '{result.stop_reason}'"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -1372,9 +1372,9 @@ class TestStopConditionsWithParallelModes:
 
         assert not isinstance(result, Exception)
         assert result.stop_reason is not None, "stop_reason should not be None"
-        assert result.stop_reason in valid_stop_reasons, (
-            f"Invalid stop_reason with {parallel_mode} mode: {result.stop_reason}"
-        )
+        assert (
+            result.stop_reason in valid_stop_reasons
+        ), f"Invalid stop_reason with {parallel_mode} mode: {result.stop_reason}"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -1557,9 +1557,9 @@ class TestStopConditionsWithExampleConcurrency:
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         assert len(result.trials) == max_trials
         # stop_reason should be max_trials_reached
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected 'max_trials_reached', got '{result.stop_reason}'"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -1609,9 +1609,9 @@ class TestStopConditionsParallelEdgeCases:
         assert not isinstance(result, Exception)
         assert len(result.trials) == 1
         # stop_reason should be max_trials_reached
-        assert result.stop_reason == "max_trials_reached", (
-            f"Expected 'max_trials_reached', got '{result.stop_reason}'"
-        )
+        assert (
+            result.stop_reason == "max_trials_reached"
+        ), f"Expected 'max_trials_reached', got '{result.stop_reason}'"
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

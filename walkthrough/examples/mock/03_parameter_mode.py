@@ -10,7 +10,7 @@ traigent.initialize(execution_mode="edge_analytics")
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     injection_mode="parameter",
     configuration_space={

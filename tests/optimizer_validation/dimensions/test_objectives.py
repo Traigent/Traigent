@@ -124,14 +124,17 @@ class TestMultiObjective:
         # Use only built-in metrics supported by the evaluator
         objective_names = ["accuracy", "cost", "latency"]
         objectives = [
-            ObjectiveSpec(name=objective_names[i], weight=1.0) for i in range(objective_count)
+            ObjectiveSpec(name=objective_names[i], weight=1.0)
+            for i in range(objective_count)
         ]
 
         scenario = multi_objective_scenario(
             name=f"multi_{objective_count}_objectives",
             objectives=objectives,
             max_trials=3,
-            gist_template=(f"multi-{objective_count} -> {{trial_count()}} | {{status()}}"),
+            gist_template=(
+                f"multi-{objective_count} -> {{trial_count()}} | {{status()}}"
+            ),
         )
 
         _, result = await scenario_runner(scenario)
@@ -671,7 +674,9 @@ class TestMultiObjectiveWithAlgorithms:
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
         if hasattr(result, "trials"):
             # Grid should have tried all 4 combinations
-            assert len(result.trials) == 4, f"Expected 4 trials, got {len(result.trials)}"
+            assert (
+                len(result.trials) == 4
+            ), f"Expected 4 trials, got {len(result.trials)}"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
