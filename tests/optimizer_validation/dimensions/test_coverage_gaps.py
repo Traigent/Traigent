@@ -719,7 +719,8 @@ class TestNonDeterministicReproducibility:
             description="Non-deterministic optimization",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
             max_trials=3,
-            # No seed set - should be non-deterministic
+            # Explicitly set random_seed=None to opt out of conftest auto-seeding
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             evaluator=EvaluatorSpec(
                 type="custom",
                 evaluator_fn=non_deterministic_evaluator,
@@ -753,23 +754,29 @@ class TestNonDeterministicReproducibility:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Stochastic optimizers show variance across runs.
+        """Stochastic optimizers work correctly without explicit seeding.
 
         Purpose:
-            Verify that stochastic optimization algorithms
-            (like random search) produce varying exploration paths.
+            Verify that stochastic optimization algorithms (like random search)
+            function correctly when not explicitly seeded. This is a smoke test
+            to ensure the random optimizer wiring works.
+
+        Note:
+            We set random_seed=None to explicitly opt out of the conftest's
+            auto-seeding behavior, ensuring truly unseeded execution.
 
         Dimensions: Reproducibility=non_deterministic
         """
         scenario = TestScenario(
             name="stochastic_variance",
-            description="Stochastic optimizer variance",
+            description="Stochastic optimizer without explicit seed",
             config_space={
                 "model": ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo"],
                 "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
             },
             max_trials=5,
-            algorithm="random",  # Stochastic algorithm
+            # Explicitly set random_seed=None to opt out of auto-seeding
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             expected=ExpectedResult(
                 min_trials=3,
                 max_trials=5,
@@ -790,11 +797,16 @@ class TestNonDeterministicReproducibility:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Unseeded random exploration varies between runs.
+        """Unseeded random exploration works correctly.
 
         Purpose:
-            Verify that without explicit seeding, random parameter
-            exploration follows different paths.
+            Verify that random parameter exploration works without explicit
+            seeding. This is a smoke test to ensure unseeded random search
+            completes successfully.
+
+        Note:
+            We set random_seed=None to explicitly opt out of the conftest's
+            auto-seeding behavior, ensuring truly unseeded execution.
 
         Dimensions: Reproducibility=non_deterministic
         """
@@ -806,8 +818,8 @@ class TestNonDeterministicReproducibility:
                 "batch_size": [16, 32, 64, 128],
             },
             max_trials=4,
-            algorithm="random",
-            # No seed - intentionally non-deterministic
+            # Explicitly set random_seed=None to opt out of auto-seeding
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             expected=ExpectedResult(
                 min_trials=2,
                 max_trials=4,

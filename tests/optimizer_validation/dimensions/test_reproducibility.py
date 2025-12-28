@@ -77,12 +77,14 @@ class TestRandomSeedReproducibility:
             configs2 = [t.config for t in result2.trials]
 
             # With same seed, should get same configs in same order
-            assert len(configs1) == len(configs2), (
-                f"Different trial counts: {len(configs1)} vs {len(configs2)}"
-            )
+            assert len(configs1) == len(
+                configs2
+            ), f"Different trial counts: {len(configs1)} vs {len(configs2)}"
 
             for i, (c1, c2) in enumerate(zip(configs1, configs2, strict=False)):
-                assert c1 == c2, f"Trial {i + 1} configs differ with same seed: {c1} vs {c2}"
+                assert (
+                    c1 == c2
+                ), f"Trial {i + 1} configs differ with same seed: {c1} vs {c2}"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -107,12 +109,14 @@ class TestRandomSeedReproducibility:
         }
 
         # Run first optimization without seed
+        # NOTE: We set random_seed=None to explicitly opt out of the conftest's
+        # auto-seeding behavior, ensuring truly unseeded execution.
         scenario1 = config_space_scenario(
             name="no_seed_1",
             config_space=config_space,
             description="First run without seed",
             max_trials=5,
-            mock_mode_config={"optimizer": "random"},  # No seed
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             gist_template="no-seed-1 -> {trial_count()} | {status()}",
         )
 
@@ -124,7 +128,7 @@ class TestRandomSeedReproducibility:
             config_space=config_space,
             description="Second run without seed",
             max_trials=5,
-            mock_mode_config={"optimizer": "random"},  # No seed
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             gist_template="no-seed-2 -> {trial_count()} | {status()}",
         )
 
@@ -211,10 +215,10 @@ class TestRandomSeedReproducibility:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test that random search without seed produces varying results.
+        """Unseeded random search runs without explicit seeding.
 
-        Without a fixed seed, different runs should (usually) produce
-        different sequences.
+        This is a smoke test to ensure unseeded execution succeeds;
+        we avoid asserting variance to keep the test stable.
         """
         config_space = {
             "model": [f"model-{i}" for i in range(10)],
@@ -222,13 +226,13 @@ class TestRandomSeedReproducibility:
         }
         # 100 combinations - very unlikely to get same sequence twice
 
-        # Run twice without seed
+        # Run twice without seed (explicitly opt out of conftest auto-seeding)
         scenario1 = config_space_scenario(
             name="no_seed_1",
             config_space=config_space,
             description="First run without seed",
             max_trials=3,
-            mock_mode_config={"optimizer": "random"},  # No seed
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             gist_template="no-seed-1 -> {trial_count()} | {status()}",
         )
 
@@ -240,7 +244,7 @@ class TestRandomSeedReproducibility:
             config_space=config_space,
             description="Second run without seed",
             max_trials=3,
-            mock_mode_config={"optimizer": "random"},  # No seed
+            mock_mode_config={"optimizer": "random", "random_seed": None},
             gist_template="no-seed-2 -> {trial_count()} | {status()}",
         )
 
@@ -448,9 +452,9 @@ class TestOptunaSeedReproducibility:
             # At minimum, first trial should be identical
             if len(configs1) > 0 and len(configs2) > 0:
                 # Categorical part should definitely match
-                assert configs1[0].get("model") == configs2[0].get("model"), (
-                    "First trial model should match with same seed"
-                )
+                assert configs1[0].get("model") == configs2[0].get(
+                    "model"
+                ), "First trial model should match with same seed"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -570,12 +574,16 @@ class TestContinuousParameterReproducibility:
 
         # Compare floating point values
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
-            for i, (t1, t2) in enumerate(zip(result1.trials, result2.trials, strict=False)):
+            for i, (t1, t2) in enumerate(
+                zip(result1.trials, result2.trials, strict=False)
+            ):
                 temp1 = t1.config.get("temperature")
                 temp2 = t2.config.get("temperature")
 
                 if temp1 is not None and temp2 is not None:
-                    assert abs(temp1 - temp2) < 1e-10, f"Trial {i + 1} temperature differs"
+                    assert (
+                        abs(temp1 - temp2) < 1e-10
+                    ), f"Trial {i + 1} temperature differs"
 
                 top_p1 = t1.config.get("top_p")
                 top_p2 = t2.config.get("top_p")
@@ -636,20 +644,24 @@ class TestMixedSpaceReproducibility:
 
         # Compare all config values
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
-            for i, (t1, t2) in enumerate(zip(result1.trials, result2.trials, strict=False)):
+            for i, (t1, t2) in enumerate(
+                zip(result1.trials, result2.trials, strict=False)
+            ):
                 # Categorical should match exactly
-                assert t1.config.get("model") == t2.config.get("model"), (
-                    f"Trial {i + 1} model differs"
-                )
-                assert t1.config.get("max_tokens") == t2.config.get("max_tokens"), (
-                    f"Trial {i + 1} max_tokens differs"
-                )
+                assert t1.config.get("model") == t2.config.get(
+                    "model"
+                ), f"Trial {i + 1} model differs"
+                assert t1.config.get("max_tokens") == t2.config.get(
+                    "max_tokens"
+                ), f"Trial {i + 1} max_tokens differs"
 
                 # Continuous should match within epsilon
                 temp1 = t1.config.get("temperature")
                 temp2 = t2.config.get("temperature")
                 if temp1 is not None and temp2 is not None:
-                    assert abs(temp1 - temp2) < 1e-10, f"Trial {i + 1} temperature differs"
+                    assert (
+                        abs(temp1 - temp2) < 1e-10
+                    ), f"Trial {i + 1} temperature differs"
 
 
 class TestSeedEdgeCases:
@@ -778,9 +790,9 @@ class TestSeedEdgeCases:
         if isinstance(result, Exception):
             # If it fails, should be a clear error about invalid seed
             error_msg = str(result).lower()
-            assert "seed" in error_msg or "negative" in error_msg, (
-                f"Error should mention seed issue: {result}"
-            )
+            assert (
+                "seed" in error_msg or "negative" in error_msg
+            ), f"Error should mention seed issue: {result}"
         else:
             # If it works, that's fine too
             result_validator(scenario, result)
