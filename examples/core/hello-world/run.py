@@ -30,7 +30,9 @@ class RetrieverBase:
         self._docs = docs
         self.k = 3
 
-    def get_relevant_documents(self, query: str) -> list[Document]:  # pragma: no cover - protocol
+    def get_relevant_documents(
+        self, query: str
+    ) -> list[Document]:  # pragma: no cover - protocol
         raise NotImplementedError
 
 
@@ -163,7 +165,9 @@ def _generate_mock_telemetry(model: str, use_rag: bool, fast_mode: bool = True) 
 
     # Get model-specific parameters or use defaults
     input_cost, output_cost = model_costs.get(model, (3.0, 15.0))
-    min_latency, max_latency = model_latency.get(model, (0.5 * latency_scale, 2.0 * latency_scale))
+    min_latency, max_latency = model_latency.get(
+        model, (0.5 * latency_scale, 2.0 * latency_scale)
+    )
 
     # Realistic token counts for Q&A
     # RAG uses more input tokens due to retrieved context
@@ -171,7 +175,9 @@ def _generate_mock_telemetry(model: str, use_rag: bool, fast_mode: bool = True) 
     output_tokens = random.randint(50, 120)
 
     # Calculate cost
-    cost = (input_tokens * input_cost / 1_000_000) + (output_tokens * output_cost / 1_000_000)
+    cost = (input_tokens * input_cost / 1_000_000) + (
+        output_tokens * output_cost / 1_000_000
+    )
 
     # Add some variance to latency (RAG might be slightly slower due to retrieval)
     latency = random.uniform(min_latency, max_latency)
@@ -217,7 +223,9 @@ def _normalize_answer(raw: str) -> str:
     return raw[:128]
 
 
-def _mock_cost_metric(output=None, expected=None, example=None, config=None, llm_metrics=None):
+def _mock_cost_metric(
+    output=None, expected=None, example=None, config=None, llm_metrics=None
+):
     """Custom cost metric that generates realistic values in mock mode.
 
     Args:
@@ -257,7 +265,9 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
 @traigent.optimize(
     eval_dataset=DATASET,
     objectives=["cost"],
-    metric_functions={"cost": _mock_cost_metric},  # Custom cost metric for realistic mock data
+    metric_functions={
+        "cost": _mock_cost_metric
+    },  # Custom cost metric for realistic mock data
     configuration_space={
         "model": [
             "claude-3-5-sonnet-20241022",

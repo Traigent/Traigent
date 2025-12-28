@@ -14,7 +14,7 @@ import traigent
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -34,7 +34,7 @@ def local_mode(text: str) -> str:
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -53,7 +53,7 @@ def cloud_mode(text: str) -> str:
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -77,15 +77,15 @@ async def main() -> None:
     print("=" * 50)
 
     print("\nLOCAL - All data stays on your machine")
-    local_results = await local_mode.optimize(algorithm="grid", max_trials=4)
+    local_results = await local_mode.optimize(algorithm="grid", max_trials=4, random_seed=42)
     print(f"  Best: {local_results.best_config}")
 
     print("\nCLOUD - Advanced Bayesian optimization")
-    cloud_results = await cloud_mode.optimize(algorithm="bayesian", max_trials=12)
+    cloud_results = await cloud_mode.optimize(algorithm="bayesian", max_trials=10, random_seed=42)
     print(f"  Best: {cloud_results.best_config}")
 
     print("\nHYBRID - Local execution, cloud intelligence")
-    hybrid_results = await hybrid_mode.optimize(algorithm="random", max_trials=6)
+    hybrid_results = await hybrid_mode.optimize(algorithm="random", max_trials=6, random_seed=42)
     print(f"  Best: {hybrid_results.best_config}")
 
     print("\nChoose the mode that fits your needs!")

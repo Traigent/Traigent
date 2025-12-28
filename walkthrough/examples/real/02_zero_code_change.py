@@ -14,7 +14,7 @@ import traigent
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -36,7 +36,7 @@ async def main() -> None:
     print("=" * 50)
     print("Seamless mode overrides hardcoded LLM parameters.\n")
 
-    results = await answer_question.optimize(algorithm="random", max_trials=9)
+    results = await answer_question.optimize(algorithm="random", max_trials=10, random_seed=42)
 
     print("\nBest Configuration:")
     print(f"  Model: {results.best_config.get('model')}")

@@ -21,7 +21,7 @@ def code_evaluator(output: str, expected: str) -> float:
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/code_gen.jsonl",
+    eval_dataset="./code_gen.jsonl",
     objectives=["accuracy", "cost"],
     custom_evaluator=code_evaluator,
     configuration_space={

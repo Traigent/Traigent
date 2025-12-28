@@ -15,7 +15,7 @@ KNOWLEDGE_BASE = [
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/rag_questions.jsonl",
+    eval_dataset="./rag_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],

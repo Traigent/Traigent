@@ -15,7 +15,7 @@ from traigent import TraigentConfig
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     injection_mode="parameter",
     configuration_space={
@@ -56,7 +56,7 @@ async def main() -> None:
     print("=" * 50)
     print("Full control with explicit configuration parameter.\n")
 
-    results = await answer_with_control.optimize(algorithm="random", max_trials=12)
+    results = await answer_with_control.optimize(algorithm="random", max_trials=10, random_seed=42)
 
     print("\nOptimal Configuration:")
     for key, value in results.best_config.items():

@@ -14,7 +14,7 @@ import traigent
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
@@ -37,7 +37,7 @@ async def main() -> None:
     print("Traigent Example 1: Simple Optimization")
     print("=" * 50)
 
-    results = await answer_question.optimize(algorithm="grid", max_trials=6)
+    results = await answer_question.optimize(algorithm="grid", max_trials=10, random_seed=42)
 
     print("\nBest Configuration:")
     print(f"  Model: {results.best_config.get('model')}")

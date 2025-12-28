@@ -9,7 +9,7 @@ traigent.initialize(execution_mode="edge_analytics")
 
 
 @traigent.optimize(
-    eval_dataset="../datasets/simple_questions.jsonl",
+    eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],

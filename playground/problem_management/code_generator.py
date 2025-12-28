@@ -10,7 +10,7 @@ import ast
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .example_generator import GeneratedExample
 
@@ -24,10 +24,10 @@ class CodeGenerationConfig:
     domain: str
     difficulty: str
     output_type: str
-    models: List[str]
-    temperature_range: List[float]
-    max_tokens: Optional[int] = None
-    custom_metrics: Optional[List[str]] = None
+    models: list[str]
+    temperature_range: list[float]
+    max_tokens: int | None = None
+    custom_metrics: list[str] | None = None
 
 
 class CodeGenerator:
@@ -211,12 +211,12 @@ register_problem("{name}", {class_name})
         description: str,
         domain: str,
         difficulty: str,
-        examples: List[Any],  # Can be GeneratedExample objects or dicts
+        examples: list[Any],  # Can be GeneratedExample objects or dicts
         output_type: str,
-        models: List[str],
-        temperature_range: List[float],
-        max_tokens: Optional[int] = None,
-        custom_metrics: Optional[List[str]] = None,
+        models: list[str],
+        temperature_range: list[float],
+        max_tokens: int | None = None,
+        custom_metrics: list[str] | None = None,
     ) -> str:
         """
         Generate a complete problem module.
@@ -253,14 +253,10 @@ register_problem("{name}", {class_name})
         result_processing = self._generate_result_processing(output_type)
 
         # Generate custom metrics calculation
-        custom_metrics_calc = self._generate_custom_metrics(
-            output_type, custom_metrics or []
-        )
+        custom_metrics_calc = self._generate_custom_metrics(output_type, custom_metrics or [])
 
         # Generate function description
-        function_description = self._generate_function_description(
-            description, output_type
-        )
+        function_description = self._generate_function_description(description, output_type)
 
         # Generate temperature range as proper list
         temp_start, temp_end = temperature_range
@@ -281,9 +277,7 @@ register_problem("{name}", {class_name})
             )
 
         # Generate optimization objectives
-        optimization_objectives = (
-            all_metrics[:2] if len(all_metrics) >= 2 else all_metrics
-        )
+        optimization_objectives = all_metrics[:2] if len(all_metrics) >= 2 else all_metrics
 
         # Format the template
         code = self.base_template.format(
@@ -311,7 +305,7 @@ register_problem("{name}", {class_name})
         return code
 
     async def add_examples_to_module(
-        self, problem_name: str, new_examples: List[GeneratedExample]
+        self, problem_name: str, new_examples: list[GeneratedExample]
     ) -> str:
         """
         Add examples to an existing problem module.
@@ -378,7 +372,7 @@ register_problem("{name}", {class_name})
 
         return int(base * multiplier)
 
-    def _format_examples_data(self, examples: List[Any]) -> str:
+    def _format_examples_data(self, examples: list[Any]) -> str:
         """Format examples as Python data structure."""
         examples_dict = []
 
@@ -419,7 +413,7 @@ register_problem("{name}", {class_name})
         indented_lines = ["        " + line if line.strip() else line for line in lines]
         return "\n".join(indented_lines)
 
-    def _format_examples_data_from_dicts(self, examples: List[Dict]) -> str:
+    def _format_examples_data_from_dicts(self, examples: list[dict]) -> str:
         """Format examples from dictionaries."""
         # Re-number the IDs
         for i, example in enumerate(examples):
@@ -506,9 +500,7 @@ Extracted information (return as JSON):"""'''
             return """# Extract text result
             result = response.content.strip()"""
 
-    def _generate_custom_metrics(
-        self, output_type: str, custom_metrics: List[str]
-    ) -> str:
+    def _generate_custom_metrics(self, output_type: str, custom_metrics: list[str]) -> str:
         """Generate custom metrics calculation."""
         base_metrics = """# Basic metrics
         total_results = len(results)
@@ -587,7 +579,7 @@ Extracted information (return as JSON):"""'''
         clean_name = name.replace("-", "_").replace(" ", "_")
         return f"{prefix}_{clean_name}"
 
-    def _get_default_metrics(self, output_type: str) -> List[str]:
+    def _get_default_metrics(self, output_type: str) -> list[str]:
         """Get default metrics for output type."""
         # Map output types to problem types
         problem_type_metrics = {
@@ -617,14 +609,12 @@ Extracted information (return as JSON):"""'''
         }
 
         # Get metrics for the output type
-        metrics = problem_type_metrics.get(
-            output_type, ["quality", "accuracy", "relevance"]
-        )
+        metrics = problem_type_metrics.get(output_type, ["quality", "accuracy", "relevance"])
 
         # Always include success_rate as base metric
         return ["success_rate"] + metrics[:3]  # Limit to 4 metrics total
 
-    def _get_domain_categories(self, domain: str) -> List[str]:
+    def _get_domain_categories(self, domain: str) -> list[str]:
         """Get categories for domain."""
         domain_categories = {
             "customer_service": [
@@ -676,7 +666,7 @@ Extracted information (return as JSON):"""'''
             domain, ["category_a", "category_b", "category_c", "category_d"]
         )
 
-    def _extract_examples_from_code(self, code: str) -> List[Dict]:
+    def _extract_examples_from_code(self, code: str) -> list[dict]:
         """Extract examples from existing code."""
         # Simple extraction - look for the examples list
         import re
@@ -696,7 +686,7 @@ Extracted information (return as JSON):"""'''
 
         return []
 
-    def _convert_generated_to_dict(self, example: GeneratedExample) -> Dict:
+    def _convert_generated_to_dict(self, example: GeneratedExample) -> dict:
         """Convert GeneratedExample to dictionary format."""
         return {
             "id": 0,  # Will be set later
@@ -709,9 +699,7 @@ Extracted information (return as JSON):"""'''
             },
         }
 
-    def _replace_examples_in_code(
-        self, code: str, new_examples_data: str, total_count: int
-    ) -> str:
+    def _replace_examples_in_code(self, code: str, new_examples_data: str, total_count: int) -> str:
         """Replace examples data in existing code."""
         import re
 
