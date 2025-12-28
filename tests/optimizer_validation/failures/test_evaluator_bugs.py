@@ -11,10 +11,8 @@ from typing import Any
 import pytest
 
 from tests.optimizer_validation.specs import (
-    EvaluatorSpec,
     ExpectedOutcome,
     ExpectedResult,
-    TestScenario,
     evaluator_scenario,
 )
 
@@ -43,14 +41,17 @@ class TestEvaluatorRaises:
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.PARTIAL,
             ),
+            gist_template="eval-raises -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully - trials may fail but shouldn't crash
         if not isinstance(result, Exception):
             # Expect failed trials
             assert len(result.trials) >= 1
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -70,13 +71,16 @@ class TestEvaluatorRaises:
             evaluator_fn=type_error_evaluator,
             should_fail=True,
             max_trials=2,
+            gist_template="eval-type-error -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
         if not isinstance(result, Exception):
             assert len(result.trials) >= 1
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -96,13 +100,16 @@ class TestEvaluatorRaises:
             evaluator_fn=runtime_error_evaluator,
             should_fail=True,
             max_trials=2,
+            gist_template="eval-runtime-error -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
         if not isinstance(result, Exception):
             assert len(result.trials) >= 1
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestEvaluatorReturnsInvalidType:
@@ -125,12 +132,15 @@ class TestEvaluatorReturnsInvalidType:
             evaluator_type="custom",
             evaluator_fn=string_evaluator,
             max_trials=2,
+            gist_template="eval-ret-str -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully (may raise or produce failed trials)
         # The key is no unexpected crash
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -149,11 +159,14 @@ class TestEvaluatorReturnsInvalidType:
             evaluator_type="custom",
             evaluator_fn=dict_evaluator,
             max_trials=2,
+            gist_template="eval-ret-dict -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -172,11 +185,14 @@ class TestEvaluatorReturnsInvalidType:
             evaluator_type="custom",
             evaluator_fn=none_evaluator,
             max_trials=2,
+            gist_template="eval-ret-none -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestEvaluatorMalformedOutput:
@@ -208,13 +224,16 @@ class TestEvaluatorMalformedOutput:
             evaluator_type="custom",
             evaluator_fn=empty_metrics_evaluator,
             max_trials=2,
+            gist_template="eval-empty-metrics -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully - empty metrics might be allowed
         if not isinstance(result, Exception):
             assert len(result.trials) >= 1
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -242,13 +261,16 @@ class TestEvaluatorMalformedOutput:
             evaluator_type="custom",
             evaluator_fn=negative_metrics_evaluator,
             max_trials=2,
+            gist_template="eval-neg-metrics -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
         if not isinstance(result, Exception):
             assert len(result.trials) >= 1
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -258,8 +280,6 @@ class TestEvaluatorMalformedOutput:
         result_validator,
     ) -> None:
         """Test evaluator returning NaN metric values."""
-        import math
-
         from traigent.api.types import ExampleResult
 
         def nan_metrics_evaluator(func, config, example):
@@ -278,11 +298,14 @@ class TestEvaluatorMalformedOutput:
             evaluator_type="custom",
             evaluator_fn=nan_metrics_evaluator,
             max_trials=2,
+            gist_template="eval-nan-metrics -> {trial_count()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestScoringFunctionBugs:
@@ -305,11 +328,14 @@ class TestScoringFunctionBugs:
             evaluator_type="scoring_function",
             scoring_fn=failing_scorer,
             max_trials=2,
+            gist_template="scorer-raises -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -328,11 +354,14 @@ class TestScoringFunctionBugs:
             evaluator_type="scoring_function",
             scoring_fn=string_scorer,
             max_trials=2,
+            gist_template="scorer-ret-str -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully (may convert or fail)
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestMetricFunctionBugs:
@@ -355,11 +384,14 @@ class TestMetricFunctionBugs:
             evaluator_type="metric_functions",
             metric_fns={"accuracy": failing_metric},
             max_trials=2,
+            gist_template="metric-raises -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -384,8 +416,11 @@ class TestMetricFunctionBugs:
                 "bad": bad_metric,
             },
             max_trials=2,
+            gist_template="partial-metric-fail -> {error_type()} | {status()}",
         )
 
-        func, result = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()

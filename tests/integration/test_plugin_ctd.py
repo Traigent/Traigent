@@ -212,7 +212,7 @@ class CTDTestGenerator:
             # Full combinatorial (use with caution!)
             all_combos = []
             for combo in itertools.product(*[parameters[p] for p in param_names]):
-                all_combos.append(dict(zip(param_names, combo)))
+                all_combos.append(dict(zip(param_names, combo, strict=False)))
             return all_combos
 
     def _generate_pairwise(
@@ -301,7 +301,7 @@ class CTDTestGenerator:
 
             # Generate all combinations for this subset
             for combo in itertools.product(*[subset_params[p] for p in param_subset]):
-                test_case = dict(zip(param_subset, combo))
+                test_case = dict(zip(param_subset, combo, strict=False))
 
                 # Fill in other parameters with valid defaults
                 for param in param_names:

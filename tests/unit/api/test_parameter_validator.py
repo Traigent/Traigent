@@ -240,7 +240,9 @@ class TestParameterValidator:
             InjectionMode.SEAMLESS,
         ]
 
-        for string_mode, expected_enum in zip(string_modes, expected_enums):
+        for string_mode, expected_enum in zip(
+            string_modes, expected_enums, strict=False
+        ):
             result = self.validator._normalize_injection_mode(string_mode)
             assert result == expected_enum
 

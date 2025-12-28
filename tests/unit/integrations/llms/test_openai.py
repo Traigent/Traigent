@@ -46,7 +46,7 @@ class TestOpenAIIntegration:
 
     def test_supported_clients_structure(self, integration: OpenAIIntegration) -> None:
         """Test supported clients have correct parameter mappings."""
-        for client_name, mappings in integration.supported_clients.items():
+        for _client_name, mappings in integration.supported_clients.items():
             assert isinstance(mappings, dict)
             # Check for essential parameter mappings
             assert "model" in mappings
@@ -244,7 +244,7 @@ class TestOpenAIContext:
     @patch("traigent.integrations.llms.openai.override_context")
     def test_openai_context_with_none(self, mock_override: MagicMock) -> None:
         """Test openai_context with None passes all clients to override_context."""
-        result = openai_context(None)
+        openai_context(None)
         mock_override.assert_called_once()
         called_clients = mock_override.call_args[0][0]
         assert "openai.OpenAI" in called_clients

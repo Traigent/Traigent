@@ -14,11 +14,11 @@ This test module focuses on the uncovered areas:
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import patch
 
 import pytest
 
-from traigent.config.context import config_context, set_config, set_config_space
+from traigent.config.context import config_context, set_config
 from traigent.config.types import TraigentConfig
 from traigent.integrations.framework_override import (
     ENHANCED_FEATURES_AVAILABLE,
@@ -769,7 +769,6 @@ class TestDeactivateOverrides:
                 self.kwargs = kwargs
 
         # Store original __init__
-        original_init = MockClient.__init__
 
         # Override it
         override_manager.override_mock_classes({"test.Client": MockClient})

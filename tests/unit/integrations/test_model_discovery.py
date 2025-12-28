@@ -33,10 +33,8 @@ from traigent.integrations.model_discovery.cache import (
 from traigent.integrations.model_discovery.gemini_discovery import GeminiDiscovery
 from traigent.integrations.model_discovery.openai_discovery import OpenAIDiscovery
 from traigent.integrations.model_discovery.registry import (
-    clear_registry,
     get_model_discovery,
     list_registered_providers,
-    register_discovery,
 )
 from traigent.integrations.utils import Framework
 
@@ -709,7 +707,7 @@ class TestDiscoveryWithMockedSDK:
 
         discovery = OpenAIDiscovery()
         # Should raise exception (handled by caller in list_models)
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match="API error"):
             discovery._fetch_models_from_sdk()
 
     @patch.dict("os.environ", {"GOOGLE_API_KEY": "test-api-key"})

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Mapping, Sequence
-from typing import Any, Literal, Union, get_type_hints
+from typing import Any, Literal, get_type_hints
 from unittest.mock import MagicMock, patch
 
 from traigent.integrations.utils.validation import ParameterValidator
@@ -157,14 +157,9 @@ class TestParameterValidator:
 
     def test_check_type_compatibility_with_union(self) -> None:
         """Test compatibility check with Union types."""
-        assert ParameterValidator._check_type_compatibility(42, Union[int, str]) is True
-        assert (
-            ParameterValidator._check_type_compatibility("hello", Union[int, str])
-            is True
-        )
-        assert (
-            ParameterValidator._check_type_compatibility(3.14, Union[int, str]) is False
-        )
+        assert ParameterValidator._check_type_compatibility(42, int | str) is True
+        assert ParameterValidator._check_type_compatibility("hello", int | str) is True
+        assert ParameterValidator._check_type_compatibility(3.14, int | str) is False
 
     def test_check_type_compatibility_with_pipe_union(self) -> None:
         """Test compatibility check with pipe union syntax (int | str)."""

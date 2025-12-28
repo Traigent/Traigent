@@ -10,16 +10,12 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from traigent.hooks.config import (
-    CostConstraints,
     HooksConfig,
-    HooksConstraints,
-    ModelConstraints,
 )
 from traigent.hooks.validator import (
     DEFAULT_TOKENS_PER_QUERY,

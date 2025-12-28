@@ -264,6 +264,8 @@ CLAUDE.local.md
 fix_*.py
 cleanup_*.py
 validate_*.py
+# But keep test validation tools
+!tests/optimizer_validation/tools/validate_*.py
 *_REPORT.md
 *_COMPLETE.md
 *_TRACKER.md
@@ -342,3 +344,23 @@ reports/
 # Workspace-specific GitHub CLI config
 .gh/
 .envrc
+
+# Optimizer validation generated artifacts
+tests/optimizer_validation/viewer/graph_data.json
+tests/optimizer_validation/viewer/_results/
+tests/optimizer_validation/viewer/*.html
+!tests/optimizer_validation/viewer/index.html
+tests/optimizer_validation/viewer/ontology/*.ttl
+!tests/optimizer_validation/viewer/ontology/schema.ttl
+
+# Large test reports
+report.json
+
+# Agent instruction files (development only)
+AGENTS.md
+MAINTENANCE.md
+tests/optimizer_validation/AGENT_*.md
+tests/optimizer_validation/GIST_*.md
+tests/optimizer_validation/GPT_*.md
+tests/optimizer_validation/*_TEMPLATE*.md
+tests/optimizer_validation/TEST_REVIEW_CHECKLIST.md

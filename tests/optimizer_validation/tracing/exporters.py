@@ -9,12 +9,12 @@ Provides:
 from __future__ import annotations
 
 import json
-import os
 import threading
-from dataclasses import asdict, dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any
 
 try:
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import (

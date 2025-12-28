@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from .scenario import ExpectedOutcome, TestScenario
 
 if TYPE_CHECKING:
-    from traigent.api.types import OptimizationResult, TrialStatus
+    from traigent.api.types import OptimizationResult
 
 
 @dataclass

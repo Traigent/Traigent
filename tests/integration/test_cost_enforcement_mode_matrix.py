@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -54,7 +54,7 @@ import pytest
 os.environ["TRAIGENT_MOCK_MODE"] = "false"
 
 from traigent.config.types import ExecutionMode, InjectionMode, TraigentConfig
-from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig
+from traigent.core.cost_enforcement import CostEnforcer
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import (
     BaseEvaluator,

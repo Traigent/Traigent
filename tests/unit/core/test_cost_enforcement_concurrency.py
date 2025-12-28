@@ -118,7 +118,12 @@ class TestCostEnforcerConcurrency:
             barrier = threading.Barrier(2)
             results_lock = threading.Lock()
 
-            def release_permit() -> None:
+            def release_permit(
+                permit=permit,
+                barrier=barrier,
+                results_lock=results_lock,
+                results=results,
+            ) -> None:
                 barrier.wait()  # Synchronize start
                 result = enforcer.release_permit(permit)
                 with results_lock:
@@ -192,7 +197,7 @@ class TestCostEnforcerConcurrency:
         """
         enforcer = CostEnforcer(CostEnforcerConfig(limit=100.0))
 
-        for iteration in range(30):
+        for _iteration in range(30):
             permit = enforcer.acquire_permit()
             assert permit.is_granted
 
@@ -201,13 +206,21 @@ class TestCostEnforcerConcurrency:
             release_succeeded = threading.Event()
             barrier = threading.Barrier(2)
 
-            def do_track() -> None:
+            def do_track(
+                barrier=barrier,
+                permit=permit,
+                track_succeeded=track_succeeded,
+            ) -> None:
                 barrier.wait()
                 # track_cost doesn't return bool, so we check if it processes
                 enforcer.track_cost(0.05, permit=permit)
                 track_succeeded.set()
 
-            def do_release() -> None:
+            def do_release(
+                barrier=barrier,
+                permit=permit,
+                release_succeeded=release_succeeded,
+            ) -> None:
                 barrier.wait()
                 result = enforcer.release_permit(permit)
                 if result:
@@ -352,7 +365,7 @@ class TestCostEnforcerAsyncConcurrency:
             permit = await enforcer.acquire_permit_async()
             assert permit.is_granted
 
-            async def release_task() -> bool:
+            async def release_task(permit=permit) -> bool:
                 return await enforcer.release_permit_async(permit)
 
             # Launch both release attempts concurrently

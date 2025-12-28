@@ -85,9 +85,20 @@ class GridSearchOptimizer(BaseOptimizer):
                 param_values.append(param_def)
             elif isinstance(param_def, tuple) and len(param_def) == 2:
                 # Continuous parameter - not directly supported in basic grid search
+                low, high = param_def
+                # Suggest discrete values based on the range
+                if isinstance(low, int) and isinstance(high, int):
+                    suggestion = f"[{low}, {(low + high) // 2}, {high}]"
+                else:
+                    mid = (low + high) / 2
+                    suggestion = f"[{low}, {mid:.2f}, {high}]"
                 raise OptimizationError(
-                    f"Grid search does not support continuous parameter '{param_name}'. "
-                    f"Use a list of discrete values instead of range {param_def}."
+                    f"Grid search cannot optimize continuous parameter '{param_name}' "
+                    f"with range {param_def}. Grid search requires discrete values to enumerate. "
+                    f"Options: "
+                    f"(1) Use a list of discrete values: {suggestion}, "
+                    f"(2) Use 'random' or 'optuna' optimizer instead for continuous ranges, "
+                    f"(3) Use traigent.optimizers.optuna_utils.discretize_for_grid() to auto-discretize"
                 )
             else:
                 # Single value (fixed parameter)

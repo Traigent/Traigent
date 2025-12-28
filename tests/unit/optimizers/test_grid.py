@@ -47,7 +47,9 @@ class TestGridSearchOptimizer:
         """Test that continuous parameters raise error."""
         config_space = {"x": [0, 1, 2], "y": (0.0, 1.0)}  # Continuous range
 
-        with pytest.raises(OptimizationError, match="does not support continuous"):
+        with pytest.raises(
+            OptimizationError, match="cannot optimize continuous parameter"
+        ):
             GridSearchOptimizer(config_space, ["accuracy"])
 
     def test_initialization_empty_config_space(self):

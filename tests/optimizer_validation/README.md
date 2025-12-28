@@ -204,11 +204,46 @@ docker run -d --name traigent-jaeger \
 3. Click **Find Traces**
 4. Click on any trace to see the span hierarchy
 
+### Trace Naming
+
+Each trace now includes informative test metadata automatically:
+
+**Operation Name Format:**
+
+```text
+optimization: <test_name>
+```
+
+For example:
+
+- `optimization: test_injection_mode_basic[context]`
+- `optimization: test_multi_objective_weighted`
+- `optimization: test_constraint_enforcement`
+
+This makes it easy to find traces for specific tests in the Jaeger UI.
+
+**Test Metadata Attributes:**
+
+Each optimization span includes these test-related attributes:
+
+| Attribute | Description | Example |
+| --------- | ----------- | ------- |
+| `test.name` | Full test name with parameters | `test_injection_mode_basic[context]` |
+| `test.description` | Test docstring (first line) | `Test each injection mode works...` |
+| `test.module` | Python module path | `tests.optimizer_validation.dimensions.test_injection_modes` |
+| `test.class` | Test class name (if applicable) | `TestInjectionModeMatrix` |
+| `test.param.*` | Parametrized test values | `test.param.injection_mode: context` |
+
 ### Trace Hierarchy
 
-```
-optimization_session (root)
+```text
+optimization: test_injection_mode_basic[context] (root)
 ├── Attributes:
+│   ├── test.name: "test_injection_mode_basic[context]"
+│   ├── test.description: "Test each injection mode works..."
+│   ├── test.module: "tests.optimizer_validation.dimensions.test_injection_modes"
+│   ├── test.class: "TestInjectionModeMatrix"
+│   ├── test.param.injection_mode: "context"
 │   ├── traigent.function_name: "test_func"
 │   ├── traigent.max_trials: 3
 │   ├── traigent.objectives: "accuracy,cost"
@@ -429,3 +464,292 @@ Ensure `TRAIGENT_MOCK_MODE=true` is set. The `conftest.py` sets this automatical
 1. Define expectations in `specs/trace_expectations.py`
 2. Add to scenario: `trace_expectations=my_expectations()`
 3. Use `traced_scenario_runner` and `trace_validator`
+
+---
+
+## Knowledge Graph System
+
+The test suite includes a Knowledge Graph (KG) system for semantic analysis of test coverage. This enables automatic detection of coverage gaps and suggests missing test combinations.
+
+### Quick Start
+
+```bash
+# Generate coverage data
+cd tests/optimizer_validation/viewer
+python knowledge_graph.py
+
+# Start the viewer
+python -m http.server 8765
+
+# Open coverage analysis: http://127.0.0.1:8765/coverage_analysis.html
+```
+
+### Ontology Overview
+
+The KG defines 10 dimensions that characterize optimizer behavior:
+
+| Dimension | Values | Description |
+|-----------|--------|-------------|
+| InjectionMode | context, parameter, attribute, seamless | How configs are injected |
+| ExecutionMode | edge_analytics, privacy, hybrid, cloud, standard | Where optimization runs |
+| Algorithm | random, grid, optuna_tpe, optuna_cmaes, optuna_random | Search algorithm |
+| ConfigSpaceType | categorical, continuous, mixed, nested, conditional | Parameter space type |
+| ObjectiveConfig | single, multi_weighted, multi_pareto, constrained | Objective setup |
+| StopCondition | max_trials, timeout, convergence, early_stopping | Stop criteria |
+| ParallelMode | sequential, parallel_trials, parallel_examples | Parallelism level |
+| ConstraintUsage | none, config_constraints, metric_constraints | Constraint types |
+| FailureMode | none, partial_failure, full_failure, recovery | Error handling |
+| Reproducibility | none, seeded, deterministic | Reproducibility level |
+
+### Critical Dimension Pairs
+
+The KG tracks pairwise coverage for these critical combinations:
+
+1. **InjectionMode × ExecutionMode** - All injection methods work in all environments
+2. **Algorithm × ConfigSpaceType** - Algorithms handle all parameter types
+3. **ParallelMode × StopCondition** - Parallel execution stops correctly
+4. **ObjectiveConfig × ConstraintUsage** - Constrained multi-objective works
+5. **Algorithm × FailureMode** - Algorithm resilience to failures
+
+### Programmatic Usage
+
+```python
+from pathlib import Path
+from tests.optimizer_validation.viewer.knowledge_graph import TestKnowledgeGraph
+
+# Build graph
+kg = TestKnowledgeGraph()
+kg.load_tests(Path("tests/optimizer_validation/dimensions"))
+
+# Find gaps
+gaps = kg.find_coverage_gaps()
+for gap in gaps[:5]:
+    print(f"Missing: {gap.dimension1}={gap.value1} × {gap.dimension2}={gap.value2}")
+
+# Get suggestions
+suggestions = kg.suggest_new_tests(max_suggestions=10)
+```
+
+### Documentation
+
+- [Knowledge Graph Design](viewer/knowledge_graph_design.md) - Full ontology specification
+- [Coverage Analysis](viewer/coverage_analysis.html) - Interactive visualization
+
+---
+
+## Interactive Test Viewer
+
+The test viewer provides a web dashboard for exploring test results and evidence.
+
+### Starting the Viewer
+
+```bash
+cd tests/optimizer_validation/viewer
+python -m http.server 8765
+# Open http://127.0.0.1:8765/
+```
+
+### Features
+
+1. **Test Dashboard** (`index.html`)
+   - Browse tests by dimension category
+   - View test scenarios with expected/actual results
+   - See validation checks and evidence
+   - Filter by pass/fail status
+
+2. **Coverage Analysis** (`coverage_analysis.html`)
+   - Pairwise coverage heatmap
+   - Coverage gap identification
+   - Suggested new test combinations
+   - Dimension coverage statistics
+
+---
+
+## Evidence Validation
+
+The test suite includes tools for validating that all tests emit proper evidence.
+
+### Evidence Schema
+
+Test evidence follows a defined JSON schema. See [`specs/evidence_schema.json`](specs/evidence_schema.json) for the full specification.
+
+Required sections in test evidence:
+
+| Section             | Required Fields                                        |
+| ------------------- | ------------------------------------------------------ |
+| `scenario`          | `name`, `config_space`, `injection_mode`, `max_trials` |
+| `expected`          | `outcome`                                              |
+| `actual`            | `type`                                                 |
+| `validation_checks` | Array of checks with `passed` boolean                  |
+
+### Validation Tool
+
+Use the validation tool to check all tests emit proper evidence:
+
+```bash
+# Generate a JSON report
+TRAIGENT_MOCK_MODE=true pytest tests/optimizer_validation/ \
+    --json-report --json-report-file=report.json
+
+# Validate the report
+python -m tests.optimizer_validation.tools.validate_evidence report.json
+
+# Show warnings too
+python -m tests.optimizer_validation.tools.validate_evidence report.json -v
+```
+
+Example output:
+
+```text
+============================================================
+TEST EVIDENCE VALIDATION REPORT
+============================================================
+Total tests: 49
+With evidence: 49
+Without evidence: 0
+Issues found: 0
+
+✓ All tests have valid evidence
+============================================================
+```
+
+### Emitting Evidence in Tests
+
+Evidence is automatically emitted when tests call `result_validator`:
+
+```python
+async def test_example(self, scenario_runner, result_validator):
+    scenario = TestScenario(...)
+    func, result = await scenario_runner(scenario)
+
+    # This call emits evidence to stdout (captured by pytest-json-report)
+    validation = result_validator(scenario, result)
+    assert validation.passed
+```
+
+Tests that don't call `result_validator` will not emit evidence.
+
+See [`tools/README.md`](tools/README.md) for detailed documentation
+
+---
+
+## Gist Templates (Tooltip Summaries)
+
+Gist templates provide brief, informative tooltips for tests in the viewer. They appear on hover over test names in the tree view, giving at-a-glance information about what the test does and what happened.
+
+### What is a Gist?
+
+A gist is a one-liner summary combining:
+- Key test characteristics (config type, injection mode, etc.)
+- Expected outcome
+- Actual result
+
+**Example gists:**
+- `empty-dataset -> ConfigurationError | PASS`
+- `categorical | 18 combos | PASS`
+- `PASS | max_trials_reached | 3 trials`
+
+### Defining a Gist Template
+
+Add a `gist_template` field to your `TestScenario`:
+
+```python
+scenario = TestScenario(
+    name="empty_dataset",
+    description="Test with empty dataset file",
+    gist_template="empty-dataset -> {error_type()} | {status()}",
+    # ... other fields
+)
+```
+
+### Available Template Functions
+
+| Function | Pre-run | Post-run | Description |
+|----------|---------|----------|-------------|
+| `{status()}` | `--` | `PASS` / `FAIL` | Overall test result |
+| `{outcome()}` | `{outcome}` | `SUCCESS` / `EXCEPTION` | Actual outcome |
+| `{error_type()}` | `{error}` | `ValueError`, etc. | Exception type if failed |
+| `{trial_count()}` | `?` | `3` | Number of trials executed |
+| `{best_score()}` | `--` | `0.8542` | Best score achieved |
+| `{stop_reason()}` | `--` | `max_trials_reached` | Why optimization stopped |
+| `{duration()}` | `--` | `1.23s` | Total execution time |
+| `{config_space_size()}` | from scenario | `4 combos` | Search space size |
+| `{injection_mode()}` | from scenario | `context` | Injection mode used |
+| `{algorithm()}` | from scenario | `random` | Optimizer algorithm |
+| `{expected_outcome()}` | from scenario | `SUCCESS` / `FAILURE` | What the test expects |
+| `{expected_trials()}` | from scenario | `1-5` or `>=1` | Expected trial range |
+
+### Example Templates by Test Type
+
+**Failure Tests:**
+```python
+gist_template="empty-dataset -> {error_type()} | {status()}"
+# Pre-run:  "empty-dataset -> {error} | --"
+# Post-run: "empty-dataset -> DatasetError | PASS"
+```
+
+**Stop Condition Tests:**
+```python
+gist_template="max_trials=3 -> {stop_reason()} @ {trial_count()} | {status()}"
+# Pre-run:  "max_trials=3 -> -- @ ? | --"
+# Post-run: "max_trials=3 -> max_trials_reached @ 3 | PASS"
+```
+
+**Multi-Objective Tests:**
+```python
+gist_template="accuracy+cost -> best={best_score()} | {status()}"
+# Pre-run:  "accuracy+cost -> best=-- | --"
+# Post-run: "accuracy+cost -> best=0.8542 | PASS"
+```
+
+**Algorithm Tests:**
+```python
+gist_template="{algorithm()} -> {trial_count()} trials | {status()}"
+# Pre-run:  "{algo} -> ? trials | --"
+# Post-run: "random -> 5 trials | PASS"
+```
+
+**Config Space Tests:**
+```python
+gist_template="categorical | {config_space_size()} | {status()}"
+# Pre-run:  "categorical | {size} | --"
+# Post-run: "categorical | 18 combos | PASS"
+```
+
+**Injection Mode Tests:**
+```python
+gist_template="{injection_mode()} mode -> {trial_count()} trials | {status()}"
+# Pre-run:  "{mode} mode -> ? trials | --"
+# Post-run: "context mode -> 3 trials | PASS"
+```
+
+### Auto-Generated Defaults
+
+If no `gist_template` is specified, the viewer auto-generates one based on test file location:
+
+| Test Location | Default Template |
+|---------------|------------------|
+| `failures/` | `{status()} \| {error_type()}` |
+| `stop_conditions` | `{status()} \| {stop_reason()} \| {trial_count()} trials` |
+| `objectives` | `{status()} \| best={best_score()}` |
+| `config_spaces` | `{status()} \| {config_space_size()}` |
+| `injection` | `{status()} \| {injection_mode()}` |
+| `algorithm` | `{status()} \| {algorithm()} \| {trial_count()} trials` |
+| default | `{status()} \| {trial_count()} trials` |
+
+### Guidelines for Writing Good Gists
+
+1. **Be concise** - Aim for under 50 characters
+2. **Lead with context** - Start with what makes this test unique
+3. **Include the key assertion** - What must be true for the test to pass?
+4. **End with status** - Always include `{status()}` so the result is visible
+
+**Good examples:**
+- `empty-dataset -> ConfigurationError | {status()}`
+- `3 weighted objectives -> best={best_score()} | {status()}`
+- `{injection_mode()} + {algorithm()} | {status()}`
+
+**Avoid:**
+- Generic templates that don't distinguish tests
+- Too many placeholders (keep it to 2-3 dynamic parts)
+- Redundant information already visible in the test name

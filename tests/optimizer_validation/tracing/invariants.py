@@ -6,7 +6,7 @@ that should hold for any valid optimization trace.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from traigent.api.types import OptimizationResult

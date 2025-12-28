@@ -1,5 +1,6 @@
 """Comprehensive unit tests for integration configuration system."""
 
+from dataclasses import fields
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,24 @@ from traigent.integrations.config import (
     integration_config,
 )
 from traigent.utils.exceptions import ValidationError as ValidationException
+
+
+@pytest.fixture(autouse=True)
+def reset_integration_config():
+    """Reset integration_config to defaults before and after each test.
+
+    This ensures test isolation when tests modify the global integration_config.
+    """
+    # Save original values
+    original_values = {
+        f.name: getattr(integration_config, f.name) for f in fields(IntegrationConfig)
+    }
+
+    yield
+
+    # Restore original values after test
+    for name, value in original_values.items():
+        setattr(integration_config, name, value)
 
 
 class TestIntegrationConfig:
@@ -454,24 +473,18 @@ class TestGlobalConfiguration:
         original_auto_discover = integration_config.auto_discover
         original_strict_mode = integration_config.strict_mode
 
-        try:
-            # Configure some options
-            configure_integrations(
-                auto_discover=not original_auto_discover,
-                strict_mode=not original_strict_mode,
-                discovery_cache_ttl=7200,
-            )
+        # Configure some options
+        configure_integrations(
+            auto_discover=not original_auto_discover,
+            strict_mode=not original_strict_mode,
+            discovery_cache_ttl=7200,
+        )
 
-            # Check that values were updated
-            assert integration_config.auto_discover == (not original_auto_discover)
-            assert integration_config.strict_mode == (not original_strict_mode)
-            assert integration_config.discovery_cache_ttl == 7200
-
-        finally:
-            # Restore original values
-            integration_config.auto_discover = original_auto_discover
-            integration_config.strict_mode = original_strict_mode
-            integration_config.discovery_cache_ttl = 3600
+        # Check that values were updated
+        assert integration_config.auto_discover == (not original_auto_discover)
+        assert integration_config.strict_mode == (not original_strict_mode)
+        assert integration_config.discovery_cache_ttl == 7200
+        # Cleanup handled by reset_integration_config fixture
 
     def test_configure_integrations_invalid_options(self):
         """Test configuring integrations with invalid options."""
@@ -488,21 +501,15 @@ class TestGlobalConfiguration:
 
     def test_configure_integrations_type_safety(self):
         """Test that configuration maintains type safety."""
-        original_fuzzy_threshold = integration_config.fuzzy_matching_threshold
+        # Valid type change
+        configure_integrations(fuzzy_matching_threshold=0.9)
+        assert integration_config.fuzzy_matching_threshold == 0.9
 
-        try:
-            # Valid type change
-            configure_integrations(fuzzy_matching_threshold=0.9)
-            assert integration_config.fuzzy_matching_threshold == 0.9
-
-            # Invalid type should still be set (Python is dynamic)
-            with pytest.raises(ValidationException):
-                configure_integrations(fuzzy_matching_threshold="invalid")
-            assert integration_config.fuzzy_matching_threshold == 0.9
-
-        finally:
-            # Restore original value
-            integration_config.fuzzy_matching_threshold = original_fuzzy_threshold
+        # Invalid type should raise and not change the value
+        with pytest.raises(ValidationException):
+            configure_integrations(fuzzy_matching_threshold="invalid")
+        assert integration_config.fuzzy_matching_threshold == 0.9
+        # Cleanup handled by reset_integration_config fixture
 
     def test_configure_integrations_rejects_negative_cache_ttl(self):
         """Negative discovery_cache_ttl should raise an error."""

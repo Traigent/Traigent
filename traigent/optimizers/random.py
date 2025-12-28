@@ -72,15 +72,47 @@ class RandomSearchOptimizer(BaseOptimizer):
             Randomly sampled configuration
 
         Raises:
-            OptimizationError: If maximum trials reached
+            OptimizationError: If maximum trials reached or space exhausted
         """
         if self._trial_count >= self.max_trials:
             raise OptimizationError(f"Maximum trials ({self.max_trials}) reached")
 
-        config = {}
+        # Check if discrete space is exhausted
+        if self.is_config_space_exhausted():
+            raise OptimizationError(
+                f"Config space exhausted: all {self.config_space_cardinality} "
+                "unique configurations have been tried"
+            )
 
-        for param_name, param_def in self.config_space.items():
-            config[param_name] = self._sample_parameter(param_name, param_def)
+        # For discrete spaces, avoid duplicates by retrying
+        max_attempts = 100  # Prevent infinite loops
+        cardinality = self.config_space_cardinality
+
+        for _attempt in range(max_attempts):
+            config = {}
+            for param_name, param_def in self.config_space.items():
+                config[param_name] = self._sample_parameter(param_name, param_def)
+
+            # For discrete spaces, check if this config is new
+            if cardinality is not None:
+                is_new = self.register_tried_config(config)
+                if is_new:
+                    break
+                # Duplicate - try again if space not exhausted
+                if self.is_config_space_exhausted():
+                    raise OptimizationError(
+                        f"Config space exhausted: all {cardinality} "
+                        "unique configurations have been tried"
+                    )
+            else:
+                # Continuous space - always accept (duplicates very unlikely)
+                self.register_tried_config(config)
+                break
+        else:
+            # Exhausted retry attempts (shouldn't happen with proper cardinality)
+            raise OptimizationError(
+                f"Failed to find unique config after {max_attempts} attempts"
+            )
 
         self._trial_count += 1
 
@@ -122,15 +154,31 @@ class RandomSearchOptimizer(BaseOptimizer):
     def should_stop(self, history: list[TrialResult]) -> bool:
         """Determine if optimization should stop.
 
-        Random search stops when maximum trials is reached.
+        Random search stops when maximum trials is reached or when a discrete
+        configuration space has been exhausted.
 
         Args:
             history: List of previous trials
 
         Returns:
-            True if max trials reached, False otherwise
+            True if max trials reached or space exhausted, False otherwise
         """
-        return self._trial_count >= self.max_trials
+        if self._trial_count >= self.max_trials:
+            return True
+
+        # Early termination for exhausted discrete config spaces
+        if self.is_config_space_exhausted():
+            cardinality = self.config_space_cardinality
+            logger.info(
+                "Config space exhausted after %d unique configurations. "
+                "Stopping early (requested %d trials, but only %d possible).",
+                self.unique_configs_tried,
+                self.max_trials,
+                cardinality,
+            )
+            return True
+
+        return False
 
     def reset(self) -> None:
         """Reset optimizer state for new optimization run."""

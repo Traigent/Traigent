@@ -78,8 +78,6 @@ from traigent.utils.optimization_logger import OptimizationLogger
 from .tracing import (
     optimization_session_span,
     record_optimization_complete,
-    record_trial_result,
-    trial_span,
 )
 
 logger = get_logger(__name__)

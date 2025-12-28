@@ -3,7 +3,7 @@
 import json
 import os
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -52,7 +52,7 @@ class TestKeyManager:
         assert not metadata.is_expired()
 
         # Mock expiration
-        metadata.expires_at = datetime.now(timezone.utc) - timedelta(days=1)
+        metadata.expires_at = datetime.now(UTC) - timedelta(days=1)
         assert metadata.is_expired()
         assert not metadata.is_valid()
 
@@ -401,7 +401,7 @@ class TestDataProtectionManager:
         )
 
         # Test expiration checking
-        old_date = datetime.now(timezone.utc) - timedelta(days=400)
+        old_date = datetime.now(UTC) - timedelta(days=400)
 
         # Should be expired for TOP_SECRET (365 days retention)
         assert protection_manager.is_retention_expired(
@@ -513,7 +513,7 @@ class TestSecureStorage:
 
         # Mock old creation time to simulate expiration
         record = storage.storage["test_key"]
-        old_time = datetime.now(timezone.utc) - timedelta(
+        old_time = datetime.now(UTC) - timedelta(
             days=400
         )  # Older than TOP_SECRET retention (365 days)
         record["created_at"] = old_time.isoformat()
