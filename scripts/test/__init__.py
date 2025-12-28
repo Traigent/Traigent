@@ -1,7 +1,7 @@
 """
-Test suite for TraiGent SDK scripts.
+Test suite for Traigent SDK scripts.
 
-This package contains comprehensive tests for all scripts in the TraiGent SDK,
+This package contains comprehensive tests for all scripts in the Traigent SDK,
 ensuring reliability and correctness of development tools.
 """
 

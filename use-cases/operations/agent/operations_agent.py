@@ -254,7 +254,7 @@ def generate_rule_based_response(
 async def run_optimization():
     """Run the Operations agent optimization."""
     print("=" * 60)
-    print("Operations Agent - TraiGent Optimization")
+    print("Operations Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled

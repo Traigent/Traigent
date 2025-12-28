@@ -175,7 +175,7 @@ class BackendSessionManager:
                 if session_id not in _warned_missing_mapping and not is_mock_mode():
                     logger.warning(
                         "Backend mapping missing for session %s (%s). "
-                        "This strongly suggests the TraiGent API rejected the session "
+                        "This strongly suggests the Traigent API rejected the session "
                         "creation request and the SDK fell back to local tracking. "
                         "Trials will remain local unless the session endpoint is reachable.",
                         session_id,

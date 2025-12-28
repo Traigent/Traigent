@@ -1,1 +1,1 @@
-"""Shared test utilities for TraiGent SDK test suite."""
+"""Shared test utilities for Traigent SDK test suite."""

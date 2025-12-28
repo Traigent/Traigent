@@ -42,7 +42,7 @@ class TestEnableTOTP:
 
         mfa.enable_totp()
 
-        mock_totp_class.assert_called_once_with("TraiGent")
+        mock_totp_class.assert_called_once_with("Traigent")
         assert mfa.totp_provider == mock_totp_instance
 
     @patch("traigent.security.auth.mfa.TOTPAuthProvider")

@@ -1,4 +1,4 @@
-"""Security profile and feature flag configuration for the TraiGent SDK."""
+"""Security profile and feature flag configuration for the Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Security CONC-Quality-Maintainability FUNC-SECURITY REQ-SEC-010 SYNC-CloudHybrid
 

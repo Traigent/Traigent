@@ -1,1 +1,1 @@
-"""Unit tests for TraiGent SDK core modules."""
+"""Unit tests for Traigent SDK core modules."""

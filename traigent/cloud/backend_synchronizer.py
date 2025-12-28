@@ -1,4 +1,4 @@
-"""Backend Synchronization for TraiGent SDK.
+"""Backend Synchronization for Traigent SDK.
 
 Focused component responsible for synchronizing session and trial states with backend,
 extracted from the SessionLifecycleManager to follow Single Responsibility Principle.

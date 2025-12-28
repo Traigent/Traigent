@@ -416,9 +416,9 @@ Provide sentiment and confidence level.""",
         def sentiment_analyzer_optimized(text: str, language: str, context: str) -> str:
             """Optimized sentiment analyzer."""
             llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Will be overridden by TraiGent
-                temperature=0.2,  # Will be overridden by TraiGent
-                model_kwargs={"max_tokens": 100},  # Will be overridden by TraiGent
+                model="gpt-4o-mini",  # Will be overridden by Traigent
+                temperature=0.2,  # Will be overridden by Traigent
+                model_kwargs={"max_tokens": 100},  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

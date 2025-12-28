@@ -1,4 +1,4 @@
-"""Plugin system for TraiGent SDK."""
+"""Plugin system for Traigent SDK."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 

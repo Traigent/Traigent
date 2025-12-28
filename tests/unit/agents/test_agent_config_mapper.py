@@ -38,7 +38,7 @@ def sample_agent_spec():
 
 @pytest.fixture
 def sample_config():
-    """Create a sample TraiGent configuration."""
+    """Create a sample Traigent configuration."""
     return {
         "model": "GPT-4o",
         "temperature": 0.9,

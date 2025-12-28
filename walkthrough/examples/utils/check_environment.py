@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check environment and dependencies for TraiGent walkthrough."""
+"""Check environment and dependencies for Traigent walkthrough."""
 
 import importlib.util
 import os
@@ -43,7 +43,7 @@ def check_api_keys():
     keys = {
         "OPENAI_API_KEY": "OpenAI",
         "ANTHROPIC_API_KEY": "Anthropic",
-        "TRAIGENT_API_KEY": "TraiGent Cloud",
+        "TRAIGENT_API_KEY": "Traigent Cloud",
     }
 
     found_any = False
@@ -58,11 +58,11 @@ def check_api_keys():
 
 
 def check_traigent_installation():
-    """Check if TraiGent is properly installed."""
+    """Check if Traigent is properly installed."""
     try:
         import traigent
 
-        print(f"{GREEN}✓ TraiGent SDK installed{NC}")
+        print(f"{GREEN}✓ Traigent SDK installed{NC}")
 
         # Check version if available
         if hasattr(traigent, "__version__"):
@@ -70,14 +70,14 @@ def check_traigent_installation():
 
         return True
     except ImportError:
-        print(f"{RED}✗ TraiGent SDK not installed{NC}")
+        print(f"{RED}✗ Traigent SDK not installed{NC}")
         print("  Run: pip install -e .")
         return False
 
 
 def main():
     print(f"{CYAN}{'='*50}{NC}")
-    print(f"{CYAN}TraiGent Environment Check{NC}")
+    print(f"{CYAN}Traigent Environment Check{NC}")
     print(f"{CYAN}{'='*50}{NC}\n")
 
     all_good = True
@@ -107,7 +107,7 @@ def main():
 
     if all_good:
         print(f"{GREEN}{'='*50}{NC}")
-        print(f"{GREEN}✅ Environment ready for TraiGent walkthrough!{NC}")
+        print(f"{GREEN}✅ Environment ready for Traigent walkthrough!{NC}")
 
         if not has_keys:
             print(
@@ -120,7 +120,7 @@ def main():
         print(f"{RED}{'='*50}{NC}")
         print(f"{RED}⚠ Some requirements are missing.{NC}")
         print("\nTo fix:")
-        print("1. cd to TraiGent root directory")
+        print("1. cd to Traigent root directory")
         print("2. pip install -r requirements/requirements.txt")
         print("3. pip install -r requirements/requirements-integrations.txt")
         print("4. pip install -e .")

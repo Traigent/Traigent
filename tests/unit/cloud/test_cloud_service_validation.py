@@ -1,8 +1,8 @@
-"""Validation tests for TraiGentCloudService."""
+"""Validation tests for TraigentCloudService."""
 
 import pytest
 
-from traigent.cloud.service import OptimizationRequest, TraiGentCloudService
+from traigent.cloud.service import OptimizationRequest, TraigentCloudService
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.exceptions import ValidationError as ValidationException
 
@@ -18,7 +18,7 @@ def _sample_dataset() -> Dataset:
 
 @pytest.mark.asyncio
 async def test_process_request_rejects_empty_function_name():
-    service = TraiGentCloudService()
+    service = TraigentCloudService()
     request = OptimizationRequest(
         function_name="",
         dataset=_sample_dataset(),
@@ -32,7 +32,7 @@ async def test_process_request_rejects_empty_function_name():
 
 @pytest.mark.asyncio
 async def test_process_request_rejects_unknown_billing_tier():
-    service = TraiGentCloudService()
+    service = TraigentCloudService()
     request = OptimizationRequest(
         function_name="greet",
         dataset=_sample_dataset(),

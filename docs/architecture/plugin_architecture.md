@@ -1,8 +1,8 @@
-# TraiGent Plugin Architecture Documentation
+# Traigent Plugin Architecture Documentation
 
 ## Overview
 
-The TraiGent integration system has been redesigned with a **hybrid plugin + configuration architecture** that provides:
+The Traigent integration system has been redesigned with a **hybrid plugin + configuration architecture** that provides:
 
 - **Type Safety**: Plugin interfaces with compile-time checking
 - **Flexibility**: YAML configuration overrides without code changes
@@ -150,7 +150,7 @@ validation:
 1. **User Code**: Calls framework with original parameters
 2. **Interception**: Plugin intercepts the call
 3. **Configuration Loading**: TraigentConfig provides optimization parameters
-4. **Mapping**: Plugin maps TraiGent parameters to framework parameters
+4. **Mapping**: Plugin maps Traigent parameters to framework parameters
 5. **Validation**: Plugin validates parameters against rules
 6. **Override**: Modified parameters passed to original framework
 
@@ -206,7 +206,7 @@ normalized = normalize_params(params, "langchain", "openai")
 # Or use the normalizer instance for more control
 normalizer = get_normalizer()
 
-# Convert to canonical TraiGent format first
+# Convert to canonical Traigent format first
 canonical = normalizer.to_canonical(params, Framework.LANGCHAIN)
 
 # Then convert to target framework

@@ -1,5 +1,5 @@
 """
-Edge case and error scenario tests for TraiGent Optimization Validation System.
+Edge case and error scenario tests for Traigent Optimization Validation System.
 
 Tests challenging scenarios, edge cases, and error conditions.
 """

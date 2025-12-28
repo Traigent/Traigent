@@ -280,7 +280,7 @@ else:
     BATCH_SIZE = ENV_BATCH_SIZE
     PARALLEL_TRIALS = min(TOTAL_CONFIGS, ENV_PARALLEL_TRIALS)
 
-# Configure TraiGent
+# Configure Traigent
 traigent.configure(parallel_workers=DEFAULT_WORKERS)
 
 parallel_mode = (

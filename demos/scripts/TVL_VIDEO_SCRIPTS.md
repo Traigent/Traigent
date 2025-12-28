@@ -1,6 +1,6 @@
 # TVL 0.9 Video Scripts
 
-These demo scripts showcase the new TVL 0.9 features in TraiGent. They follow the same format as the existing `demo-optimize.sh` and `demo-hooks.sh` scripts.
+These demo scripts showcase the new TVL 0.9 features in Traigent. They follow the same format as the existing `demo-optimize.sh` and `demo-hooks.sh` scripts.
 
 ## Overview
 
@@ -22,7 +22,7 @@ These demo scripts showcase the new TVL 0.9 features in TraiGent. They follow th
 - Loading specs with `load_tvl_spec()`
 - Using `@traigent.optimize(tvl_spec="...")`
 
-**Target audience**: New TraiGent users learning TVL
+**Target audience**: New Traigent users learning TVL
 
 ---
 

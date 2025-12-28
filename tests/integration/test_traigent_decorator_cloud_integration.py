@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests demonstrating TraiGent decorator with cloud modules integration.
+"""Tests demonstrating Traigent decorator with cloud modules integration.
 
 This test suite validates that the @traigent.optimize decorator works correctly
 with our cloud modules, including:
@@ -16,7 +16,7 @@ import pytest
 
 from traigent.api.decorators import optimize
 from traigent.cloud.auth import AuthManager
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     DatasetSubsetIndices,
     NextTrialResponse,
@@ -30,8 +30,8 @@ from traigent.config.types import TraigentConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
-class TestTraiGentDecoratorCloudIntegration:
-    """Test TraiGent decorator integration with cloud modules."""
+class TestTraigentDecoratorCloudIntegration:
+    """Test Traigent decorator integration with cloud modules."""
 
     def setup_method(self):
         """Set up test fixtures."""
@@ -190,7 +190,7 @@ class TestTraiGentDecoratorCloudIntegration:
             return f"Processed: {input_text}"
 
         # Mock cloud client
-        with patch("traigent.cloud.client.TraiGentCloudClient") as mock_client_class:
+        with patch("traigent.cloud.client.TraigentCloudClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -374,7 +374,7 @@ class TestTraiGentDecoratorCloudIntegration:
             return f"Result: {input_val}"
 
         # Mock cloud service error
-        with patch("traigent.cloud.client.TraiGentCloudClient") as mock_client_class:
+        with patch("traigent.cloud.client.TraigentCloudClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -453,7 +453,7 @@ class TestTraiGentDecoratorCloudIntegration:
             return f"LangChain response for: {query}"
 
         # Create realistic cloud client mock
-        with patch("traigent.cloud.client.TraiGentCloudClient") as mock_client_class:
+        with patch("traigent.cloud.client.TraigentCloudClient") as mock_client_class:
             mock_client = AsyncMock()
             mock_client_class.return_value = mock_client
 
@@ -477,7 +477,7 @@ class TestTraiGentDecoratorCloudIntegration:
                 pass
 
     def test_decorator_with_config_context_integration(self):
-        """Test decorator integration with TraiGent configuration context."""
+        """Test decorator integration with Traigent configuration context."""
 
         # Set global configuration
         global_config = TraigentConfig(
@@ -520,17 +520,17 @@ class TestCloudModulesIntegration:
 
     @pytest.mark.asyncio
     async def test_cloud_client_initialization(self):
-        """Test TraiGentCloudClient initialization."""
+        """Test TraigentCloudClient initialization."""
 
         # Test without aiohttp (fallback mode)
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", False):
-            client = TraiGentCloudClient(api_key="test-key")
+            client = TraigentCloudClient(api_key="test-key")
             assert client is not None
             assert client.enable_fallback
 
         # Test with aiohttp available
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
-            client = TraiGentCloudClient(
+            client = TraigentCloudClient(
                 api_key="test-key",
                 base_url="https://api.test.com",
                 enable_fallback=True,

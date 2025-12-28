@@ -35,7 +35,7 @@ class LocalAnalytics:
         """Initialize analytics collector.
 
         Args:
-            config: TraiGent configuration with analytics settings
+            config: Traigent configuration with analytics settings
         """
         self.config = config
         storage_path_option = config.get_local_storage_path()
@@ -225,7 +225,7 @@ class LocalAnalytics:
             api_key = BackendConfig.get_api_key()
             if not api_key:
                 logger.debug(
-                    "No OptiGen/TraiGent API key found, analytics submission skipped"
+                    "No OptiGen/Traigent API key found, analytics submission skipped"
                 )
                 return {"success": False, "reason": "No API key available"}
 

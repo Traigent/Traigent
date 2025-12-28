@@ -17,7 +17,7 @@ def main() -> None:
     """Run the configuration spaces example."""
     results_file = "results.json"
 
-    print("Running TraiGent Configuration Spaces Example")
+    print("Running Traigent Configuration Spaces Example")
     print("=" * 50)
 
     # Demonstrate configuration types
@@ -55,7 +55,7 @@ def main() -> None:
     # Create results for display
     results_data = {
         "concept": "Configuration Spaces",
-        "description": "Defining parameters for TraiGent to optimize",
+        "description": "Defining parameters for Traigent to optimize",
         "best_configuration": best_config,
         "configuration_types": {
             "discrete_choices": {
@@ -77,7 +77,7 @@ def main() -> None:
         },
         "key_insights": [
             "Configuration space defines the optimization search space",
-            "TraiGent tests combinations to find optimal settings",
+            "Traigent tests combinations to find optimal settings",
             "Supports both LLM parameters and custom application logic",
             "Can optimize 10+ parameters simultaneously",
             "Works with any LLM framework (OpenAI, LangChain, etc.)",

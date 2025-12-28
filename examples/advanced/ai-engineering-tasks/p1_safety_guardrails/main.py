@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-P1-3: Safety Guardrails Optimization with TraiGent
+P1-3: Safety Guardrails Optimization with Traigent
 ================================================
 
-This example demonstrates how TraiGent systematically optimizes safety guardrails
+This example demonstrates how Traigent systematically optimizes safety guardrails
 to achieve 95%+ PII detection accuracy and effective hallucination prevention
 while preserving maximum utility for legitimate queries.
 
@@ -69,7 +69,7 @@ def print_header() -> None:
     console.print(
         Panel.fit(
             "[bold blue]P1-3: Safety Guardrails Optimization[/bold blue]\\n"
-            "[dim]Optimize PII detection and hallucination prevention with TraiGent[/dim]",
+            "[dim]Optimize PII detection and hallucination prevention with Traigent[/dim]",
             border_style="blue",
         )
     )
@@ -78,13 +78,13 @@ def print_header() -> None:
 def create_evaluation_function(
     queries: list, safety_scenario: str = "balanced_safety"
 ) -> Callable:
-    """Create the evaluation function for TraiGent optimization."""
+    """Create the evaluation function for Traigent optimization."""
 
     def evaluate_safety_config(**config_params) -> dict[str, float]:
         """
         Evaluate safety guardrails configuration on the query dataset.
 
-        This function is called by TraiGent for each configuration trial.
+        This function is called by Traigent for each configuration trial.
         It tests PII detection accuracy, hallucination prevention, and utility preservation.
         """
 
@@ -206,14 +206,14 @@ def optimize_safety_guardrails(
     **kwargs,
 ) -> None:
     """
-    TraiGent-optimized function for safety guardrails optimization.
+    Traigent-optimized function for safety guardrails optimization.
 
-    This function will be called by TraiGent with different parameter combinations
+    This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for safety-utility balance.
     """
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
-    # TraiGent will inject the optimal parameters and track results
+    # Traigent will inject the optimal parameters and track results
     pass
 
 
@@ -291,7 +291,7 @@ def display_results(
         status = "🚀 Optimized"
 
         table.add_row(
-            "TraiGent Optimized",
+            "Traigent Optimized",
             f"{best_metrics.get('avg_safety_score', 0):.3f}",
             f"{best_metrics.get('avg_pii_recall', 0):.1%}",
             f"{best_metrics.get('avg_false_positive_rate', 0):.1%}",
@@ -520,16 +520,16 @@ async def main() -> None:
     # Run baseline comparisons
     baseline_results = run_baseline_comparison(queries, safety_scenario)
 
-    # Set up TraiGent evaluation
+    # Set up Traigent evaluation
     evaluation_function = create_evaluation_function(queries, safety_scenario)
 
-    # Configure TraiGent optimization
+    # Configure Traigent optimization
     # traigent.configure(
     #     verbose=True
     # )
     # Note: verbose parameter doesn't exist in traigent.configure() API
 
-    console.print("\\n[yellow]Starting TraiGent optimization...[/yellow]")
+    console.print("\\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(
         "[dim]This will systematically explore PII detection and hallucination prevention strategies...[/dim]\\n"
     )
@@ -617,7 +617,7 @@ if __name__ == "__main__":
         console.print(f"✅ Generated {len(queries)} sample safety test queries\\n")
 
         # Show configuration space
-        console.print("[bold]TraiGent Configuration Space:[/bold]")
+        console.print("[bold]Traigent Configuration Space:[/bold]")
         for key, values in SAFETY_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 

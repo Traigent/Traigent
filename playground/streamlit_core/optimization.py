@@ -32,7 +32,7 @@ def _get_api_key():
     return ""
 
 
-# Import TraiGent modules and utilities
+# Import Traigent modules and utilities
 try:
     # Import availability checks only
     import optimization_callbacks  # noqa: F401 - Import check only
@@ -101,7 +101,7 @@ async def run_optimization(
                 progress_callback,
             )
 
-        # Real TraiGent optimization
+        # Real Traigent optimization
         start_time = datetime.now(timezone.utc)
 
         if progress_callback:
@@ -109,7 +109,7 @@ async def run_optimization(
 
         # Add debug logging to understand what's happening
 
-        # Set TraiGent context for quiet mode but allow some debug output
+        # Set Traigent context for quiet mode but allow some debug output
         os.environ["TRAIGENT_QUIET"] = "1"
         os.environ["TRAIGENT_VERBOSE"] = "0"
         os.environ["TRAIGENT_DEBUG"] = "0"
@@ -149,7 +149,7 @@ async def run_optimization(
         if progress_callback:
             progress_callback(0.2, "Creating optimized function...")
 
-        # Create the TraiGent optimized function
+        # Create the Traigent optimized function
         optimized_function = problem.create_optimized_function()
 
         # Update configuration space if models are specified
@@ -221,7 +221,7 @@ async def run_optimization(
         }
         algorithm = algorithm_map.get(strategy, "random")
 
-        # Run the actual TraiGent optimization
+        # Run the actual Traigent optimization
         try:
             if progress_callback:
                 progress_callback(

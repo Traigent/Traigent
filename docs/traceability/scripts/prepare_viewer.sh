@@ -24,7 +24,7 @@ cat > "${ROOT_DIR}/docs/traceability/reports/viewer.html" <<'EOF'
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>TraiGent Traceability Graph</title>
+  <title>Traigent Traceability Graph</title>
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; }
     #cy { width: 100%; height: 100%; }

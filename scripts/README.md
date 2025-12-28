@@ -1,6 +1,6 @@
 # 🔧 Scripts Directory
 
-This directory contains all automation, development, and utility scripts for the TraiGent SDK project.
+This directory contains all automation, development, and utility scripts for the Traigent SDK project.
 
 ## 📁 Directory Structure
 
@@ -104,13 +104,13 @@ See `scripts/archive/README.md` for complete list of archived scripts and their 
 
 ### 🚀 **Examples (`examples/`)**
 **Demo scripts and interactive tools:**
-- **`launch_control_center.py`** - Launch TraiGent Playground (Streamlit UI)
+- **`launch_control_center.py`** - Launch Traigent Playground (Streamlit UI)
 - **`run_examples.py`** - Run all example scripts with comprehensive testing
 
 ### 🔗 **Integration (`integration/`)**
 **Integration testing and storage inspection:**
 - **`test-local-integration.py`** - Local integration testing and validation
-- **`view_traigent_storage.py`** - TraiGent storage inspection and debugging
+- **`view_traigent_storage.py`** - Traigent storage inspection and debugging
 
 ### ⚙️ **Setup (`setup/`)**
 **Installation and environment setup scripts:**
@@ -157,7 +157,7 @@ IDE and workspace setup:
 ### Development Setup
 
 #### `setup_test_environment.py`
-Sets up the test environment for TraiGent development. Run this after cloning the repository for the first time.
+Sets up the test environment for Traigent development. Run this after cloning the repository for the first time.
 
 **What it does:**
 - Creates necessary test fixture directories
@@ -193,7 +193,7 @@ python scripts/test/run_new_functionality_tests.py
 ### User Interface
 
 #### `launch_control_center.py`
-Launches the interactive TraiGent Playground UI.
+Launches the interactive Traigent Playground UI.
 
 **Usage:**
 ```bash
@@ -320,13 +320,13 @@ python scripts/documentation/doc_dashboard.py
 
 ### Examples and Demos - **NEW CATEGORY**
 ```bash
-# Launch TraiGent Playground
+# Launch Traigent Playground
 python scripts/examples/launch_control_center.py
 
 # Run all examples
 python scripts/examples/run_examples.py
 
-# View TraiGent storage
+# View Traigent storage
 python scripts/integration/view_traigent_storage.py
 ```
 

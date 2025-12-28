@@ -5,7 +5,7 @@ Scripts for testing integrations, viewing storage, and local testing.
 ## Scripts
 
 - **`test-local-integration.py`** - Local integration testing and validation
-- **`view_traigent_storage.py`** - TraiGent storage inspection and debugging
+- **`view_traigent_storage.py`** - Traigent storage inspection and debugging
 
 ## Usage
 
@@ -13,7 +13,7 @@ Scripts for testing integrations, viewing storage, and local testing.
 # Test local integration
 python scripts/integration/test-local-integration.py
 
-# View TraiGent storage
+# View Traigent storage
 python scripts/integration/view_traigent_storage.py
 ```
 

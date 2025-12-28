@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Add TraiGent to path
+# Add Traigent to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import the components we need

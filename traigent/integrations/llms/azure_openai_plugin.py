@@ -1,4 +1,4 @@
-"""Azure OpenAI integration plugin for TraiGent.
+"""Azure OpenAI integration plugin for Traigent.
 
 This module provides the Azure OpenAI-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -34,7 +34,7 @@ class AzureOpenAIPlugin(LLMPlugin):
             supported_packages=["openai"],
             priority=IntegrationPriority.HIGH,
             description="Azure OpenAI integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["openai>=1.0.0"],
             supports_versions={"openai": "1."},
         )

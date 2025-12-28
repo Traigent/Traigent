@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Demonstration script that exercises weighted-score concurrency in TraiGent."""
+"""Demonstration script that exercises weighted-score concurrency in Traigent."""
 
 from __future__ import annotations
 

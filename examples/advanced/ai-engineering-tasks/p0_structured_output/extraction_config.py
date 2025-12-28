@@ -38,7 +38,7 @@ class ExtractionConfig:
     max_retries: int  # 0, 1, 2
 
 
-# Search space definition for TraiGent optimization
+# Search space definition for Traigent optimization
 EXTRACTION_SEARCH_SPACE = {
     "output_format": [
         "json_mode",  # Native JSON mode (GPT-4, etc.)

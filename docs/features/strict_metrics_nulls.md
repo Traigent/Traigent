@@ -2,11 +2,11 @@
 
 ## Overview
 
-The `TRAIGENT_STRICT_METRICS_NULLS` feature flag controls how TraiGent handles missing or invalid metrics. When enabled, it returns `null` (None in Python) for missing values instead of defaulting to `0.0`, preventing misleading calculations and preserving data integrity.
+The `TRAIGENT_STRICT_METRICS_NULLS` feature flag controls how Traigent handles missing or invalid metrics. When enabled, it returns `null` (None in Python) for missing values instead of defaulting to `0.0`, preventing misleading calculations and preserving data integrity.
 
 ## Motivation
 
-Previously, TraiGent defaulted all missing metrics to `0.0`, which could lead to:
+Previously, Traigent defaulted all missing metrics to `0.0`, which could lead to:
 - **Misleading averages**: Missing data counted as zero skewed calculations
 - **False precision**: Showing `0.0` implied measurement when none existed
 - **Incorrect aggregations**: Sum/average operations included non-existent data
@@ -16,7 +16,7 @@ Previously, TraiGent defaulted all missing metrics to `0.0`, which could lead to
 
 ### Enabling the Feature
 
-Set the environment variable before running TraiGent:
+Set the environment variable before running Traigent:
 
 ```bash
 export TRAIGENT_STRICT_METRICS_NULLS=true
@@ -86,7 +86,7 @@ Note: `accuracy` and `score` remain `0.0` as they represent actual measured valu
   - LLM metrics handling respects the flag for missing values
 
 ### Orchestrator
-- **`TraiGentOrchestrator`** in `traigent/core/orchestrator.py`
+- **`TraigentOrchestrator`** in `traigent/core/orchestrator.py`
   - Aggregation functions filter `None` values before calculations
   - Comparison operations check for `None` before numeric comparisons
 
@@ -219,6 +219,6 @@ print(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
 
 ## Related Configuration
 
-Other TraiGent configuration options that work well with strict nulls:
+Other Traigent configuration options that work well with strict nulls:
 - `TRAIGENT_MOCK_MODE`: Testing without real API calls
 - `TRAIGENT_DEBUG`: Enhanced logging for troubleshooting

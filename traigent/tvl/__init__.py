@@ -1,4 +1,4 @@
-"""TVL integration helpers for the TraiGent SDK."""
+"""TVL integration helpers for the Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability FUNC-TVLSPEC REQ-TVLSPEC-012 SYNC-OptimizationFlow
 

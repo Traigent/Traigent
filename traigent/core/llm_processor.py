@@ -1,4 +1,4 @@
-"""LLM response processing utilities for TraiGent optimization system.
+"""LLM response processing utilities for Traigent optimization system.
 
 This module provides utilities for processing LLM responses, extracting metrics,
 and handling response parsing logic.

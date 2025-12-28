@@ -1,6 +1,6 @@
 # Requirements Files Guide
 
-This directory contains all TraiGent SDK dependencies organized by feature category. All files are synchronized with `pyproject.toml`.
+This directory contains all Traigent SDK dependencies organized by feature category. All files are synchronized with `pyproject.toml`.
 
 ## File Structure
 

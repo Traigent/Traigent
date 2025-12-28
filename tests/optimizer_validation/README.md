@@ -1,6 +1,6 @@
-# TraiGent Optimizer Validation Test Suite
+# Traigent Optimizer Validation Test Suite
 
-A comprehensive test infrastructure for validating the TraiGent optimizer decorator across all configuration combinations, ensuring correctness of the `OptimizationResult` object, and testing failure scenarios.
+A comprehensive test infrastructure for validating the Traigent optimizer decorator across all configuration combinations, ensuring correctness of the `OptimizationResult` object, and testing failure scenarios.
 
 ## Quick Start
 

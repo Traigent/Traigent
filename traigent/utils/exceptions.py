@@ -1,4 +1,4 @@
-"""Custom exceptions for TraiGent SDK."""
+"""Custom exceptions for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability CONC-Quality-Security FUNC-ORCH-LIFECYCLE FUNC-CLOUD-HYBRID FUNC-SECURITY REQ-ORCH-003 REQ-CLOUD-009 REQ-SEC-010 SYNC-OptimizationFlow SYNC-CloudHybrid
 
@@ -8,7 +8,7 @@ from typing import Any
 
 
 class TraigentError(Exception):
-    """Base exception for all TraiGent-related errors."""
+    """Base exception for all Traigent-related errors."""
 
     def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
@@ -222,7 +222,7 @@ class TrialPrunedError(TraigentError):
 
 
 class TraigentWarning(UserWarning):
-    """Base warning class for all TraiGent-specific warnings.
+    """Base warning class for all Traigent-specific warnings.
 
     Use this as the base for warnings about deprecated features,
     discouraged patterns, or other non-fatal issues.
@@ -239,10 +239,10 @@ class ConfigAccessWarning(TraigentWarning):
 
 
 class TraigentDeprecationWarning(TraigentWarning):
-    """Warning for deprecated TraiGent features.
+    """Warning for deprecated Traigent features.
 
     Named TraigentDeprecationWarning to avoid shadowing Python's built-in
-    DeprecationWarning. This is a TraiGent-specific deprecation warning
+    DeprecationWarning. This is a Traigent-specific deprecation warning
     that won't be filtered by Python's default warning filters.
     """
 

@@ -21,15 +21,15 @@ FULL_DATASET_PATH="$DATASETS_DIR/hotpotqa_distractor_dev.jsonl"
 REQUIREMENTS_FILE="$SCRIPT_DIR/requirements.txt"
 
 log() {
-    printf '\033[36m[TraiGent HotpotQA]\033[0m %s\n' "$1"
+    printf '\033[36m[Traigent HotpotQA]\033[0m %s\n' "$1"
 }
 
 warn() {
-    printf '\033[33m[TraiGent HotpotQA]\033[0m %s\n' "$1"
+    printf '\033[33m[Traigent HotpotQA]\033[0m %s\n' "$1"
 }
 
 error_exit() {
-    printf '\033[31m[TraiGent HotpotQA] ERROR:\033[0m %s\n' "$1" >&2
+    printf '\033[31m[Traigent HotpotQA] ERROR:\033[0m %s\n' "$1" >&2
     exit 1
 }
 
@@ -108,11 +108,11 @@ install_dependencies() {
     local python_exec="$PYTHON_EXEC"
 
     if [[ "$FORCE_REINSTALL" != "1" ]] && "$python_exec" -c "import importlib, sys; sys.exit(0 if importlib.util.find_spec('traigent') else 1)" >/dev/null 2>&1; then
-        log "TraiGent is already installed in the selected environment (set FORCE_REINSTALL=1 to force reinstall)."
+        log "Traigent is already installed in the selected environment (set FORCE_REINSTALL=1 to force reinstall)."
         return
     fi
 
-    log "Installing TraiGent dependencies (this may take a few minutes)..."
+    log "Installing Traigent dependencies (this may take a few minutes)..."
     log "Equivalent manual commands:"
     log "  pip install -r \"$REQUIREMENTS_FILE\""
     log "  pip install -e \"$ROOT_DIR\""

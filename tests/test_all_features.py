@@ -1,4 +1,4 @@
-"""Test all TraiGent SDK features to ensure everything is working correctly."""
+"""Test all Traigent SDK features to ensure everything is working correctly."""
 
 import asyncio
 import sys
@@ -238,7 +238,7 @@ def test_importance_analysis():
 
 async def main():
     """Run all tests."""
-    print("🧪 Testing TraiGent SDK Features")
+    print("🧪 Testing Traigent SDK Features")
     print("=" * 50)
 
     test_imports()
@@ -251,7 +251,7 @@ async def main():
     test_importance_analysis()
 
     print("\n✅ All tests passed!")
-    print("TraiGent SDK is working correctly!")
+    print("Traigent SDK is working correctly!")
 
 
 if __name__ == "__main__":

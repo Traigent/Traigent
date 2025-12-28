@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-TraiGent tokencost Integration Verification Script
+Traigent tokencost Integration Verification Script
 
-Tests that tokencost is properly installed and integrated with TraiGent.
+Tests that tokencost is properly installed and integrated with Traigent.
 """
 
 import sys
@@ -76,8 +76,8 @@ def test_tokencost_import():
 
 
 def test_traigent_tokencost_integration():
-    """Test that TraiGent properly integrates with tokencost."""
-    print_header("Testing TraiGent Integration")
+    """Test that Traigent properly integrates with tokencost."""
+    print_header("Testing Traigent Integration")
 
     try:
         from traigent.evaluators.metrics_tracker import (
@@ -85,11 +85,11 @@ def test_traigent_tokencost_integration():
             extract_llm_metrics,
         )
 
-        print_success("TraiGent metrics_tracker imported successfully")
+        print_success("Traigent metrics_tracker imported successfully")
         print_info(f"TOKENCOST_AVAILABLE flag: {TOKENCOST_AVAILABLE}")
 
         if not TOKENCOST_AVAILABLE:
-            print_warning("tokencost is not detected as available in TraiGent")
+            print_warning("tokencost is not detected as available in Traigent")
             print_info("This might be due to import issues or missing dependencies")
             return False
 
@@ -111,7 +111,7 @@ def test_traigent_tokencost_integration():
             return False
 
     except ImportError as e:
-        print_error(f"Cannot import TraiGent components: {e}")
+        print_error(f"Cannot import Traigent components: {e}")
         return False
 
 
@@ -208,16 +208,16 @@ def test_different_models():
 
 def main():
     """Main entry point."""
-    print_header("🔍 TraiGent tokencost Integration Verification")
-    print("This script verifies that tokencost is properly integrated with TraiGent.\n")
+    print_header("🔍 Traigent tokencost Integration Verification")
+    print("This script verifies that tokencost is properly integrated with Traigent.\n")
 
     results = []
 
     # Test tokencost import
     results.append(("tokencost Import", test_tokencost_import()))
 
-    # Test TraiGent integration
-    results.append(("TraiGent Integration", test_traigent_tokencost_integration()))
+    # Test Traigent integration
+    results.append(("Traigent Integration", test_traigent_tokencost_integration()))
 
     # Test cost calculation
     results.append(("Cost Calculation", test_cost_calculation()))

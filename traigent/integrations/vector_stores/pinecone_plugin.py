@@ -1,4 +1,4 @@
-"""Pinecone integration plugin for TraiGent.
+"""Pinecone integration plugin for Traigent.
 
 This module provides the Pinecone-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -29,7 +29,7 @@ class PineconePlugin(VectorStorePlugin):
             supported_packages=["pinecone", "pinecone-client"],
             priority=IntegrationPriority.NORMAL,
             description="Pinecone vector store integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["pinecone-client>=3.0.0"],
             supports_versions={"pinecone-client": "3."},
         )

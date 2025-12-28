@@ -211,7 +211,7 @@ def generate_mock_code(
 async def run_optimization():
     """Run the code generation agent optimization."""
     print("=" * 60)
-    print("Product & Technical Agent - TraiGent Optimization")
+    print("Product & Technical Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled

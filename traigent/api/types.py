@@ -1,4 +1,4 @@
-"""Type definitions for TraiGent SDK public API."""
+"""Type definitions for Traigent SDK public API."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Compatibility FUNC-API-ENTRY FUNC-ORCH-LIFECYCLE REQ-API-001 REQ-ORCH-003 SYNC-OptimizationFlow
 

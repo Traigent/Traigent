@@ -3,7 +3,7 @@
 **Traceability**: CONC-Layer-Infra CONC-Quality-Maintainability REQ-TRACE-GAP-004
 
 This directory contains machine-readable feature matrices that track implementation
-completeness across TraiGent SDK modules.
+completeness across Traigent SDK modules.
 
 ## Purpose
 

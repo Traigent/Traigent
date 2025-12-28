@@ -772,7 +772,7 @@ class TestEdgeCases:
         mock_response = MagicMock()
         mock_response.headers = {
             "Server": "Custom/1.0",
-            "X-Powered-By": "TraiGent/1.0",
+            "X-Powered-By": "Traigent/1.0",
         }
 
         result = middleware.apply_headers(mock_response)

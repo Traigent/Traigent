@@ -1,6 +1,6 @@
-"""TraiGent SDK - Open-source LLM optimization toolkit.
+"""Traigent SDK - Open-source LLM optimization toolkit.
 
-TraiGent makes it effortless to optimize your LLM applications with a simple decorator.
+Traigent makes it effortless to optimize your LLM applications with a simple decorator.
 
 Example:
     >>> import traigent
@@ -29,7 +29,7 @@ import sys
 from traigent._version import get_version
 
 __version__ = get_version()
-__author__ = "TraiGent Team"
+__author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
 
 # Public API exports

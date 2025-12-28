@@ -2,14 +2,14 @@
 
 ## 1. Background & Problem Statement
 
-TraiGent’s `injection_mode="seamless"` relies on an AST transformer to rewrite in-function assignments (e.g. `model = "claude"`). This works for users who explicitly assign configuration values inside the function body, but it fails for common patterns where configuration lives solely in:
+Traigent’s `injection_mode="seamless"` relies on an AST transformer to rewrite in-function assignments (e.g. `model = "claude"`). This works for users who explicitly assign configuration values inside the function body, but it fails for common patterns where configuration lives solely in:
 
 - **Signature defaults** (`def fn(model="claude")`)
 - **Keyword-only parameters** (`def fn(*, model="claude")`)
 - **Required parameters that are never passed by the caller** (`def fn(model): ...`)
 - **Direct call arguments** (`ChatAnthropic(model="claude")` inside the function)
 
-In these cases, the AST transformer does not modify anything, so the optimizer’s sampled configuration is never applied—even though TraiGent records trial configs as if they were used. Anthropic logs confirmed the issue: all requests were sent to the default model despite multiple configs appearing in the results table.
+In these cases, the AST transformer does not modify anything, so the optimizer’s sampled configuration is never applied—even though Traigent records trial configs as if they were used. Anthropic logs confirmed the issue: all requests were sent to the default model despite multiple configs appearing in the results table.
 
 Our goal is to guarantee that all configurations sampled by the optimizer are actually used during evaluation, without sacrificing the safety guarantees of the seamless provider, and without demanding users sprinkle explicit assignments through their code.
 

@@ -1,4 +1,4 @@
-name: TraiGent CI Gates
+name: Traigent CI Gates
 
 on:
   pull_request:
@@ -168,7 +168,7 @@ jobs:
 
             // Read comparison output
             const comment = `
-            ## TraiGent CI Gates Results
+            ## Traigent CI Gates Results
 
             ❌ **CI gates failed.** Please review the metrics comparison above.
 

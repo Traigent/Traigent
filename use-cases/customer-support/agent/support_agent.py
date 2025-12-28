@@ -311,7 +311,7 @@ Is there anything else I can help you with today?"""
 async def run_optimization():
     """Run the customer support agent optimization."""
     print("=" * 60)
-    print("Customer Support Agent - TraiGent Optimization")
+    print("Customer Support Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled

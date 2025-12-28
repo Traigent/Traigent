@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Prepare dataset for auto-tuning optimization.
-Loads data, splits it, and prepares it for TraiGent optimization.
+Loads data, splits it, and prepares it for Traigent optimization.
 """
 
 import json
@@ -81,7 +81,7 @@ def split_dataset(
 
 def prepare_for_traigent(dataset: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Prepare dataset in TraiGent-compatible format.
+    Prepare dataset in Traigent-compatible format.
     """
     return {
         "version": "1.0",
@@ -127,7 +127,7 @@ def main():
     train_set, test_set = split_dataset(dataset, split_ratio, seed)
     print(f"Split dataset: {len(train_set)} train, {len(test_set)} test")
 
-    # Prepare TraiGent-compatible format
+    # Prepare Traigent-compatible format
     train_data = prepare_for_traigent(train_set)
     test_data = prepare_for_traigent(test_set)
 

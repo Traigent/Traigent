@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Service billing and usage tracking."""
+"""Tests for Traigent Cloud Service billing and usage tracking."""
 
 import asyncio
 import tempfile

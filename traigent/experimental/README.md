@@ -1,6 +1,6 @@
 # Experimental Features
 
-⚠️ **WARNING: This module contains experimental features that are NOT part of the production TraiGent SDK.**
+⚠️ **WARNING: This module contains experimental features that are NOT part of the production Traigent SDK.**
 
 ## Purpose
 
@@ -17,18 +17,18 @@ This module contains experimental implementations used for:
 A simplified, **non-production** implementation of platform executors that simulates cloud execution locally.
 
 **⚠️ IMPORTANT DISCLAIMERS:**
-- **NOT the real TraiGent cloud implementation**
+- **NOT the real Traigent cloud implementation**
 - **NOT suitable for production use**
-- **Does NOT represent TraiGent's proprietary IP**
+- **Does NOT represent Traigent's proprietary IP**
 - **Only for local experimentation and testing**
 
 ## Production Implementation
 
 The **real** cloud execution happens in the **OptiGen Backend**, which is:
-- Proprietary TraiGent IP
+- Proprietary Traigent IP
 - Not part of this open-source SDK
 - Optimized for scale, performance, and advanced features
-- Accessible only through TraiGent cloud services
+- Accessible only through Traigent cloud services
 
 ## Usage
 
@@ -45,10 +45,10 @@ result = await simulator.test_platform_integration()
 
 1. **Do NOT use in production**
 2. **Do NOT rely on this API** - it may change or be removed
-3. **This is NOT TraiGent's cloud architecture**
+3. **This is NOT Traigent's cloud architecture**
 4. **Real cloud features are much more advanced**
 
 For production use, rely on:
 - `@traigent.optimize()` decorator with `auto_override_frameworks=True`
-- TraiGent cloud services (when available)
+- Traigent cloud services (when available)
 - OptiGen backend integration

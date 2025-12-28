@@ -97,7 +97,7 @@ class FunctionConfig:
         }
 
 
-# TraiGent search space for function calling optimization
+# Traigent search space for function calling optimization
 FUNCTION_SEARCH_SPACE = {
     # Tool description formats
     "description_format": [

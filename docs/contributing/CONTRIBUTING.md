@@ -1,6 +1,6 @@
-# Contributing to TraiGent SDK
+# Contributing to Traigent SDK
 
-Thank you for your interest in contributing to TraiGent SDK! We welcome contributions from the community and are excited to work with you to make AI agent discovery more accessible and powerful.
+Thank you for your interest in contributing to Traigent SDK! We welcome contributions from the community and are excited to work with you to make AI agent discovery more accessible and powerful.
 
 ## 🚀 Getting Started
 
@@ -159,7 +159,7 @@ Brief description of changes
 
 When reporting issues, please include:
 - Python version
-- TraiGent SDK version
+- Traigent SDK version
 - Minimal reproducible example
 - Error messages and stack traces
 - Expected vs actual behavior
@@ -191,6 +191,6 @@ By contributing, you agree that your contributions will be licensed under the MI
 
 ## 🙏 Thank You!
 
-Your contributions help make TraiGent SDK better for everyone. We appreciate your time and effort!
+Your contributions help make Traigent SDK better for everyone. We appreciate your time and effort!
 
 If you have any questions, feel free to open an issue or start a discussion.

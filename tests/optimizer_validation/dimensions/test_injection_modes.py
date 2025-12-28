@@ -50,7 +50,7 @@ class TestInjectionModeMatrix:
         - StopCondition: max_trials
 
     Why This Matters:
-        Injection mode is fundamental to how users interact with TraiGent.
+        Injection mode is fundamental to how users interact with Traigent.
         Different frameworks and use cases require different injection
         strategies. Failures here indicate core functionality issues.
     """

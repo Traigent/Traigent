@@ -1,10 +1,10 @@
-# TraiGent Decorator Reference
+# Traigent Decorator Reference
 
 This document provides a comprehensive reference for the `@traigent.optimize()` decorator and `@optimize()` (when imported directly).
 
 ## Overview
 
-The `@traigent.optimize()` decorator is the main entry point for TraiGent SDK. It enables zero-code-change optimization for any function containing LLM invocations by automatically detecting and optimizing LLM parameters.
+The `@traigent.optimize()` decorator is the main entry point for Traigent SDK. It enables zero-code-change optimization for any function containing LLM invocations by automatically detecting and optimizing LLM parameters.
 
 ## Import Signatures
 
@@ -75,7 +75,7 @@ def optimize(
 )
 ```
 
-TraiGent automatically infers:
+Traigent automatically infers:
 
 - **Orientations**: Maximize for accuracy-like metrics, minimize for cost/latency
 - **Weights**: Equal weights for all objectives
@@ -229,7 +229,7 @@ def cost_constraint(config, metrics=None):
 
 ### TVL Integration
 
-TraiGent supports the TVL (Tuned Variables Language) 0.9 specification for declarative optimization configuration. TVL specs provide:
+Traigent supports the TVL (Tuned Variables Language) 0.9 specification for declarative optimization configuration. TVL specs provide:
 
 - **Typed Variables (tvars)**: Parameters with explicit types (`bool`, `int`, `float`, `enum[str]`, `tuple[...]`). Integer ranges preserve `int` type for proper sampling.
 - **Structural Constraints**: Boolean formulas over tvars (compiled to DNF)

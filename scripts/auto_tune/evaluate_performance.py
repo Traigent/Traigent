@@ -22,7 +22,7 @@ def load_params() -> Dict[str, Any]:
 def load_optimization_results(
     path: str = "optimization_results/latest.json",
 ) -> Dict[str, Any]:
-    """Load optimization results from TraiGent."""
+    """Load optimization results from Traigent."""
     if not Path(path).exists():
         print(f"⚠️  No optimization results found at {path}")
         return {}

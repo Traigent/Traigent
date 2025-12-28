@@ -1,11 +1,11 @@
-# TraiGent Quickstart Examples
+# Traigent Quickstart Examples
 
 This directory contains the exact examples from the main README.md, ready to run.
 
 ## Prerequisites
 
 ```bash
-# Install TraiGent (from repo root)
+# Install Traigent (from repo root)
 pip install -e ".[dev,integrations,analytics]"
 ```
 

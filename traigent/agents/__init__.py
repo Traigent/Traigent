@@ -1,4 +1,4 @@
-"""Agent execution framework for TraiGent SDK.
+"""Agent execution framework for Traigent SDK.
 
 This module provides the infrastructure for executing AI agents
 with optimized configurations.

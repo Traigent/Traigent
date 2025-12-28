@@ -1,7 +1,7 @@
 """Mock LLM provider implementations for testing.
 
 This module provides consistent mock implementations of all major LLM providers
-used in the TraiGent SDK, with configuration logging capabilities for test validation.
+used in the Traigent SDK, with configuration logging capabilities for test validation.
 """
 
 from typing import Any

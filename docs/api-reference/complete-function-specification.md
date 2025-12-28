@@ -1,6 +1,6 @@
-# TraiGent SDK API Reference
+# Traigent SDK API Reference
 
-Authoritative reference for TraiGent SDK **v0.8.0 (Beta)**.
+Authoritative reference for Traigent SDK **v0.8.0 (Beta)**.
 
 ## Quick Navigation
 
@@ -109,7 +109,7 @@ def optimize(
 - `ParallelConfig` lives in `traigent.config.parallel`. You can pass either an instance or a simple `dict` with the same keys.
 - `privacy_enabled=True` applies in local/edge contexts; cloud/hybrid execution is not available yet in OSS builds.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
-- Provide plain lists for quick starts; TraiGent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
+- Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
 - Removed decorator kwargs `auto_optimize`, `trigger`, `batch_size`, and `parallel_trials`. Use the grouped options or `parallel_config` instead.
 
 #### Parallel configuration precedence
@@ -507,7 +507,7 @@ class StrategyConfig:
 ## Configuration Types
 
 ### TraigentConfig
-Configuration class for TraiGent settings
+Configuration class for Traigent settings
 
 ### InjectionMode
 - `CONTEXT`: Use configuration context (default)
@@ -580,4 +580,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects TraiGent SDK v1.1.0.
+This documentation reflects Traigent SDK v1.1.0.

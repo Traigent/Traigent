@@ -1,4 +1,4 @@
-"""Advanced batch processing utilities for TraiGent SDK.
+"""Advanced batch processing utilities for Traigent SDK.
 
 This module provides enhanced batch processing capabilities including:
 - Memory-efficient streaming

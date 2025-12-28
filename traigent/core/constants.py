@@ -1,4 +1,4 @@
-"""Core constants and configuration values for TraiGent optimization system.
+"""Core constants and configuration values for Traigent optimization system.
 
 This module centralizes all magic numbers, default values, and configuration
 constants used throughout the core architecture. This promotes consistency

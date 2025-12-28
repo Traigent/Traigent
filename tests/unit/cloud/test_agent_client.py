@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentExecutionResponse,
@@ -66,7 +66,7 @@ def agent_client(mock_aiohttp_session):
     """Create agent client with mocked session."""
     # Create a valid format API key (tg_ + 61 characters = 64 total)
     valid_api_key = "tg_" + "1234567890abcdef" * 3 + "1234567890abc"  # 64 chars total
-    client = TraiGentCloudClient(
+    client = TraigentCloudClient(
         base_url="https://api.traigent.ai", api_key=valid_api_key
     )
     client._session = mock_aiohttp_session
@@ -177,13 +177,13 @@ class TestAgentOptimization:
         """Test agent optimization without initialized session."""
         from traigent.utils.exceptions import AuthenticationError
 
-        client = TraiGentCloudClient(
+        client = TraigentCloudClient(
             base_url="https://api.traigent.ai", api_key="test-key"
         )
         # Don't set _session - this will cause authentication to fail
 
         with pytest.raises(
-            AuthenticationError, match="Not authenticated with TraiGent Cloud Service"
+            AuthenticationError, match="Not authenticated with Traigent Cloud Service"
         ):
             await client.optimize_agent(
                 agent_spec=sample_agent_spec,

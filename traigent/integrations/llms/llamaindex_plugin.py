@@ -1,4 +1,4 @@
-"""LlamaIndex integration plugin for TraiGent.
+"""LlamaIndex integration plugin for Traigent.
 
 This plugin provides automatic parameter override functionality for LlamaIndex,
 supporting various LLM providers, embedding models, and RAG components.
@@ -191,13 +191,13 @@ class LlamaIndexPlugin(LLMPlugin):
         return PluginMetadata(
             name="llamaindex",
             version="1.0.0",
-            description="LlamaIndex framework integration for TraiGent",
-            author="TraiGent Team",
+            description="LlamaIndex framework integration for Traigent",
+            author="Traigent Team",
             supported_packages=["llama_index", "llama-index"],
         )
 
     def _get_extra_mappings(self) -> dict[str, str]:
-        """Return parameter mappings from TraiGent to LlamaIndex."""
+        """Return parameter mappings from Traigent to LlamaIndex."""
         return {
             # Core LLM parameters
             "model": "model",  # Most LlamaIndex LLMs use 'model'

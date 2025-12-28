@@ -1,4 +1,4 @@
-"""Audit logging and compliance reporting for TraiGent Enterprise."""
+"""Audit logging and compliance reporting for Traigent Enterprise."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Security CONC-Quality-Observability CONC-Compliance-SOC2-Audit FUNC-SECURITY REQ-SEC-010 SYNC-CloudHybrid
 

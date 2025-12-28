@@ -1,4 +1,4 @@
-"""Parameter importance analysis for TraiGent optimization."""
+"""Parameter importance analysis for Traigent optimization."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 

@@ -1,4 +1,4 @@
-# Example Template for TraiGent
+# Example Template for Traigent
 
 ## 📋 Template Structure
 
@@ -6,7 +6,7 @@
 """
 [ONE-LINE DESCRIPTION]
 
-This example demonstrates [FEATURE/CONCEPT] in TraiGent.
+This example demonstrates [FEATURE/CONCEPT] in Traigent.
 Shows how to [PRIMARY USE CASE].
 """
 

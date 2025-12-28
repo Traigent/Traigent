@@ -1,6 +1,6 @@
 """Utility helpers for Optuna-based optimizers.
 
-This module centralises shared functionality for converting TraiGent configuration
+This module centralises shared functionality for converting Traigent configuration
 spaces into Optuna distributions and for deriving optimisation directions. The
 helpers are intentionally lightweight so they can be imported from both runtime
 code and tests without introducing additional dependencies.
@@ -51,7 +51,7 @@ def config_space_to_distributions(
     *,
     include_fixed: bool = True,
 ) -> dict[str, BaseDistribution]:
-    """Convert a TraiGent configuration space into Optuna distributions."""
+    """Convert a Traigent configuration space into Optuna distributions."""
 
     ensure_optuna_available()
 

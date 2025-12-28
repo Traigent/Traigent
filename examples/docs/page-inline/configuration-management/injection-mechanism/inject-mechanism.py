@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-# How TraiGent intercepts and modifies your LLM calls
+# How Traigent intercepts and modifies your LLM calls
 
 
 # Your original code:
@@ -40,10 +40,10 @@ def original_function():
     return getattr(response, "content", str(response))
 
 
-# What TraiGent does internally:
+# What Traigent does internally:
 @traigent.optimize(configuration_space={"model": [...], "temperature": [...]})
 def my_function():
-    # 1. TraiGent intercepts the ChatOpenAI constructor
+    # 1. Traigent intercepts the ChatOpenAI constructor
     # 2. Gets optimal parameters from configuration space
     # 3. Overrides your parameters with optimal ones
     # 4. Creates LLM instance with optimal parameters
@@ -52,7 +52,7 @@ def my_function():
     if not isinstance(optimal_config, dict):
         optimal_config = {"model": "gpt-4o-mini", "temperature": 0.3}
 
-    # Your code sees this, but TraiGent modified the parameters:
+    # Your code sees this, but Traigent modified the parameters:
     llm = ChatOpenAI(
         model=optimal_config["model"],  # Was "gpt-3.5-turbo", now "gpt-4o-mini"
         temperature=optimal_config["temperature"],  # Was 0.7, now 0.3

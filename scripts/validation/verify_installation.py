@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-Verify TraiGent Installation Script
+Verify Traigent Installation Script
 
-This script verifies that all TraiGent dependencies are installed correctly
+This script verifies that all Traigent dependencies are installed correctly
 and that the SDK is ready to use.
 """
 
@@ -26,12 +26,12 @@ def check_dependency(module_name: str, import_path: str = None) -> bool:
 
 def main():
     """Run installation verification checks."""
-    print("🔍 TraiGent Installation Verification")
+    print("🔍 Traigent Installation Verification")
     print("=" * 50)
 
     all_ok = True
 
-    # Core TraiGent
+    # Core Traigent
     print("\n📦 Core Package:")
     if check_dependency("traigent"):
         print("  ✅ traigent")
@@ -131,7 +131,7 @@ def main():
     print("\n" + "=" * 50)
     if all_ok:
         print("✅ Installation verified successfully!")
-        print("\n🚀 You're ready to use TraiGent!")
+        print("\n🚀 You're ready to use Traigent!")
         print("\nQuick test command:")
         print("  TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py")
         return 0

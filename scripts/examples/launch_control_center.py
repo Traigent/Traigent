@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Launch script for TraiGent Playground
+Launch script for Traigent Playground
 Run from anywhere: python launch_control_center.py
 """
 
@@ -11,9 +11,9 @@ from pathlib import Path
 
 
 def main():
-    """Launch the TraiGent Playground Streamlit app."""
+    """Launch the Traigent Playground Streamlit app."""
 
-    print("🎯 Launching TraiGent Playground...")
+    print("🎯 Launching Traigent Playground...")
     print("==================================")
 
     # Check for streamlit
@@ -56,7 +56,7 @@ def main():
     try:
         subprocess.run([sys.executable, "-m", "streamlit", "run", str(app_path)])
     except KeyboardInterrupt:
-        print("\n👋 Shutting down TraiGent Playground...")
+        print("\n👋 Shutting down Traigent Playground...")
 
 
 if __name__ == "__main__":

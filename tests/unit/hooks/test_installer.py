@@ -157,19 +157,19 @@ class TestHooksInstaller:
         assert pre_commit_content == PRE_COMMIT_HOOK_SCRIPT
         assert HOOK_MARKER in pre_push_content
         # Note: HOOK_MARKER only appears in pre-push, not pre-commit
-        assert "TraiGent" in pre_commit_content
+        assert "Traigent" in pre_commit_content
 
     def test_install_without_force_skips_existing_traigent_hooks(
         self, installer: HooksInstaller
     ) -> None:
-        """Test install without force skips existing TraiGent hooks."""
+        """Test install without force skips existing Traigent hooks."""
         # Install once
         installer.install()
 
         # Install again without force
         results = installer.install(force=False)
 
-        # pre-push has HOOK_MARKER so it's detected as TraiGent hook
+        # pre-push has HOOK_MARKER so it's detected as Traigent hook
         assert results["pre-push"] is True
         # pre-commit doesn't have HOOK_MARKER so it's not re-detected
         # This is current behavior - could be considered a bug
@@ -178,8 +178,8 @@ class TestHooksInstaller:
     def test_install_without_force_preserves_non_traigent_hooks(
         self, installer: HooksInstaller
     ) -> None:
-        """Test install without force doesn't overwrite non-TraiGent hooks."""
-        # Create non-TraiGent hook
+        """Test install without force doesn't overwrite non-Traigent hooks."""
+        # Create non-Traigent hook
         pre_push = installer.hooks_dir / "pre-push"
         pre_push.write_text("#!/bin/bash\necho 'custom hook'")
 
@@ -244,7 +244,7 @@ class TestHooksInstaller:
 
     # uninstall tests
     def test_uninstall_removes_traigent_hooks(self, installer: HooksInstaller) -> None:
-        """Test uninstall removes TraiGent hooks with HOOK_MARKER."""
+        """Test uninstall removes Traigent hooks with HOOK_MARKER."""
         installer.install()
         results = installer.uninstall()
 
@@ -259,8 +259,8 @@ class TestHooksInstaller:
     def test_uninstall_preserves_non_traigent_hooks(
         self, installer: HooksInstaller
     ) -> None:
-        """Test uninstall doesn't remove non-TraiGent hooks."""
-        # Create non-TraiGent hook
+        """Test uninstall doesn't remove non-Traigent hooks."""
+        # Create non-Traigent hook
         pre_push = installer.hooks_dir / "pre-push"
         custom_content = "#!/bin/bash\necho 'custom'"
         pre_push.write_text(custom_content)
@@ -302,7 +302,7 @@ class TestHooksInstaller:
     def test_uninstall_hook_removes_traigent_hook(
         self, installer: HooksInstaller
     ) -> None:
-        """Test _uninstall_hook removes TraiGent hook."""
+        """Test _uninstall_hook removes Traigent hook."""
         hook_path = installer.hooks_dir / "test-hook"
         hook_path.write_text("#!/bin/bash\n" + HOOK_MARKER)
 
@@ -324,7 +324,7 @@ class TestHooksInstaller:
     def test_uninstall_hook_preserves_non_traigent_hook(
         self, installer: HooksInstaller
     ) -> None:
-        """Test _uninstall_hook doesn't remove non-TraiGent hook."""
+        """Test _uninstall_hook doesn't remove non-Traigent hook."""
         hook_path = installer.hooks_dir / "test-hook"
         hook_path.write_text("#!/bin/bash\necho 'custom'")
 
@@ -350,7 +350,7 @@ class TestHooksInstaller:
         installer.install()
         status = installer.status()
 
-        # pre-push has HOOK_MARKER so it's detected as TraiGent
+        # pre-push has HOOK_MARKER so it's detected as Traigent
         assert status["pre-push"] == "installed (traigent)"
         # pre-commit doesn't have HOOK_MARKER so it's detected as other
         assert status["pre-commit"] == "installed (other)"
@@ -358,7 +358,7 @@ class TestHooksInstaller:
     def test_status_returns_installed_other_for_non_traigent_hooks(
         self, installer: HooksInstaller
     ) -> None:
-        """Test status returns 'installed (other)' for non-TraiGent hooks."""
+        """Test status returns 'installed (other)' for non-Traigent hooks."""
         pre_push = installer.hooks_dir / "pre-push"
         pre_push.write_text("#!/bin/bash\necho 'custom'")
 
@@ -506,7 +506,7 @@ class TestInstallHooks:
         self, temp_git_repo: Path
     ) -> None:
         """Test install_hooks returns False when some hooks fail to install."""
-        # Create non-TraiGent pre-push hook
+        # Create non-Traigent pre-push hook
         pre_push = temp_git_repo / ".git" / "hooks" / "pre-push"
         pre_push.write_text("#!/bin/bash\necho 'custom'")
 
@@ -521,7 +521,7 @@ class TestUninstallHooks:
 
     @pytest.fixture
     def temp_git_repo_with_hooks(self) -> Generator[Path, None, None]:
-        """Create temp Git repository with TraiGent hooks installed."""
+        """Create temp Git repository with Traigent hooks installed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             repo_path = Path(tmpdir)
             git_dir = repo_path / ".git"
@@ -595,7 +595,7 @@ class TestHookScripts:
     """Tests for hook script constants."""
 
     def test_pre_push_hook_script_contains_marker(self) -> None:
-        """Test PRE_PUSH_HOOK_SCRIPT contains TraiGent marker."""
+        """Test PRE_PUSH_HOOK_SCRIPT contains Traigent marker."""
         assert HOOK_MARKER in PRE_PUSH_HOOK_SCRIPT
 
     def test_pre_push_hook_script_has_shebang(self) -> None:
@@ -607,9 +607,9 @@ class TestHookScripts:
         assert "hooks validate" in PRE_PUSH_HOOK_SCRIPT
 
     def test_pre_commit_hook_script_contains_traigent(self) -> None:
-        """Test PRE_COMMIT_HOOK_SCRIPT contains TraiGent identifier."""
+        """Test PRE_COMMIT_HOOK_SCRIPT contains Traigent identifier."""
         # Note: pre-commit doesn't have HOOK_MARKER
-        assert "TraiGent" in PRE_COMMIT_HOOK_SCRIPT
+        assert "Traigent" in PRE_COMMIT_HOOK_SCRIPT
 
     def test_pre_commit_hook_script_has_shebang(self) -> None:
         """Test PRE_COMMIT_HOOK_SCRIPT starts with bash shebang."""
@@ -621,5 +621,5 @@ class TestHookScripts:
 
     def test_hook_marker_is_descriptive(self) -> None:
         """Test HOOK_MARKER contains descriptive text."""
-        assert "TraiGent" in HOOK_MARKER
+        assert "Traigent" in HOOK_MARKER
         assert "pre-push" in HOOK_MARKER

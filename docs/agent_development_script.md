@@ -1,6 +1,6 @@
 # AI Agent Development Playbook
 
-Systematic evaluation & tuning with TraiGent (for GTM, Ops, Engineering, and product leaders).
+Systematic evaluation & tuning with Traigent (for GTM, Ops, Engineering, and product leaders).
 
 ## Who this is for
 
@@ -26,9 +26,9 @@ Systematic evaluation & tuning with TraiGent (for GTM, Ops, Engineering, and pro
 | Product / technical | Weighted test pass, quality/security score | Use deterministic CI signals first; judge readability second |
 | Customer support | Resolution accuracy, escalation accuracy | Compare to expert responses; evaluate routing directly |
 
-## The TraiGent loop (offline-first)
+## The Traigent loop (offline-first)
 
-TraiGent treats agent improvement as an empirical workflow. You define measurable objectives and guardrails, then explore your configuration space **within an evaluation budget**.
+Traigent treats agent improvement as an empirical workflow. You define measurable objectives and guardrails, then explore your configuration space **within an evaluation budget**.
 
 1. **Build an evaluation dataset**: representative inputs paired with expected outputs (or expected behaviors).
 2. **Define automated scoring**: deterministic checks where possible + calibrated rubrics where needed.
@@ -236,13 +236,13 @@ Note: evaluation wiring can still be code-driven (datasets, evaluators, rubrics)
 | “Best trade-offs set” (Pareto front) | Configs where you can’t improve one goal without hurting another |
 | “Balance of false alarms vs misses” (F1-style) | A way to measure decisions like “escalate vs handle” without optimizing only one side |
 | Ranking quality (MRR/NDCG@k) | How well retrieval ranks relevant documents near the top |
-| TVL (Tuned Variable Language) | TraiGent’s spec format for objectives, constraints, budgets, and Tuned Variables |
-| `tvars` | Tuned Variables defined in TVL (the knobs TraiGent explores) |
+| TVL (Tuned Variable Language) | Traigent’s spec format for objectives, constraints, budgets, and Tuned Variables |
+| `tvars` | Tuned Variables defined in TVL (the knobs Traigent explores) |
 
-## Getting started with TraiGent
+## Getting started with Traigent
 
-Once you have an eval set and scoring in place, TraiGent’s SDK helps you explore configs and ship behind gates.
+Once you have an eval set and scoring in place, Traigent’s SDK helps you explore configs and ship behind gates.
 
 Next steps:
 - Review the TVL spec reference for syntax and examples
-- Explore runnable examples in the TraiGent repo
+- Explore runnable examples in the Traigent repo

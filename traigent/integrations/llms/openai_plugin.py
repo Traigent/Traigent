@@ -1,4 +1,4 @@
-"""OpenAI integration plugin for TraiGent.
+"""OpenAI integration plugin for Traigent.
 
 This module provides the OpenAI-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -34,7 +34,7 @@ class OpenAIPlugin(LLMPlugin):
             supported_packages=["openai"],
             priority=IntegrationPriority.HIGH,
             description="OpenAI SDK integration for GPT models",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["openai>=1.0.0"],
             supports_versions={"openai": "1."},
         )

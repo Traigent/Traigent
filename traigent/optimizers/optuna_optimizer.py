@@ -1,4 +1,4 @@
-"""Optuna-backed optimizers for TraiGent.
+"""Optuna-backed optimizers for Traigent.
 
 These optimizers follow the existing :class:`BaseOptimizer` interface while using
 Optuna samplers under the hood.  They are implemented as additive features—the
@@ -416,7 +416,7 @@ class OptunaBaseOptimizer(BaseOptimizer):
                 values = ordered if len(ordered) > 1 else ordered[0]
                 state = optuna.trial.TrialState.COMPLETE
             elif status in {TrialStatus.CANCELLED, TrialStatus.PRUNED}:
-                # TraiGent exposes both CANCELLED and PRUNED statuses. Optuna doesn't
+                # Traigent exposes both CANCELLED and PRUNED statuses. Optuna doesn't
                 # have a distinct "cancelled" trial state in ask/tell, so we map
                 # cancelled runs to PRUNED when backfilling history to keep the
                 # study consistent and avoid treating them as failures.

@@ -1,15 +1,15 @@
 # Creative Stress Testing Prompt
 
-You are a senior AI engineer exploring TraiGent's capabilities. The README quickstarts have been validated - your job is to **push the boundaries** by creating your own experiments.
+You are a senior AI engineer exploring Traigent's capabilities. The README quickstarts have been validated - your job is to **push the boundaries** by creating your own experiments.
 
-**Your mission**: Design creative experiments that stress-test TraiGent's flexibility, error handling, and edge cases. Everything runs in mock mode.
+**Your mission**: Design creative experiments that stress-test Traigent's flexibility, error handling, and edge cases. Everything runs in mock mode.
 
 ---
 
 ## Setup
 
 ```bash
-# Ensure you're in the TraiGent directory with the SDK installed
+# Ensure you're in the Traigent directory with the SDK installed
 cd /path/to/Traigent
 export TRAIGENT_MOCK_MODE=true
 export TRAIGENT_LOG_LEVEL=INFO
@@ -19,7 +19,7 @@ export TRAIGENT_LOG_LEVEL=INFO
 
 ## SCENARIO 1: Domain-Specific Agents
 
-Create agents for specific domains and observe how TraiGent handles them.
+Create agents for specific domains and observe how Traigent handles them.
 
 ### 1.1 Code Review Agent
 
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 ```
 
 **Questions to answer:**
-- [ ] Does TraiGent handle string-based categorical values correctly?
+- [ ] Does Traigent handle string-based categorical values correctly?
 - [ ] Can it optimize for security-sensitive outputs?
 - [ ] What happens with integer parameters like `strictness`?
 
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 ```
 
 **Questions to answer:**
-- [ ] Does TraiGent handle functions with MULTIPLE input parameters?
+- [ ] Does Traigent handle functions with MULTIPLE input parameters?
 - [ ] Grid search with 3x3x3 = 27 configurations - does it run all?
 - [ ] Unicode in expected outputs - handled correctly?
 
@@ -938,7 +938,7 @@ For each scenario, report:
 
 After running all scenarios, answer:
 
-1. **Configuration flexibility**: Can TraiGent handle diverse config types (strings, ints, floats, booleans)?
+1. **Configuration flexibility**: Can Traigent handle diverse config types (strings, ints, floats, booleans)?
 2. **Multi-parameter functions**: Do functions with multiple inputs work correctly?
 3. **Algorithm comparison**: Do different algorithms produce reasonable results?
 4. **Error handling**: Are errors reported clearly? Does optimization continue after partial failures?

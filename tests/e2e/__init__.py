@@ -1,1 +1,1 @@
-"""End-to-end tests for TraiGent SDK."""
+"""End-to-end tests for Traigent SDK."""

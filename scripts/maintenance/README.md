@@ -1,6 +1,6 @@
 # 🔧 Maintenance Tools
 
-This directory contains **active maintenance tools** for the TraiGent project. These are safe, well-tested tools that should be used for ongoing project maintenance.
+This directory contains **active maintenance tools** for the Traigent project. These are safe, well-tested tools that should be used for ongoing project maintenance.
 
 ## 🛠️ **Available Tools**
 

@@ -9,7 +9,7 @@
 
 ## Request Summary
 
-I am requesting a comprehensive technical review of the TVL 0.9 implementation plan for the TraiGent SDK. This is a significant enhancement that introduces full support for the Tuned Variables Language (TVL) 0.9 specification as defined in the academic paper.
+I am requesting a comprehensive technical review of the TVL 0.9 implementation plan for the Traigent SDK. This is a significant enhancement that introduces full support for the Tuned Variables Language (TVL) 0.9 specification as defined in the academic paper.
 
 **Review Documents:**
 - [TVL_0.9_IMPLEMENTATION_PLAN.md](./TVL_0.9_IMPLEMENTATION_PLAN.md) - Full implementation plan
@@ -38,7 +38,7 @@ The TVL ecosystem spans two repositories:
 | **TraigentPaper/tvl/** | TVL spec definition, EBNF grammar, JSON schema, standalone validation tools (`tvl-lint`, `tvl-check-structural`, `tvl-ci-gate`) |
 | **Traigent/** (SDK) | Runtime consumption - load specs, convert to optimization artifacts, integrate with `@optimize` decorator |
 
-**This plan focuses on the TraiGent SDK only.** The validation tooling already exists in the paper repository.
+**This plan focuses on the Traigent SDK only.** The validation tooling already exists in the paper repository.
 
 ### Current State
 
@@ -350,7 +350,7 @@ Please structure your review as follows:
 
 For clarifications on this review request:
 - Implementation Lead: Claude (AI Assistant)
-- Project: TraiGent SDK
+- Project: Traigent SDK
 - Branch: `feature/tvl-language-complete`
 
 ---

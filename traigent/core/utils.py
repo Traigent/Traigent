@@ -1,4 +1,4 @@
-"""Core utility functions for TraiGent optimization system.
+"""Core utility functions for Traigent optimization system.
 
 This module provides utility functions that are used across multiple core
 components. These functions handle common operations like safe attribute access,

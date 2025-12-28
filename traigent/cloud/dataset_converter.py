@@ -1,4 +1,4 @@
-"""Dataset Converter for TraiGent SDK and OptiGen Backend Integration.
+"""Dataset Converter for Traigent SDK and OptiGen Backend Integration.
 
 This module provides utilities to convert between SDK JSONL format and
 backend example set format, enabling seamless data exchange while

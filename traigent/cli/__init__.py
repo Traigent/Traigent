@@ -1,9 +1,9 @@
-"""Command-line interface for TraiGent SDK.
+"""Command-line interface for Traigent SDK.
 
 Note:
     This module is designed for interactive terminal use only. It uses
     rich.console for formatted terminal output rather than structured logging.
-    For programmatic access to TraiGent functionality, use the traigent.api
+    For programmatic access to Traigent functionality, use the traigent.api
     module instead, which provides proper logging integration.
 """
 

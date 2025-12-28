@@ -1,4 +1,4 @@
-# Getting Started with TraiGent SDK
+# Getting Started with Traigent SDK
 
 The fastest path to optimize an LLM workflow with **zero code changes**.
 
@@ -28,7 +28,7 @@ def answer_question(question: str) -> str:
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
     return llm.invoke(question).content
 
-# Async-safe in TraiGent - use asyncio.run in sync contexts
+# Async-safe in Traigent - use asyncio.run in sync contexts
 if __name__ == "__main__":
     import asyncio
     results = asyncio.run(answer_question.optimize(max_trials=5, algorithm="grid"))

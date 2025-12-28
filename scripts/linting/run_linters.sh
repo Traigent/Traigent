@@ -1,13 +1,13 @@
 #!/bin/bash
 
-# Script to run all linters on the TraiGent project
+# Script to run all linters on the Traigent project
 # This will help you see all problems from different linters
 
 # Navigate to project root from scripts/linting directory
 cd "$(dirname "$0")/../.."
 
 echo "========================================="
-echo "Running All Linters on TraiGent Project"
+echo "Running All Linters on Traigent Project"
 echo "========================================="
 echo ""
 

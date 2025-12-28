@@ -1,15 +1,15 @@
 """
-Optimization Callbacks for TraiGent Playground
+Optimization Callbacks for Traigent Playground
 =================================================
 
-This module provides custom callbacks for the TraiGent optimization process,
+This module provides custom callbacks for the Traigent optimization process,
 including detailed logging of all function invocations for debugging and analysis.
 
 Features:
 - Logs every function call with input, output, config, and timing
 - Saves logs in JSONL format for easy parsing
 - Provides summary statistics
-- Integrates seamlessly with TraiGent's callback system
+- Integrates seamlessly with Traigent's callback system
 """
 
 import json

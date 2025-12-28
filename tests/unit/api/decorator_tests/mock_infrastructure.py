@@ -1,7 +1,7 @@
 """Shared mock infrastructure for decorator tests.
 
 This module provides lightweight mock implementations of various LLM frameworks
-for testing TraiGent decorator functionality. These mocks focus on configuration
+for testing Traigent decorator functionality. These mocks focus on configuration
 tracking rather than realistic behavior simulation.
 """
 

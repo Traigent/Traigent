@@ -4,7 +4,7 @@
 
 ## Overview
 
-Context engineering has replaced prompt engineering as the primary challenge in LLM applications. Teams report spending 40% of development time determining optimal context composition. This example demonstrates how TraiGent systematically optimizes RAG (Retrieval-Augmented Generation) systems to find the perfect balance between answer quality and cost.
+Context engineering has replaced prompt engineering as the primary challenge in LLM applications. Teams report spending 40% of development time determining optimal context composition. This example demonstrates how Traigent systematically optimizes RAG (Retrieval-Augmented Generation) systems to find the perfect balance between answer quality and cost.
 
 ## Problem Statement
 
@@ -160,7 +160,7 @@ budget_allocation = {
 |---------------|----------------|------------|--------------|---------|
 | Simple RAG    | 0.72           | $0.0012   | 0.68         | 180ms   |
 | Standard RAG  | 0.78           | $0.0008   | 0.75         | 220ms   |
-| TraiGent Optimized | **0.87**  | **$0.00045** | **0.85** | 250ms   |
+| Traigent Optimized | **0.87**  | **$0.00045** | **0.85** | 250ms   |
 
 ### Key Insights from Optimization
 
@@ -232,7 +232,7 @@ def your_rag_function(**config):
    - Quality assessment with LLM judges
 
 4. **Main Optimization** (`main.py`)
-   - TraiGent integration and orchestration
+   - Traigent integration and orchestration
    - Results visualization and analysis
    - Insights generation and recommendations
 

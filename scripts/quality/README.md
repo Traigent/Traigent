@@ -1,6 +1,6 @@
 # Code Quality Scripts
 
-This directory contains scripts for maintaining code quality standards across the TraiGent SDK.
+This directory contains scripts for maintaining code quality standards across the Traigent SDK.
 
 ## Scripts
 

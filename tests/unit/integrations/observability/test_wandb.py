@@ -1,6 +1,6 @@
 """Unit tests for Weights & Biases integration.
 
-Tests for TraiGent W&B experiment tracking and observability.
+Tests for Traigent W&B experiment tracking and observability.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability

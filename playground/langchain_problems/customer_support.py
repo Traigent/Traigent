@@ -493,9 +493,9 @@ Respond with only the category name, nothing else.""",
         def customer_support_classifier_optimized(query: str) -> str:
             """Optimized customer support ticket classifier."""
             llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Will be overridden by TraiGent
-                temperature=0.7,  # Will be overridden by TraiGent
-                model_kwargs={"max_tokens": 50},  # Will be overridden by TraiGent
+                model="gpt-4o-mini",  # Will be overridden by Traigent
+                temperature=0.7,  # Will be overridden by Traigent
+                model_kwargs={"max_tokens": 50},  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

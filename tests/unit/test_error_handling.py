@@ -19,7 +19,7 @@ class TestExceptionHierarchy:
     """Test custom exception hierarchy."""
 
     def test_base_exception(self):
-        """Test base TraiGent exception."""
+        """Test base Traigent exception."""
         error = TraigentError("Base error message")
         assert str(error) == "Base error message"
         assert isinstance(error, Exception)

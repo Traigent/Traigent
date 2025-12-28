@@ -91,7 +91,7 @@ class ProblemDefinition(ABC):
     @abstractmethod
     def create_optimized_function(self) -> Callable:
         """
-        Create the optimized version of the function with TraiGent decorator.
+        Create the optimized version of the function with Traigent decorator.
 
         Returns:
             Function decorated with @traigent.optimize

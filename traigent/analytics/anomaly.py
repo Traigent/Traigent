@@ -1,4 +1,4 @@
-"""Anomaly detection and performance monitoring for TraiGent optimizations."""
+"""Anomaly detection and performance monitoring for Traigent optimizations."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Reliability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 

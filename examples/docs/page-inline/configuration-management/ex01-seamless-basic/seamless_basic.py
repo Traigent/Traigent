@@ -93,7 +93,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     max_trials=10,
 )
 def optimized_summary(text: str) -> str:
-    """Same implementation; TraiGent injects optimal parameters at runtime."""
+    """Same implementation; Traigent injects optimal parameters at runtime."""
     llm = ChatOpenAI(
         model="gpt-3.5-turbo", temperature=0.7, model_kwargs={"max_tokens": 150}
     )

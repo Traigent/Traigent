@@ -1,9 +1,9 @@
 #!/bin/bash
-# Development installation script for TraiGent SDK
+# Development installation script for Traigent SDK
 
 set -e
 
-echo "🚀 Setting up TraiGent SDK for development..."
+echo "🚀 Setting up Traigent SDK for development..."
 
 # Check Python version
 echo "📋 Checking Python version..."
@@ -32,7 +32,7 @@ echo "📦 Upgrading pip..."
 pip install --upgrade pip
 
 # Install package in development mode with all dependencies
-echo "📦 Installing TraiGent SDK in development mode..."
+echo "📦 Installing Traigent SDK in development mode..."
 pip install -e ".[dev,integrations,bayesian,docs]"
 
 # Install pre-commit hooks

@@ -1,5 +1,5 @@
 """
-Problem Type System for TraiGent SDK.
+Problem Type System for Traigent SDK.
 
 This module provides a structured, constraint-based approach for defining
 and working with different types of LLM optimization problems. It focuses

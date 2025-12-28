@@ -17,7 +17,7 @@ RESET='\033[0m'
 
 clear
 echo -e "${BLUE}${BOLD}┌────────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${BLUE}${BOLD}│  🔔 TraiGent: Optimization Callbacks                           │${RESET}"
+echo -e "${BLUE}${BOLD}│  🔔 Traigent: Optimization Callbacks                           │${RESET}"
 echo -e "${BLUE}${BOLD}└────────────────────────────────────────────────────────────────┘${RESET}"
 echo ""
 sleep 1
