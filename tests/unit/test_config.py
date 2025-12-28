@@ -489,15 +489,19 @@ class TestGlobalConfiguration:
     def test_configure_integrations_invalid_options(self):
         """Test configuring integrations with invalid options."""
         with patch("traigent.integrations.config.logger") as mock_logger:
-            configure_integrations(
-                valid_option=True, invalid_option="should_warn", another_invalid=123
-            )
+            configure_integrations(invalid_option="should_warn", another_invalid=123)
 
-            # Should warn about invalid options
-            assert mock_logger.warning.call_count >= 2
+            # Should warn about invalid options (at least one warning per invalid option)
+            assert (
+                mock_logger.warning.call_count >= 2
+            ), f"Expected at least 2 warnings, got {mock_logger.warning.call_count}"
             warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any("invalid_option" in call for call in warning_calls)
-            assert any("another_invalid" in call for call in warning_calls)
+            assert any(
+                "invalid_option" in call for call in warning_calls
+            ), f"Expected warning about 'invalid_option' in: {warning_calls}"
+            assert any(
+                "another_invalid" in call for call in warning_calls
+            ), f"Expected warning about 'another_invalid' in: {warning_calls}"
 
     def test_configure_integrations_type_safety(self):
         """Test that configuration maintains type safety."""
