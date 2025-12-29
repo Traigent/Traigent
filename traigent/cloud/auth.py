@@ -831,7 +831,6 @@ class AuthManager:
         if self._credentials.mode == AuthMode.API_KEY:
             api_key_value = self._get_api_key_for_internal_use()
             if api_key_value:
-                headers["Authorization"] = f"Bearer {api_key_value}"
                 headers["X-API-Key"] = api_key_value
 
         elif self._credentials.mode == AuthMode.JWT_TOKEN:
@@ -1064,7 +1063,6 @@ class AuthManager:
         credentials.api_key = api_key_value
 
         headers = {
-            "Authorization": f"Bearer {api_key_value}",
             "X-API-Key": api_key_value,
         }
 

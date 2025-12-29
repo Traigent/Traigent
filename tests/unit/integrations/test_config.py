@@ -27,20 +27,29 @@ def reset_integration_config():
 
     This ensures test isolation when tests modify the global integration_config.
     Handles both property modifications and complete object replacement.
+    Important: We reset to actual IntegrationConfig defaults, not "current" values,
+    because other tests may have polluted the global state before this fixture runs.
     """
-    # Save the original object reference and its values
+    # Save the original object reference (for tests that replace the object)
     original_config = config_module.integration_config
-    original_values = {
-        f.name: getattr(original_config, f.name) for f in fields(IntegrationConfig)
+
+    # Get actual default values from a fresh IntegrationConfig instance
+    default_config = IntegrationConfig()
+    default_values = {
+        f.name: getattr(default_config, f.name) for f in fields(IntegrationConfig)
     }
+
+    # Reset to defaults BEFORE the test runs
+    for name, value in default_values.items():
+        setattr(config_module.integration_config, name, value)
 
     yield
 
     # Restore original object reference if it was replaced
     config_module.integration_config = original_config
 
-    # Restore original values
-    for name, value in original_values.items():
+    # Reset to defaults AFTER the test runs
+    for name, value in default_values.items():
         setattr(config_module.integration_config, name, value)
 
 

@@ -49,7 +49,7 @@ class SyncManager:
         self.base_url = BackendConfig.get_backend_api_url().rstrip("/")
 
         # Setup HTTP client - always create a requests session for sync operations
-        self.headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        self.headers = {"X-API-Key": api_key} if api_key else {}
         # Always create requests session for synchronous operations
         self._session = requests.Session()
         if api_key:
