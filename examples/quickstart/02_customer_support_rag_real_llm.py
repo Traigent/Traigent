@@ -1,16 +1,18 @@
 #!/usr/bin/env python
 """
-TraiGent Quickstart: Customer Support RAG with REAL LLM Calls
+TraiGent Quickstart: Customer Support RAG with FAISS and Real LLM Calls
 
-This example demonstrates RAG (Retrieval Augmented Generation) optimization
-with actual OpenAI API calls, showcasing:
+This example demonstrates real RAG (Retrieval Augmented Generation) optimization
+with FAISS vector store, OpenAI embeddings, and actual LLM calls, showcasing:
+- Semantic similarity search with FAISS
+- OpenAI embeddings (text-embedding-3-small)
 - RAG retrieval depth optimization (k parameter)
 - Model and temperature tuning
 - Multi-objective optimization (accuracy, cost, latency)
-- Custom scoring for customer support quality
 
 Run with:
     export OPENAI_API_KEY="your-key-here"
+    pip install faiss-cpu  # if not already installed
     python examples/quickstart/02_customer_support_rag_real_llm.py
 """
 
@@ -21,13 +23,21 @@ import os
 import sys
 from pathlib import Path
 
-from langchain_openai import ChatOpenAI
-
-# Check for API key
+# Check for API key first
 api_key = os.environ.get("OPENAI_API_KEY")
 if not api_key:
     print("ERROR: OPENAI_API_KEY environment variable not set.")
     print("Please run: export OPENAI_API_KEY='your-key-here'")
+    sys.exit(1)
+
+# Check for FAISS
+try:
+    from langchain_community.vectorstores import FAISS
+    from langchain_core.documents import Document
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+except ImportError as e:
+    print(f"ERROR: Missing dependency: {e}")
+    print("Please install: pip install faiss-cpu langchain-community langchain-openai")
     sys.exit(1)
 
 # Set results folder to local directory
@@ -60,34 +70,50 @@ if not RAG_DATASET_PATH.exists():
     RAG_DATASET_PATH.write_text("\n".join(rag_data) + "\n")
 
 
-# Simulated knowledge base
-KNOWLEDGE_BASE = [
-    "Returns accepted within 30 days with original receipt",
-    "Free shipping on orders over $50",
-    "Track your order using the link in confirmation email",
-    "We accept Visa, Mastercard, PayPal, and Apple Pay",
-    "Contact support at support@example.com or 1-800-SUPPORT",
-    "Business hours: Monday-Friday 9am-5pm EST",
-    "Gift cards never expire",
-    "Price match guarantee within 14 days of purchase",
+# Knowledge base documents for the vector store
+KNOWLEDGE_BASE_DOCS = [
+    {"content": "Returns accepted within 30 days with original receipt. Items must be unused and in original packaging.", "category": "returns"},
+    {"content": "Free shipping on orders over $50. Standard shipping takes 5-7 business days.", "category": "shipping"},
+    {"content": "Track your order using the tracking link in your confirmation email. You can also check status on our website.", "category": "orders"},
+    {"content": "We accept Visa, Mastercard, American Express, PayPal, and Apple Pay. All transactions are secure.", "category": "payments"},
+    {"content": "Contact support at support@example.com or call 1-800-SUPPORT. Live chat available on our website.", "category": "support"},
+    {"content": "Business hours: Monday-Friday 9am-5pm EST. Weekend support available via email only.", "category": "hours"},
+    {"content": "Gift cards never expire and can be used online or in-store. Check balance at giftcards.example.com.", "category": "gift_cards"},
+    {"content": "Price match guarantee within 14 days of purchase. Must be identical item from authorized retailer.", "category": "pricing"},
 ]
 
 
-def simple_retriever(query: str, k: int = 3) -> list[str]:
-    """Simple keyword-based retriever for demo purposes.
+def create_vector_store() -> FAISS:
+    """Create FAISS vector store with OpenAI embeddings.
 
-    In production, you would use a vector store like Chroma or FAISS.
+    Uses text-embedding-3-small for cost-effective semantic embeddings.
+    Cost: ~$0.00002 per 1K tokens (very cheap for small knowledge bases).
     """
-    query_lower = query.lower()
-    scores = []
-    for doc in KNOWLEDGE_BASE:
-        # Simple keyword matching score
-        score = sum(1 for word in query_lower.split() if word in doc.lower())
-        scores.append((score, doc))
+    print("Creating FAISS vector store with OpenAI embeddings...")
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
 
-    # Return top-k documents
-    scores.sort(reverse=True, key=lambda x: x[0])
-    return [doc for _, doc in scores[:k]]
+    # Convert to LangChain Documents with metadata
+    documents = [
+        Document(
+            page_content=doc["content"],
+            metadata={"category": doc["category"]}
+        )
+        for doc in KNOWLEDGE_BASE_DOCS
+    ]
+
+    vector_store = FAISS.from_documents(documents, embeddings)
+    print(f"  Created vector store with {len(documents)} documents")
+    return vector_store
+
+
+def semantic_retriever(vector_store: FAISS, query: str, k: int = 3) -> list[str]:
+    """Retrieve documents using semantic similarity search.
+
+    Unlike keyword matching, this finds semantically similar content
+    even if the exact words don't match.
+    """
+    docs = vector_store.similarity_search(query, k=k)
+    return [doc.page_content for doc in docs]
 
 
 def rag_accuracy_scorer(output: str, expected: str) -> float:
@@ -134,49 +160,16 @@ CONSTRAINTS_DESCRIPTIONS = [
     "GPT-3.5-turbo: k >= 3 (needs more context)",
 ]
 
+# Global vector store (initialized once)
+_vector_store: FAISS | None = None
 
-# Debug wrappers to log constraint checks (same logic, just adds print)
-_constraint_results = {}  # Track constraint results by config tuple
-_current_config_key = [None]  # Track current config being checked
-_trial_counter = [0]  # Count trials that passed all constraints
 
-def make_logged_constraint(name: str, constraint_fn, is_last: bool = False):
-    """Wrap a constraint function with logging.
-
-    Args:
-        name: Name of the constraint for logging
-        constraint_fn: The actual constraint function
-        is_last: Set True for the last constraint - it will print trial assignment
-    """
-    def logged(cfg):
-        cfg_key = (cfg.get("model"), cfg.get("temperature"), cfg.get("k"))
-
-        # If this is a new config, start fresh
-        if cfg_key != _current_config_key[0]:
-            _current_config_key[0] = cfg_key
-            if cfg_key not in _constraint_results:
-                _constraint_results[cfg_key] = {}
-
-        result = constraint_fn(cfg)
-        _constraint_results[cfg_key][name] = result
-
-        # Check if all constraints for this config have been evaluated
-        all_checked = len(_constraint_results[cfg_key]) == 2  # We have 2 constraints
-        all_passed = all(_constraint_results[cfg_key].values()) if all_checked else None
-
-        # Always increment trial counter - TraiGent assigns trial numbers regardless of constraint result
-        if is_last or not result:
-            _trial_counter[0] += 1
-            trial_num = _trial_counter[0]
-            if not result:
-                # Constraint failed - trial will be skipped (score=N/A)
-                print(f"  [Trial {trial_num}] {cfg} -> REJECTED by '{name}' (will NOT run, score=N/A)")
-            elif all_passed:
-                # All constraints passed - trial will run
-                print(f"  [Trial {trial_num}] {cfg} -> OK (will run)")
-
-        return result
-    return logged
+def get_vector_store() -> FAISS:
+    """Get or create the global vector store."""
+    global _vector_store
+    if _vector_store is None:
+        _vector_store = create_vector_store()
+    return _vector_store
 
 
 @traigent.optimize(
@@ -189,12 +182,9 @@ def make_logged_constraint(name: str, constraint_fn, is_last: bool = False):
     # Constraints: skip configurations that don't make sense
     constraints=[
         # Don't use high temperature with GPT-4o (expensive + unpredictable)
-        make_logged_constraint("gpt4o_temp<=0.3",
-            lambda cfg: cfg["temperature"] <= 0.3 if cfg["model"] == "gpt-4o" else True),
-        # GPT-3.5-turbo needs more context documents (is_last=True to log trial assignment)
-        make_logged_constraint("gpt35_k>=3",
-            lambda cfg: cfg["k"] >= 3 if cfg["model"] == "gpt-3.5-turbo" else True,
-            is_last=True),
+        lambda cfg: cfg["temperature"] <= 0.3 if cfg["model"] == "gpt-4o" else True,
+        # GPT-3.5-turbo needs more context documents
+        lambda cfg: cfg["k"] >= 3 if cfg["model"] == "gpt-3.5-turbo" else True,
     ],
     # Custom metric functions for accuracy
     metric_functions={"accuracy": rag_accuracy_scorer},
@@ -212,7 +202,7 @@ def make_logged_constraint(name: str, constraint_fn, is_last: bool = False):
         auto_override_frameworks=True,
     ),
     # Runtime controls
-    max_trials=3,  # Testing: reduced to verify constraint slot consumption
+    max_trials=6,
     timeout=600,  # Override default 60s to allow all trials to complete
     cost_limit=5.00,
     cost_approved=True,
@@ -225,11 +215,17 @@ def customer_support_agent(
 ) -> str:
     """Answer customer questions using RAG with real LLM calls.
 
+    This function uses:
+    - FAISS for semantic similarity search
+    - OpenAI embeddings for document vectors
+    - LangChain ChatOpenAI for LLM responses
+
     TraiGent automatically injects optimized parameters into this function.
     The model, temperature, and k (retrieval depth) will be varied during optimization.
     """
-    # Retrieve relevant documents
-    docs = simple_retriever(query, k=k)
+    # Get vector store and retrieve relevant documents
+    vector_store = get_vector_store()
+    docs = semantic_retriever(vector_store, query, k=k)
     context = "\n".join(f"- {doc}" for doc in docs)
 
     # Build prompt with retrieved context
@@ -391,18 +387,18 @@ def print_model_summary(results) -> None:
 
 async def main():
     print("=" * 60)
-    print("TraiGent Quickstart: Customer Support RAG (Real LLM)")
+    print("TraiGent Quickstart: Customer Support RAG (FAISS + Real LLM)")
     print("=" * 60)
     print()
 
     print("Knowledge Base:")
-    for i, doc in enumerate(KNOWLEDGE_BASE[:3], 1):
-        print(f"  {i}. {doc[:50]}...")
-    print(f"  ... and {len(KNOWLEDGE_BASE) - 3} more documents")
+    for i, doc in enumerate(KNOWLEDGE_BASE_DOCS[:3], 1):
+        print(f"  {i}. [{doc['category']}] {doc['content'][:50]}...")
+    print(f"  ... and {len(KNOWLEDGE_BASE_DOCS) - 3} more documents")
     print()
 
     print(f"Dataset: {RAG_DATASET_PATH}")
-    print("Using real OpenAI API calls")
+    print("Using FAISS vector store with OpenAI embeddings")
     print()
 
     print("Configuration Space:")
@@ -416,12 +412,18 @@ async def main():
         print(f"  - {constraint}")
     print()
 
-    # Test the retriever first
-    print("Testing retriever:")
-    test_query = "What is your return policy?"
-    retrieved = simple_retriever(test_query, k=2)
+    # Initialize vector store before optimization
+    vector_store = get_vector_store()
+    print()
+
+    # Test the semantic retriever
+    print("Testing semantic retriever:")
+    test_query = "How do I get my money back?"  # Doesn't contain "return" but semantically related
+    retrieved = semantic_retriever(vector_store, test_query, k=2)
     print(f"  Query: '{test_query}'")
-    print(f"  Retrieved: {retrieved[:2]}...")
+    print(f"  Retrieved (semantic match):")
+    for doc in retrieved:
+        print(f"    - {doc[:60]}...")
     print()
 
     # Run optimization
@@ -438,24 +440,16 @@ async def main():
     print(f"Best Configuration: {results.best_config}")
     print()
 
-    # Show all trial results with constraint status
+    # Show all trial results
     if hasattr(results, "trials") and results.trials:
-        print("All Trials (with constraint status):")
+        print("All Trials:")
         print("-" * 40)
         for i, trial in enumerate(results.trials, 1):
             score = getattr(trial, "score", None) or getattr(trial, "metrics", {}).get(
                 "score", "N/A"
             )
             config = getattr(trial, "config", getattr(trial, "configuration", {}))
-            # Check constraint status for this config
-            cfg_key = (config.get("model"), config.get("temperature"), config.get("k"))
-            constraint_info = _constraint_results.get(cfg_key, {})
-            failed_constraints = [k for k, v in constraint_info.items() if not v]
-            if failed_constraints:
-                constraint_status = f"VIOLATED: {', '.join(failed_constraints)}"
-            else:
-                constraint_status = "OK"
-            print(f"  Trial {i}: {config} -> score={score} | constraints: {constraint_status}")
+            print(f"  Trial {i}: {config} -> score={score}")
 
     # Save results to CSV
     csv_output_path = Path(__file__).parent / "results" / "rag_optimization_results.csv"
@@ -496,7 +490,7 @@ async def main():
             print(f"A: {answer}")
 
     print()
-    print("RAG optimization complete with real LLM calls!")
+    print("RAG optimization complete with FAISS and real LLM calls!")
 
 
 if __name__ == "__main__":
