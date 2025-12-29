@@ -1,6 +1,6 @@
 """Tests for different injection modes (context, parameter, seamless).
 
-Tests how TraiGent injects configuration in different modes:
+Tests how Traigent injects configuration in different modes:
 - Context mode: Uses global context
 - Parameter mode: Adds TraigentConfig parameter
 - Seamless mode: Overrides framework parameters transparently

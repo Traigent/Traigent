@@ -1,4 +1,4 @@
-"""Advanced analytics and intelligence module for TraiGent SDK."""
+"""Advanced analytics and intelligence module for Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Maintainability
 

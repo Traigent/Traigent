@@ -1,6 +1,6 @@
 # Simple Prompt Optimization
 
-This is the "Hello World" of TraiGent. It demonstrates the most basic usage: optimizing a prompt and model parameters for a simple summarization task.
+This is the "Hello World" of Traigent. It demonstrates the most basic usage: optimizing a prompt and model parameters for a simple summarization task.
 
 ## What You'll Learn
 
@@ -27,7 +27,7 @@ python examples/core/simple-prompt/run.py
 
 ## Expected Output
 
-You should see TraiGent trying different combinations of parameters and reporting the results.
+You should see Traigent trying different combinations of parameters and reporting the results.
 
 ```text
 Starting Simple Prompt Optimization...

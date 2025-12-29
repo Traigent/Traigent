@@ -1,4 +1,4 @@
-# TraiGent SDK Installation Guide
+# Traigent SDK Installation Guide
 
 Release-ready, minimal install steps for the SDK and examples.
 
@@ -24,7 +24,7 @@ uv pip install -e ".[integrations]"       # Same extras, faster resolver
 
 ### Not on PyPI yet
 
-TraiGent is currently distributed from GitHub. Keep using the commands above until the first PyPI release lands.
+Traigent is currently distributed from GitHub. Keep using the commands above until the first PyPI release lands.
 
 ## 📦 Extras (from `pyproject.toml`)
 
@@ -76,7 +76,7 @@ TraiGent is currently distributed from GitHub. Keep using the commands above unt
 ```bash
 python - <<'PY'
 import traigent
-print("TraiGent version:", traigent.get_version_info()["version"])
+print("Traigent version:", traigent.get_version_info()["version"])
 PY
 ```
 

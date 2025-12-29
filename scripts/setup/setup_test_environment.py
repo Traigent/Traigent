@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Setup script for TraiGent test environment.
+"""Setup script for Traigent test environment.
 
 This script prepares the test environment by creating necessary directories,
 fixture files, and installing optional dependencies needed for testing.
@@ -158,7 +158,7 @@ def check_dependencies():
 
 def main():
     """Main setup function."""
-    print("🔧 Setting up TraiGent test environment...\n")
+    print("🔧 Setting up Traigent test environment...\n")
 
     # Get project root
     script_dir = Path(__file__).parent

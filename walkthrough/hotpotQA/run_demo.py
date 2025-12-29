@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Minimal HotpotQA optimization walkthrough using TraiGent."""
+"""Minimal HotpotQA optimization walkthrough using Traigent."""
 
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def generate_real_answer(
     mock_mode_config={"enabled": USE_MOCK, "override_evaluator": False},
 )
 def hotpot_agent(question: str, context: list[str] | None = None) -> str:
-    """Simulated HotpotQA agent; context is captured via TraiGent instrumentation."""
+    """Simulated HotpotQA agent; context is captured via Traigent instrumentation."""
 
     context = context or []
     config: dict[str, Any] = traigent.get_config()

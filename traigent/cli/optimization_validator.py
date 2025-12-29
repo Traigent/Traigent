@@ -21,7 +21,7 @@ console = Console()
 
 
 class OptimizationValidator:
-    """Validates that TraiGent optimization improves over default parameters using Pareto efficiency."""
+    """Validates that Traigent optimization improves over default parameters using Pareto efficiency."""
 
     def __init__(self, threshold_pct: float = 10.0) -> None:
         """Initialize the optimization validator.
@@ -66,8 +66,8 @@ class OptimizationValidator:
             console.print("🔍 Running baseline with default parameters...")
             baseline_metrics, baseline_config = await self._run_baseline(func_info)
 
-            # Step 2: Run TraiGent optimization
-            console.print("🚀 Running TraiGent optimization...")
+            # Step 2: Run Traigent optimization
+            console.print("🚀 Running Traigent optimization...")
             optimized_metrics, optimized_config = await self._run_optimization(
                 func_info
             )
@@ -156,7 +156,7 @@ class OptimizationValidator:
     async def _run_optimization(
         self, func_info: OptimizedFunction
     ) -> tuple[dict[str, float], dict[str, Any]]:
-        """Run TraiGent optimization to get optimized metrics.
+        """Run Traigent optimization to get optimized metrics.
 
         Args:
             func_info: Function information

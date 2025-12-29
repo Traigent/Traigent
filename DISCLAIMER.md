@@ -1,18 +1,18 @@
-# TraiGent SDK Disclaimer
+# Traigent SDK Disclaimer
 
-This document outlines important disclaimers and terms of use for the TraiGent SDK.
+This document outlines important disclaimers and terms of use for the Traigent SDK.
 By using this software, you acknowledge and agree to the following terms.
 
 ## Cost Liability
 
-TraiGent optimizes LLM applications by running multiple trials across different configurations.
+Traigent optimizes LLM applications by running multiple trials across different configurations.
 **This can result in significant API costs.**
 
 ### Cost Estimates Are Approximations
 
-- Cost estimates provided by TraiGent are **approximations based on maximum context length and expected token usage**
+- Cost estimates provided by Traigent are **approximations based on maximum context length and expected token usage**
 - **Actual billing is determined solely by the LLM provider** (OpenAI, Anthropic, Google, etc.)
-- TraiGent cannot guarantee cost accuracy for:
+- Traigent cannot guarantee cost accuracy for:
   - New or updated models with changed pricing
   - Custom endpoints or self-hosted models
   - Provider-specific billing variations
@@ -30,7 +30,7 @@ Users are **solely responsible** for:
 
 ### Parallel Execution Warning
 
-TraiGent may execute multiple LLM calls in parallel during optimization. This means:
+Traigent may execute multiple LLM calls in parallel during optimization. This means:
 
 - Multiple API requests can be made simultaneously
 - Costs can accumulate rapidly during parallel execution
@@ -38,7 +38,7 @@ TraiGent may execute multiple LLM calls in parallel during optimization. This me
 
 ## Third-Party API Terms
 
-TraiGent integrates with third-party LLM providers. Users must comply with the terms of service
+Traigent integrates with third-party LLM providers. Users must comply with the terms of service
 of each provider they use:
 
 - **OpenAI**: https://openai.com/policies/terms-of-use
@@ -48,7 +48,7 @@ of each provider they use:
 - **Azure OpenAI**: https://www.microsoft.com/licensing/terms/
 - Other provider terms as applicable
 
-TraiGent is **not responsible** for:
+Traigent is **not responsible** for:
 
 - Provider billing, rate limits, or service interruptions
 - Changes to provider pricing or terms
@@ -122,7 +122,7 @@ acceptance of any changes. Users are responsible for reviewing this disclaimer p
 
 ## Contact
 
-For questions about this disclaimer or the TraiGent SDK, please open an issue on GitHub:
+For questions about this disclaimer or the Traigent SDK, please open an issue on GitHub:
 https://github.com/Traigent/Traigent/issues
 
 ---

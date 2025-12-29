@@ -206,7 +206,7 @@ def split_dataset(
 
 
 def prepare_for_traigent(dataset: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Prepare dataset in TraiGent-compatible format with validation."""
+    """Prepare dataset in Traigent-compatible format with validation."""
     prepared = {
         "version": "1.0",
         "problem_type": "mixed",
@@ -280,7 +280,7 @@ def main():
         # Split dataset with validation
         train_set, test_set = split_dataset(dataset, split_ratio, seed)
 
-        # Prepare TraiGent-compatible format
+        # Prepare Traigent-compatible format
         train_data = prepare_for_traigent(train_set)
         test_data = prepare_for_traigent(test_set)
 

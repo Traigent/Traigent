@@ -1,4 +1,4 @@
-# TraiGent Execution Modes Guide
+# Traigent Execution Modes Guide
 
 > **Current status:** Open-source builds support `edge_analytics` (local) only. Cloud and hybrid are roadmap-ready but require a managed backend.
 

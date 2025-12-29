@@ -1,1 +1,1 @@
-"""Security tests for TraiGent SDK."""
+"""Security tests for Traigent SDK."""

@@ -1,6 +1,6 @@
-"""TraiGent integrations with ML/AI frameworks and experiment tracking.
+"""Traigent integrations with ML/AI frameworks and experiment tracking.
 
-TraiGent provides two types of integrations:
+Traigent provides two types of integrations:
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
 1. **Zero-Code-Change Framework Integration**:

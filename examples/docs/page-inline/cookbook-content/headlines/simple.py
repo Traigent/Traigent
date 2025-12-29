@@ -60,7 +60,7 @@ if __name__ == "__main__":
         print(
             "Test:",
             generate_headline(
-                "TraiGent optimizes LLM apps for quality, cost, and speed"
+                "Traigent optimizes LLM apps for quality, cost, and speed"
             ),
         )
 

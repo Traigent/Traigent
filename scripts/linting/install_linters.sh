@@ -2,7 +2,7 @@
 
 # Script to install all linters for VS Code integration
 echo "========================================="
-echo "Installing Linters for TraiGent Project"
+echo "Installing Linters for Traigent Project"
 echo "========================================="
 echo ""
 

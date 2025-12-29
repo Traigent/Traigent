@@ -2,7 +2,7 @@
 P0-1: Modern Structured Output Engineering
 ==========================================
 
-This example demonstrates how TraiGent can optimize structured output extraction
+This example demonstrates how Traigent can optimize structured output extraction
 from unstructured text, addressing one of the most universal problems in AI engineering.
 
 The optimization explores modern output strategies including JSON mode, function calling,

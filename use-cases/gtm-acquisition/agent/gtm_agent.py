@@ -120,7 +120,7 @@ def gtm_outreach_agent(
         tone=tone,
     )
 
-    # Use LangChain for LLM call (TraiGent intercepts and optimizes)
+    # Use LangChain for LLM call (Traigent intercepts and optimizes)
     try:
         from langchain_openai import ChatOpenAI
 
@@ -145,7 +145,7 @@ Best,
 async def run_optimization():
     """Run the GTM agent optimization."""
     print("=" * 60)
-    print("GTM & Acquisition Agent - TraiGent Optimization")
+    print("GTM & Acquisition Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled

@@ -294,7 +294,7 @@ def answer_question(question: str) -> str:
         # Simulate realistic API latency
         time.sleep(telemetry["latency"])
 
-        # Store telemetry for TraiGent to capture
+        # Store telemetry for Traigent to capture
         # This simulates what would be captured in real mode
         if hasattr(answer_question, "_mock_telemetry"):
             answer_question._mock_telemetry = telemetry
@@ -385,9 +385,7 @@ if __name__ == "__main__":
             assert isinstance(primary, str)
             minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
             ascending = any(p in primary.lower() for p in minimize_patterns)
-            df_raw = df_raw.sort_values(
-                by=primary, ascending=ascending, na_position="last"
-            )  # type: ignore[call-arg]
+            df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
         print("\nRaw (per-sample) trials:")
         print(df_raw.to_string(index=False))
 

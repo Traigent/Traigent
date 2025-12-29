@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-TraiGent Quickstart Example 2: Customer Support with RAG
+Traigent Quickstart Example 2: Customer Support with RAG
 
 This example demonstrates RAG (Retrieval Augmented Generation) optimization.
 Based on the README.md customer support example.
@@ -83,13 +83,13 @@ def simple_retriever(query: str, k: int = 3) -> list[str]:
 def customer_support_agent(query: str) -> str:
     """Answer customer questions using RAG.
 
-    This demonstrates how TraiGent can optimize RAG parameters like:
+    This demonstrates how Traigent can optimize RAG parameters like:
     - Which model to use
     - Temperature setting
     - Number of retrieved documents (k)
     """
-    # Get current config (in real usage, TraiGent injects these)
-    k = 3  # Default, will be overridden by TraiGent
+    # Get current config (in real usage, Traigent injects these)
+    k = 3  # Default, will be overridden by Traigent
 
     # Retrieve relevant documents
     docs = simple_retriever(query, k=k)
@@ -109,7 +109,7 @@ def customer_support_agent(query: str) -> str:
 
 async def main():
     print("=" * 60)
-    print("TraiGent Quickstart: Customer Support RAG Optimization")
+    print("Traigent Quickstart: Customer Support RAG Optimization")
     print("=" * 60)
     print()
 

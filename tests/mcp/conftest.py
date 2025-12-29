@@ -254,10 +254,10 @@ def mock_mcp_service():
 @pytest.fixture
 def mock_cloud_client(mock_mcp_service):
     """Create a mock cloud client with MCP service."""
-    from traigent.cloud.client import TraiGentCloudClient
+    from traigent.cloud.client import TraigentCloudClient
 
     # Create client without real HTTP
-    client = TraiGentCloudClient(api_key="test-key", enable_fallback=False)
+    client = TraigentCloudClient(api_key="test-key", enable_fallback=False)
 
     # Mock the internal methods to use our mock service
     client._submit_optimization = AsyncMock(

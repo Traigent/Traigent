@@ -1,4 +1,4 @@
-# TraiGent SDK Complete Dependencies
+# Traigent SDK Complete Dependencies
 # All features and dependencies for full installation
 
 -r requirements.txt

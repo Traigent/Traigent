@@ -1,4 +1,4 @@
-# TraiGent SDK Enterprise Security Dependencies
+# Traigent SDK Enterprise Security Dependencies
 # Required for Sprint 7 enterprise security features
 
 -r requirements.txt

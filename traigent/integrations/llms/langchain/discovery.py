@@ -1,7 +1,7 @@
 """Auto-discovery utilities for LangChain components.
 
 This module provides utilities to automatically discover all LangChain components
-that can be optimized by TraiGent.
+that can be optimized by Traigent.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook

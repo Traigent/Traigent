@@ -1,4 +1,4 @@
-"""Backend integration tests for TraiGent SDK.
+"""Backend integration tests for Traigent SDK.
 
 Tests the backend client integration with privacy-preserving metadata submission.
 These are integration tests that verify communication with the backend service.
@@ -25,7 +25,7 @@ class TestBackendIntegration:
 
     @pytest.fixture
     def traigent_config(self):
-        """Create TraiGent configuration for tests."""
+        """Create Traigent configuration for tests."""
         return TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
 
     @pytest.fixture

@@ -1,6 +1,6 @@
-# TraiGent SDK Architecture
+# Traigent SDK Architecture
 
-This page summarizes how the open-source TraiGent SDK is structured and how the local (`edge_analytics`) execution flow works. Cloud/hybrid orchestration remains roadmap-only in the OSS build; run locally unless you have a managed backend.
+This page summarizes how the open-source Traigent SDK is structured and how the local (`edge_analytics`) execution flow works. Cloud/hybrid orchestration remains roadmap-only in the OSS build; run locally unless you have a managed backend.
 
 ## High-Level Architecture (OSS)
 

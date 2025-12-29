@@ -10,7 +10,7 @@ echo ""
 sleep 1
 
 echo "# TVL is a declarative language for LLM optimization"
-echo "# Define WHAT to optimize, let TraiGent figure out HOW"
+echo "# Define WHAT to optimize, let Traigent figure out HOW"
 echo ""
 sleep 2
 
@@ -87,7 +87,7 @@ print(f"Objectives: {[o.name for o in spec.objective_schema.objectives]}")
 # Use with decorator
 @traigent.optimize(tvl_spec="chatbot.tvl.yml")
 def chatbot_respond(query: str, *, model: str, temperature: float, max_tokens: int):
-    """TraiGent injects optimized parameters automatically."""
+    """Traigent injects optimized parameters automatically."""
     return call_llm(model, temperature, max_tokens, query)
 PYTHON
 sleep 3

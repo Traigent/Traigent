@@ -1,4 +1,4 @@
-"""Tests for TraiGent cloud cost tracking module."""
+"""Tests for Traigent cloud cost tracking module."""
 
 import asyncio
 import time

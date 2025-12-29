@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Test script for TraiGent optimization validation system.
+Test script for Traigent optimization validation system.
 This file contains functions decorated with @traigent.optimize for testing.
 """
 

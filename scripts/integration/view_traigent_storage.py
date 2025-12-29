@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to view TraiGent storage information and optimization results.
+Script to view Traigent storage information and optimization results.
 """
 
 import os
@@ -17,7 +17,7 @@ from traigent.storage.local_storage import LocalStorageManager
 
 
 def main():
-    print("🔍 TraiGent Storage Information")
+    print("🔍 Traigent Storage Information")
     print("=" * 50)
 
     # Get storage path

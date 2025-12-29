@@ -1,6 +1,6 @@
-# Optuna Integration in TraiGent
+# Optuna Integration in Traigent
 
-The Optuna integration augments TraiGent's optimisation toolkit with a modern
+The Optuna integration augments Traigent's optimisation toolkit with a modern
 ask/tell capable backend. Optuna-based optimisers ship **in addition** to the
 existing random, grid, and Bayesian implementations—change the algorithm name
 to opt into the new behaviour.
@@ -53,7 +53,7 @@ optimizer.report_trial_result(config["_optuna_trial_id"], [0.82, 0.12])
 ## Ask/Tell coordination for distributed workloads
 
 Edge deployments typically evaluate trials outside the coordinator process.
-TraiGent now exposes the `OptunaCoordinator` helper to manage that workflow:
+Traigent now exposes the `OptunaCoordinator` helper to manage that workflow:
 
 ```python
 from traigent.optimizers.optuna_coordinator import OptunaCoordinator
@@ -133,7 +133,7 @@ backend-specific prerequisites (migrations, credentials, network access).
 
 ## Adapter for existing decorators
 
-Some code paths call TraiGent's optimiser decorator directly instead of the
+Some code paths call Traigent's optimiser decorator directly instead of the
 registry. The `OptunaAdapter` translates those calls without requiring refactors:
 
 ```python
@@ -159,6 +159,6 @@ print("Best parameters", result["best_params"])
 
 ## Dependency
 
-The Optuna features require the `optuna` package, which is included in TraiGent's
+The Optuna features require the `optuna` package, which is included in Traigent's
 core dependencies and enabled by default. No additional installation or
 environment variables are required—Optuna optimizers are available out of the box.

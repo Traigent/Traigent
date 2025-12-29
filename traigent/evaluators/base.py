@@ -26,7 +26,7 @@ from traigent.evaluators.dataset_registry import (
 )
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.error_handler import APIKeyError, ErrorHandler
-from traigent.utils.error_handler import TraiGentError as FriendlyTraiGentError
+from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
@@ -373,7 +373,7 @@ class Dataset:
 
     examples: list[EvaluationExample]
     name: str = "dataset"  # Default name instead of empty string
-    description: str = "TraiGent evaluation dataset"
+    description: str = "Traigent evaluation dataset"
     metadata: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -1051,7 +1051,7 @@ class BaseEvaluator(ABC):
             logger.warning(error_msg)
             return None, error_msg
 
-        except (APIKeyError, FriendlyTraiGentError, CoreTraigentError):
+        except (APIKeyError, FriendlyTraigentError, CoreTraigentError):
             # Surface authentication/configuration issues immediately.
             raise
         except Exception as e:
@@ -1061,7 +1061,7 @@ class BaseEvaluator(ABC):
                 # Promote authentication failures to actionable APIKeyError.
                 try:
                     ErrorHandler.handle_api_key_error(e)
-                except (APIKeyError, FriendlyTraiGentError) as auth_error:
+                except (APIKeyError, FriendlyTraigentError) as auth_error:
                     raise auth_error
 
             error_msg = f"Function call failed: {e}"
@@ -1180,7 +1180,7 @@ class BaseEvaluator(ABC):
                 )
             return True  # Skip this result
 
-        if isinstance(result, (APIKeyError, FriendlyTraiGentError, CoreTraigentError)):
+        if isinstance(result, (APIKeyError, FriendlyTraigentError, CoreTraigentError)):
             raise result
 
         if detailed:
@@ -1345,7 +1345,7 @@ class BaseEvaluator(ABC):
                             await cancel_pending(pending_tasks)
                             raise
                     continue
-                except (APIKeyError, FriendlyTraiGentError, CoreTraigentError):
+                except (APIKeyError, FriendlyTraigentError, CoreTraigentError):
                     await cancel_pending(pending_tasks)
                     raise
                 except Exception as exc:
@@ -1695,7 +1695,7 @@ class BaseEvaluator(ABC):
                     raise
                 except (
                     APIKeyError,
-                    FriendlyTraiGentError,
+                    FriendlyTraigentError,
                     CoreTraigentError,
                     ConfigurationError,
                 ):

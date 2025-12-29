@@ -77,7 +77,7 @@ def chat_loop(model: str = "claude-sonnet-4-20250514") -> None:
     messages: list[dict[str, Any]] = []
 
     print("=" * 60)
-    print("TraiGent Test Suite Chatbot")
+    print("Traigent Test Suite Chatbot")
     print("=" * 60)
     print(f"Model: {model}")
     print("Type 'quit' or 'exit' to exit, 'help' for usage tips")
@@ -230,7 +230,7 @@ def print_help() -> None:
     """Print usage help."""
     print(
         """
-TraiGent Test Suite Chatbot - Help
+Traigent Test Suite Chatbot - Help
 ==================================
 
 Quick Commands:
@@ -259,7 +259,7 @@ Tips:
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
-        description="TraiGent Test Suite Chatbot",
+        description="Traigent Test Suite Chatbot",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

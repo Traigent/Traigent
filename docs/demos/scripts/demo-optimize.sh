@@ -17,7 +17,7 @@ RESET='\033[0m'
 
 clear
 echo -e "${BLUE}${BOLD}┌────────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${BLUE}${BOLD}│  🚀 TraiGent: Responsible LLM Optimization                     │${RESET}"
+echo -e "${BLUE}${BOLD}│  🚀 Traigent: Responsible LLM Optimization                     │${RESET}"
 echo -e "${BLUE}${BOLD}└────────────────────────────────────────────────────────────────┘${RESET}"
 echo ""
 sleep 1
@@ -58,8 +58,8 @@ echo -e ")"
 echo -e "${BLUE}def${RESET} ${YELLOW}qa_agent${RESET}(question: str) -> str:"
 echo -e "    ${DIM}\"\"\"Q&A agent with tunable parameters\"\"\"${RESET}"
 echo -e "    llm = ChatOpenAI("
-echo -e "        model=${GREEN}\"gpt-3.5-turbo\"${RESET},    ${DIM}# TraiGent will tune this${RESET}"
-echo -e "        temperature=${CYAN}0.7${RESET}           ${DIM}# TraiGent will tune this${RESET}"
+echo -e "        model=${GREEN}\"gpt-3.5-turbo\"${RESET},    ${DIM}# Traigent will tune this${RESET}"
+echo -e "        temperature=${CYAN}0.7${RESET}           ${DIM}# Traigent will tune this${RESET}"
 echo -e "    )"
 echo -e "    ${MAGENTA}return${RESET} llm.invoke(question).content"
 sleep 3

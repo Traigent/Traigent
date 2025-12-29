@@ -10,7 +10,7 @@ from traigent.agents import (
     apply_config_to_agent,
     validate_config_compatibility,
 )
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     AgentExecutionResponse,
     AgentOptimizationResponse,
@@ -75,7 +75,7 @@ def sample_dataset():
 @pytest.fixture
 def mock_cloud_client_with_agent_support():
     """Create mock cloud client with agent optimization support."""
-    client = AsyncMock(spec=TraiGentCloudClient)
+    client = AsyncMock(spec=TraigentCloudClient)
 
     # Track optimization state
     client._optimizations = {}

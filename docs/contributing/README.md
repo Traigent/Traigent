@@ -1,6 +1,6 @@
 # 🤝 Contributing
 
-Guidelines and policies for contributing to TraiGent SDK.
+Guidelines and policies for contributing to Traigent SDK.
 
 ## 📋 Contents
 

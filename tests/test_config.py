@@ -1,4 +1,4 @@
-"""Test configuration for TraiGent tests.
+"""Test configuration for Traigent tests.
 
 This module provides test-specific configuration and mock credentials.
 These are NOT real credentials and should only be used in testing.

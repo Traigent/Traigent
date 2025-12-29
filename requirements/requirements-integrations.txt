@@ -1,4 +1,4 @@
-# TraiGent SDK Framework Integration Dependencies
+# Traigent SDK Framework Integration Dependencies
 # Required for Sprint 6 framework integrations
 
 -r requirements.txt

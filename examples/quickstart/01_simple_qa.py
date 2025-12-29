@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-TraiGent Quickstart Example 1: Simple Q&A Agent
+Traigent Quickstart Example 1: Simple Q&A Agent
 
 This is the exact example from the main README.md, configured to work out of the box.
 
@@ -63,7 +63,7 @@ def simple_qa_agent(question: str) -> str:
 
 async def main():
     print("=" * 60)
-    print("TraiGent Quickstart: Simple Q&A Agent Optimization")
+    print("Traigent Quickstart: Simple Q&A Agent Optimization")
     print("=" * 60)
     print()
 

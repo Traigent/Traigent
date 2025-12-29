@@ -1,4 +1,4 @@
-"""Vector store integrations for TraiGent (future functionality)."""
+"""Vector store integrations for Traigent (future functionality)."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 

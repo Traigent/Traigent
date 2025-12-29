@@ -1,8 +1,8 @@
-"""Unified Billing and Cost Tracking for TraiGent Cloud Service.
+"""Unified Billing and Cost Tracking for Traigent Cloud Service.
 
 This module provides comprehensive billing and cost tracking functionality,
 combining usage tracking, billing management, and detailed cost monitoring
-for TraiGent SDK and OptiGen Backend integration.
+for Traigent SDK and OptiGen Backend integration.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -114,7 +114,7 @@ class CostTrackingConfig:
 
 @dataclass
 class UsageRecord:
-    """Record of TraiGent Cloud Service usage."""
+    """Record of Traigent Cloud Service usage."""
 
     timestamp: datetime
     function_name: str
@@ -157,7 +157,7 @@ class UsageRecord:
 
 @dataclass
 class BillingPlan:
-    """TraiGent Cloud Service billing plan."""
+    """Traigent Cloud Service billing plan."""
 
     name: str
     monthly_credits: int

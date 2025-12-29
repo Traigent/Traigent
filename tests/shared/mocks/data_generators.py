@@ -1,7 +1,7 @@
 """Test data generators for consistent test fixtures.
 
 This module provides functions to generate common test data structures
-used across the TraiGent SDK test suite.
+used across the Traigent SDK test suite.
 """
 
 from typing import Any

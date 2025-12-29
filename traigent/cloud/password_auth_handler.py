@@ -1,4 +1,4 @@
-"""Password authentication handler for TraiGent.
+"""Password authentication handler for Traigent.
 
 This module handles email/password authentication with rate limiting and
 resilient backend communication.

@@ -1,8 +1,8 @@
 #!/bin/bash
-# Git pre-push hook for TraiGent CI/CD
+# Git pre-push hook for Traigent CI/CD
 # Install: cp examples/ci-cd-integration/hooks/pre-push .git/hooks/
 
-echo "🚀 TraiGent: Running pre-push optimization check..."
+echo "🚀 Traigent: Running pre-push optimization check..."
 
 cd examples/ci-cd-integration/math-qa || exit 0
 

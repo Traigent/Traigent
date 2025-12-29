@@ -57,6 +57,6 @@ if __name__ == "__main__":
         res = await shotlist.optimize(max_trials=10)
         shotlist.set_config(res.best_config)
         print("Best config:", res.best_config)
-        print("Test:\n", shotlist("TraiGent SDK launch"))
+        print("Test:\n", shotlist("Traigent SDK launch"))
 
     asyncio.run(_main())

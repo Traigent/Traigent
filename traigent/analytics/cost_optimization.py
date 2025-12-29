@@ -1,4 +1,4 @@
-"""Cost optimization components for TraiGent analytics.
+"""Cost optimization components for Traigent analytics.
 
 This module contains cost optimization strategies, resource management,
 and budget allocation functionality extracted from intelligence.py.

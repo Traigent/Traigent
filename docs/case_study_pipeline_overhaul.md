@@ -4,7 +4,7 @@
 
 ## Executive Summary
 
-This document describes a comprehensive overhaul of the TraiGent paper experiments pipeline, standardizing evaluation across seven academic case studies (FEVER, KILT, HotpotQA, SQuAD, Summarization, TriviaQA, Spider). The refactoring introduces:
+This document describes a comprehensive overhaul of the Traigent paper experiments pipeline, standardizing evaluation across seven academic case studies (FEVER, KILT, HotpotQA, SQuAD, Summarization, TriviaQA, Spider). The refactoring introduces:
 
 - **Mandatory mock mode** for automated testing to prevent accidental API costs
 - **Unified evaluation pipeline** using `LocalEvaluator` + `metric_functions`
@@ -1160,7 +1160,7 @@ class SimulationResult:
 
 ## Summary
 
-This pipeline overhaul represents a significant improvement in the TraiGent paper experiments infrastructure:
+This pipeline overhaul represents a significant improvement in the Traigent paper experiments infrastructure:
 
 ✅ **Safety**: Mandatory mock mode prevents accidental API costs
 ✅ **Consistency**: Unified evaluation pipeline across all scenarios
@@ -1178,7 +1178,7 @@ This pipeline overhaul represents a significant improvement in the TraiGent pape
 
 **Questions or Issues?**
 
-- 📧 Contact the TraiGent team via team channels
+- 📧 Contact the Traigent team via team channels
 - 🐛 Report bugs with `[Pipeline Overhaul]` tag
 - 📚 See [CLAUDE.md](../CLAUDE.md) for additional SDK documentation
 

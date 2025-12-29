@@ -245,7 +245,7 @@ def generate_mock_response(
 async def run_optimization():
     """Run the RAG agent optimization."""
     print("=" * 60)
-    print("Knowledge & RAG Agent - TraiGent Optimization")
+    print("Knowledge & RAG Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled

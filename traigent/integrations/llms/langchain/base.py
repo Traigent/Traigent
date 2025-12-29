@@ -1,4 +1,4 @@
-"""LangChain Integration for TraiGent.
+"""LangChain Integration for Traigent.
 
 This module provides seamless integration with LangChain, enabling zero-code-change
 optimization of LangChain applications through automatic parameter override.
@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 
 
 class LangChainIntegration:
-    """Enhanced LangChain integration with TraiGent optimization."""
+    """Enhanced LangChain integration with Traigent optimization."""
 
     def __init__(self) -> None:
         """Initialize LangChain integration."""
@@ -109,7 +109,7 @@ class LangChainIntegration:
 
         Args:
             llm_class: Full class name (e.g., "custom_package.CustomLLM")
-            parameter_mapping: Mapping from TraiGent params to LLM params
+            parameter_mapping: Mapping from Traigent params to LLM params
         """
         self.supported_llms[llm_class] = parameter_mapping
         register_framework_mapping(llm_class, parameter_mapping)
@@ -121,7 +121,7 @@ _langchain_integration = LangChainIntegration()
 
 
 def enable_langchain_optimization(llm_types: list[str] | None = None) -> None:
-    """Enable TraiGent optimization for LangChain applications.
+    """Enable Traigent optimization for LangChain applications.
 
     This function enables automatic parameter override for LangChain LLMs,
     allowing seamless optimization without code changes.
@@ -144,7 +144,7 @@ def enable_langchain_optimization(llm_types: list[str] | None = None) -> None:
             llm = ChatOpenAI(model="gpt-3.5-turbo")
             return llm.invoke("Hello world")
 
-        # TraiGent will automatically test different models/parameters
+        # Traigent will automatically test different models/parameters
         result = my_langchain_app()
         ```
     """
@@ -167,7 +167,7 @@ def add_langchain_llm_mapping(
 
     Args:
         llm_class: Full class name (e.g., "custom_package.CustomLLM")
-        parameter_mapping: Mapping from TraiGent params to LLM params
+        parameter_mapping: Mapping from Traigent params to LLM params
 
     Example:
         ```python

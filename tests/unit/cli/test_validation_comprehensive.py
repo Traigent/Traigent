@@ -1,5 +1,5 @@
 """
-Comprehensive working tests for TraiGent Optimization Validation System.
+Comprehensive working tests for Traigent Optimization Validation System.
 
 Focuses on testing core functionality with simplified mocks.
 """
@@ -215,7 +215,7 @@ class TestCLIIntegration:
         """Test check command help output."""
         result = cli_runner.invoke(cli, ["check", "--help"])
         assert result.exit_code == 0
-        assert "Validate TraiGent optimization" in result.output
+        assert "Validate Traigent optimization" in result.output
         assert "--functions" in result.output
         assert "--threshold" in result.output
         assert "--dry-run" in result.output
@@ -377,7 +377,7 @@ class TestEdgeCases:
 
 
 class TestMockModeIntegration:
-    """Test integration with TraiGent mock mode."""
+    """Test integration with Traigent mock mode."""
 
     @pytest.fixture
     def validator(self):

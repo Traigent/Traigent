@@ -1,1 +1,1 @@
-"""Performance tests for TraiGent SDK."""
+"""Performance tests for Traigent SDK."""

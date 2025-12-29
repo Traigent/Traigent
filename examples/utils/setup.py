@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Shared setup utilities for TraiGent examples.
+"""Shared setup utilities for Traigent examples.
 
 This module provides common setup code to reduce duplication across examples.
 """
@@ -112,6 +112,6 @@ def quick_setup(base_path: Path, execution_mode: str = "edge_analytics") -> bool
 
 
 if __name__ == "__main__":
-    print("TraiGent Examples Setup Utilities")
+    print("Traigent Examples Setup Utilities")
     print(f"Mock mode: {is_mock_mode()}")
     print(f"Datasets path: {get_datasets_path()}")

@@ -1,4 +1,4 @@
-"""Privacy-first optimization operations for TraiGent Cloud Client.
+"""Privacy-first optimization operations for Traigent Cloud Client.
 
 This module handles privacy-preserving optimization operations where data
 remains local and only metrics are transmitted to the cloud.
@@ -98,7 +98,7 @@ class PrivacyOperations:
             session_id = session_response.session_id
 
             # Always use session endpoints for tracking
-            logger.info("🔄 Creating session via TraiGent session endpoints...")
+            logger.info("🔄 Creating session via Traigent session endpoints...")
             (
                 session_id,
                 experiment_id,

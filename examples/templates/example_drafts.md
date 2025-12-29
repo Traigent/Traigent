@@ -113,7 +113,7 @@
 - Files: `evaluation_set.jsonl` (briefs + expected style markers), `prompt.txt`, optional `example_set.jsonl`
 - Eval: Style compliance accuracy (detect bullets or paragraph continuity and tone keywords)
 - Batch/Parallel: sequential
-- Notes: Highlights seamless override and how TraiGent manipulates parameters without changing code.
+- Notes: Highlights seamless override and how Traigent manipulates parameters without changing code.
 
 ---
 

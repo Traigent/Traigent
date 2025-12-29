@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-P0: Structured Output Engineering with TraiGent
+P0: Structured Output Engineering with Traigent
 ===============================================
 
 Demonstrates optimizing structured data extraction from text.
-TraiGent finds the best output format and parsing strategy.
+Traigent finds the best output format and parsing strategy.
 
 Run: TRAIGENT_MOCK_MODE=true python main.py
 """
@@ -144,7 +144,7 @@ def extract_entities(
 
 async def main() -> None:
     """Demonstrate structured output optimization."""
-    print("📋 Structured Output Optimization with TraiGent")
+    print("📋 Structured Output Optimization with Traigent")
     print("=" * 50)
 
     test_text = "Meeting with John Smith (CEO of Acme Corp) next Tuesday at 3pm"
@@ -155,7 +155,7 @@ async def main() -> None:
     print(f"Output: {baseline}")
 
     # Run optimization
-    print("\n🚀 Running TraiGent optimization...")
+    print("\n🚀 Running Traigent optimization...")
     print("Testing 12 configurations (3 formats × 2 validation × 2 styles)")
 
     optimization = await extract_entities.optimize(max_trials=12, timeout=60)

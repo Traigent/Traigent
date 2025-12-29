@@ -103,7 +103,7 @@ def _emit_cost_warning_once() -> None:
 
     _COST_WARNING_EMITTED = True
     warnings.warn(
-        "TraiGent optimization will make multiple LLM API calls. "
+        "Traigent optimization will make multiple LLM API calls. "
         "Cost estimates are approximations; actual billing is determined by your LLM provider. "
         "Set TRAIGENT_MOCK_MODE=true for testing. See DISCLAIMER.md for full details.",
         UserWarning,
@@ -1407,7 +1407,7 @@ class OptimizedFunction:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> OptimizationResult:
-        """Run optimization using TraiGent Cloud Service.
+        """Run optimization using Traigent Cloud Service.
 
         Args:
             dataset: Evaluation dataset
@@ -1419,11 +1419,11 @@ class OptimizedFunction:
             OptimizationResult from cloud service
         """
         from traigent.api.types import TrialResult, TrialStatus
-        from traigent.cloud.client import CloudOptimizationResult, TraiGentCloudClient
+        from traigent.cloud.client import CloudOptimizationResult, TraigentCloudClient
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
-            self._cloud_client = TraiGentCloudClient(enable_fallback=True)
+            self._cloud_client = TraigentCloudClient(enable_fallback=True)
 
         if max_trials is not None and max_trials <= 0:
             logger.info("Cloud optimization skipped due to max_trials=0.")

@@ -1053,7 +1053,7 @@ class TestMockRemoteService:
         """Test MockRemoteService initialization with default parameters."""
         service = MockRemoteService()
 
-        assert service.service_name == "MockTraiGentService"
+        assert service.service_name == "MockTraigentService"
         assert service.endpoint == "mock://localhost"
         assert service.api_key is None
         assert service.timeout == 30.0
@@ -1085,7 +1085,7 @@ class TestMockRemoteService:
 
         assert service._status == ServiceStatus.CONNECTED
         assert service._service_info is not None
-        assert info.name == "MockTraiGentService"
+        assert info.name == "MockTraigentService"
         assert info.version == "1.0.0-mock"
         assert "random" in info.supported_algorithms
         assert "grid" in info.supported_algorithms
@@ -1154,8 +1154,8 @@ class TestMockRemoteService:
             custom_metadata="test_value",
         )
 
-        assert session.session_id.startswith("MockTraiGentService_")
-        assert session.service_name == "MockTraiGentService"
+        assert session.session_id.startswith("MockTraigentService_")
+        assert session.service_name == "MockTraigentService"
         assert session.config_space == config_space
         assert session.objectives == objectives
         assert session.algorithm == "bayesian"
@@ -1757,7 +1757,7 @@ class TestRemoteOptimizationServiceHelpers:
 
         assert service.status == ServiceStatus.CONNECTED
         assert service.service_info is not None
-        assert service.service_info.name == "MockTraiGentService"
+        assert service.service_info.name == "MockTraigentService"
 
         # Create sessions
         session1 = await service.create_session({"p1": (0, 1)}, ["obj1"])

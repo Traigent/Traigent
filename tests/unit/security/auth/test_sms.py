@@ -423,7 +423,7 @@ class TestVerifySMSCode:
         # Extract the actual code from the message sent
         call_args = provider.client.messages.create.call_args
         message_body = call_args.kwargs["body"]
-        # Parse code from "Your TraiGent verification code is: 123456\n\n..."
+        # Parse code from "Your Traigent verification code is: 123456\n\n..."
         code = message_body.split("code is: ")[1].split("\n")[0]
 
         result = provider.verify_sms_code("user123", code)

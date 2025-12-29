@@ -1,4 +1,4 @@
-"""OpenTelemetry tracing for TraiGent optimization.
+"""OpenTelemetry tracing for Traigent optimization.
 
 Provides automatic span creation for optimization sessions and trials,
 making it easy to trace and analyze optimization runs in Jaeger or other
@@ -182,7 +182,7 @@ def _initialize_tracer() -> Tracer | None:
 
 
 def get_tracer() -> Tracer | None:
-    """Get the TraiGent tracer, initializing if needed."""
+    """Get the Traigent tracer, initializing if needed."""
     return _initialize_tracer()
 
 

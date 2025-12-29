@@ -2,7 +2,7 @@
 
 Purpose:
     Fill the CRITICAL gap where we have 0 tests for LLM framework
-    integrations. Users will use TraiGent with:
+    integrations. Users will use Traigent with:
     - OpenAI SDK
     - Anthropic SDK
     - LangChain
@@ -38,7 +38,7 @@ class TestOpenAIPatterns:
     """Tests for OpenAI SDK usage patterns.
 
     Purpose:
-        Verify that TraiGent works correctly with typical OpenAI API
+        Verify that Traigent works correctly with typical OpenAI API
         configuration patterns.
 
     Why This Matters:
@@ -188,7 +188,7 @@ class TestAnthropicPatterns:
     """Tests for Anthropic Claude SDK patterns.
 
     Purpose:
-        Verify that TraiGent works correctly with typical Anthropic
+        Verify that Traigent works correctly with typical Anthropic
         API configuration patterns.
 
     Why This Matters:
@@ -287,12 +287,12 @@ class TestLangChainPatterns:
     """Tests for LangChain framework patterns.
 
     Purpose:
-        Verify that TraiGent works with LangChain's abstractions
+        Verify that Traigent works with LangChain's abstractions
         and common usage patterns.
 
     Why This Matters:
         LangChain is extremely popular for building LLM applications.
-        Many users will wrap LangChain chains with TraiGent.
+        Many users will wrap LangChain chains with Traigent.
     """
 
     @pytest.mark.unit
@@ -427,7 +427,7 @@ class TestMultiProviderPatterns:
     """Tests for multi-provider optimization patterns.
 
     Purpose:
-        Verify that TraiGent works when optimizing across multiple
+        Verify that Traigent works when optimizing across multiple
         LLM providers.
 
     Why This Matters:
@@ -524,7 +524,7 @@ class TestRAGPatterns:
     """Tests for RAG (Retrieval-Augmented Generation) patterns.
 
     Purpose:
-        Verify that TraiGent works with common RAG configurations.
+        Verify that Traigent works with common RAG configurations.
 
     Why This Matters:
         RAG is one of the most common LLM application patterns.
@@ -621,7 +621,7 @@ class TestPromptEngineeringPatterns:
     """Tests for prompt engineering optimization patterns.
 
     Purpose:
-        Verify that TraiGent works for prompt optimization use cases.
+        Verify that Traigent works for prompt optimization use cases.
 
     Why This Matters:
         Prompt engineering is a major use case for LLM optimization.

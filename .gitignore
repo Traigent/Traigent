@@ -188,7 +188,7 @@ cython_debug/
 # Internal design docs (IP/private during implementation)
 resampling_configs.md
 
-# TraiGent specific
+# Traigent specific
 *.jsonl
 # But keep example datasets tracked for users to run examples
 !examples/datasets/**/*.jsonl
@@ -319,7 +319,7 @@ test_concurrent.db
 scripts/secrets/
 .scannerwork/
 
-# TraiGent generated results and caches
+# Traigent generated results and caches
 **/.traigent_results/
 **/.config/mlflow/
 

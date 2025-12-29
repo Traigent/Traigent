@@ -1,4 +1,4 @@
-"""Anthropic integration plugin for TraiGent.
+"""Anthropic integration plugin for Traigent.
 
 This module provides the Anthropic-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -37,7 +37,7 @@ class AnthropicPlugin(LLMPlugin):
             supported_packages=["anthropic"],
             priority=IntegrationPriority.HIGH,
             description="Anthropic SDK integration for Claude models",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["anthropic>=0.3.0"],
             supports_versions={"anthropic": "0."},
         )

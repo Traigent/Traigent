@@ -1,4 +1,4 @@
-"""Utility modules for TraiGent SDK."""
+"""Utility modules for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Maintainability CONC-Quality-Observability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 

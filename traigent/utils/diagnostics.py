@@ -1,7 +1,7 @@
 """
-Diagnostic utilities for TraiGent SDK.
+Diagnostic utilities for Traigent SDK.
 
-Provides tools to diagnose and troubleshoot TraiGent installation and configuration issues.
+Provides tools to diagnose and troubleshoot Traigent installation and configuration issues.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Maintainability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
@@ -60,7 +60,7 @@ class DiagnosticReport:
     def print_report(self) -> None:
         """Print formatted report to console."""
         print("\n" + "=" * 60)
-        print("🔍 TraiGent Diagnostic Report")
+        print("🔍 Traigent Diagnostic Report")
         print("=" * 60)
 
         print("\n📊 System Info:")
@@ -101,11 +101,11 @@ class DiagnosticReport:
         print("=" * 60 + "\n")
 
 
-class TraiGentDiagnostics:
-    """Diagnostic tool for TraiGent SDK."""
+class TraigentDiagnostics:
+    """Diagnostic tool for Traigent SDK."""
 
     REQUIRED_PACKAGES = [
-        ("traigent", "TraiGent SDK", None),
+        ("traigent", "Traigent SDK", None),
         ("langchain", "LangChain", "langchain"),
         ("langchain_openai", "LangChain OpenAI", "langchain-openai"),
         ("langchain_chroma", "LangChain Chroma", "langchain-chroma"),
@@ -123,9 +123,9 @@ class TraiGentDiagnostics:
 
     ENVIRONMENT_VARIABLES = [
         ("OPENAI_API_KEY", "OpenAI API access", True),
-        ("TRAIGENT_API_KEY", "TraiGent cloud features", False),
+        ("TRAIGENT_API_KEY", "Traigent cloud features", False),
         ("ANTHROPIC_API_KEY", "Anthropic Claude access", False),
-        ("TRAIGENT_BACKEND_URL", "TraiGent backend", False),
+        ("TRAIGENT_BACKEND_URL", "Traigent backend", False),
         ("TRAIGENT_MOCK_MODE", "Mock mode testing", False),
     ]
 
@@ -149,7 +149,7 @@ class TraiGentDiagnostics:
         # Check environment variables
         cls._check_environment(report)
 
-        # Check TraiGent configuration
+        # Check Traigent configuration
         cls._check_traigent_config(report)
 
         # Check file permissions
@@ -242,23 +242,23 @@ class TraiGentDiagnostics:
 
     @classmethod
     def _check_traigent_config(cls, report: DiagnosticReport) -> None:
-        """Check TraiGent specific configuration."""
+        """Check Traigent specific configuration."""
         try:
             import traigent
 
-            # Check if TraiGent can be initialized
+            # Check if Traigent can be initialized
             traigent.initialize(execution_mode="edge_analytics")
-            report.add_success("TraiGent", "SDK initialized successfully")
+            report.add_success("Traigent", "SDK initialized successfully")
 
             # Check for mock mode
             if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true":
                 report.add_success(
-                    "TraiGent", "Mock mode is enabled (good for testing)"
+                    "Traigent", "Mock mode is enabled (good for testing)"
                 )
 
         except Exception as e:
             report.add_issue(
-                "TraiGent",
+                "Traigent",
                 f"Failed to initialize: {str(e)}",
                 "Check installation with: pip install -e .",
             )
@@ -333,12 +333,12 @@ class TraiGentDiagnostics:
 
 def diagnose() -> DiagnosticReport:
     """Run diagnostics and return report."""
-    return TraiGentDiagnostics.run_diagnostics()
+    return TraigentDiagnostics.run_diagnostics()
 
 
 def main():
     """CLI entry point for diagnostics."""
-    print("Running TraiGent diagnostics...")
+    print("Running Traigent diagnostics...")
     report = diagnose()
     report.print_report()
 

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-# Import TraiGent components
+# Import Traigent components
 import traigent
 
 # Import our testing infrastructure
@@ -21,8 +21,8 @@ from traigent.api.decorators import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
-class MockTraiGentCloudClientWithPrivacyServer:
-    """Mock TraiGent cloud client that uses our privacy server for testing."""
+class MockTraigentCloudClientWithPrivacyServer:
+    """Mock Traigent cloud client that uses our privacy server for testing."""
 
     def __init__(self, privacy_server: DummyPrivacyServer):
         self.server = privacy_server
@@ -84,7 +84,7 @@ def sensitive_eval_dataset():
 def privacy_server_with_mock_client():
     """Create privacy server with mock client."""
     server = DummyPrivacyServer()
-    client = MockTraiGentCloudClientWithPrivacyServer(server)
+    client = MockTraigentCloudClientWithPrivacyServer(server)
     return client, server
 
 
@@ -191,7 +191,7 @@ class TestPrivacyDecoratorE2E:
 
             # Patch the cloud client to use our privacy server
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -299,7 +299,7 @@ class TestPrivacyDecoratorE2E:
                 return {"performance": performance}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -362,7 +362,7 @@ class TestPrivacyDecoratorE2E:
                 return {"success_rate": success_rate}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -493,7 +493,7 @@ class TestPrivacyDecoratorE2E:
                 }
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -585,7 +585,7 @@ class TestPrivacyIntegrationEdgeCases:
                 return {"metric": 0.8}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -645,7 +645,7 @@ class TestPrivacyIntegrationEdgeCases:
                 return {"performance": 0.7 + kwargs.get("y", 0.5)}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 

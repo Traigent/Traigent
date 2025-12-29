@@ -1,8 +1,8 @@
 """⚠️  EXPERIMENTAL: Naive Anthropic executor - NOT FOR PRODUCTION.
 
 🚨 WARNING: This is a simplified, experimental implementation for local testing.
-This is NOT the real TraiGent cloud implementation and does NOT represent
-TraiGent's proprietary IP.
+This is NOT the real Traigent cloud implementation and does NOT represent
+Traigent's proprietary IP.
 
 This module provides a basic wrapper around Anthropic's API for testing
 framework override functionality and parameter mapping while the OptiGen
@@ -10,7 +10,7 @@ backend is under development.
 
 For production use:
 - Use @traigent.optimize(auto_override_frameworks=True)
-- Use real TraiGent cloud services (via OptiGen backend)
+- Use real Traigent cloud services (via OptiGen backend)
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-AGENTS FUNC-INTEGRATIONS REQ-AGNT-013 REQ-INT-008 SYNC-OptimizationFlow
@@ -43,7 +43,7 @@ logger = get_logger(__name__)
 class AnthropicAgentExecutor(BasePlatformExecutor):
     """⚠️  EXPERIMENTAL: Naive Anthropic executor for local testing only.
 
-    🚨 WARNING: This is NOT the real TraiGent cloud implementation!
+    🚨 WARNING: This is NOT the real Traigent cloud implementation!
     This is a simple wrapper for development/testing purposes.
     """
 

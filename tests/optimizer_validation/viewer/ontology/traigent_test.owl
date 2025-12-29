@@ -5,14 +5,14 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 # =============================================================================
-# TraiGent Test Ontology
+# Traigent Test Ontology
 # =============================================================================
-# This ontology describes the test suite structure for TraiGent optimizer
+# This ontology describes the test suite structure for Traigent optimizer
 # validation tests. It defines 10 key dimensions and their possible values.
 # =============================================================================
 
 <http://traigent.io/test> a owl:Ontology ;
-    rdfs:label "TraiGent Test Ontology" ;
+    rdfs:label "Traigent Test Ontology" ;
     rdfs:comment "Ontology for optimizer validation test scenarios" .
 
 # =============================================================================

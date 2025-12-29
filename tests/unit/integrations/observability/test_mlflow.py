@@ -1,6 +1,6 @@
 """Unit tests for MLflow integration.
 
-Tests for TraiGent MLflow experiment tracking and observability.
+Tests for Traigent MLflow experiment tracking and observability.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability

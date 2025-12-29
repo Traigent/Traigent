@@ -1,6 +1,6 @@
-# TraiGent Features
+# Traigent Features
 
-Documentation for TraiGent SDK features and configuration options.
+Documentation for Traigent SDK features and configuration options.
 
 ## Available Features
 
@@ -10,7 +10,7 @@ Documentation for TraiGent SDK features and configuration options.
 
 ## Overview
 
-TraiGent includes several advanced features that can be configured to customize SDK behavior. Each feature is designed to be optional and can be enabled/disabled based on your needs.
+Traigent includes several advanced features that can be configured to customize SDK behavior. Each feature is designed to be optional and can be enabled/disabled based on your needs.
 
 ### Quick Links
 

@@ -251,9 +251,10 @@ class TestProgressPreservation:
                 "model": [f"model-{i}" for i in range(10)],
                 "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
             },
-            max_trials=100,  # High limit
+            max_trials=50,  # Limit to config space size to avoid unique config issues
             timeout=2.0,  # Short timeout
-            mock_mode_config={"optimizer": "random"},
+            # Use random_seed for determinism to avoid flaky "unique config" failures
+            mock_mode_config={"optimizer": "random", "random_seed": 42},
             gist_template="partial -> {trial_count()} | {status()}",
         )
 

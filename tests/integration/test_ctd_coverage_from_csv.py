@@ -438,7 +438,7 @@ def test_generator(csv_path):
 
 @pytest.fixture
 def mock_traigent():
-    """Mock TraiGent client for testing."""
+    """Mock Traigent client for testing."""
     from unittest.mock import MagicMock, Mock
 
     mock_client = Mock()

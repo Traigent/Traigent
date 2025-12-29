@@ -1,4 +1,4 @@
-"""Cohere integration plugin for TraiGent.
+"""Cohere integration plugin for Traigent.
 
 This module provides the Cohere-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -50,7 +50,7 @@ class CoherePlugin(LLMPlugin):
             supported_packages=["cohere"],
             priority=IntegrationPriority.NORMAL,
             description="Cohere integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["cohere>=5.0.0"],
             supports_versions={"cohere": "5."},
         )

@@ -1,4 +1,4 @@
-"""MCP (Model Context Protocol) testing framework for TraiGent SDK.
+"""MCP (Model Context Protocol) testing framework for Traigent SDK.
 
 This module provides comprehensive testing for MCP integration, including:
 - Unit tests for individual MCP endpoints

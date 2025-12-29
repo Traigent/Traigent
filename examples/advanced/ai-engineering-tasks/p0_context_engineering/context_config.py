@@ -46,7 +46,7 @@ class ContextConfig:
     n_examples: int  # 0, 1, 3, 5
 
 
-# Search space definition for TraiGent optimization
+# Search space definition for Traigent optimization
 CONTEXT_ENGINEERING_SEARCH_SPACE = {
     "retrieval_method": [
         "bm25",  # Sparse retrieval
@@ -80,7 +80,7 @@ CONTEXT_ENGINEERING_SEARCH_SPACE = {
     ],
     # CUSTOM LOGIC - NOT PART OF TRAIGENT:
     # Token budget allocation is a custom feature implemented in this example.
-    # TraiGent does not have built-in budget allocation - this is custom logic.
+    # Traigent does not have built-in budget allocation - this is custom logic.
     # Budget allocation ranges (will be normalized to sum to 1.0)
     "budget_retrieved_docs": [0.4, 0.5, 0.6, 0.7, 0.8],
     "budget_few_shot": [0.0, 0.1, 0.2, 0.3],

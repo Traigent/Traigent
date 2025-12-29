@@ -1,4 +1,4 @@
-"""TraiGent Cloud Service implementation."""
+"""Traigent Cloud Service implementation."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
@@ -50,8 +50,8 @@ class OptimizationResponse:
     status: str = "completed"
 
 
-class TraiGentCloudService:
-    """Main TraiGent Cloud Service for commercial optimization."""
+class TraigentCloudService:
+    """Main Traigent Cloud Service for commercial optimization."""
 
     def __init__(self) -> None:
         """Initialize cloud service."""
@@ -112,7 +112,7 @@ class TraiGentCloudService:
             )
         )
 
-        if request.billing_tier not in TraiGentCloudService._allowed_billing_tiers():
+        if request.billing_tier not in TraigentCloudService._allowed_billing_tiers():
             raise ValidationException(
                 f"billing_tier '{request.billing_tier}' is not supported"
             )

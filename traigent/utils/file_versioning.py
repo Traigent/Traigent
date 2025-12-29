@@ -1,4 +1,4 @@
-"""File versioning and naming standardization for TraiGent optimization logs.
+"""File versioning and naming standardization for Traigent optimization logs.
 
 This module provides consistent file naming conventions and versioning support
 for all optimization run artifacts, ensuring reproducibility and traceability.
@@ -368,7 +368,7 @@ class RunVersionInfo:
         """Create version information for the run.
 
         Args:
-            traigent_version: TraiGent SDK version
+            traigent_version: Traigent SDK version
             file_naming_version: File naming convention version
             custom_metadata: Additional metadata to include
 
@@ -415,7 +415,7 @@ class RunVersionInfo:
         """Check compatibility between current and run versions.
 
         Args:
-            current_version: Current TraiGent version
+            current_version: Current Traigent version
 
         Returns:
             Compatibility report

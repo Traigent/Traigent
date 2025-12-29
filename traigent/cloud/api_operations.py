@@ -1,4 +1,4 @@
-"""Backend API operations for TraiGent Cloud Client.
+"""Backend API operations for Traigent Cloud Client.
 
 This module contains methods for interacting with the backend API endpoints,
 including session creation, status updates, and configuration run management.
@@ -115,7 +115,7 @@ class ApiOperations:
             # Allow localhost for development but provide helpful context
             if hostname in ["localhost", "127.0.0.1", "::1"]:
                 logger.info(f"🔧 Using local backend URL: {url}")
-                logger.info("💡 TraiGent is configured for local development mode")
+                logger.info("💡 Traigent is configured for local development mode")
             # Block other private IP ranges
             elif (
                 hostname.startswith("192.168.")
@@ -132,9 +132,9 @@ class ApiOperations:
         return clean_url.rstrip("/")
 
     def map_to_backend_status(self, status: str) -> str:
-        """Map TraiGent status values to backend-expected values.
+        """Map Traigent status values to backend-expected values.
 
-        TraiGent uses lowercase (pending, completed, failed)
+        Traigent uses lowercase (pending, completed, failed)
         Backend expects uppercase (CREATED, ACTIVE, COMPLETED, FAILED, PRUNED)
 
         Note: PRUNED is a success case (early stopping for efficiency).
@@ -200,7 +200,7 @@ class ApiOperations:
     async def create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
     ) -> tuple[str, str, str]:
-        """Create a TraiGent optimization session using the new session endpoints.
+        """Create a Traigent optimization session using the new session endpoints.
 
         Returns:
             Tuple of (session_id, experiment_id, experiment_run_id)
@@ -331,7 +331,7 @@ class ApiOperations:
         )
 
         logger.info(
-            f"✅ Created TraiGent session: {session_id} "
+            f"✅ Created Traigent session: {session_id} "
             f"(exp: {experiment_id}, run: {experiment_run_id})"
         )
         return session_id, experiment_id, experiment_run_id
@@ -344,7 +344,7 @@ class ApiOperations:
             logger.info(
                 "💡 The backend service may be starting up or temporarily unavailable"
             )
-            logger.info("   TraiGent will fall back to local optimization")
+            logger.info("   Traigent will fall back to local optimization")
             raise CloudServiceError(
                 "Cloud backend temporarily unavailable (server error) - using local optimization"
             )
@@ -354,7 +354,7 @@ class ApiOperations:
             logger.info(
                 "💡 The backend service is temporarily overloaded or down for maintenance"
             )
-            logger.info("   TraiGent will fall back to local optimization")
+            logger.info("   Traigent will fall back to local optimization")
             raise CloudServiceError(
                 "Cloud backend service unavailable - using local optimization"
             )
@@ -362,13 +362,13 @@ class ApiOperations:
         if status_code in {502, 504}:
             logger.warning(f"⚡ Cloud backend gateway error (HTTP {status_code})")
             logger.info("💡 There's a temporary network issue reaching the backend")
-            logger.info("   TraiGent will fall back to local optimization")
+            logger.info("   Traigent will fall back to local optimization")
             raise CloudServiceError(
                 "Cloud backend gateway error - using local optimization"
             )
 
         logger.error(
-            f"Failed to create TraiGent session: {status_code} - {error_msg[:200]}"
+            f"Failed to create Traigent session: {status_code} - {error_msg[:200]}"
         )
         raise CloudServiceError(
             f"Failed to create session via /api/v1/sessions endpoint: {status_code} - {error_msg[:200]}"
@@ -420,12 +420,12 @@ class ApiOperations:
         if "Connection refused" in error_msg or "ConnectionRefusedError" in error_msg:
             logger.warning("⚡ Cloud backend connection refused")
             logger.info("💡 The backend service may not be running or accessible")
-            logger.info("   TraiGent will continue with local optimization")
+            logger.info("   Traigent will continue with local optimization")
             raise CloudServiceError(
                 "Cloud backend service not accessible - using local optimization"
             ) from error
 
-        logger.error(f"Error creating TraiGent session: {error}")
+        logger.error(f"Error creating Traigent session: {error}")
         raise error
 
     async def update_config_run_status(self, config_run_id: str, status: str) -> bool:
@@ -506,7 +506,7 @@ class ApiOperations:
 
         try:
             # Convert metrics to backend measures format per OptiGen schema
-            # Map TraiGent metrics to OptiGen standard measure IDs
+            # Map Traigent metrics to OptiGen standard measure IDs
             mapped_metrics = {}
 
             # Helper function to ensure value is a valid number

@@ -1,4 +1,4 @@
-"""TraiGent Cloud Service Client for commercial optimization."""
+"""Traigent Cloud Service Client for commercial optimization."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
 
@@ -57,8 +57,8 @@ def _session_is_closed(session: Any) -> bool:
     return False
 
 
-class BaseTraiGentClient(ABC):
-    """Base interface for all TraiGent clients.
+class BaseTraigentClient(ABC):
+    """Base interface for all Traigent clients.
 
     This provides a standardized interface for session-based optimization
     across different execution modes (local, cloud, hybrid).
@@ -159,7 +159,7 @@ class BaseTraiGentClient(ABC):
 
 
 class StandardizedClientError(Exception):
-    """Standardized error class for all TraiGent clients."""
+    """Standardized error class for all Traigent clients."""
 
     def __init__(
         self,
@@ -186,10 +186,10 @@ class CloudOptimizationResult:
     subset_size: int | None = None
 
 
-class TraiGentCloudClient(BaseTraiGentClient):
-    """Client for TraiGent Cloud Service - enables commercial optimization features."""
+class TraigentCloudClient(BaseTraigentClient):
+    """Client for Traigent Cloud Service - enables commercial optimization features."""
 
-    _AUTH_FAILURE_MESSAGE = "Not authenticated with TraiGent Cloud Service"
+    _AUTH_FAILURE_MESSAGE = "Not authenticated with Traigent Cloud Service"
 
     def __init__(
         self,
@@ -202,7 +202,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
         """Initialize cloud client.
 
         Args:
-            api_key: TraiGent Cloud API key
+            api_key: Traigent Cloud API key
             base_url: Cloud service base URL
             enable_fallback: Fall back to local optimization if cloud fails
             max_retries: Maximum retry attempts for cloud requests
@@ -495,7 +495,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
 
         message = (
             f"{action} failed for session '{session_id}': HTTP {status} Forbidden. "
-            "TraiGent Cloud now enforces session ownership. "
+            "Traigent Cloud now enforces session ownership. "
             f"Session owner: {summary_owner}. Calling credentials: {summary_current}. "
             "Re-authenticate with the owning token or an admin-scoped key, or recreate the session "
             "under the currently active credentials."
@@ -531,7 +531,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
         max_trials: int = 50,
         target_cost_reduction: float = 0.65,
     ) -> CloudOptimizationResult:
-        """Run optimization using TraiGent Cloud Service.
+        """Run optimization using Traigent Cloud Service.
 
         Args:
             function_name: Name of function being optimized
@@ -560,7 +560,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
                 auth_status = await auth_status
 
             if not auth_status:
-                raise CloudServiceError("Not authenticated with TraiGent Cloud Service")
+                raise CloudServiceError("Not authenticated with Traigent Cloud Service")
 
             # Smart dataset subset selection for cost optimization
             original_size = len(dataset.examples)
@@ -735,7 +735,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
         return cast(dict[str, Any], await self.usage_tracker.get_usage_stats())
 
     async def check_service_status(self) -> dict[str, Any]:
-        """Check TraiGent Cloud Service status."""
+        """Check Traigent Cloud Service status."""
         await self._ensure_session()
         assert self._aio_session is not None, "Session not initialized"
 
@@ -827,7 +827,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
             "error": str(last_error) if last_error else "Unknown error",
         }
 
-    # Standard interface implementation (BaseTraiGentClient)
+    # Standard interface implementation (BaseTraigentClient)
     # Note: The existing methods already provide the interface functionality
 
     async def create_session(
@@ -840,7 +840,7 @@ class TraiGentCloudClient(BaseTraiGentClient):
     ) -> str:
         """Standard interface: Create optimization session.
 
-        This implements the BaseTraiGentClient interface for compatibility.
+        This implements the BaseTraigentClient interface for compatibility.
         """
         try:
             response = await self.create_optimization_session(
@@ -1695,4 +1695,4 @@ class CloudServiceError(StandardizedClientError):
 
 
 # Backward compatibility aliases
-TraiGentClientError = StandardizedClientError
+TraigentClientError = StandardizedClientError

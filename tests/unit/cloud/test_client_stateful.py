@@ -6,7 +6,7 @@ import aiohttp
 import pytest
 import pytest_asyncio
 
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     OptimizationSessionStatus,
     TrialResultSubmission,
@@ -47,7 +47,7 @@ async def cloud_client(mock_session):
                 mock_auth_instance.get_headers = AsyncMock(
                     return_value={
                         "Authorization": "Bearer test-key",
-                        "X-TraiGent-Client": "test",
+                        "X-Traigent-Client": "test",
                         "Content-Type": "application/json",
                     }
                 )
@@ -64,7 +64,7 @@ async def cloud_client(mock_session):
                 )
                 mock_auth_mgr.return_value = mock_auth_instance
 
-                client = TraiGentCloudClient(api_key="test-key")
+                client = TraigentCloudClient(api_key="test-key")
                 client._session = mock_session
                 client.auth = mock_auth_instance
                 yield client

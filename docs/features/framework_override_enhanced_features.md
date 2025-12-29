@@ -24,13 +24,13 @@ PARAMETER_MAPPINGS = {
 
 ### How it works:
 1. When a framework is initialized (e.g., `OpenAI()`), we intercept the constructor
-2. We check if we have a TraiGent config with parameters
-3. We map TraiGent parameters to framework parameters using the hardcoded mapping
+2. We check if we have a Traigent config with parameters
+3. We map Traigent parameters to framework parameters using the hardcoded mapping
 4. We inject the mapped parameters into the constructor
 
 ### Example:
 ```python
-# TraiGent config has: {"model": "gpt-4", "temperature": 0.5}
+# Traigent config has: {"model": "gpt-4", "temperature": 0.5}
 # OpenAI expects: model="gpt-4", temperature=0.5
 # Mapping is straightforward: model -> model, temperature -> temperature
 ```
@@ -163,10 +163,10 @@ The `_create_override_wrapper` has two strategies:
 
 ```python
 # Strategy 1: Use mapping
-# TraiGent: "model" -> Framework: "model_name" (via mapping)
+# Traigent: "model" -> Framework: "model_name" (via mapping)
 
 # Strategy 2: Fallback
-# TraiGent: "custom_param" -> Framework: "custom_param" (no mapping, use exact name)
+# Traigent: "custom_param" -> Framework: "custom_param" (no mapping, use exact name)
 ```
 
 This ensures maximum compatibility even with unknown parameters.

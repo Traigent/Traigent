@@ -1,7 +1,7 @@
 """Data models for cloud optimization service communication.
 
 This module contains all the data classes used for communication between
-the TraiGent client and cloud services, supporting both client-side execution
+the Traigent client and cloud services, supporting both client-side execution
 and agent-based remote execution models.
 """
 

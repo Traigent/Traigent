@@ -1,6 +1,6 @@
 # MCP (Model Context Protocol) Testing Framework
 
-This directory contains a comprehensive testing framework for MCP integration in the TraiGent SDK. The framework verifies that natural language task descriptions can be correctly interpreted and mapped to appropriate MCP API calls.
+This directory contains a comprehensive testing framework for MCP integration in the Traigent SDK. The framework verifies that natural language task descriptions can be correctly interpreted and mapped to appropriate MCP API calls.
 
 ## Overview
 
@@ -322,4 +322,4 @@ When adding new MCP functionality:
 
 ## License
 
-This testing framework is part of the TraiGent SDK and follows the same MIT license.
+This testing framework is part of the Traigent SDK and follows the same MIT license.

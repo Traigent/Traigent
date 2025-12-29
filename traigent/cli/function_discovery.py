@@ -1,4 +1,4 @@
-"""Function discovery engine for TraiGent optimization validation system."""
+"""Function discovery engine for Traigent optimization validation system."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Maintainability CONC-Quality-Usability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
@@ -48,7 +48,7 @@ def discover_optimized_functions(
         module_path_obj.relative_to(PROJECT_ROOT)
     except ValueError as exc:
         raise ValueError(
-            f"Module path must reside inside the TraiGent workspace ({PROJECT_ROOT}): {module_path_obj}"
+            f"Module path must reside inside the Traigent workspace ({PROJECT_ROOT}): {module_path_obj}"
         ) from exc
 
     if not module_path_obj.exists():

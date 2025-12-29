@@ -35,7 +35,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 def generate_summary(text: str) -> str:
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",  # TraiGent will optimize this
+        model="gpt-3.5-turbo",  # Traigent will optimize this
         temperature=0.7,  # And this
         model_kwargs={"max_tokens": 150},  # And this
     )
@@ -58,7 +58,7 @@ def generate_summary(text: str) -> str:
     objectives=["cost", "accuracy"],
 )
 def optimized_summary(text: str) -> str:
-    # Exact same code - TraiGent seamlessly injects optimal parameters
+    # Exact same code - Traigent seamlessly injects optimal parameters
     llm = ChatOpenAI(
         model="gpt-3.5-turbo",  # Becomes optimal model automatically
         temperature=0.7,  # Becomes optimal temperature automatically
@@ -70,7 +70,7 @@ def optimized_summary(text: str) -> str:
     return getattr(response, "content", str(response))
 
 
-# TraiGent finds: model="gpt-4o-mini", temperature=0.3, model_kwargs={"max_tokens": 200
+# Traigent finds: model="gpt-4o-mini", temperature=0.3, model_kwargs={"max_tokens": 200
 # Your function automatically uses these optimal values!
 
 if __name__ == "__main__":

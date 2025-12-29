@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 
 
 class TestSessionExpiryAndRefresh:
@@ -49,7 +49,7 @@ class TestSessionExpiryAndRefresh:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # First request creates session
                     await client.check_service_status()
@@ -80,7 +80,7 @@ class TestSessionExpiryAndRefresh:
             token_refresh_attempts.append(time.time())
             return {
                 "Authorization": f"Bearer {api_key}_refreshed_{len(token_refresh_attempts)}",
-                "X-TraiGent-Client": "test",
+                "X-Traigent-Client": "test",
             }
 
         def mock_request(*args, **kwargs):
@@ -119,7 +119,7 @@ class TestSessionExpiryAndRefresh:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # This should trigger token refresh after 401
                         # Note: Our current implementation doesn't auto-retry on 401,
@@ -189,7 +189,7 @@ class TestSessionExpiryAndRefresh:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -197,7 +197,7 @@ class TestSessionExpiryAndRefresh:
                         )
                         mock_auth_mgr.return_value = mock_auth_instance
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # First attempt fails due to invalid session - suppress expected error
                         with suppress(CloudServiceError, Exception):
@@ -231,7 +231,7 @@ class TestSessionExpiryAndRefresh:
                 await asyncio.sleep(0.01)  # Simulate refresh delay
             return {
                 "Authorization": f"Bearer {api_key}_fresh_{len(refresh_operations)}",
-                "X-TraiGent-Client": "test",
+                "X-Traigent-Client": "test",
             }
 
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
@@ -259,7 +259,7 @@ class TestSessionExpiryAndRefresh:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Launch multiple concurrent requests that all need fresh tokens
                         tasks = []
@@ -328,7 +328,7 @@ class TestAuthenticationErrorRecovery:
                             mock_auth.get_headers = AsyncMock(
                                 return_value={
                                     "Authorization": f"Bearer {key}",
-                                    "X-TraiGent-Client": "test",
+                                    "X-Traigent-Client": "test",
                                 }
                             )
                             mock_auth.is_authenticated = AsyncMock(return_value=True)
@@ -342,14 +342,14 @@ class TestAuthenticationErrorRecovery:
                         mock_cs.return_value = mock_session
 
                         # Start with invalid key
-                        client = TraiGentCloudClient(api_key=invalid_key)
+                        client = TraigentCloudClient(api_key=invalid_key)
 
                         # First request fails - suppress expected error
                         with suppress(CloudServiceError, Exception):
                             await client.check_service_status()
 
                         # Update to valid key (simulating key rotation/fix)
-                        client = TraiGentCloudClient(api_key=valid_key)
+                        client = TraigentCloudClient(api_key=valid_key)
 
                         # Request should now succeed
                         await client.check_service_status()
@@ -374,7 +374,7 @@ class TestAuthenticationErrorRecovery:
                 raise Exception("Auth service unavailable")
 
             # Later attempts succeed
-            return {"Authorization": f"Bearer {api_key}", "X-TraiGent-Client": "test"}
+            return {"Authorization": f"Bearer {api_key}", "X-Traigent-Client": "test"}
 
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
             with patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs:
@@ -391,7 +391,7 @@ class TestAuthenticationErrorRecovery:
                     mock_session.get = Mock(return_value=mock_context)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = mock_get_headers
 
                     # First attempts should fail - suppress expected errors
@@ -421,19 +421,19 @@ class TestAuthenticationErrorRecovery:
                 # First attempt returns corrupted token
                 return {
                     "Authorization": "Bearer corrupted_token_###INVALID###",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
             elif token_generation_attempts == 2:
                 # Second attempt returns malformed token
                 return {
                     "Authorization": "InvalidFormat token_without_bearer",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
             else:
                 # Later attempts return valid token
                 return {
                     "Authorization": f"Bearer {api_key}",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
 
         def mock_request(*args, **kwargs):
@@ -464,7 +464,7 @@ class TestAuthenticationErrorRecovery:
                     mock_session.get = Mock(side_effect=mock_request)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = mock_get_headers
 
                     # First attempt with corrupted token - may fail
@@ -511,13 +511,13 @@ class TestBackendClientAuthLifecycle:
                 # This is a workaround for the bug in the implementation
                 return {
                     "X-API-Key": "fallback-key",  # Use fallback format
-                    "X-TraiGent-Client": "backend-test",
+                    "X-Traigent-Client": "backend-test",
                 }
             else:
                 # Later attempts succeed with primary auth
                 return {
                     "Authorization": "Bearer primary-auth-token",
-                    "X-TraiGent-Client": "backend-test",
+                    "X-Traigent-Client": "backend-test",
                 }
 
         session_creations = []
@@ -776,7 +776,7 @@ class TestAdvancedAuthScenarios:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -789,7 +789,7 @@ class TestAdvancedAuthScenarios:
                         mock_session.close = AsyncMock()  # Make close async
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Make multiple requests during high error period
                         for _i in range(success_threshold):
@@ -826,7 +826,7 @@ class TestAdvancedAuthScenarios:
 
             return {
                 "Authorization": f"Bearer {api_key}",
-                "X-TraiGent-Client": "memory-test",
+                "X-Traigent-Client": "memory-test",
             }
 
         def mock_session_constructor(*args, **kwargs):
@@ -851,7 +851,7 @@ class TestAdvancedAuthScenarios:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = memory_intensive_get_headers
 
                     # Create many sessions to simulate memory pressure
@@ -904,7 +904,7 @@ class TestAdvancedAuthScenarios:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -918,7 +918,7 @@ class TestAdvancedAuthScenarios:
                         mock_cs.return_value = mock_session
 
                         for _encoding, _expected_header in encoding_scenarios:
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
 
                             # Ensure clean session for each test
                             client._session = None

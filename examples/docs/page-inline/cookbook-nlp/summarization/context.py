@@ -72,6 +72,6 @@ if __name__ == "__main__":
         res = await summarize.optimize(max_trials=10)
         summarize.set_config(res.best_config)
         print("Best config:", res.best_config)
-        print("Test:", summarize(" ".join(["TraiGent"] * 300)))
+        print("Test:", summarize(" ".join(["Traigent"] * 300)))
 
     asyncio.run(_main())

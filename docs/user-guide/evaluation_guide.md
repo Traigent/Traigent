@@ -1,8 +1,8 @@
-# 📊 TraiGent Evaluation Guide
+# 📊 Traigent Evaluation Guide
 
-## Understanding Evaluation in TraiGent
+## Understanding Evaluation in Traigent
 
-Evaluation is how TraiGent measures the success of different AI agent configurations. This guide explains what evaluation means, how it works, and how to use it effectively.
+Evaluation is how Traigent measures the success of different AI agent configurations. This guide explains what evaluation means, how it works, and how to use it effectively.
 
 ## Table of Contents
 - [What is Evaluation?](#what-is-evaluation)
@@ -15,7 +15,7 @@ Evaluation is how TraiGent measures the success of different AI agent configurat
 
 ## What is Evaluation?
 
-Evaluation in TraiGent compares your AI agent's outputs against expected results to determine which configuration performs best.
+Evaluation in Traigent compares your AI agent's outputs against expected results to determine which configuration performs best.
 
 ```python
 @traigent.optimize(
@@ -30,7 +30,7 @@ def my_agent(input):
 
 ## Understanding Accuracy
 
-"Accuracy" in TraiGent can mean different things depending on your use case:
+"Accuracy" in Traigent can mean different things depending on your use case:
 
 ### 1. Classification Accuracy (Exact Match)
 For tasks with discrete outputs (sentiment, categories, yes/no):
@@ -64,7 +64,7 @@ Expected: Reference summary
 
 ### Method 1: Default Evaluation (Semantic Similarity)
 
-TraiGent's default evaluator uses embeddings to compare meaning:
+Traigent's default evaluator uses embeddings to compare meaning:
 
 ```python
 @traigent.optimize(

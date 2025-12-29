@@ -10,7 +10,7 @@ from datetime import datetime
 
 
 def create_mock_types():
-    """Create mock versions of TraiGent types for testing."""
+    """Create mock versions of Traigent types for testing."""
 
     class MockTrialResult:
         def __init__(
@@ -615,7 +615,7 @@ def test_error_edge_cases():
 
 def main():
     """Run all functionality tests."""
-    print("🚀 TraiGent New Functionality Test Suite")
+    print("🚀 Traigent New Functionality Test Suite")
     print("=" * 60)
     print("Testing apply_best_config() and get_optimization_insights() functionality")
     print("without requiring full pytest/dependency setup\n")

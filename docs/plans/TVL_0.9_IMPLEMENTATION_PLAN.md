@@ -10,13 +10,13 @@
 
 ## Executive Summary
 
-This document outlines the plan to complete TVL (Tuned Variables Language) 0.9 support in the TraiGent SDK. TVL is a declarative language for specifying LLM optimization experiments, including typed variables, structural constraints, multi-objective optimization, and statistical promotion policies.
+This document outlines the plan to complete TVL (Tuned Variables Language) 0.9 support in the Traigent SDK. TVL is a declarative language for specifying LLM optimization experiments, including typed variables, structural constraints, multi-objective optimization, and statistical promotion policies.
 
 **Key Insight:** The TVL ecosystem is split across two repositories:
 - **TraigentPaper/tvl/** - Standalone TVL specification, validation tools (`tvl-lint`, `tvl-check-structural`, etc.)
 - **Traigent/** (SDK) - Runtime consumption of TVL specs for optimization
 
-This plan focuses on **TraiGent SDK enhancements** only. Validation tooling already exists in the paper repository.
+This plan focuses on **Traigent SDK enhancements** only. Validation tooling already exists in the paper repository.
 
 ---
 
@@ -168,7 +168,7 @@ exploration:
 
 ## 2. Current State Analysis
 
-### 2.1 Existing Implementation in TraiGent SDK
+### 2.1 Existing Implementation in Traigent SDK
 
 | File | Purpose | Status |
 |------|---------|--------|

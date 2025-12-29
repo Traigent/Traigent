@@ -801,7 +801,7 @@ class OptimizationOrchestrator:
                         description=getattr(
                             dataset,
                             "description",
-                            "TraiGent evaluation dataset",
+                            "Traigent evaluation dataset",
                         ),
                     )
                 except Exception as exc:

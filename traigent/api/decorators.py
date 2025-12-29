@@ -1,4 +1,4 @@
-"""Main decorator for TraiGent SDK.
+"""Main decorator for Traigent SDK.
 
 This module provides the primary @optimize decorator that enables zero-code-change
 optimization for any function containing LLM invocations. The decorator automatically
@@ -407,9 +407,9 @@ def optimize(
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
-    """Decorator to make functions optimizable with TraiGent.
+    """Decorator to make functions optimizable with Traigent.
 
-    This is the main entry point for TraiGent optimization. Decorate any function
+    This is the main entry point for Traigent optimization. Decorate any function
     with @traigent.optimize to add zero-code-change optimization capabilities.
     The decorator automatically detects and optimizes LLM invocations without
     requiring any modifications to your existing code. Use the grouped bundles
@@ -417,7 +417,7 @@ def optimize(
     expansive signature when needed.
 
     Args:
-        objectives: Target metrics to optimize. Accepts a list of names (TraiGent
+        objectives: Target metrics to optimize. Accepts a list of names (Traigent
             infers sensible orientations and equal weights) or an ObjectiveSchema
             for explicit weights, orientations, and metadata. Omitted values fall
             back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
@@ -928,7 +928,7 @@ def optimize(
         if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
             logger.warning(
                 "local_storage_path is ignored when execution_mode='cloud'. "
-                "Cloud mode uses TraiGent cloud storage."
+                "Cloud mode uses Traigent cloud storage."
             )
 
         if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:

@@ -1,4 +1,4 @@
-"""Mistral AI integration plugin for TraiGent.
+"""Mistral AI integration plugin for Traigent.
 
 This module provides the Mistral AI-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -42,7 +42,7 @@ class MistralPlugin(LLMPlugin):
             supported_packages=["mistralai"],
             priority=IntegrationPriority.HIGH,
             description="Mistral AI SDK integration for Mistral models",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["mistralai>=1.0.0"],
             supports_versions={"mistralai": "1."},
         )

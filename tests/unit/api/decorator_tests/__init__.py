@@ -1,6 +1,6 @@
 """Decorator test modules.
 
-This package contains split test modules for the TraiGent decorator functionality.
+This package contains split test modules for the Traigent decorator functionality.
 The tests have been refactored from the original monolithic test_decorator_comprehensive.py
 to improve maintainability and reduce complexity.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-TraiGent provides four powerful configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
+Traigent provides four powerful configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
 
 ## Quick Comparison
 
@@ -15,7 +15,7 @@ TraiGent provides four powerful configuration injection modes to seamlessly inte
 
 ## 1. Context Mode (Default) 🔄
 
-Access configuration through TraiGent's context system — flexible, thread/async-safe, and works everywhere.
+Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.
 
 ### Basic Example
 
@@ -58,7 +58,7 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 
 ### How It Works
 
-1. TraiGent sets a thread/async-local config context
+1. Traigent sets a thread/async-local config context
 2. Your function reads config via `traigent.get_config()` (or `get_trial_config()` during optimization)
 3. Optimizer updates the active config per trial
 4. Your code stays unchanged apart from the decorator and get call
@@ -87,7 +87,7 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 
 ## 2. Seamless Mode 🪄
 
-TraiGent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).
+Traigent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).
 
 ### Basic Example
 
@@ -101,7 +101,7 @@ TraiGent automatically injects configuration values into simple variable assignm
     }
 )
 def robust_api_call(query: str) -> str:
-    # These assignments are overridden by TraiGent during optimization
+    # These assignments are overridden by Traigent during optimization
     model = "gpt-4"
     max_retries = 3
     timeout = 30
@@ -132,7 +132,7 @@ def robust_api_call(query: str) -> str:
     }
 )
 def rag_pipeline(documents: List[str], query: str) -> str:
-    # These variable assignments are overridden by TraiGent
+    # These variable assignments are overridden by Traigent
     chunk_size = 1000
     overlap = 100
     top_k = 5
@@ -154,7 +154,7 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 
 ### How It Works
 
-1. TraiGent parses your function's AST (Abstract Syntax Tree)
+1. Traigent parses your function's AST (Abstract Syntax Tree)
 2. Finds variable assignments matching config keys (e.g., `chunk_size = 1000`)
 3. Replaces the assigned values with optimized config values at runtime
 4. No `exec()` used — safe AST transformation with validation
@@ -179,7 +179,7 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 
 - Optimizing existing code without modifications
 - Quick prototyping and experimentation
-- Code where you want minimal TraiGent-specific changes
+- Code where you want minimal Traigent-specific changes
 - Functions with straightforward variable assignments
 
 ## 3. Parameter Mode 💪
@@ -203,7 +203,7 @@ from traigent import TraigentConfig
 def train_model(
     data: np.ndarray,
     labels: np.ndarray,
-    config: TraigentConfig  # TraiGent injects here
+    config: TraigentConfig  # Traigent injects here
 ) -> Model:
     # Type-safe configuration access
     model = create_model()
@@ -494,13 +494,13 @@ def my_function(prompt: str) -> str:
 For existing code where you don't want to add `get_config()` calls:
 
 ```python
-# Seamless mode: TraiGent overrides variable assignments automatically
+# Seamless mode: Traigent overrides variable assignments automatically
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={"threshold": [0.5, 0.7, 0.9]}
 )
 def process():
-    threshold = 0.5  # TraiGent will override this value during optimization
+    threshold = 0.5  # Traigent will override this value during optimization
     return apply_threshold(data, threshold)
 ```
 

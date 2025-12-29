@@ -1,6 +1,6 @@
-# TraiGent Evaluation Guide
+# Traigent Evaluation Guide
 
-How TraiGent scores your runs and how to customize it.
+How Traigent scores your runs and how to customize it.
 
 ## Dataset Format
 

@@ -1,4 +1,4 @@
-"""Configuration constraints system for TraiGent optimization."""
+"""Configuration constraints system for Traigent optimization."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE FUNC-INVOKERS REQ-ORCH-003 REQ-INJ-002 SYNC-OptimizationFlow
 

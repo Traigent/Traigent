@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-TraiGent Playground - Streamlit Application (Refactored)
+Traigent Playground - Streamlit Application (Refactored)
 ======================================================
 
 A comprehensive UI for defining AI problems and finding the best AI agents
-to solve them using TraiGent's intelligent comparison framework.
+to solve them using Traigent's intelligent comparison framework.
 
 This is the main entry point for the refactored modular application.
 
@@ -44,7 +44,7 @@ from streamlit_core.state import init_session_state
 def configure_page():
     """Configure the Streamlit page settings."""
     st.set_page_config(
-        page_title="TraiGent - AI Agent Discovery",
+        page_title="Traigent - AI Agent Discovery",
         page_icon="🤖",
         layout="wide",
         initial_sidebar_state="auto",

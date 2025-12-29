@@ -1,4 +1,4 @@
-"""Configuration management for TraiGent SDK.
+"""Configuration management for Traigent SDK.
 
 This module provides flexible configuration injection strategies for optimized functions.
 """

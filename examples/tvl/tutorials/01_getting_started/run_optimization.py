@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-TVL 0.9 Tutorial: Getting Started with TraiGent Optimization
+TVL 0.9 Tutorial: Getting Started with Traigent Optimization
 
-This script demonstrates how to use a TVL spec with the TraiGent decorator
+This script demonstrates how to use a TVL spec with the Traigent decorator
 to optimize an LLM application.
 
 Run with: python run_optimization.py
@@ -50,7 +50,7 @@ def optimized_chatbot(
     temperature: float = 0.7,
     max_tokens: int = 256,
 ) -> dict:
-    """A chatbot function that will be optimized by TraiGent.
+    """A chatbot function that will be optimized by Traigent.
 
     The decorator injects optimized parameter values for model,
     temperature, and max_tokens based on the TVL spec.

@@ -1,4 +1,4 @@
-"""Progress tracking and callback system for TraiGent optimization."""
+"""Progress tracking and callback system for Traigent optimization."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Observability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 

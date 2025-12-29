@@ -1,4 +1,4 @@
-"""Test isolation utilities for TraiGent test suite.
+"""Test isolation utilities for Traigent test suite.
 
 This module provides utilities to ensure proper test isolation and prevent
 global state pollution between tests.

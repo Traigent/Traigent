@@ -213,7 +213,7 @@ Options:
 if __name__ == "__main__":
     # Example usage
     print("=" * 60)
-    print("TraiGent: Apply Saved Configuration Example")
+    print("Traigent: Apply Saved Configuration Example")
     print("=" * 60)
 
     # You can either:
