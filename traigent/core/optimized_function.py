@@ -36,7 +36,6 @@ import os
 import sys
 import threading
 import time
-import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
@@ -102,14 +101,40 @@ def _emit_cost_warning_once() -> None:
         return
 
     _COST_WARNING_EMITTED = True
-    warnings.warn(
-        "Traigent optimization will make multiple LLM API calls. "
-        "Cost estimates are approximations; actual billing is determined by your LLM provider. "
-        "Set TRAIGENT_MOCK_MODE=true for testing. See DISCLAIMER.md for full details.",
-        UserWarning,
-        stacklevel=4,  # Point to caller of optimize()
-    )
-    # Ensure warning goes to stderr
+
+    # ANSI color codes for terminal styling
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    # Check if terminal supports colors (not redirected to file)
+    use_colors = sys.stderr.isatty()
+
+    if use_colors:
+        msg = (
+            f"\n{YELLOW}{BOLD}⚠️  COST WARNING{RESET}\n"
+            f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
+            f"Cost estimates are approximations based on {CYAN}tokencost{RESET} library pricing.\n"
+            f"Actual billing is determined by your LLM provider.\n\n"
+            f"{BOLD}Configuration:{RESET}\n"
+            f"  • Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
+            f"  • Disable for testing:   {CYAN}TRAIGENT_MOCK_MODE=true{RESET}\n"
+            f"  • Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
+        )
+    else:
+        msg = (
+            "\n⚠️  COST WARNING\n"
+            "Traigent optimization will make multiple LLM API calls.\n"
+            "Cost estimates are approximations based on tokencost library pricing.\n"
+            "Actual billing is determined by your LLM provider.\n\n"
+            "Configuration:\n"
+            "  • Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
+            "  • Disable for testing:   TRAIGENT_MOCK_MODE=true\n"
+            "  • Full details:          DISCLAIMER.md\n"
+        )
+
+    print(msg, file=sys.stderr)
     sys.stderr.flush()
 
 

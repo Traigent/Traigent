@@ -115,6 +115,41 @@ To minimize unexpected costs, we strongly recommend:
    export TRAIGENT_COST_APPROVED=true  # Only after reviewing estimates
    ```
 
+## Customizing Cost Estimates
+
+Traigent uses the [tokencost](https://github.com/AgentOps-AI/tokencost) library for LLM pricing data.
+
+### Model Name Mappings
+
+To add custom model name aliases, edit `traigent/utils/cost_calculator.py`:
+
+```python
+# In CostCalculator class
+EXACT_MODEL_MAPPING = {
+    # Add your custom mappings here
+    "my-custom-model": "gpt-4o",  # Map to a known tokencost model
+    "internal-claude": "claude-3-5-sonnet-20241022",
+}
+```
+
+### Custom Pricing for Self-Hosted Models
+
+For self-hosted or custom endpoint models not in tokencost:
+
+1. The cost calculator will return `$0.00` for unknown models
+2. Monitor actual costs via your infrastructure billing
+3. Consider contributing new model pricing to the tokencost library
+
+### Updating Pricing Data
+
+To get the latest pricing data:
+
+```bash
+pip install --upgrade tokencost
+```
+
+Note: Pricing data in tokencost may lag behind provider announcements.
+
 ## Changes to This Disclaimer
 
 This disclaimer may be updated from time to time. Continued use of the software constitutes

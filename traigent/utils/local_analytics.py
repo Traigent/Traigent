@@ -10,6 +10,7 @@ All data sent is privacy-safe and contains no sensitive information.
 import asyncio
 import logging
 import uuid
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,16 @@ from traigent.storage.local_storage import LocalStorageManager
 
 if TYPE_CHECKING:
     pass
+
+# Suppress "Unclosed client session" warnings from background analytics tasks.
+# Analytics uses fire-and-forget pattern and may be cancelled on program exit,
+# which is expected behavior and shouldn't generate user-visible warnings.
+warnings.filterwarnings(
+    "ignore",
+    message="Unclosed client session",
+    category=ResourceWarning,
+    module="aiohttp",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -240,12 +251,13 @@ class LocalAnalytics:
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),
                 enable_fallback=False,  # We're explicitly sending analytics
+                timeout=5.0,  # Short timeout for analytics - don't block program exit
             )
 
-            async with backend_client:
+            try:
+                await backend_client.__aenter__()
                 # Create a lightweight analytics session
                 # Using the hybrid session method for analytics submission
-                # Since create_privacy_optimization_session doesn't exist in BackendIntegratedClient
                 (
                     session_id,
                     token,
@@ -314,6 +326,12 @@ class LocalAnalytics:
                         "success": False,
                         "reason": "Failed to submit trial results",
                     }
+            finally:
+                # Ensure session is closed even on cancellation
+                try:
+                    await backend_client.__aexit__(None, None, None)
+                except Exception:
+                    pass  # Best effort cleanup
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
@@ -474,8 +492,16 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
             # Instead, we'll schedule the coroutine to run soon without creating an unawaited task
             async def _submit_wrapper() -> None:
                 try:
-                    await analytics.submit_usage_stats()
+                    # Use timeout to ensure we don't block program exit
+                    await asyncio.wait_for(
+                        analytics.submit_usage_stats(), timeout=10.0
+                    )
                     logger.debug("Analytics submission completed")
+                except TimeoutError:
+                    logger.debug("Analytics submission timed out")
+                except asyncio.CancelledError:
+                    # Task was cancelled (e.g., program exiting) - expected behavior
+                    logger.debug("Analytics submission cancelled")
                 except Exception as e:
                     logger.debug(f"Analytics submission failed: {e}")
 

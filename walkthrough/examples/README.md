@@ -2,6 +2,20 @@
 
 Simple, clean examples showing how to use Traigent for LLM optimization.
 
+## Requirements
+
+Install Traigent with integrations to run all examples:
+
+```bash
+pip install traigent[integrations]
+```
+
+This includes:
+
+- `langchain`, `langchain-openai`, `langchain-community` - LLM framework
+- `faiss-cpu` - Vector search for RAG examples
+- `openai`, `anthropic` - LLM providers
+
 ## Quick Start
 
 ```bash

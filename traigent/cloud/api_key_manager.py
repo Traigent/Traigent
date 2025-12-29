@@ -316,7 +316,7 @@ class APIKeyManager:
         if len(key) != expected_length:
             return False
 
-        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
         return all(char in allowed for char in key[3:])
 
     def get_status(self) -> dict[str, Any]:

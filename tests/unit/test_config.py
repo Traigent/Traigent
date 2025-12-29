@@ -21,16 +21,23 @@ def reset_integration_config():
     """Reset integration_config to defaults before and after each test.
 
     This ensures test isolation when tests modify the global integration_config.
+    Important: We reset to actual IntegrationConfig defaults, not "current" values,
+    because other tests may have polluted the global state before this fixture runs.
     """
-    # Save original values
-    original_values = {
-        f.name: getattr(integration_config, f.name) for f in fields(IntegrationConfig)
+    # Get actual default values from a fresh IntegrationConfig instance
+    default_config = IntegrationConfig()
+    default_values = {
+        f.name: getattr(default_config, f.name) for f in fields(IntegrationConfig)
     }
+
+    # Reset to defaults BEFORE the test runs
+    for name, value in default_values.items():
+        setattr(integration_config, name, value)
 
     yield
 
-    # Restore original values after test
-    for name, value in original_values.items():
+    # Reset to defaults AFTER the test runs
+    for name, value in default_values.items():
         setattr(integration_config, name, value)
 
 
