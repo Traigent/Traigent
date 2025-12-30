@@ -113,28 +113,38 @@ def _emit_cost_warning_once() -> None:
 
     if use_colors:
         msg = (
-            f"\n{YELLOW}{BOLD}⚠️  COST WARNING{RESET}\n"
+            f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
             f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
             f"Cost estimates are approximations based on {CYAN}tokencost{RESET} library pricing.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
-            f"  • Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
-            f"  • Disable for testing:   {CYAN}TRAIGENT_MOCK_MODE=true{RESET}\n"
-            f"  • Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
+            f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
+            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_MODE=true{RESET}\n"
+            f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
         msg = (
-            "\n⚠️  COST WARNING\n"
+            "\n[!] COST WARNING\n"
             "Traigent optimization will make multiple LLM API calls.\n"
             "Cost estimates are approximations based on tokencost library pricing.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
-            "  • Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
-            "  • Disable for testing:   TRAIGENT_MOCK_MODE=true\n"
-            "  • Full details:          DISCLAIMER.md\n"
+            "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
+            "  - Disable for testing:   TRAIGENT_MOCK_MODE=true\n"
+            "  - Full details:          DISCLAIMER.md\n"
         )
 
-    print(msg, file=sys.stderr)
+    # Use warnings module for filterability; fallback to stderr on encoding errors
+    import warnings
+
+    try:
+        warnings.warn(msg, UserWarning, stacklevel=2)
+    except UnicodeEncodeError:
+        # Fallback for ASCII-only locales
+        try:
+            print(msg, file=sys.stderr)
+        except UnicodeEncodeError:
+            print(msg.encode("ascii", errors="replace").decode(), file=sys.stderr)
     sys.stderr.flush()
 
 

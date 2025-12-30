@@ -831,7 +831,9 @@ class AuthManager:
         if self._credentials.mode == AuthMode.API_KEY:
             api_key_value = self._get_api_key_for_internal_use()
             if api_key_value:
+                # Include both headers for backward compatibility
                 headers["X-API-Key"] = api_key_value
+                headers["Authorization"] = f"Bearer {api_key_value}"
 
         elif self._credentials.mode == AuthMode.JWT_TOKEN:
             # Use separate token lock to prevent TOCTOU race on token expiration check (S1 fix)
@@ -1062,8 +1064,10 @@ class AuthManager:
         # Ensure credentials continue to reference the key for downstream usage
         credentials.api_key = api_key_value
 
+        # Include both headers for backward compatibility
         headers = {
             "X-API-Key": api_key_value,
+            "Authorization": f"Bearer {api_key_value}",
         }
 
         return AuthResult(
