@@ -42,6 +42,7 @@ Examples:
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -51,6 +52,10 @@ from typing import Any, TypeVar, cast
 from pydantic import BaseModel, ConfigDict
 
 from traigent.api.functions import _GLOBAL_CONFIG
+from traigent.api.parameter_ranges import (
+    is_inline_param_definition,
+    normalize_configuration_space,
+)
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -152,6 +157,87 @@ def _coerce_bundle(
         f"{parameter_name} must be a dict or {model_cls.__name__}, "
         f"got {type(value).__name__}"
     )
+
+
+def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
+    """Validate that custom_evaluator has the expected signature.
+
+    The custom_evaluator must accept (func, config, example) and return ExampleResult.
+    This catches interface mismatches early at decoration time.
+
+    Args:
+        evaluator: The custom evaluator callable to validate.
+
+    Raises:
+        ValidationError: If the evaluator signature doesn't match expectations.
+    """
+    # Get the callable to inspect (handle both functions and class instances)
+    if callable(evaluator) and not inspect.isfunction(evaluator):
+        # It's a class instance with __call__, inspect the __call__ method
+        callable_to_check = evaluator.__call__
+    else:
+        callable_to_check = evaluator
+
+    try:
+        sig = inspect.signature(callable_to_check)
+    except (ValueError, TypeError):
+        # Can't inspect signature (e.g., built-in), skip validation
+        logger.debug(
+            "Could not inspect custom_evaluator signature, skipping validation"
+        )
+        return
+
+    params = list(sig.parameters.values())
+
+    # Filter out 'self' for bound methods
+    if params and params[0].name == "self":
+        params = params[1:]
+
+    # Check parameter count (must accept at least 3: func, config, example)
+    required_params = [
+        p
+        for p in params
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+
+    param_names = [p.name for p in params]
+    metric_evaluator_params = {"prediction", "expected", "input_data"}
+    has_metric_evaluator_signature = metric_evaluator_params <= set(param_names)
+
+    # Error if signature looks like metric evaluator (has prediction, expected, input_data)
+    if has_metric_evaluator_signature:
+        raise ValidationError(
+            f"custom_evaluator signature mismatch.\n\n"
+            f"Expected: custom_evaluator(func, config, example) -> ExampleResult\n"
+            f"Got:      {evaluator.__class__.__name__}({', '.join(param_names)})\n\n"
+            f"This looks like a metric evaluator. Did you mean to use:\n"
+            f"    evaluation=EvaluationOptions(\n"
+            f"        metric_functions={{'accuracy': my_evaluator}}\n"
+            f"    )\n"
+            f"instead of:\n"
+            f"    evaluation=EvaluationOptions(\n"
+            f"        custom_evaluator=my_evaluator\n"
+            f"    )"
+        )
+
+    if len(required_params) < 3:
+        raise ValidationError(
+            f"custom_evaluator must accept (func, config, example), "
+            f"got {len(required_params)} required parameters: {param_names}"
+        )
+
+    # Warn if parameter names suggest wrong interface (but don't error)
+    suspicious_names = {"prediction", "expected", "input_data", "output", "response"}
+    found_suspicious = suspicious_names & set(param_names)
+    if found_suspicious:
+        logger.warning(
+            "custom_evaluator parameter names %s suggest metric evaluator interface. "
+            "custom_evaluator expects (func, config, example), not (prediction, expected, input_data). "
+            "Did you mean to use metric_functions instead?",
+            found_suspicious,
+        )
 
 
 _DEFAULT_SENTINEL = object()
@@ -652,10 +738,40 @@ def optimize(
             "or ExecutionOptions instead."
         )
 
+    # Extract inline parameter definitions (Range, IntRange, Choices, tuples)
+    # from runtime_overrides and merge into configuration_space
+    inline_params: dict[str, Any] = {}
+    remaining_overrides: dict[str, Any] = {}
+    for key, value in combined_runtime_overrides.items():
+        if is_inline_param_definition(value):
+            inline_params[key] = value
+        else:
+            remaining_overrides[key] = value
+
+    # Reject unknown non-parameter kwargs to catch typos (per Gemini feedback)
+    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
+    if unknown_keys:
+        raise TypeError(
+            f"Unknown keyword arguments: {sorted(unknown_keys)}. "
+            f"If you meant to define parameter ranges, use Range(), IntRange(), "
+            f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
+        )
+    combined_runtime_overrides = remaining_overrides
+
     eval_dataset = combined_settings["eval_dataset"]
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
+
+    # Normalize configuration_space and merge inline params (inline takes precedence)
+    # Also extract defaults from Range/Choices objects
+    if inline_params or configuration_space:
+        configuration_space, param_defaults = normalize_configuration_space(
+            configuration_space, inline_params
+        )
+        # Merge param defaults with explicit default_config (explicit takes precedence)
+        if param_defaults:
+            default_config = {**param_defaults, **(default_config or {})}
     constraints = combined_settings["constraints"]
     injection_mode = combined_settings["injection_mode"]
     config_param = combined_settings["config_param"]
@@ -711,6 +827,10 @@ def optimize(
             evaluation_bundle.metric_functions,
             defaults,
         )
+
+    # Validate custom_evaluator signature early to catch interface mismatches
+    if custom_evaluator is not None:
+        _validate_custom_evaluator_signature(custom_evaluator)
 
     if injection_bundle:
         injection_mode = _resolve_option(

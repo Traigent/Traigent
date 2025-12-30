@@ -426,8 +426,6 @@ class TestTraigentDecoratorCloudIntegration:
             execution_mode="cloud",
             auto_override_frameworks=True,
             framework_targets=["openai.OpenAI"],
-            max_trials=100,
-            timeout=300,
             parallel_config={"trial_concurrency": 4},
         )
         def comprehensive_config_function(input_str: str) -> str:
@@ -621,8 +619,6 @@ class TestCloudModulesIntegration:
             framework_targets=[
                 "openai.OpenAI"
             ],  # Removed langchain_openai.ChatOpenAI due to Pydantic v2 compatibility issues
-            max_trials=20,
-            timeout=600,
         )
         def math_qa_agent(question: str) -> str:
             """Mathematical Q&A agent with cloud optimization."""

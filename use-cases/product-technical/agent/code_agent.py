@@ -72,7 +72,8 @@ Then implement a solution that handles all these cases."""
     objectives=["test_pass_rate", "code_quality", "efficiency", "cost"],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/product-technical/datasets/coding_tasks.jsonl",
-        custom_evaluator=CodeEvaluator(),
+        # CodeEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=CodeEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )

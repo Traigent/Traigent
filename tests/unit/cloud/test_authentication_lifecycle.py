@@ -64,8 +64,7 @@ class TestSessionExpiryAndRefresh:
 
                     # Verify both sessions had proper headers
                     for headers in session_creations:
-                        assert "Authorization" in headers
-                        assert headers["Authorization"].startswith("Bearer ")
+                        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):

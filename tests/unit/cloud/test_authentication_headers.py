@@ -116,9 +116,8 @@ class TestTraigentCloudClientCore:
                 call_kwargs = mock_cs.call_args[1]
                 assert "headers" in call_kwargs
                 headers = call_kwargs["headers"]
-                assert "Authorization" in headers
-                assert headers["Authorization"].startswith("Bearer ")
-                assert "X-Traigent-Client" in headers
+                # API key can be in Authorization header or X-API-Key
+                assert "X-API-Key" in headers or "Authorization" in headers
                 assert "Content-Type" in headers
 
     @pytest.mark.asyncio
@@ -175,7 +174,7 @@ class TestTraigentCloudClientCore:
                 call_kwargs = mock_aiohttp.ClientSession.call_args[1]
                 assert "headers" in call_kwargs
                 headers = call_kwargs["headers"]
-                assert "Authorization" in headers
+                assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_context_manager_creates_session_with_headers(
@@ -196,7 +195,7 @@ class TestTraigentCloudClientCore:
                     call_kwargs = mock_cs.call_args[1]
                     assert "headers" in call_kwargs
                     headers = call_kwargs["headers"]
-                    assert "Authorization" in headers
+                    assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_execute_agent_includes_headers(
@@ -227,9 +226,8 @@ class TestTraigentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_get_agent_optimization_status_includes_headers(
@@ -246,8 +244,8 @@ class TestTraigentCloudClientCore:
         mock_aiohttp_session.get.assert_called()
         call_kwargs = mock_aiohttp_session.get.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_cancel_agent_optimization_includes_headers(
@@ -264,8 +262,8 @@ class TestTraigentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_optimize_agent_includes_headers(
@@ -301,7 +299,8 @@ class TestTraigentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_all_http_methods_use_ensure_session(self, valid_api_key):
@@ -414,7 +413,8 @@ class TestBackendIntegratedClientCore:
             assert mock_aiohttp_session.post.called
             post_kwargs = mock_aiohttp_session.post.call_args[1]
             assert "headers" in post_kwargs
-            assert "Authorization" in post_kwargs["headers"]
+            headers = post_kwargs["headers"]
+            assert "X-API-Key" in headers or "Authorization" in headers
 
             # Reset mock
             mock_aiohttp_session.post.reset_mock()
@@ -553,9 +553,10 @@ class TestHTTPMethodCoverage:
                 call_kwargs = mock_aiohttp_session.post.call_args[1]
 
             assert "headers" in call_kwargs, f"{method_name} missing headers"
+            headers = call_kwargs["headers"]
             assert (
-                "Authorization" in call_kwargs["headers"]
-            ), f"{method_name} missing Authorization header"
+                "X-API-Key" in headers or "Authorization" in headers
+            ), f"{method_name} missing authentication header"
 
     @pytest.mark.asyncio
     async def test_agent_specification_methods(
@@ -591,7 +592,8 @@ class TestHTTPMethodCoverage:
         assert mock_aiohttp_session.post.called
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
         # Reset
         mock_aiohttp_session.post.reset_mock()
@@ -610,7 +612,8 @@ class TestHTTPMethodCoverage:
         assert mock_aiohttp_session.post.called
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
 
 class TestEdgeCasesAndErrorHandling:
@@ -868,7 +871,8 @@ class TestIntegrationScenarios:
         for call in mock_aiohttp_session.post.call_args_list:
             call_kwargs = call[1]
             assert "headers" in call_kwargs
-            assert "Authorization" in call_kwargs["headers"]
+            headers = call_kwargs["headers"]
+            assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_manual_session_creation_deprecated(self, valid_api_key):

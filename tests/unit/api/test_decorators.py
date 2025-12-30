@@ -290,7 +290,6 @@ class TestOptimizedFunctionIntegration:
             execution_mode="cloud",
             auto_override_frameworks=False,
             framework_targets=["openai.OpenAI"],
-            custom_param="test_value",
         )
         def full_function(query: str, llm_config: dict = None) -> str:
             return f"Processing: {query}"

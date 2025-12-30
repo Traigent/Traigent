@@ -493,9 +493,7 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
             async def _submit_wrapper() -> None:
                 try:
                     # Use timeout to ensure we don't block program exit
-                    await asyncio.wait_for(
-                        analytics.submit_usage_stats(), timeout=10.0
-                    )
+                    await asyncio.wait_for(analytics.submit_usage_stats(), timeout=10.0)
                     logger.debug("Analytics submission completed")
                 except TimeoutError:
                     logger.debug("Analytics submission timed out")

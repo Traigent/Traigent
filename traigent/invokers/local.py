@@ -12,6 +12,7 @@ from typing import Any
 
 from traigent.config.providers import get_provider
 from traigent.invokers.base import BaseInvoker, InvocationResult
+from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import InvocationError
 from traigent.utils.logging import get_logger
 
@@ -140,6 +141,18 @@ class LocalInvoker(BaseInvoker):
             end_time = time.time()
             execution_time = end_time - start_time
             error_msg = f"Function call failed: {e}"
+
+            # Fail fast on API key errors - don't retry 309 times
+            lowered = str(e).lower()
+            if any(
+                token in lowered
+                for token in ("api key", "api_key", "authentication", "openai_api_key")
+            ):
+                raise APIKeyError(
+                    f"API key error detected. Set the required API key environment "
+                    f"variable or use TRAIGENT_MOCK_MODE=true for testing. "
+                    f"Original error: {e}"
+                ) from e
 
             logger.warning(error_msg)
 

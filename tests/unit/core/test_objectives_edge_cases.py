@@ -343,7 +343,7 @@ class TestDecoratorPrecedenceWarnings:
 
         with pytest.raises(
             TypeError,
-            match="objective_orientations/objective_weights are no longer supported",
+            match="Unknown keyword arguments.*objective_orientations",
         ):
 
             @optimize(
@@ -358,7 +358,7 @@ class TestDecoratorPrecedenceWarnings:
         """Legacy orientation/weight kwargs are no longer supported for lists."""
         with pytest.raises(
             TypeError,
-            match="objective_orientations/objective_weights are no longer supported",
+            match="Unknown keyword arguments.*objective_weights",
         ):
 
             @optimize(

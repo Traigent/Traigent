@@ -79,7 +79,8 @@ Write the outbound message:"""
     objectives=["message_quality", "compliance", "cost"],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/gtm-acquisition/datasets/leads_dataset.jsonl",
-        custom_evaluator=MessageQualityEvaluator(),
+        # MessageQualityEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=MessageQualityEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )

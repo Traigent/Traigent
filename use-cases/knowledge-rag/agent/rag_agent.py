@@ -127,7 +127,8 @@ Provide a helpful answer based on the documentation above. If you cannot find th
     ],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/knowledge-rag/datasets/qa_dataset.jsonl",
-        custom_evaluator=RAGEvaluator(),
+        # RAGEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=RAGEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )

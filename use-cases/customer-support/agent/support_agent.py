@@ -111,7 +111,8 @@ Should this be escalated? Respond with only "YES" or "NO":"""
     objectives=["resolution_accuracy", "tone_quality", "escalation_accuracy", "cost"],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/customer-support/datasets/support_tickets.jsonl",
-        custom_evaluator=SupportEvaluator(),
+        # SupportEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=SupportEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -332,10 +333,12 @@ async def run_optimization():
     print("\nObjectives: resolution_accuracy, tone_quality, escalation_accuracy, cost")
     print("-" * 60)
 
-    # Run optimization
+    # Run optimization with Bayesian and early stopping
     results = await customer_support_agent.optimize(
-        algorithm="random",
-        max_trials=20,
+        algorithm="bayesian",
+        max_trials=12,
+        max_examples=20,  # Use 20 examples per trial for faster demo
+        pruner="median",  # Early stop underperforming trials
     )
 
     # Display results
