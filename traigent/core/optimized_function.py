@@ -722,6 +722,13 @@ class OptimizedFunction:
                 tvl_artifact.runtime_overrides(),
             )
 
+        # Normalize configuration_space to handle Range/IntRange/LogRange/Choices objects
+        # This must happen after TVL processing but before validation
+        if configuration_space is not None:
+            from traigent.api.parameter_ranges import normalize_configuration_space
+
+            configuration_space, _ = normalize_configuration_space(configuration_space)
+
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
         )

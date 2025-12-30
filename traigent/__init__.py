@@ -4,11 +4,23 @@ Traigent makes it effortless to optimize your LLM applications with a simple dec
 
 Example:
     >>> import traigent
+    >>> from traigent import Range, IntRange, Choices, LogRange
+    >>>
+    >>> # New SE-friendly syntax with Range/Choices classes
     >>> @traigent.optimize(
     ...     eval_dataset="evals.jsonl",
     ...     objectives=["accuracy", "cost"],
+    ...     temperature=Range(0.0, 2.0),
+    ...     max_tokens=IntRange(100, 4096),
+    ...     model=Choices(["gpt-4o-mini", "gpt-4o"]),
+    ... )
+    ... def my_function(query: str) -> str:
+    ...     return process_query(query)
+    >>>
+    >>> # Legacy syntax still works
+    >>> @traigent.optimize(
     ...     configuration_space={
-    ...         "model": ["gpt-4o-mini", "GPT-4o"],
+    ...         "model": ["gpt-4o-mini", "gpt-4o"],
     ...         "temperature": (0.0, 1.0)
     ...     }
     ... )
@@ -32,6 +44,17 @@ __version__ = get_version()
 __author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
 
+from traigent.api.config_space import ConfigSpace
+
+# TVL constraint system
+from traigent.api.constraints import (
+    Condition,
+    Constraint,
+    constraints_to_callables,
+    implies,
+    require,
+)
+
 # Public API exports
 from traigent.api.decorators import optimize
 from traigent.api.functions import (
@@ -47,6 +70,15 @@ from traigent.api.functions import (
     set_strategy,
 )
 
+# SE-friendly parameter range classes
+from traigent.api.parameter_ranges import (
+    Choices,
+    IntRange,
+    LogRange,
+    ParameterRange,
+    Range,
+)
+
 # Core types
 from traigent.api.types import (
     ConfigurationComparison,
@@ -56,6 +88,16 @@ from traigent.api.types import (
     SensitivityAnalysis,
     StrategyConfig,
     TrialResult,
+)
+from traigent.api.validation_protocol import (
+    ConstraintValidator,
+    ConstraintViolation,
+    PythonConstraintValidator,
+    SatResult,
+    SatStatus,
+)
+from traigent.api.validation_protocol import (
+    ValidationResult as ConstraintValidationResult,
 )
 
 # Thread context helpers
@@ -105,6 +147,25 @@ from traigent.visualization.plots import PlotGenerator, create_quick_plot
 __all__ = [
     # Main decorator
     "optimize",
+    # SE-friendly parameter range classes
+    "Range",
+    "IntRange",
+    "LogRange",
+    "Choices",
+    "ParameterRange",
+    # TVL constraint system
+    "Condition",
+    "Constraint",
+    "ConfigSpace",
+    "ConstraintValidator",
+    "ConstraintViolation",
+    "ConstraintValidationResult",
+    "PythonConstraintValidator",
+    "SatResult",
+    "SatStatus",
+    "constraints_to_callables",
+    "implies",
+    "require",
     # Configuration functions
     "configure",
     "initialize",

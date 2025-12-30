@@ -34,6 +34,7 @@ from traigent.core.trial_result_factory import (
 )
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
+from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     OptimizationError,
     TrialPrunedError,
@@ -409,6 +410,11 @@ class TrialLifecycle:
             )
             record_trial_result(span, status="failed", error=str(constraint_error))
             return result
+
+        except APIKeyError:
+            # Fail fast on API key errors - don't continue running trials
+            # Re-raise to stop the entire optimization loop
+            raise
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)

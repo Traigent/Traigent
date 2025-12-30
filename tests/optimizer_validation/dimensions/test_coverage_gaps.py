@@ -284,7 +284,7 @@ class TestPlateauStopCondition:
         # Custom evaluator that returns constant scores after initial trials
         call_count = 0
 
-        def plateau_evaluator(config: dict, dataset: list) -> dict:
+        def plateau_evaluator(func, config: dict, example) -> dict:
             nonlocal call_count
             call_count += 1
             # First few trials show improvement, then plateau
@@ -710,7 +710,7 @@ class TestNonDeterministicReproducibility:
         """
         import random
 
-        def non_deterministic_evaluator(config: dict, dataset: list) -> dict:
+        def non_deterministic_evaluator(func, config: dict, example) -> dict:
             # Return random scores to simulate non-determinism
             return {"score": random.random()}
 

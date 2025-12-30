@@ -129,13 +129,6 @@ class TestPrivacyDecoratorE2E:
                     "max_tokens": [200, 300, 400],
                 },
                 execution_mode="privacy",  # Privacy-first mode
-                max_trials=20,
-                optimization_strategy={
-                    "exploration_ratio": 0.3,
-                    "privacy_mode": True,
-                    "min_examples_per_trial": 3,
-                    "max_subset_size": 10,
-                },
             )
             async def process_medical_query(**kwargs):
                 """
@@ -278,7 +271,6 @@ class TestPrivacyDecoratorE2E:
                     "param2": ["A", "B", "C"],
                 },
                 execution_mode="privacy",
-                max_trials=10,
             )
             def secure_function(input_data):
                 """Function using context-based config access."""
@@ -345,7 +337,6 @@ class TestPrivacyDecoratorE2E:
                 objectives=["success_rate"],
                 configuration_space={"tolerance": [1, 2, 3, 4, 5]},
                 execution_mode="privacy",
-                max_trials=12,
             )
             def challenging_function(input_data, **config):
                 """Function that may fail on difficult inputs."""
@@ -437,12 +428,6 @@ class TestPrivacyDecoratorE2E:
                     "ensemble_size": [1, 3, 5],
                 },
                 execution_mode="privacy",
-                max_trials=35,
-                optimization_strategy={
-                    "min_examples_per_trial": 5,
-                    "max_subset_size": 25,
-                    "adaptive_sampling": True,
-                },
             )
             def financial_risk_assessment(**kwargs):
                 """Assess financial risk using sensitive data locally."""
@@ -572,7 +557,6 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["metric"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="privacy",
-                max_trials=8,
             )
             def sometimes_empty_function(input_data, **config):
                 """Function that sometimes returns empty results."""
@@ -629,7 +613,6 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["score"],
                 configuration_space={"x": [1, 2, 3]},
                 execution_mode="privacy",
-                max_trials=6,
             )
             def function_a(**kwargs):
                 return {"score": 0.8 + kwargs.get("x", 1) * 0.05}
@@ -639,7 +622,6 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["performance"],
                 configuration_space={"y": [0.1, 0.5, 0.9]},
                 execution_mode="privacy",
-                max_trials=6,
             )
             def function_b(**kwargs):
                 return {"performance": 0.7 + kwargs.get("y", 0.5)}

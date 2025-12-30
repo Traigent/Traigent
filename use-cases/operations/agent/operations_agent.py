@@ -92,7 +92,8 @@ Respond with only the JSON object:"""
     objectives=["action_accuracy", "escalation_accuracy", "efficiency", "cost"],
     evaluation=EvaluationOptions(
         eval_dataset="use-cases/operations/datasets/tasks_dataset.jsonl",
-        custom_evaluator=OperationsEvaluator(),
+        # OperationsEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=OperationsEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )

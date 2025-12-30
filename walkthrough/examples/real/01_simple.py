@@ -17,8 +17,8 @@ import traigent
     eval_dataset="./simple_questions.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.1, 0.5, 0.9],
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],
+        "temperature": [0.1, 0.7],
     },
     execution_mode="edge_analytics",
 )
@@ -37,7 +37,7 @@ async def main() -> None:
     print("Traigent Example 1: Simple Optimization")
     print("=" * 50)
 
-    results = await answer_question.optimize(algorithm="grid", max_trials=10, random_seed=42)
+    results = await answer_question.optimize(algorithm="grid", max_trials=8, random_seed=42)
 
     print("\nBest Configuration:")
     print(f"  Model: {results.best_config.get('model')}")

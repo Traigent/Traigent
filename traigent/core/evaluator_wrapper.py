@@ -468,6 +468,23 @@ class CustomEvaluatorWrapper(BaseEvaluator):
                 errors.append(example_result.error_message)
 
             except Exception as e:
+                # Check for signature mismatch errors (fail fast with helpful message)
+                error_str = str(e).lower()
+                if (
+                    "has no attribute 'get'" in error_str
+                    or "'function' object" in error_str
+                    or "got multiple values for argument" in error_str
+                    or "takes" in error_str
+                    and "positional argument" in error_str
+                ):
+                    raise ValueError(
+                        f"custom_evaluator interface mismatch detected.\n\n"
+                        f"Expected signature: custom_evaluator(func, config, example) -> ExampleResult\n"
+                        f"But your evaluator appears to expect: (prediction, expected, input_data) -> dict\n\n"
+                        f"Did you mean to use metric_functions instead of custom_evaluator?\n"
+                        f"Original error: {e}"
+                    ) from e
+
                 logger.warning(f"Custom evaluation failed for example {i}: {e}")
                 failed_result = self._create_failed_example_result(example, i, e)
                 example_results.append(failed_result)

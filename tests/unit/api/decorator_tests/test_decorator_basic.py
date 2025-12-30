@@ -109,9 +109,7 @@ class TestDecoratorBasics(DecoratorTestBase):
             default_config={"model": "gpt-3.5", "temperature": 0.5},
             eval_dataset=dataset,
             injection_mode="parameter",
-            num_trials=10,
             execution_mode="edge_analytics",
-            cache_results=True,
         )
         def test_func(text: str, config=None) -> str:
             # Parameter mode requires config parameter

@@ -536,6 +536,8 @@ class Validators:
             )
             return result
 
+        from traigent.api.parameter_ranges import ParameterRange
+
         # Validate each parameter
         for param_name, param_values in config_space.items():
             # Check parameter name
@@ -548,6 +550,9 @@ class Validators:
                 continue
 
             # Check parameter values
+            if isinstance(param_values, ParameterRange):
+                param_values = param_values.to_config_value()
+
             if isinstance(param_values, list):
                 if not param_values:
                     result.add_error(
@@ -576,6 +581,138 @@ class Validators:
                         f"Invalid range: min ({min_val}) >= max ({max_val})",
                         error_code="INVALID_RANGE",
                     )
+            elif isinstance(param_values, dict):
+                if len(param_values) == 0:
+                    result.add_error(
+                        f"configuration_space.{param_name}",
+                        "Parameter dict cannot be empty",
+                        error_code="EMPTY_CONFIG",
+                    )
+                    continue
+
+                typed_keys = {
+                    "type",
+                    "low",
+                    "high",
+                    "min",
+                    "max",
+                    "values",
+                    "choices",
+                    "value",
+                    "step",
+                    "log",
+                }
+                if typed_keys.intersection(param_values):
+                    param_type = (param_values.get("type") or "").lower()
+                    if not param_type:
+                        if "choices" in param_values or "values" in param_values:
+                            param_type = "categorical"
+                        elif {"low", "high", "min", "max"} & param_values.keys():
+                            param_type = "float"
+                        else:
+                            param_type = "categorical"
+
+                    valid_types = {
+                        "float",
+                        "double",
+                        "loguniform",
+                        "qloguniform",
+                        "int",
+                        "integer",
+                        "categorical",
+                        "choice",
+                        "fixed",
+                        "constant",
+                    }
+                    if param_type not in valid_types:
+                        result.add_error(
+                            f"configuration_space.{param_name}",
+                            f"Unknown parameter type: {param_type!r}",
+                            error_code="INVALID_PARAM_TYPE",
+                            suggestions=[
+                                f"Valid types: {', '.join(sorted(valid_types))}"
+                            ],
+                        )
+                        continue
+
+                    if param_type in {
+                        "float",
+                        "double",
+                        "loguniform",
+                        "qloguniform",
+                        "int",
+                        "integer",
+                    }:
+                        low = param_values.get("low", param_values.get("min"))
+                        high = param_values.get("high", param_values.get("max"))
+                        if low is None or high is None:
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                f"{param_type} parameter requires bounds (low/high or min/max)",
+                                error_code="MISSING_BOUNDS",
+                            )
+                            continue
+                        if not isinstance(low, (int, float)) or not isinstance(
+                            high, (int, float)
+                        ):
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                "Range bounds must be numeric",
+                                error_code="INVALID_RANGE",
+                            )
+                            continue
+                        if low >= high:
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                f"Invalid range: low ({low}) >= high ({high})",
+                                error_code="INVALID_RANGE",
+                            )
+                            continue
+
+                        step = param_values.get("step")
+                        if step is not None:
+                            if not isinstance(step, (int, float)) or step <= 0:
+                                result.add_error(
+                                    f"configuration_space.{param_name}",
+                                    f"Step must be a positive number, got {step!r}",
+                                    error_code="INVALID_RANGE",
+                                )
+                            if param_values.get("log"):
+                                result.add_error(
+                                    f"configuration_space.{param_name}",
+                                    "log=True cannot be combined with step",
+                                    error_code="INVALID_RANGE",
+                                )
+                        if param_values.get("log") and low <= 0:
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                "log=True requires positive bounds",
+                                error_code="INVALID_RANGE",
+                            )
+                    elif param_type in {"categorical", "choice"}:
+                        choices = param_values.get("choices") or param_values.get(
+                            "values"
+                        )
+                        if not choices:
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                "Categorical parameter requires 'choices' or 'values'",
+                                error_code="INVALID_PARAM_TYPE",
+                            )
+                        elif isinstance(choices, (str, bytes)):
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                "Categorical choices must be a list or tuple",
+                                error_code="INVALID_PARAM_TYPE",
+                            )
+                    elif param_type in {"fixed", "constant"}:
+                        if "value" not in param_values:
+                            result.add_error(
+                                f"configuration_space.{param_name}",
+                                "Fixed parameters require a 'value'",
+                                error_code="INVALID_PARAM_TYPE",
+                            )
+                # Otherwise accept as nested configuration
             else:
                 result.add_error(
                     f"configuration_space.{param_name}",

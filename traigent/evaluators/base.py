@@ -25,7 +25,7 @@ from traigent.evaluators.dataset_registry import (
     resolve_dataset_reference,
 )
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
-from traigent.utils.error_handler import APIKeyError, ErrorHandler
+from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import (
     ConfigurationError,
@@ -1057,12 +1057,16 @@ class BaseEvaluator(ABC):
         except Exception as e:
             lowered = str(e).lower()
 
-            if any(token in lowered for token in ("api key", "authentication")):
-                # Promote authentication failures to actionable APIKeyError.
-                try:
-                    ErrorHandler.handle_api_key_error(e)
-                except (APIKeyError, FriendlyTraigentError) as auth_error:
-                    raise auth_error
+            if any(
+                token in lowered
+                for token in ("api key", "api_key", "authentication", "openai_api_key")
+            ):
+                # Fail fast on API key errors - don't retry hundreds of times
+                raise APIKeyError(
+                    f"API key error detected. Set the required API key environment "
+                    f"variable or use TRAIGENT_MOCK_MODE=true for testing. "
+                    f"Original error: {e}"
+                ) from e
 
             error_msg = f"Function call failed: {e}"
             logger.warning(error_msg)
