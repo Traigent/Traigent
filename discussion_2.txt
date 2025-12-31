@@ -1,0 +1,99 @@
+TraiGent SDK Development Session - December 17, 2025
+=====================================================
+
+SESSION SUMMARY
+---------------
+This session focused on debugging CSV pass/fail reporting and ensuring
+tests import production code rather than maintaining duplicate copies.
+
+KEY ISSUES FIXED
+----------------
+
+1. CSV PASS/FAIL BUG
+   Problem: All results showed PASS even when they should FAIL
+
+   Root Cause: The CSV code was using `ex_result.success` which just indicates
+   whether the LLM API call succeeded (didn't throw an error), NOT whether the
+   answer passed the evaluator.
+
+   Fix: Changed to use `metrics.get("accuracy")` which contains the actual
+   evaluator score. Pass/fail is now determined by score >= 0.5.
+
+   Files changed:
+   - examples/quickstart/01_simple_qa_real_llm.py
+     * save_results_to_csv() - now reads metrics["accuracy"] for pass/fail
+     * print_category_summary() - same fix applied
+
+2. TEST FILE HAD DUPLICATE SCORER CODE
+   Problem: test_custom_accuracy_scorer.py had its OWN COPY of the scorer
+   function instead of importing from production code. This means tests
+   validated the test file's copy, not the actual scorer used by TraiGent.
+
+   Fix: Created shared module examples/quickstart/scorers.py that both
+   the example and test import from.
+
+   Files created/changed:
+   - examples/quickstart/scorers.py (NEW - single source of truth)
+   - examples/quickstart/01_simple_qa_real_llm.py (imports from scorers)
+   - examples/quickstart/test_custom_accuracy_scorer.py (imports from scorers)
+
+   New rule added to AutoCoder_orders.txt:
+   "7. TESTS MUST IMPORT PRODUCTION CODE"
+
+DEEPER ISSUE DISCOVERED (NOT FIXED)
+-----------------------------------
+The TraiGent core appears to have a bug in how it stores evaluator scores.
+
+Evidence from CSV results:
+- "William Shakespeare" in "William Shakespeare." -> score=0.0 (should be 1.0)
+- "1945" in "World War II ended in 1945." -> score=0.0 (should be 1.0)
+- "Paris" in "Paris." -> score=0.0 (should be 1.0)
+
+Our custom_accuracy_scorer does: `expected.lower() in output.lower()`
+This should return 1.0 for all the above cases.
+
+Hypothesis: TraiGent is either:
+1. Not calling the custom evaluator at all
+2. Using a different metric for "accuracy"
+3. Has a bug in how it stores/retrieves custom evaluator scores
+
+This needs investigation in TraiGent core code.
+
+GIT ACTIVITY
+------------
+Branch: feature/quickstart-detailed-csv-output
+
+Commits pushed:
+1. refactor(examples): Extract scorer to shared module for test integrity
+2. fix(examples): Use evaluator score for pass/fail instead of success flag
+
+TEST DATA UPDATES
+-----------------
+- Removed Honor Harrington trick question (was to test FAIL detection)
+- Added Nerisett Karay question (fictional name to test hallucination detection)
+  Expected: "I don't have information on Nerisett Karay."
+  Actual: LLMs hallucinate various fictional characters from games/books
+
+CURRENT STATE
+-------------
+- Branch: feature/quickstart-detailed-csv-output
+- CSV now correctly shows FAIL when evaluator score < 0.5
+- Tests import production scorer code (not duplicates)
+- Results folder: examples/quickstart/results/simple/
+
+FILES IN BRANCH
+---------------
+- examples/quickstart/scorers.py (shared scorer module)
+- examples/quickstart/01_simple_qa_real_llm.py (uses metrics for pass/fail)
+- examples/quickstart/test_custom_accuracy_scorer.py (imports from scorers)
+- examples/quickstart/results/simple/optimization_results.csv
+- examples/quickstart/results/simple/optimization_results_detailed.csv
+- examples/datasets/quickstart/qa_samples.jsonl (with Nerisett Karay)
+
+NEXT STEPS
+----------
+1. Investigate TraiGent core to understand why evaluator scores don't match
+   expected behavior (e.g., "William Shakespeare" in "William Shakespeare."
+   returns 0.0 when it should be 1.0)
+2. Consider creating a GitHub issue for the scoring bug in TraiGent core
+3. May need to debug traigent/core/orchestrator.py or related evaluation code

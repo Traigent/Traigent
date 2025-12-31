@@ -2,13 +2,35 @@
 """
 Test script for Traigent optimization validation system.
 This file contains functions decorated with @traigent.optimize for testing.
+
+NOTE: This file requires test dataset files to exist. If they don't exist,
+the module will skip loading the decorated functions to avoid import errors.
 """
 
 import os
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 # Enable mock mode for testing
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
+
+# Check if required dataset files exist before importing traigent
+# (the decorator validates at import time)
+_REQUIRED_DATASETS = [
+    "data/test_dataset.jsonl",
+    "data/qa_dataset.jsonl",
+    "data/simple_dataset.jsonl",
+]
+_DATASETS_EXIST = all(Path(p).exists() for p in _REQUIRED_DATASETS)
+
+if not _DATASETS_EXIST:
+    # Skip the entire module if datasets don't exist
+    pytest.skip(
+        "Required test datasets not found: " + ", ".join(_REQUIRED_DATASETS),
+        allow_module_level=True,
+    )
 
 import traigent
 

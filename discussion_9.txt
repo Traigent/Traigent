@@ -1,0 +1,211 @@
+# Discussion 9 - Dec 30, 2024
+# File-Based Document Loading and LLM-as-Judge Implementation
+
+## Summary
+
+Today we upgraded the RAG example to load documents from files instead of hardcoded strings, created better evaluation questions, and implemented LLM-as-Judge for accurate answer scoring.
+
+---
+
+## 1. File-Based Document Loading
+
+### Created Knowledge Base Directory Structure
+
+```
+examples/quickstart/knowledge_base/
+├── gift_cards/
+│   └── gift_cards.md (1,473 chars)
+├── hours/
+│   └── store_hours.md (1,089 chars)
+├── payments/
+│   └── payment_methods.md (1,545 chars)
+├── pricing/
+│   └── price_matching.md (1,641 chars)
+├── returns/
+│   └── returns_policy.md (1,472 chars)
+├── shipping/
+│   └── shipping_info.md (1,476 chars)
+└── support/
+    └── contact_support.md (1,384 chars)
+```
+
+Total: 7 documents, ~10KB
+
+### Added load_documents_from_directory() Function
+
+```python
+def load_documents_from_directory(base_path: Path) -> list[dict]:
+    """Load documents from directory structure.
+
+    Supports: .txt, .md files
+    Category inferred from subfolder name.
+    """
+    documents = []
+    for category_dir in sorted(base_path.iterdir()):
+        if category_dir.is_dir():
+            category = category_dir.name
+            for file_path in sorted(category_dir.glob("*")):
+                if file_path.suffix in (".txt", ".md"):
+                    documents.append({
+                        "source": file_path.name,
+                        "category": category,
+                        "content": file_path.read_text(),
+                        "file_path": str(file_path),
+                    })
+    return documents
+```
+
+### Features
+- Loads .txt and .md files
+- Category derived from subfolder name
+- Adds `file_path` metadata for traceability
+- Falls back to hardcoded documents if directory doesn't exist
+- Output shows "loaded from files" or "loaded from fallback"
+
+---
+
+## 2. New Evaluation Questions
+
+Replaced generic questions with 15 specific questions that test retrieval quality:
+
+| # | Question | Expected Answer |
+|---|----------|-----------------|
+| 1 | How many days do I have to return an item? | 30 days |
+| 2 | What's the shipping cost for a $40 order? | $5.99 |
+| 3 | How long does express shipping take? | 2-3 business days |
+| 4 | Can I return swimwear? | cannot be returned |
+| 5 | How long until my refund shows up on my credit card? | 5-7 business days |
+| 6 | Do you ship to Canada? | Yes, we ship to Canada |
+| 7 | What's the cost for overnight delivery? | $24.99 |
+| 8 | Will you match Amazon third-party seller prices? | No, we don't match marketplace sellers |
+| 9 | How do I report a damaged item? | Contact support within 48 hours with photos |
+| 10 | What time do I need to order by for same-day processing? | 2pm EST |
+| 11 | Can I get a price match after I already bought something? | Yes, within 14 days of purchase |
+| 12 | Do you match Costco prices? | No, we don't match wholesale clubs |
+| 13 | What happens to my gift card balance if I don't use it all? | Remaining balance stays on your card |
+| 14 | When is phone support available? | Monday-Friday 9am-5pm EST |
+| 15 | What's the minimum order for free shipping? | $50 |
+
+### Design Goals
+- Test specific facts (prices, times, durations)
+- Test negative cases ("don't match", "cannot be returned")
+- Cover all 7 knowledge base documents
+- Require finding the correct chunk for accurate answers
+
+---
+
+## 3. LLM-as-Judge Implementation
+
+### Problem with Keyword Matching
+
+The original scorer used keyword matching:
+```python
+key_terms = [word for word in expected_lower.split() if len(word) > 3]
+matches = sum(1 for term in key_terms if term in actual_lower)
+return matches / len(key_terms)
+```
+
+Issues:
+- "No, we don't ship to Canada" would match "Yes, we ship to Canada" (same keywords)
+- Word boundaries not respected ("shipping" contains "ship")
+- Can't detect semantic correctness
+
+### New LLM-as-Judge Scorer
+
+```python
+def rag_accuracy_scorer(output: str, expected: str) -> float:
+    """Score RAG response quality using LLM-as-Judge."""
+    judge = get_judge_llm()  # gpt-4o-mini, temp=0
+
+    prompt = f"""You are evaluating if an AI assistant's answer is correct.
+
+Expected answer: {expected}
+Actual answer: {output}
+
+Does the actual answer correctly convey the same key information as the expected answer?
+- Minor wording differences are OK
+- The actual answer may include extra details, that's OK
+- The core facts must match
+
+Reply with only "YES" or "NO"."""
+
+    response = judge.invoke(prompt)
+    result = str(response.content).strip().upper()
+    return 1.0 if result.startswith("YES") else 0.0
+```
+
+### Features
+- Uses gpt-4o-mini as judge (cheap, fast)
+- Temperature=0 for consistent judgments
+- Binary YES/NO response for clear scoring
+- Fallback to keyword matching if judge fails
+- Cached LLM instance for efficiency
+
+---
+
+## 4. Results
+
+### With LLM-as-Judge
+- All 4 successful trials scored 1.0 (100% accuracy)
+- Judge correctly identifies semantic matches
+- Cost: $0.0133 (including judge calls)
+
+### Trials Run
+| Trial | Model | k | chunk | Score |
+|-------|-------|---|-------|-------|
+| 1 | gpt-3.5-turbo | 3 | 500 | 1.0 |
+| 2 | gpt-4o-mini | 2 | 500 | 1.0 |
+| 3 | gpt-4o-mini | 3 | 800 | 1.0 |
+| 4 | gpt-4o | 2 | 500 | N/A (constraint) |
+| 5 | gpt-4o | 3 | 800 | 1.0 |
+| 6 | gpt-3.5-turbo | 2 | 800 | N/A (constraint) |
+
+---
+
+## 5. Mock Mode Status
+
+Updated .env to TRAIGENT_MOCK_MODE=false for real scoring.
+Added rule #10 to AutoCoder_orders.txt to remind about mock mode status.
+
+---
+
+## Files Modified
+
+- `examples/quickstart/02_customer_support_rag_real_llm.py`
+  - Added load_documents_from_directory()
+  - Added LLM-as-Judge scorer (rag_accuracy_scorer)
+  - Updated main() to show document source
+
+- `examples/quickstart/rag_feedback.jsonl`
+  - Replaced with 15 specific evaluation questions
+
+- `AutoCoder_orders.txt`
+  - Added rule #10 about mock mode status
+
+- `.env`
+  - Set TRAIGENT_MOCK_MODE=false
+
+## Files Created
+
+- `examples/quickstart/knowledge_base/` (7 subdirectories with .md files)
+- `discussion_9.txt` (this file)
+
+---
+
+## Next Steps
+
+1. Add harder questions that might fail to see differentiation
+2. Consider adding PDF support (requires pypdf dependency)
+3. Test with larger knowledge bases
+4. Consider caching judge responses for repeated evaluations
+
+---
+
+## Branch Status
+
+Current branch: `rag-up-wip`
+
+Commits today:
+- File-based document loading
+- LLM-as-Judge implementation
+- New evaluation questions

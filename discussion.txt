@@ -1,0 +1,89 @@
+TraiGent SDK Development Session - December 15, 2025
+=====================================================
+
+SUMMARY OF WORK COMPLETED
+-------------------------
+
+1. REAL LLM QUICKSTART EXAMPLE
+   - Created: examples/quickstart/01_simple_qa_real_llm.py
+   - Demonstrates TraiGent optimization with actual OpenAI API calls
+   - Features: multi-objective optimization (accuracy, cost, latency),
+     configuration constraints, multiple repetitions per trial, custom scoring
+   - Uses @traigent.optimize() decorator with:
+     * configuration_space: model, temperature, max_tokens
+     * constraints: GPT-4o temp <= 0.5, GPT-3.5-turbo max_tokens <= 100
+     * evaluator=custom_accuracy_scorer (at decorator level, NOT in EvaluationOptions)
+   - Git branch: feature/quickstart-real-llm-example
+
+2. CUSTOM ACCURACY SCORER TESTS
+   - Created: examples/quickstart/test_custom_accuracy_scorer.py
+   - 33 pytest tests covering positive, negative, and edge cases
+   - Tests case-insensitive containment matching
+
+3. MIXED EVALUATION DATASET (llm_eval_mixed.jsonl)
+   - Created: examples/datasets/quickstart/llm_eval_mixed.jsonl
+   - 142 questions from multiple sources:
+     * TruthfulQA (40): Common misconceptions, yes/no converted to MC format
+     * GSM8K-style (37): Math reasoning with step-by-step solutions
+     * MMLU-style (35): General knowledge multiple choice
+     * CommonsenseQA-style (30): Common sense reasoning
+   - Dataset format: {"input": {"question": "..."}, "output": "...", "source": "...", "category": "..."}
+   - Multiple choice questions have options embedded in question text with
+     "Answer with just the letter of the correct option." instruction
+   - Yes/No questions converted to "A. Yes / B. No" format for shorter expected answers
+   - NOT YET COMMITTED to git (separate from quickstart branch)
+
+KEY TECHNICAL DISCOVERIES
+-------------------------
+
+1. TRAIGENT INPUT EXPANSION
+   - TraiGent expands the "input" dict as kwargs to the decorated function
+   - Only fields inside "input" are passed to the function
+   - Fields outside "input" and "output" go into example.metadata
+   - Extra fields in "input" will cause TypeError if function doesn't accept them
+
+2. EVALUATOR VS CUSTOM_EVALUATOR
+   - evaluator= at decorator level: accepts function returning float (0.0-1.0)
+   - custom_evaluator in EvaluationOptions: requires ExampleResult return type
+   - Use evaluator= for simple scoring functions
+
+3. COST ENFORCEMENT
+   - Decorator parameter: cost_limit=10.00
+   - Environment variable: TRAIGENT_RUN_COST_LIMIT (takes precedence)
+   - Default limit: $2.00
+   - To run expensive optimizations, need BOTH:
+     * TRAIGENT_RUN_COST_LIMIT=10.00
+     * TRAIGENT_COST_APPROVED=true
+
+4. COST ESTIMATE FOR MIXED DATASET
+   - 142 questions x 5 trials x 2 reps = 1,420 API calls
+   - Estimated cost: $8.52
+   - Command to run:
+     source .venv/bin/activate && TRAIGENT_RUN_COST_LIMIT=10.00 TRAIGENT_COST_APPROVED=true python examples/quickstart/01_simple_qa_real_llm.py
+
+GITHUB ISSUES CREATED
+---------------------
+- #19: Constraint violations
+- #20: Custom evaluator parameter issues
+- #22: (related to scoring)
+
+FILES TO TRACK
+--------------
+- examples/quickstart/01_simple_qa_real_llm.py (in branch feature/quickstart-real-llm-example)
+- examples/quickstart/test_custom_accuracy_scorer.py (in branch)
+- examples/quickstart/results/optimization_results.csv (in branch)
+- examples/datasets/quickstart/llm_eval_mixed.jsonl (UNTRACKED - needs separate branch/commit)
+
+NEXT STEPS (NOT DONE)
+---------------------
+1. Run optimization with mixed dataset (needs cost approval)
+2. Commit llm_eval_mixed.jsonl to appropriate branch
+3. Analyze results and display with pass/fail markers
+
+CURRENT STATE
+-------------
+- On branch: feature/quickstart-real-llm-example
+- Untracked file: examples/datasets/quickstart/llm_eval_mixed.jsonl
+- Script updated to use llm_eval_mixed.jsonl dataset
+- Cost limit increased to $10.00 in code
+- Ready to run but needs env var overrides for cost approval

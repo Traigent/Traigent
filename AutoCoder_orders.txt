@@ -1,0 +1,64 @@
+AutoCoder Orders - Mandatory Rules
+===================================
+
+1. NEVER MODIFY CODE WHEN ASKED TO "RUN" OR "EXECUTE"
+   - "Commence", "Run it", "Execute", "Go ahead" = RUN THE SCRIPT AS-IS
+   - Do NOT make code changes during execution
+   - If you think changes are needed, ASK FIRST before modifying
+
+2. NEVER USE HARDCODED VALUES IN PRINT STATEMENTS
+   - All printed configuration info MUST come from actual variables
+   - BAD:  print("Models: gpt-3.5-turbo, gpt-4o-mini")
+   - GOOD: print(f"Models: {', '.join(config_space['model'])}")
+   - This applies to: configuration_space, constraints, limits, any settings
+
+3. DO NOT CHANGE APPROVED FORMATS
+   - Once a format/output is tested and approved, DO NOT modify it
+   - If you need to add features, ADD NEW functions/files
+   - Never silently change existing approved behavior
+
+4. ASK BEFORE EXPENSIVE OPERATIONS
+   - Before running anything that costs money (API calls, cloud resources)
+   - Confirm the exact code that will run
+   - Confirm cost limits are set correctly
+   - Do NOT make last-minute code changes before expensive runs
+
+5. SINGLE SOURCE OF TRUTH
+   - Configuration values should be defined ONCE
+   - All references (prints, logs, docs) must read from that source
+   - Never duplicate configuration values as strings elsewhere
+
+6. TEST RUNS MUST BE REPRESENTATIVE
+   - Test runs should use the same code path as production runs
+   - If test passes, production should work identically
+   - Do NOT add features between test and production runs
+
+7. TESTS MUST IMPORT PRODUCTION CODE
+   - Tests must NEVER have a copy of the code they are testing
+   - Tests must import the actual function/class being used in production
+   - Otherwise, changes to production code won't trigger test failures
+   - BAD:  Copying a function into test file and testing that copy
+   - GOOD: from module import function_under_test
+   - This ensures tests validate the ACTUAL code, not a stale duplicate
+
+8. DOCUMENTATION MUST REFERENCE SOURCE OF TRUTH
+   - Docstrings, comments, and README files must NOT hardcode config values
+   - When documenting defaults, limits, or options, reference the actual variables
+   - BAD:  "Supports models: gpt-3.5-turbo, gpt-4o" (hardcoded in docstring)
+   - GOOD: "Supports models: see SUPPORTED_MODELS constant" (references source)
+   - If exact values must appear in docs, add a note to update when source changes
+   - This extends Rules 2 and 5 to all documentation
+
+9. DO NOT MODIFY TRAIGENT CORE CODE
+   - Never modify files under traigent/traigent/ directory (the SDK core)
+   - OK to modify: examples/, tests/, docs/, scripts, etc.
+   - If TraiGent has a bug, work around it in customer code
+   - Document workarounds in this file or discussion files
+   - Known workarounds:
+     * cost_limit=/cost_approved= decorator params don't work → use env vars instead
+     * evaluator= param doesn't work → use metric_functions= instead
+
+10. REMINDER: CHECK MOCK MODE STATUS
+    - .env has TRAIGENT_MOCK_MODE=false (real scoring for RAG examples)
+    - If VS Code test discovery breaks, set it back to true
+    - PROMPT THE USER: "Mock mode is currently OFF. Want me to enable it for tests?"

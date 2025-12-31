@@ -1,0 +1,103 @@
+Discussion 5: LLM-as-Judge for Model Differentiation
+=====================================================
+
+Date: 2025-12-23
+
+CONTEXT
+-------
+After trying HLE dataset and mixed dataset, we found that:
+- HLE questions are too hard (all models fail equally ~10%)
+- Mixed dataset questions are either too easy (all pass) or fail substring matching
+- No differentiation between model configurations observed
+
+PROPOSED SOLUTION: LLM-AS-JUDGE
+-------------------------------
+Use an LLM to evaluate answer quality instead of substring matching.
+
+CORE CHALLENGE: SUBJECTIVITY
+----------------------------
+"How good is this answer?" is inherently subjective. Issues:
+
+1. What are we measuring?
+   - Correctness?
+   - Completeness?
+   - Clarity?
+   - Helpfulness?
+   - Different criteria give different scores
+
+2. Ground truth dependency
+   - Without reference answer: judge gives opinion (unreliable)
+   - With reference answer: becomes "similarity to expected" (more objective but fuzzy)
+
+3. Judge model bias
+   - GPT-4 judging GPT-3.5 may favor GPT-4-style responses
+   - Self-preference bias is documented in research
+
+4. Consistency
+   - Same judge may score same answer differently across runs
+   - Temperature > 0 introduces randomness
+
+APPROACHES TO REDUCE SUBJECTIVITY
+---------------------------------
+
+1. Binary Criteria
+   Instead of "rate 1-10", ask multiple yes/no questions:
+   - "Does the answer contain fact X?"
+   - "Is the answer factually correct?"
+   - "Does it answer the question asked?"
+   Sum of binary checks = score
+
+2. Comparative Judging
+   "Which of these two answers is better?" is more reliable than absolute scoring
+   - Pairwise comparisons between model outputs
+   - Elo-style ranking emerges from comparisons
+
+3. Rubric-Based Scoring
+   Define explicit, measurable criteria:
+   - "Contains the key concept [X]"
+   - "Is under N words"
+   - "Provides a concrete example"
+   - "Cites a source" (if applicable)
+
+4. Multi-Judge Consensus
+   Use multiple judge models/prompts, aggregate scores
+   - Reduces single-judge bias
+   - More expensive
+
+FUNDAMENTAL QUESTION
+--------------------
+What does "better" mean for TraiGent optimization?
+
+Options:
+A. More accurate answers (needs ground truth)
+B. Better formatted/structured (subjective but definable)
+C. More cost-efficient for same quality (needs quality metric)
+D. Faster responses (objective, already measured)
+E. Safer/less harmful (needs safety rubric)
+
+For demonstrating model differentiation, we probably want (A) - accuracy.
+But accuracy requires knowing the right answer, which brings us back to
+the original problem of matching expected answers.
+
+POSSIBLE HYBRID APPROACH
+------------------------
+1. Use substring/exact matching for questions with clear answers
+2. Use LLM-judge only for open-ended questions
+3. Weight both in final score
+
+Or: Create questions specifically designed for LLM-judge evaluation
+where the criteria are explicit and measurable.
+
+OPEN QUESTIONS
+--------------
+- What specific criteria should the judge evaluate?
+- Which model should be the judge? (cost vs quality tradeoff)
+- How to validate that the judge is actually measuring what we want?
+- Is the added cost/complexity worth it vs. just curating better questions?
+
+NEXT STEPS (TBD)
+----------------
+- Define concrete evaluation criteria
+- Prototype a simple LLM-judge scorer
+- Test on subset of questions
+- Compare results with substring matching

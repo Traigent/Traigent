@@ -1,0 +1,10 @@
+{
+  "best_score": 1.0,
+  "best_config": {
+    "model": "gpt-3.5-turbo",
+    "temperature": 0.3,
+    "k": 3,
+    "chunk_size": 500,
+    "chunk_overlap": 50
+  }
+}

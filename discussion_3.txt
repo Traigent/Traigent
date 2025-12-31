@@ -1,0 +1,93 @@
+Discussion 3: Why Only 1 Trial Runs Despite max_trials=5
+=========================================================
+
+Date: 2025-12-17
+
+PROBLEM
+-------
+User observed that optimization with max_trials=5 only ran 1 trial, testing just
+1 model (gpt-4o) instead of the expected 5 configurations across 3 models.
+
+INVESTIGATION
+-------------
+1. Initial hypothesis: max_trials not being passed correctly to optimizer
+   - User pushed back: "are you quite sure max isn't passed correctly? I doubt it"
+
+2. Traced through code:
+   - OptimizedFunction._execute_optimization()
+   - StopConditionManager with MaxTrialsStopCondition
+   - RandomSearchOptimizer.should_stop()
+   - CostEnforcer and permit acquisition
+
+3. Found the real cause at optimized_function.py:339:
+   ```python
+   self.timeout = kwargs.pop("timeout", 60.0)  # Default is only 60 seconds!
+   ```
+
+4. The timeout check at orchestrator.py:1524-1527 stops optimization:
+   ```python
+   if self.timeout and self._start_time and elapsed >= self.timeout:
+       logger.info(f"Stopping: reached timeout ({self.timeout}s)")
+       self._stop_reason = "timeout"
+       return True
+   ```
+
+ROOT CAUSE
+----------
+- Default timeout is 60 seconds
+- With 142 examples × 2 reps = 284 LLM calls per trial
+- One trial takes ~90 seconds
+- Timeout triggers after first trial, before subsequent trials can start
+
+KEY INSIGHT: SILENT FAILURE
+---------------------------
+The timeout message uses logger.info() which doesn't appear in console output.
+Users see "Optimization Complete!" with 1 trial and NO indication it was cut short.
+This is extremely confusing - user thinks 1 trial was sufficient or something failed.
+
+PROOF
+-----
+Ran same script with timeout=600 added to decorator:
+
+| Scenario              | Timeout | Trials | Models Tested |
+|-----------------------|---------|--------|---------------|
+| Default (no timeout)  | 60s     | 1      | 1 (gpt-4o)    |
+| With timeout=600      | 600s    | 5      | 3 (all)       |
+
+WORKAROUND
+----------
+Add explicit timeout parameter to decorator:
+```python
+@traigent.optimize(
+    ...
+    max_trials=5,
+    timeout=600,  # Override default 60s
+)
+```
+
+GITHUB ISSUE FILED
+------------------
+https://github.com/Traigent/Traigent/issues/23
+
+"Default timeout of 60s silently prevents multiple trials from completing"
+
+Issue emphasizes:
+1. Silent failure - no user-visible warning
+2. Confusing UX - max_trials=5 but only 1 runs
+3. Short default - 60s insufficient for real datasets
+
+Suggested fixes in issue:
+- Minimum: Add visible warning when timeout stops optimization early
+- Better: Increase default timeout or calculate dynamically
+- Best: Show progress during optimization with clear timeout indication
+
+FILES REFERENCED
+----------------
+- traigent/core/optimized_function.py:339 - default timeout definition
+- traigent/core/orchestrator.py:1524-1527 - timeout check and logging
+- examples/quickstart/01_simple_qa_real_llm.py - quickstart missing timeout param
+
+TODO
+----
+- Add timeout=600 to quickstart example
+- Document workaround in AutoCoder_orders.txt

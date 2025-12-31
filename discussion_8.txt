@@ -1,0 +1,152 @@
+# Discussion 8 - Dec 29, 2024
+# Real FAISS RAG Example with Document Chunking
+
+## Summary
+
+Created a production-ready RAG example using FAISS vector store, OpenAI embeddings, and document chunking. Also created GitHub issue #27 for constraint slot consumption bug.
+
+---
+
+## Bug Investigation Completed
+
+### Constraint Slot Consumption Bug (Issue #27)
+
+Discovered that constraint-rejected configurations consume trial slots without being executed.
+
+**Evidence:**
+- Set `max_trials=3`
+- 3 configs sampled, 1 rejected by constraint
+- Only 2 actual trials ran
+- User requested 3 trials, got 2
+
+**Branches:**
+- `debug/constraint-trial-counting` - Contains instrumented debug code proving the bug
+- Issue #27 created with reproduction steps and suggested fix
+
+---
+
+## RAG Example Upgrade
+
+### Branch: `rag-up-wip`
+
+Upgraded `examples/quickstart/02_customer_support_rag_real_llm.py` from fake keyword-matching RAG to real semantic RAG.
+
+### Before (Keyword Matching)
+```python
+KNOWLEDGE_BASE = ["Returns accepted within 30 days...", ...]
+
+def simple_retriever(query, k):
+    # Naive keyword matching - NOT semantic
+    score = sum(1 for word in query.split() if word in doc.lower())
+```
+
+### After (Real FAISS RAG)
+```python
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+def create_vector_store(chunk_size, chunk_overlap):
+    embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+    documents = chunk_documents(KNOWLEDGE_BASE_DOCUMENTS, chunk_size, chunk_overlap)
+    return FAISS.from_documents(documents, embeddings)
+```
+
+### Key Features Added
+
+1. **Long-form Knowledge Base**
+   - 7 documents (~1,500-2,000 chars each)
+   - ~10,000 total characters
+   - Topics: returns, shipping, payments, support, hours, gift cards, pricing
+
+2. **Document Chunking**
+   - `RecursiveCharacterTextSplitter` from LangChain
+   - Configurable `chunk_size` (300, 500, 800)
+   - Configurable `chunk_overlap` (25, 50, 100) - sliding window
+   - Splits on: paragraphs -> sentences -> words
+
+3. **FAISS Vector Store**
+   - OpenAI `text-embedding-3-small` embeddings
+   - Semantic similarity search
+   - Cached by `(chunk_size, chunk_overlap)` tuple
+
+4. **Configuration Space**
+   ```python
+   CONFIGURATION_SPACE = {
+       "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+       "temperature": [0.1, 0.3, 0.5, 0.7],
+       "k": [2, 3, 5],
+       "chunk_size": [300, 500, 800],
+       "chunk_overlap": [25, 50, 100],
+   }
+   ```
+
+5. **Constraints**
+   - GPT-4o: temperature <= 0.3
+   - GPT-3.5-turbo: k >= 3
+   - chunk_overlap < chunk_size (prevents invalid combos)
+
+6. **Summary Output**
+   - Accuracy by Model
+   - Accuracy by Retrieval Depth (k)
+   - Accuracy by Chunk Size
+   - Accuracy by Chunk Overlap
+   - Total Cost
+
+---
+
+## Commits
+
+### Branch: `debug/constraint-trial-counting`
+- `f871985` - debug: Add constraint trial counting instrumentation
+
+### Branch: `rag-up-wip`
+- `7375a22` - WIP: Upgrade RAG example to use FAISS with OpenAI embeddings
+- `f673a35` - feat: Add document chunking with chunk_size and chunk_overlap optimization
+
+---
+
+## Dependencies Added
+
+- `faiss-cpu` - FAISS vector similarity search
+- `langchain-text-splitters` - Document chunking
+- `langchain-community` - FAISS wrapper (already in pyproject.toml)
+
+---
+
+## Files Modified
+
+- `examples/quickstart/02_customer_support_rag_real_llm.py` - Complete rewrite with real RAG
+
+---
+
+## Next Steps (for next session)
+
+1. **Load documents from files** instead of hardcoded strings
+   - Support .txt, .md, .pdf files
+   - Add file path to metadata
+
+2. **Test the example in action**
+   - Run with real OpenAI API key
+   - Verify semantic retrieval works
+   - Check optimization finds meaningful differences
+
+3. **Consider additional features**
+   - Hybrid search (semantic + keyword)
+   - Metadata filtering by category
+   - Persistent vector store (save/load)
+
+---
+
+## Branch Status
+
+Current branch: `rag-up-wip`
+
+Other relevant branches:
+- `debug/constraint-trial-counting` - Bug evidence for issue #27
+- `feature/HLE-model-diff` - Main feature branch
+
+Untracked files preserved:
+- discussion.txt through discussion_8.txt
+- AutoCoder_orders.txt
+- examples/quickstart/results/*

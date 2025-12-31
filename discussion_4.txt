@@ -1,0 +1,93 @@
+TraiGent SDK Development Session - December 21, 2025
+=====================================================
+
+SESSION SUMMARY
+---------------
+This session focused on branch management, CSV output fixes, and preparing
+for future optimization experiments.
+
+WORK COMPLETED
+--------------
+
+1. BRANCH MANAGEMENT
+   - Rebased feature/quickstart-detailed-csv-output onto origin/main
+   - Further rebased onto origin/fix/uk-api-key-validation to get:
+     * uk_ prefixed API key support
+     * Trial status handling (PRUNED/CANCELLED)
+     * CeilingPruner improvements
+     * TVL 0.9 language implementation
+   - Renamed branch to feature/simple-qa-with-llm
+   - Pushed as feature/simple-qa-with-llm_shortened
+
+2. CSV OUTPUT FIXES
+   - Fixed newline issue: LLM responses containing \n broke CSV rows
+   - Fixed semicolon issue: LibreOffice was splitting cells on semicolons
+   - Solution: Added csv.QUOTE_ALL to wrap all fields in double quotes
+   - Sanitized all text fields: question, expected, and answer
+   - Files changed: examples/quickstart/01_simple_qa_real_llm.py
+
+3. DATASET VARIANTS
+   - Created llm_eval_mixed_20.jsonl (first 20 questions from full dataset)
+   - Full dataset: llm_eval_mixed.jsonl (142 questions)
+   - Code defaults to full dataset, 20-question version available for quick tests
+
+4. GITHUB ISSUES
+   - Reviewed open issues #19, #20 (still unresolved - TraiGent core bugs)
+   - Reviewed closed issues #22, #23 (fixed in upstream)
+   - Created issue #25: Optimization runs only 1 trial despite max_trials=5
+     * Root cause: Default timeout of 60s
+     * Workaround: Add timeout=600 to decorator
+
+5. INVESTIGATED fix/uk-api-key-validation BRANCH
+   - uk_ = User Key (46 chars) - new format from Traigent backend
+   - tg_ = original SDK format (64 chars)
+   - PR #24 is still open, not merged to main
+
+GIT STATE
+---------
+- Local branch: feature/simple-qa-with-llm
+- Remote: origin/feature/simple-qa-with-llm_shortened
+- Based on: fix/uk-api-key-validation (which is ahead of main)
+
+FILES IN BRANCH
+---------------
+- examples/quickstart/01_simple_qa_real_llm.py (CSV fixes, full dataset default)
+- examples/quickstart/scorers.py (shared scorer module)
+- examples/datasets/quickstart/llm_eval_mixed.jsonl (142 questions)
+- examples/datasets/quickstart/llm_eval_mixed_20.jsonl (20 questions)
+
+UNTRACKED FILES (kept locally)
+------------------------------
+- AutoCoder_orders.txt
+- discussion.txt, discussion_2.txt, discussion_3.txt, discussion_4.txt
+- examples/quickstart/results/*.csv
+
+==============================================================================
+NEXT SESSION TODO
+==============================================================================
+
+GOAL: Find better test samples that differentiate model configurations
+
+PROBLEM:
+With the 20-question subset, ~50% pass across all sampled configurations.
+This makes it hard to distinguish which config is actually better - they
+all score similarly.
+
+APPROACH:
+1. Find questions that produce DIFFERENT results across configs
+   - Some questions should pass with one model but fail with another
+   - Temperature and max_tokens should affect certain question types
+
+2. Consider adding challenging questions like:
+   - The Alderman riddle (logic puzzle)
+   - Multi-step reasoning problems
+   - Questions where verbosity matters (max_tokens constraint)
+   - Questions where creativity vs precision matters (temperature)
+
+3. Curate a 20-question subset specifically designed to:
+   - Show model capability differences (gpt-3.5 vs gpt-4o)
+   - Show temperature effects (creative vs factual)
+   - Show token limit effects (verbose vs concise answers)
+
+4. Expected outcome: A dataset where different configs score differently,
+   making optimization meaningful rather than random selection.
