@@ -761,6 +761,28 @@ def optimize(
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
+    constraints = combined_settings["constraints"]
+
+    # Check for conflicting constraints: ConfigSpace with constraints AND explicit constraints
+    original_config_space = configuration_space
+    config_space_has_constraints = (
+        hasattr(original_config_space, "constraints")
+        and original_config_space.constraints
+    )
+    if config_space_has_constraints and constraints:
+        raise TypeError(
+            "Cannot provide both ConfigSpace with constraints and explicit constraints. "
+            "Either include constraints in your ConfigSpace or pass them separately."
+        )
+
+    # Extract constraints from ConfigSpace if present (and no explicit constraints)
+    config_space_constraints = None
+    config_space_var_names = None
+    if config_space_has_constraints:
+        config_space_constraints = original_config_space.constraints
+        # Build var_names mapping from ConfigSpace tvars for constraint normalization
+        if hasattr(original_config_space, "var_names"):
+            config_space_var_names = original_config_space.var_names
 
     # Normalize configuration_space and merge inline params (inline takes precedence)
     # Also extract defaults from Range/Choices objects
@@ -771,7 +793,17 @@ def optimize(
         # Merge param defaults with explicit default_config (explicit takes precedence)
         if param_defaults:
             default_config = {**param_defaults, **(default_config or {})}
-    constraints = combined_settings["constraints"]
+
+    # Merge ConfigSpace constraints if no explicit constraints were provided
+    if config_space_constraints and not constraints:
+        constraints = config_space_constraints
+
+    # Normalize Constraint/BoolExpr objects to callables for the optimizer
+    # This allows users to pass DSL constraints directly to @optimize
+    if constraints:
+        from traigent.api.constraints import normalize_constraints
+
+        constraints = normalize_constraints(constraints, config_space_var_names)
     injection_mode = combined_settings["injection_mode"]
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]

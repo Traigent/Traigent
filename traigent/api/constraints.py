@@ -8,6 +8,23 @@ The constraint system uses a builder pattern where ParameterRange objects
 (Range, IntRange, Choices) create Condition objects via builder methods,
 which are then combined into Constraint objects.
 
+Supports three syntax styles for constraints:
+
+1. Functional (canonical, explicit):
+    >>> implies(model.equals("gpt-4"), temp.lte(0.7))
+
+2. Operator-based (concise, formula-like):
+    >>> model.equals("gpt-4") >> temp.lte(0.7)
+
+3. Fluent (readable):
+    >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
+
+OPERATOR PRECEDENCE WARNING:
+    Python precedence: ~ > << >> > & > ^ > |
+    This means: a & b >> c  evaluates as  a & (b >> c), NOT (a & b) >> c
+    Always use parentheses for clarity:
+        (model.equals("gpt-4") & temp.lte(0.7)) >> max_tokens.gte(1000)
+
 Example:
     >>> from traigent import Range, IntRange, Choices, implies
     >>>
@@ -16,17 +33,18 @@ Example:
     >>> max_tokens = IntRange(100, 4096)
     >>> model = Choices(["gpt-4", "gpt-3.5-turbo"])
     >>>
-    >>> # Define constraints using builder pattern
+    >>> # Define constraints using any syntax style
     >>> constraints = [
-    ...     # When using gpt-4, require high token limit
+    ...     # Functional style
     ...     implies(model.equals("gpt-4"), max_tokens.gte(1000)),
-    ...     # Temperature must be low for turbo models
-    ...     implies(model.equals("gpt-3.5-turbo"), temperature.lte(0.7)),
+    ...     # Operator style
+    ...     model.equals("gpt-3.5-turbo") >> temperature.lte(0.7),
     ... ]
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -39,8 +57,140 @@ if TYPE_CHECKING:
 OperatorType = Literal["==", "!=", ">", ">=", "<", "<=", "in", "not_in", "in_range"]
 
 
+# =============================================================================
+# Boolean Expression Base Class
+# =============================================================================
+
+
+class BoolExpr(ABC):
+    """Abstract base class for boolean expressions in constraints.
+
+    Provides operator overloading for intuitive constraint syntax:
+        - >> for implication (A >> B means "A implies B")
+        - & for conjunction (A & B means "A and B")
+        - | for disjunction (A | B means "A or B")
+        - ~ for negation (~A means "not A")
+
+    OPERATOR PRECEDENCE WARNING:
+        Python precedence: ~ > << >> > & > ^ > |
+        This means: a & b >> c  evaluates as  a & (b >> c), NOT (a & b) >> c
+        Always use parentheses for clarity.
+    """
+
+    @abstractmethod
+    def to_expression(self, var_names: dict[int, str]) -> str:
+        """Convert to TVL expression string.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to variable name.
+
+        Returns:
+            A string expression like "params.temperature <= 0.7"
+        """
+        ...
+
+    @abstractmethod
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate this expression against a configuration.
+
+        Args:
+            config: The configuration dict with parameter values
+            var_names: Mapping from ParameterRange id() to config key.
+
+        Returns:
+            True if the expression is satisfied
+        """
+        ...
+
+    def __rshift__(self, other: BoolExpr) -> Constraint:
+        """Implication operator: self >> other means 'self implies other'.
+
+        Example:
+            >>> model.equals("gpt-4") >> temp.lte(0.7)
+        """
+        if not isinstance(other, BoolExpr):
+            return NotImplemented
+        return Constraint(when=self, then=other)
+
+    def __and__(self, other: BoolExpr) -> AndCondition:
+        """Conjunction operator: self & other means 'self and other'.
+
+        Example:
+            >>> model.equals("gpt-4") & temp.lte(0.7)
+        """
+        if not isinstance(other, BoolExpr):
+            return NotImplemented
+        return AndCondition((self, other))
+
+    def __or__(self, other: BoolExpr) -> OrCondition:
+        """Disjunction operator: self | other means 'self or other'.
+
+        Example:
+            >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+        """
+        if not isinstance(other, BoolExpr):
+            return NotImplemented
+        return OrCondition((self, other))
+
+    def __invert__(self) -> NotCondition:
+        """Negation operator: ~self means 'not self'.
+
+        Example:
+            >>> ~model.equals("gpt-4")
+        """
+        return NotCondition(self)
+
+    def __bool__(self) -> bool:
+        """Prevent accidental boolean evaluation.
+
+        Raises TypeError to catch mistakes like:
+            if model.equals("gpt-4"):  # Wrong! Use operators instead.
+
+        Use & | ~ operators instead of 'and', 'or', 'not'.
+        """
+        raise TypeError(
+            "BoolExpr cannot be used in boolean context. "
+            "Use & | ~ operators instead of 'and', 'or', 'not'. "
+            "Use >> for implication, or wrap in Constraint/implies()."
+        )
+
+    def implies(self, other: BoolExpr) -> Constraint:
+        """Fluent method for implication: self.implies(other).
+
+        Example:
+            >>> model.equals("gpt-4").implies(temp.lte(0.7))
+        """
+        return Constraint(when=self, then=other)
+
+    @abstractmethod
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return a plain English explanation of this expression.
+
+        Args:
+            var_names: Optional mapping from ParameterRange id() to variable name.
+                If not provided, uses the name attribute of each ParameterRange.
+
+        Returns:
+            Human-readable explanation like "model equals 'gpt-4'"
+
+        Example:
+            >>> temp = Range(0.0, 2.0, name="temperature")
+            >>> cond = temp.lte(0.7)
+            >>> cond.explain()
+            "temperature is at most 0.7"
+        """
+        ...
+
+
+# =============================================================================
+# Atomic Condition
+# =============================================================================
+
+
 @dataclass(frozen=True, slots=True)
-class Condition:
+class Condition(BoolExpr):
     """A single condition in a constraint expression.
 
     Conditions are created via builder methods on ParameterRange objects
@@ -61,15 +211,23 @@ class Condition:
     operator: OperatorType
     value: Any
 
-    def to_expression(self, var_name: str) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert to TVL expression string.
 
         Args:
-            var_name: The variable name to use in the expression
+            var_names: Either a mapping from ParameterRange id() to variable name,
+                or a single variable name string (for backward compatibility).
 
         Returns:
             A string expression like "params.temperature <= 0.7"
         """
+        # Backward compatibility: accept single string
+        if isinstance(var_names, str):
+            var_name = var_names
+        else:
+            var_name = var_names.get(
+                id(self.tvar), f"params.{self.tvar.name or 'unknown'}"
+            )
         if self.operator == "in_range":
             low, high = self.value
             return f"({var_name} >= {low}) and ({var_name} <= {high})"
@@ -85,6 +243,23 @@ class Condition:
             # Numeric comparisons: >, >=, <, <=
             return f"{var_name} {self.operator} {self.value}"
 
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate against a configuration.
+
+        Args:
+            config: The configuration dict with parameter values
+            var_names: Mapping from ParameterRange id() to config key.
+
+        Returns:
+            True if the condition is satisfied
+        """
+        var_name = var_names.get(id(self.tvar))
+        if var_name is None or var_name not in config:
+            return True  # Missing value - constraint doesn't apply
+        return self.evaluate(config[var_name])
+
     def evaluate(self, value: Any) -> bool:
         """Evaluate this condition against a concrete value.
 
@@ -95,26 +270,201 @@ class Condition:
             True if the condition is satisfied
         """
         if self.operator == "==":
-            return value == self.value
+            return bool(value == self.value)
         elif self.operator == "!=":
-            return value != self.value
+            return bool(value != self.value)
         elif self.operator == ">":
-            return value > self.value
+            return bool(value > self.value)
         elif self.operator == ">=":
-            return value >= self.value
+            return bool(value >= self.value)
         elif self.operator == "<":
-            return value < self.value
+            return bool(value < self.value)
         elif self.operator == "<=":
-            return value <= self.value
+            return bool(value <= self.value)
         elif self.operator == "in":
-            return value in self.value
+            return bool(value in self.value)
         elif self.operator == "not_in":
-            return value not in self.value
+            return bool(value not in self.value)
         elif self.operator == "in_range":
             low, high = self.value
-            return low <= value <= high
+            return bool(low <= value <= high)
         else:
             raise ValueError(f"Unknown operator: {self.operator}")
+
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return plain English explanation of this condition."""
+        # Get variable name
+        if var_names and id(self.tvar) in var_names:
+            name = var_names[id(self.tvar)]
+        elif self.tvar.name:
+            name = self.tvar.name
+        else:
+            name = "parameter"
+
+        # Map operators to plain English (computed on demand)
+        if self.operator == "==":
+            return f"{name} equals {self.value!r}"
+        elif self.operator == "!=":
+            return f"{name} is not {self.value!r}"
+        elif self.operator == ">":
+            return f"{name} is greater than {self.value}"
+        elif self.operator == ">=":
+            return f"{name} is at least {self.value}"
+        elif self.operator == "<":
+            return f"{name} is less than {self.value}"
+        elif self.operator == "<=":
+            return f"{name} is at most {self.value}"
+        elif self.operator == "in":
+            return f"{name} is one of {list(self.value)}"
+        elif self.operator == "not_in":
+            return f"{name} is not one of {list(self.value)}"
+        elif self.operator == "in_range":
+            low, high = self.value
+            return f"{name} is between {low} and {high}"
+        else:
+            return f"{name} {self.operator} {self.value}"
+
+
+# =============================================================================
+# Compound Conditions
+# =============================================================================
+
+
+@dataclass(frozen=True)
+class AndCondition(BoolExpr):
+    """Conjunction of multiple conditions (all must be true).
+
+    Example:
+        >>> model.equals("gpt-4") & temp.lte(0.7)
+    """
+
+    conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if len(self.conditions) < 2:
+            raise ValueError("AndCondition requires at least 2 conditions")
+
+    def to_expression(self, var_names: dict[int, str]) -> str:
+        """Convert this conjunction to a TVL expression string.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to variable name.
+
+        Returns:
+            A string expression with all conditions joined by 'and'.
+        """
+        parts = [c.to_expression(var_names) for c in self.conditions]
+        return f"({' and '.join(parts)})"
+
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate this conjunction against a configuration.
+
+        Args:
+            config: The configuration dict with parameter values.
+            var_names: Mapping from ParameterRange id() to config key.
+
+        Returns:
+            True if all conditions are satisfied.
+        """
+        return all(c.evaluate_config(config, var_names) for c in self.conditions)
+
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return plain English explanation of this conjunction."""
+        parts = [c.explain(var_names) for c in self.conditions]
+        return " AND ".join(parts)
+
+
+@dataclass(frozen=True)
+class OrCondition(BoolExpr):
+    """Disjunction of multiple conditions (at least one must be true).
+
+    Example:
+        >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+    """
+
+    conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        if len(self.conditions) < 2:
+            raise ValueError("OrCondition requires at least 2 conditions")
+
+    def to_expression(self, var_names: dict[int, str]) -> str:
+        """Convert this disjunction to a TVL expression string.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to variable name.
+
+        Returns:
+            A string expression with all conditions joined by 'or'.
+        """
+        parts = [c.to_expression(var_names) for c in self.conditions]
+        return f"({' or '.join(parts)})"
+
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate this disjunction against a configuration.
+
+        Args:
+            config: The configuration dict with parameter values.
+            var_names: Mapping from ParameterRange id() to config key.
+
+        Returns:
+            True if any condition is satisfied.
+        """
+        return any(c.evaluate_config(config, var_names) for c in self.conditions)
+
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return plain English explanation of this disjunction."""
+        parts = [c.explain(var_names) for c in self.conditions]
+        return "(" + " OR ".join(parts) + ")"
+
+
+@dataclass(frozen=True)
+class NotCondition(BoolExpr):
+    """Negation of a condition.
+
+    Example:
+        >>> ~model.equals("gpt-4")
+    """
+
+    condition: BoolExpr
+
+    def to_expression(self, var_names: dict[int, str]) -> str:
+        """Convert this negation to a TVL expression string.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to variable name.
+
+        Returns:
+            A string expression with 'not' prefix.
+        """
+        return f"not ({self.condition.to_expression(var_names)})"
+
+    def evaluate_config(
+        self, config: dict[str, Any], var_names: dict[int, str]
+    ) -> bool:
+        """Evaluate this negation against a configuration.
+
+        Args:
+            config: The configuration dict with parameter values.
+            var_names: Mapping from ParameterRange id() to config key.
+
+        Returns:
+            True if the inner condition is NOT satisfied.
+        """
+        return not self.condition.evaluate_config(config, var_names)
+
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return plain English explanation of this negation."""
+        return f"NOT ({self.condition.explain(var_names)})"
+
+
+# =============================================================================
+# Constraint Class
+# =============================================================================
 
 
 @dataclass(frozen=True)
@@ -149,9 +499,9 @@ class Constraint:
         >>> c = Constraint(expr=temperature.gt(0))
     """
 
-    when: Condition | None = None
-    then: Condition | None = None
-    expr: Condition | None = None
+    when: BoolExpr | None = None
+    then: BoolExpr | None = None
+    expr: BoolExpr | None = None
     description: str | None = None
     id: str | None = None
 
@@ -189,20 +539,12 @@ class Constraint:
             A string expression representing the constraint
         """
         if self.expr is not None:
-            tvar = self.expr.tvar
-            var_name = var_names.get(id(tvar), f"params.{tvar.name or 'unknown'}")
-            return self.expr.to_expression(var_name)
+            return self.expr.to_expression(var_names)
 
         # Implication: not(when) or then
         assert self.when is not None and self.then is not None
-        when_var = var_names.get(
-            id(self.when.tvar), f"params.{self.when.tvar.name or 'unknown'}"
-        )
-        then_var = var_names.get(
-            id(self.then.tvar), f"params.{self.then.tvar.name or 'unknown'}"
-        )
-        when_expr = self.when.to_expression(when_var)
-        then_expr = self.then.to_expression(then_var)
+        when_expr = self.when.to_expression(var_names)
+        then_expr = self.then.to_expression(var_names)
         return f"not ({when_expr}) or ({then_expr})"
 
     def evaluate(self, config: dict[str, Any], var_names: dict[int, str]) -> bool:
@@ -217,28 +559,38 @@ class Constraint:
             True if the constraint is satisfied
         """
         if self.expr is not None:
-            var_name = var_names.get(id(self.expr.tvar))
-            if var_name is None or var_name not in config:
-                return True  # Missing value - constraint doesn't apply
-            return self.expr.evaluate(config[var_name])
+            return self.expr.evaluate_config(config, var_names)
 
         # Implication: not(when) or then
         assert self.when is not None and self.then is not None
 
-        when_var = var_names.get(id(self.when.tvar))
-        then_var = var_names.get(id(self.then.tvar))
-
-        # If variables are missing, constraint doesn't apply
-        if when_var is None or when_var not in config:
-            return True
-        if then_var is None or then_var not in config:
-            return True
-
-        when_result = self.when.evaluate(config[when_var])
+        when_result = self.when.evaluate_config(config, var_names)
         if not when_result:
             return True  # When is false, implication is satisfied
 
-        return self.then.evaluate(config[then_var])
+        return self.then.evaluate_config(config, var_names)
+
+    def explain(self, var_names: dict[int, str] | None = None) -> str:
+        """Return a plain English explanation of this constraint.
+
+        Args:
+            var_names: Optional mapping from ParameterRange id() to name.
+
+        Returns:
+            Human-readable explanation of the constraint.
+
+        Example:
+            >>> c = implies(model.equals("gpt-4"), temp.lte(0.7))
+            >>> c.explain()
+            "IF model equals 'gpt-4' THEN temperature is at most 0.7"
+        """
+        if self.expr is not None:
+            return f"REQUIRE: {self.expr.explain(var_names)}"
+
+        assert self.when is not None and self.then is not None
+        when_text = self.when.explain(var_names)
+        then_text = self.then.explain(var_names)
+        return f"IF {when_text} THEN {then_text}"
 
     def to_structural_constraint(
         self, var_names: dict[int, str]
@@ -256,21 +608,12 @@ class Constraint:
         from traigent.tvl.models import StructuralConstraint
 
         if self.expr is not None:
-            var_name = var_names.get(
-                id(self.expr.tvar), f"params.{self.expr.tvar.name or 'unknown'}"
-            )
-            return StructuralConstraint(expr=self.expr.to_expression(var_name))
+            return StructuralConstraint(expr=self.expr.to_expression(var_names))
 
         assert self.when is not None and self.then is not None
-        when_var = var_names.get(
-            id(self.when.tvar), f"params.{self.when.tvar.name or 'unknown'}"
-        )
-        then_var = var_names.get(
-            id(self.then.tvar), f"params.{self.then.tvar.name or 'unknown'}"
-        )
         return StructuralConstraint(
-            when=self.when.to_expression(when_var),
-            then=self.then.to_expression(then_var),
+            when=self.when.to_expression(var_names),
+            then=self.then.to_expression(var_names),
         )
 
     def to_callable(
@@ -312,30 +655,15 @@ class Constraint:
         if var_names is None:
             var_names = {}
             missing_names: list[str] = []
-
-            if self.expr is not None:
-                if self.expr.tvar.name:
-                    var_names[id(self.expr.tvar)] = self.expr.tvar.name
-                else:
-                    missing_names.append("expr.tvar")
-            else:
-                if self.when is not None:
-                    if self.when.tvar.name:
-                        var_names[id(self.when.tvar)] = self.when.tvar.name
-                    else:
-                        missing_names.append("when.tvar")
-                if self.then is not None:
-                    if self.then.tvar.name:
-                        var_names[id(self.then.tvar)] = self.then.tvar.name
-                    else:
-                        missing_names.append("then.tvar")
+            self._collect_tvars(var_names, missing_names)
 
             if missing_names:
                 warnings.warn(
-                    f"Constraint has ParameterRange(s) without names: {missing_names}. "
+                    f"Constraint has ParameterRange(s) without names: "
+                    f"{missing_names}. "
                     "This may cause constraint evaluation to fail. "
-                    "Set the 'name' attribute on your Range/Choices/IntRange objects, "
-                    "or provide explicit var_names mapping.",
+                    "Set the 'name' attribute on your Range/Choices/IntRange "
+                    "objects, or provide explicit var_names mapping.",
                     UserWarning,
                     stacklevel=2,
                 )
@@ -344,7 +672,7 @@ class Constraint:
         captured_var_names = dict(var_names)
 
         def constraint_fn(config: dict[str, Any]) -> bool:
-            """Evaluate the structural constraint against the given configuration."""
+            """Evaluate the structural constraint against the config."""
             return self.evaluate(config, captured_var_names)
 
         # Add metadata for debugging
@@ -353,6 +681,34 @@ class Constraint:
 
         return constraint_fn
 
+    def _collect_tvars(
+        self,
+        var_names: dict[int, str],
+        missing_names: list[str],
+    ) -> None:
+        """Recursively collect tvar references from expression tree."""
+
+        def collect_from_expr(expr: BoolExpr, path: str) -> None:
+            """Recursively extract tvar names from a boolean expression tree."""
+            if isinstance(expr, Condition):
+                if expr.tvar.name:
+                    var_names[id(expr.tvar)] = expr.tvar.name
+                else:
+                    missing_names.append(path)
+            elif isinstance(expr, (AndCondition, OrCondition)):
+                for i, sub in enumerate(expr.conditions):
+                    collect_from_expr(sub, f"{path}[{i}]")
+            elif isinstance(expr, NotCondition):
+                collect_from_expr(expr.condition, f"~{path}")
+
+        if self.expr is not None:
+            collect_from_expr(self.expr, "expr")
+        else:
+            if self.when is not None:
+                collect_from_expr(self.when, "when")
+            if self.then is not None:
+                collect_from_expr(self.then, "then")
+
 
 # =============================================================================
 # Convenience Factory Functions
@@ -360,8 +716,8 @@ class Constraint:
 
 
 def implies(
-    when: Condition,
-    then: Condition,
+    when: BoolExpr,
+    then: BoolExpr,
     description: str | None = None,
     id: str | None = None,
 ) -> Constraint:
@@ -394,7 +750,7 @@ def implies(
 
 
 def require(
-    condition: Condition,
+    condition: BoolExpr,
     description: str | None = None,
     id: str | None = None,
 ) -> Constraint:
@@ -422,38 +778,76 @@ def require(
 
 
 # =============================================================================
-# Compound Conditions (for future extension)
+# Fluent Builder
 # =============================================================================
 
 
-@dataclass(frozen=True)
-class AndCondition:
-    """Conjunction of multiple conditions (all must be true).
+class WhenBuilder:
+    """Builder for when(condition).then(consequence) fluent syntax.
 
-    Note: This is a placeholder for future extension. Currently,
-    compound conditions should be expressed as multiple constraints.
+    Example:
+        >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
     """
 
-    conditions: tuple[Condition, ...] = field(default_factory=tuple)
+    def __init__(self, condition: BoolExpr) -> None:
+        """Initialize the WhenBuilder with a guard condition.
 
-    def __post_init__(self) -> None:
-        if len(self.conditions) < 2:
-            raise ValueError("AndCondition requires at least 2 conditions")
+        Args:
+            condition: The boolean expression that serves as the implication guard.
+        """
+        self._condition = condition
+
+    def then(
+        self,
+        consequence: BoolExpr,
+        description: str | None = None,
+        id: str | None = None,
+    ) -> Constraint:
+        """Complete the implication constraint.
+
+        Args:
+            consequence: The condition that must hold when the guard is true
+            description: Optional human-readable description
+            id: Optional identifier for the constraint
+
+        Returns:
+            A Constraint with implication semantics
+        """
+        return Constraint(
+            when=self._condition,
+            then=consequence,
+            description=description,
+            id=id,
+        )
 
 
-@dataclass(frozen=True)
-class OrCondition:
-    """Disjunction of multiple conditions (at least one must be true).
+def when(condition: BoolExpr) -> WhenBuilder:
+    """Start a when().then() fluent implication chain.
 
-    Note: This is a placeholder for future extension. Currently,
-    compound conditions should be expressed as multiple constraints.
+    Provides readable syntax for constraints:
+        when(model.equals("gpt-4")).then(temp.lte(0.7))
+
+    Args:
+        condition: The guard/antecedent condition
+
+    Returns:
+        A WhenBuilder to complete with .then()
+
+    Example:
+        >>> from traigent import Range, Choices, when
+        >>>
+        >>> model = Choices(["gpt-4", "gpt-3.5"])
+        >>> temp = Range(0.0, 2.0)
+        >>>
+        >>> # If model is gpt-4, temperature must be <= 0.7
+        >>> c = when(model.equals("gpt-4")).then(temp.lte(0.7))
     """
+    return WhenBuilder(condition)
 
-    conditions: tuple[Condition, ...] = field(default_factory=tuple)
 
-    def __post_init__(self) -> None:
-        if len(self.conditions) < 2:
-            raise ValueError("OrCondition requires at least 2 conditions")
+# =============================================================================
+# Utility Functions
+# =============================================================================
 
 
 def constraints_to_callables(
@@ -491,13 +885,224 @@ def constraints_to_callables(
     return [c.to_callable(var_names) for c in constraints]
 
 
+def normalize_constraints(
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
+    var_names: dict[int, str] | None = None,
+) -> list[Callable[[dict[str, Any]], bool]]:
+    """Normalize mixed Constraint/BoolExpr/Callable list to pure callables.
+
+    This function converts a list containing Constraint objects, bare BoolExpr
+    objects, and raw callable functions into a uniform list of callables
+    compatible with the optimizer.
+
+    - Constraint objects: converted via to_callable()
+    - BoolExpr objects: wrapped in Constraint(expr=...) then converted
+    - Raw callables: passed through unchanged
+
+    This enables users to mix all syntax styles:
+    - Functional: implies(model.equals("gpt-4"), temp.lte(0.7))
+    - Operator: model.equals("gpt-4") >> temp.lte(0.7)
+    - Bare condition: temp.lte(1.5)  (auto-wrapped with require())
+    - Legacy callable: lambda cfg: cfg["max_tokens"] < 4096
+
+    Args:
+        constraints: List of Constraint/BoolExpr/callable objects, or None
+        var_names: Optional mapping from ParameterRange id() to config key.
+            If not provided, uses the name attribute of each ParameterRange.
+            Only used for Constraint/BoolExpr objects.
+
+    Returns:
+        List of callable constraint functions. Empty list if input is None.
+
+    Raises:
+        TypeError: If an element is not a Constraint, BoolExpr, or callable.
+
+    Example:
+        >>> from traigent import Range, Choices, implies, normalize_constraints
+        >>>
+        >>> model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        >>> temp = Range(0.0, 2.0, name="temperature")
+        >>>
+        >>> # Mixed list of different constraint types
+        >>> constraints = [
+        ...     implies(model.equals("gpt-4"), temp.lte(0.7)),
+        ...     model.equals("gpt-3.5") >> temp.lte(0.9),
+        ...     temp.lte(1.5),  # bare BoolExpr, auto-wrapped
+        ...     lambda cfg: cfg["max_tokens"] < 4096,
+        ... ]
+        >>>
+        >>> # Normalize for use with decorator
+        >>> normalized = normalize_constraints(constraints)
+    """
+    if not constraints:
+        return []
+
+    result: list[Callable[[dict[str, Any]], bool]] = []
+    for i, constraint in enumerate(constraints):
+        if isinstance(constraint, Constraint):
+            result.append(constraint.to_callable(var_names))
+        elif isinstance(constraint, BoolExpr):
+            # Wrap bare BoolExpr in a require() constraint
+            wrapped = Constraint(expr=constraint)
+            result.append(wrapped.to_callable(var_names))
+        elif callable(constraint):
+            result.append(constraint)
+        else:
+            raise TypeError(
+                f"constraints[{i}]: Expected Constraint, BoolExpr, or callable, "
+                f"got {type(constraint).__name__}"
+            )
+    return result
+
+
+# =============================================================================
+# Constraint Conflict Detection
+# =============================================================================
+
+
+@dataclass
+class ConstraintConflict:
+    """Describes a conflict between constraints.
+
+    Attributes:
+        constraints: The constraints that conflict.
+        config: A sample configuration that violates the constraints.
+        messages: Human-readable explanations of each violation.
+    """
+
+    constraints: list[Constraint]
+    config: dict[str, Any]
+    messages: list[str]
+
+    def __str__(self) -> str:
+        lines = ["Constraint conflict detected:"]
+        for i, (c, msg) in enumerate(zip(self.constraints, self.messages, strict=True)):
+            lines.append(f"  [{i+1}] {c.explain()}")
+            lines.append(f"      Violated: {msg}")
+        lines.append(f"  Sample config: {self.config}")
+        return "\n".join(lines)
+
+
+def check_constraints_conflict(
+    constraints: list[Constraint],
+    sample_configs: list[dict[str, Any]] | None = None,
+    var_names: dict[int, str] | None = None,
+) -> ConstraintConflict | None:
+    """Check if constraints conflict with each other.
+
+    This performs a simple heuristic check by testing sample configurations
+    against the constraint set. For comprehensive SAT-based checking,
+    consider using z3-solver (MIT license).
+
+    Args:
+        constraints: List of Constraint objects to check.
+        sample_configs: Optional list of configs to test. If not provided,
+            the function returns None (no conflict detected by default).
+        var_names: Optional mapping from ParameterRange id() to config key.
+
+    Returns:
+        ConstraintConflict if a conflict is detected, None otherwise.
+
+    Example:
+        >>> temp = Range(0.0, 2.0, name="temperature")
+        >>> c1 = require(temp.lte(0.5))
+        >>> c2 = require(temp.gte(0.8))
+        >>> # These cannot both be satisfied
+        >>> conflict = check_constraints_conflict(
+        ...     [c1, c2],
+        ...     sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}]
+        ... )
+        >>> if conflict:
+        ...     print(conflict)
+    """
+    if not constraints or not sample_configs:
+        return None
+
+    # Build var_names from constraints if not provided
+    if var_names is None:
+        var_names = {}
+        for c in constraints:
+            c._collect_tvars(var_names, [])
+
+    # Test each sample config against all constraints
+    for config in sample_configs:
+        violations: list[tuple[Constraint, str]] = []
+
+        for constraint in constraints:
+            if not constraint.evaluate(config, var_names):
+                # Constraint violated - record it
+                explanation = constraint.explain(var_names)
+                violations.append((constraint, explanation))
+
+        # If all constraints violated, we found a conflict scenario
+        if len(violations) == len(constraints) and len(violations) > 1:
+            return ConstraintConflict(
+                constraints=[v[0] for v in violations],
+                config=config,
+                messages=[v[1] for v in violations],
+            )
+
+    return None
+
+
+def explain_constraint_violation(
+    constraint: Constraint,
+    config: dict[str, Any],
+    var_names: dict[int, str] | None = None,
+) -> str | None:
+    """Explain why a constraint is violated by a configuration.
+
+    Args:
+        constraint: The constraint to check.
+        config: The configuration to test.
+        var_names: Optional mapping from ParameterRange id() to config key.
+
+    Returns:
+        Human-readable explanation if violated, None if satisfied.
+
+    Example:
+        >>> temp = Range(0.0, 2.0, name="temperature")
+        >>> c = require(temp.lte(0.5))
+        >>> msg = explain_constraint_violation(c, {"temperature": 0.9})
+        >>> print(msg)
+        "Constraint violated: REQUIRE: temperature is at most 0.5
+         Config has temperature=0.9"
+    """
+    if var_names is None:
+        var_names = {}
+        constraint._collect_tvars(var_names, [])
+
+    if constraint.evaluate(config, var_names):
+        return None  # Not violated
+
+    explanation = constraint.explain(var_names)
+
+    # Find which values caused the violation
+    relevant_values = []
+    for _tvar_id, name in var_names.items():
+        if name in config:
+            relevant_values.append(f"{name}={config[name]!r}")
+
+    config_str = ", ".join(relevant_values) if relevant_values else str(config)
+
+    return f"Constraint violated: {explanation}\n  Config has: {config_str}"
+
+
 __all__ = [
     "AndCondition",
+    "BoolExpr",
     "Condition",
     "Constraint",
+    "ConstraintConflict",
+    "NotCondition",
     "OperatorType",
     "OrCondition",
+    "WhenBuilder",
+    "check_constraints_conflict",
     "constraints_to_callables",
+    "explain_constraint_violation",
     "implies",
+    "normalize_constraints",
     "require",
+    "when",
 ]

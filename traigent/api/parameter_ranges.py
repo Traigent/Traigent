@@ -634,7 +634,8 @@ def normalize_configuration_space(
     Precedence: inline_params override config_space entries.
 
     Args:
-        config_space: Explicit configuration_space dict (may contain Range/Choices)
+        config_space: Explicit configuration_space dict, or a ConfigSpace object
+            (may contain Range/Choices)
         inline_params: Inline kwargs from decorator that are param definitions
 
     Returns:
@@ -647,7 +648,11 @@ def normalize_configuration_space(
 
     # Start with explicit config_space (lower precedence)
     if config_space:
-        if not isinstance(config_space, dict):
+        # Handle ConfigSpace objects by extracting their tvars
+        if hasattr(config_space, "tvars") and hasattr(config_space, "constraints"):
+            # It's a ConfigSpace object - extract the tvars dict
+            config_space = config_space.tvars
+        elif not isinstance(config_space, dict):
             from traigent.utils.exceptions import ValidationError
 
             raise ValidationError(

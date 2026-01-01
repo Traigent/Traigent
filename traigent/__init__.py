@@ -48,11 +48,18 @@ from traigent.api.config_space import ConfigSpace
 
 # TVL constraint system
 from traigent.api.constraints import (
+    AndCondition,
+    BoolExpr,
     Condition,
     Constraint,
+    NotCondition,
+    OrCondition,
+    WhenBuilder,
     constraints_to_callables,
     implies,
+    normalize_constraints,
     require,
+    when,
 )
 
 # Public API exports
@@ -154,29 +161,36 @@ __all__ = [
     "Choices",
     "ParameterRange",
     # TVL constraint system
+    "AndCondition",
+    "BoolExpr",
     "Condition",
     "Constraint",
     "ConfigSpace",
     "ConstraintValidator",
     "ConstraintViolation",
     "ConstraintValidationResult",
+    "NotCondition",
+    "OrCondition",
     "PythonConstraintValidator",
     "SatResult",
     "SatStatus",
+    "WhenBuilder",
     "constraints_to_callables",
     "implies",
+    "normalize_constraints",
     "require",
+    "when",
     # Configuration functions
     "configure",
     "initialize",
     "override_config",
-    "set_strategy",
     "get_available_strategies",
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
     "get_optimization_insights",
     "get_version_info",
+    "set_strategy",
     # Configuration types
     "TraigentConfig",
     # Lifecycle and state
