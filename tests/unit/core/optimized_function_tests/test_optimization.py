@@ -199,6 +199,47 @@ class TestOptimization:
             assert result.best_score == 0.85
 
     @pytest.mark.asyncio
+    async def test_cost_limit_forwarded_to_orchestrator(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Ensure cost_limit/cost_approved are forwarded to the orchestrator."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            max_trials=3,
+        )
+
+        from datetime import datetime
+
+        mock_result = OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.5},
+            best_score=0.9,
+            optimization_id="cost-limit-test",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=sample_objectives,
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        with patch(
+            "traigent.core.optimized_function.OptimizationOrchestrator"
+        ) as MockOrchestrator:
+            mock_orchestrator = MockOrchestrator.return_value
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+
+            await opt_func.optimize(cost_limit=1.5, cost_approved=True)
+
+            _, kwargs = MockOrchestrator.call_args
+            assert kwargs["cost_limit"] == 1.5
+            assert kwargs["cost_approved"] is True
+
+    @pytest.mark.asyncio
     async def test_optimization_error_handling(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):

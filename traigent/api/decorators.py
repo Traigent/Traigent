@@ -270,6 +270,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
+    "max_trials": 50,
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -468,8 +469,6 @@ def _apply_tvl_artifact(
         overrides = artifact.runtime_overrides()
         for key, value in overrides.items():
             runtime_overrides.setdefault(key, value)
-    elif artifact.metadata:
-        runtime_overrides.setdefault("tvl_metadata", artifact.metadata)
 
     if not default_config and artifact.default_config:
         default_config = artifact.default_config
@@ -898,6 +897,21 @@ def optimize(
             execution_bundle.samples_include_pruned,
             defaults,
         )
+
+        # Enterprise-gated features: reps_per_trial and reps_aggregation
+        # These are reserved for future Traigent Enterprise editions
+        if execution_bundle.reps_per_trial != 1:
+            raise NotImplementedError(
+                "reps_per_trial is not available in this version. "
+                "This feature requires Traigent Enterprise. "
+                "Contact sales@traigent.ai for more information."
+            )
+        if execution_bundle.reps_aggregation != "mean":
+            raise NotImplementedError(
+                "reps_aggregation is not available in this version. "
+                "This feature requires Traigent Enterprise. "
+                "Contact sales@traigent.ai for more information."
+            )
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle

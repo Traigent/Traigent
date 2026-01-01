@@ -1115,7 +1115,7 @@ class TestFullMetricIntegration:
                 "temperature": [0.3, 0.5, 0.7],
             },
             max_trials=6,
-            parallel_config={"max_workers": 2},
+            parallel_config={"thread_workers": 2},
             mock_mode_config={"optimizer": "random"},
             expected=ExpectedResult(required_metrics=["accuracy", "cost"]),
             gist_template="full-parallel -> {trial_count()} | {status()}",

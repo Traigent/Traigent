@@ -278,3 +278,49 @@ class TestEdgeCases(DecoratorTestBase):
         batches = list(generator_func(items))
         assert len(batches) > 0
         assert all(isinstance(batch, list) for batch in batches)
+
+
+class TestEnterpriseGatedFeatures(DecoratorTestBase):
+    """Test enterprise-gated features raise NotImplementedError."""
+
+    def test_reps_per_trial_raises_not_implemented(self):
+        """Test that reps_per_trial raises NotImplementedError."""
+        with pytest.raises(NotImplementedError) as exc:
+
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                execution={"reps_per_trial": 3},
+            )
+            def test_func(text: str) -> str:
+                return text
+
+        assert "reps_per_trial is not available" in str(exc.value)
+        assert "Traigent Enterprise" in str(exc.value)
+
+    def test_reps_aggregation_raises_not_implemented(self):
+        """Test that reps_aggregation raises NotImplementedError."""
+        with pytest.raises(NotImplementedError) as exc:
+
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                execution={"reps_aggregation": "median"},
+            )
+            def test_func(text: str) -> str:
+                return text
+
+        assert "reps_aggregation is not available" in str(exc.value)
+        assert "Traigent Enterprise" in str(exc.value)
+
+    def test_default_reps_values_work(self):
+        """Test that default reps values (1, 'mean') work fine."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            execution={"reps_per_trial": 1, "reps_aggregation": "mean"},
+        )
+        def test_func(text: str) -> str:
+            return text
+
+        # Should not raise - defaults are allowed
+        result = test_func("hello")
+        assert result == "hello"

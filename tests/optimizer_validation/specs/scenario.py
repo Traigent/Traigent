@@ -15,6 +15,28 @@ if TYPE_CHECKING:
     from .trace_expectations import TraceExpectations
 
 
+# =============================================================================
+# Dataset Size Recommendations
+# =============================================================================
+# These constants define recommended minimum dataset sizes for different test
+# categories. Using too small a dataset (e.g., 3 examples) can prevent proper
+# testing of optimization behaviors like convergence, parallel execution, and
+# algorithm-specific features.
+
+# Default dataset size - balanced for most tests
+DEFAULT_DATASET_SIZE = 10
+
+# Minimum sizes by test category
+DATASET_SIZE_MINIMAL = 3  # Only for edge case tests (e.g., empty, single)
+DATASET_SIZE_BASIC = 10  # Basic functionality tests
+DATASET_SIZE_ALGORITHM = 20  # Algorithm comparison tests (Bayesian needs samples)
+DATASET_SIZE_CONVERGENCE = 30  # Convergence/plateau detection tests
+DATASET_SIZE_PARALLEL = 15  # Parallel execution tests (need enough work to parallelize)
+DATASET_SIZE_STOP_CONDITION = (
+    20  # Stop condition tests (need room to trigger conditions)
+)
+
+
 class ExpectedOutcome(Enum):
     """Expected outcome of a test scenario."""
 
@@ -169,7 +191,9 @@ class TestScenario:
     # Evaluation
     evaluator: EvaluatorSpec = field(default_factory=EvaluatorSpec)
     dataset_path: str | None = None
-    dataset_size: int = 3
+    dataset_size: int = (
+        DEFAULT_DATASET_SIZE  # Use constants for category-specific sizes
+    )
 
     # Execution parameters
     max_trials: int = 5

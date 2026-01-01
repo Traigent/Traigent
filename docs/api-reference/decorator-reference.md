@@ -384,12 +384,10 @@ from traigent.config.parallel import ParallelConfig
         execution_mode="edge_analytics",
         local_storage_path="./my_results",
         minimal_logging=True,
-        parallel_config=ParallelConfig(thread_workers=4, max_concurrent_trials=2),
+        parallel_config=ParallelConfig(thread_workers=4, trial_concurrency=2),
         privacy_enabled=False,
         max_total_examples=1000,
         samples_include_pruned=True,
-        reps_per_trial=3,  # Run each config 3 times
-        reps_aggregation="mean",  # Aggregate using mean
     ),
     ...
 )
@@ -404,8 +402,6 @@ from traigent.config.parallel import ParallelConfig
 - `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
-- `reps_per_trial`: Repetitions per config for stability (default: 1)
-- `reps_aggregation`: How to aggregate repetitions ("mean", "median", "min", "max")
 
 #### `mock`
 

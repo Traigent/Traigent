@@ -363,7 +363,7 @@ class TestEffectiveParallelConfig:
                 "temperature": [0.3, 0.7],
             },
             max_trials=4,
-            parallel_config={"parallel_trials": 1},
+            parallel_config={"trial_concurrency": 1},
             gist_template="seq-explicit -> {trial_count()} | {status()}",
         )
 

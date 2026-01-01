@@ -148,17 +148,17 @@ class TVLSpecArtifact:
 
         # Ensure parallelism impacts runtime by mapping legacy parallel_trials into
         # the unified parallel_config structure used by execution.
-        if "parallel_trials" in overrides and "parallel_config" not in overrides:
+        if "parallel_trials" in overrides:
             parallel_trials_value = overrides.get("parallel_trials")
-            if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
-                from traigent.config.parallel import ParallelConfig
+            if "parallel_config" not in overrides:
+                if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
+                    from traigent.config.parallel import ParallelConfig
 
-                overrides["parallel_config"] = ParallelConfig.from_legacy(
-                    parallel_trials=parallel_trials_value
-                )
+                    overrides["parallel_config"] = ParallelConfig.from_legacy(
+                        parallel_trials=parallel_trials_value
+                    )
+            overrides.pop("parallel_trials", None)
 
-        if self.metadata:
-            overrides.setdefault("tvl_metadata", self.metadata)
         return overrides
 
 

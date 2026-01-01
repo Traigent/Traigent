@@ -190,7 +190,7 @@ class TestConcurrentExecution:
                 "temperature": [0.3, 0.5, 0.7],
             },
             max_trials=6,
-            parallel_config={"parallel_trials": 3},
+            parallel_config={"trial_concurrency": 3},
             timeout=30.0,
             mock_mode_config={"optimizer": "random"},
             gist_template="parallel-async -> {trial_count()} | {status()}",
@@ -230,7 +230,7 @@ class TestConcurrentExecution:
                 "temperature": [0.1, 0.5, 0.9],
             },
             max_trials=6,
-            parallel_config={"parallel_trials": 3},
+            parallel_config={"trial_concurrency": 3},
             mock_mode_config={"optimizer": "random", "random_seed": 42},
             gist_template="async-isolate -> {trial_count()} | {status()}",
         )

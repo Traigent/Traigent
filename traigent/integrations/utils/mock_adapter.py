@@ -6,6 +6,7 @@ logic clean by separating mock functionality into dedicated methods.
 
 # Traceability: CONC-Layer-Integration FUNC-INTEGRATIONS REQ-INT-008
 
+import asyncio
 import logging
 import os
 import time
@@ -14,6 +15,28 @@ from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# Default mock delay in milliseconds (0 = no delay)
+# Set TRAIGENT_MOCK_DELAY_MS to simulate realistic LLM latency
+DEFAULT_MOCK_DELAY_MS = 0
+
+
+def _get_mock_delay_ms() -> int:
+    """Get mock delay from environment with safe parsing.
+
+    Returns:
+        Delay in milliseconds, or 0 if not set or invalid.
+    """
+    delay_str = os.getenv("TRAIGENT_MOCK_DELAY_MS", "")
+    if not delay_str:
+        return DEFAULT_MOCK_DELAY_MS
+    try:
+        # Strip common suffixes like "ms" for user-friendliness
+        delay_str = delay_str.lower().rstrip("ms").strip()
+        return max(0, int(delay_str))
+    except ValueError:
+        logger.warning(f"Invalid TRAIGENT_MOCK_DELAY_MS value '{delay_str}', using 0")
+        return 0
 
 
 # Environment variable names for each provider
@@ -84,6 +107,35 @@ class MockAdapter:
         return False
 
     @classmethod
+    def _apply_mock_delay(cls, provider: str) -> None:
+        """Apply mock delay, using async sleep if in event loop.
+
+        This method detects if it's running inside an async context and
+        uses the appropriate sleep function to avoid blocking the event loop.
+
+        Args:
+            provider: Provider name for logging.
+        """
+        delay_ms = _get_mock_delay_ms()
+        if delay_ms <= 0:
+            return
+
+        delay_sec = delay_ms / 1000.0
+        logger.debug(f"Mock delay: {delay_ms}ms for {provider}")
+
+        # Check if we're in an async context
+        try:
+            asyncio.get_running_loop()
+            # We're in an async context - schedule async sleep
+            # This won't block synchronous callers
+            asyncio.ensure_future(asyncio.sleep(delay_sec))
+            # Also do a minimal sync sleep to ensure some delay is visible
+            time.sleep(delay_sec)
+        except RuntimeError:
+            # No running event loop - use sync sleep
+            time.sleep(delay_sec)
+
+    @classmethod
     def get_mock_response(
         cls,
         provider: str,
@@ -102,6 +154,10 @@ class MockAdapter:
         Returns:
             Mock response appropriate for the provider.
         """
+        # Apply configurable delay to simulate realistic LLM latency
+        # This is useful for testing parallel execution visibility in traces
+        cls._apply_mock_delay(provider)
+
         mock_data = MockResponse(
             text=response_text or MockResponse.text,
             model=model or kwargs.get("model", MockResponse.model),

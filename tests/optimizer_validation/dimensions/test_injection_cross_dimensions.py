@@ -296,7 +296,7 @@ class TestInjectionModeWithParallelExecution:
                 "temperature": [0.3, 0.5, 0.7],
             },
             max_trials=5,
-            parallel_config={"parallel_trials": 3},
+            parallel_config={"trial_concurrency": 3},
             timeout=60.0,  # Generous timeout to detect hangs
             gist_template=f"parallel+{injection_mode} -> {{trial_count()}} | {{status()}}",
         )
@@ -351,7 +351,7 @@ class TestInjectionModeWithParallelExecution:
             injection_mode=injection_mode,
             config_space=config_space,
             max_trials=6,
-            parallel_config={"parallel_trials": 3},
+            parallel_config={"trial_concurrency": 3},
             timeout=60.0,
             mock_mode_config={"optimizer": "random", "random_seed": 42},
             gist_template=f"isolation+{injection_mode} -> {{trial_count()}} | {{status()}}",

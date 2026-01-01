@@ -768,6 +768,32 @@ class BaseEvaluator(ABC):
 
         return correct / total if total > 0 else 0.0
 
+    async def _apply_mock_delay_if_enabled(self) -> None:
+        """Apply mock delay if TRAIGENT_MOCK_MODE and TRAIGENT_MOCK_DELAY_MS are set.
+
+        This simulates realistic LLM latency in mock mode to make parallel execution
+        visible in traces. Uses asyncio.sleep to not block the event loop.
+        """
+        import os
+
+        if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() not in ("true", "1", "yes"):
+            return
+
+        delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")
+        if not delay_str:
+            return
+
+        try:
+            # Strip common suffixes like "ms" for user-friendliness
+            delay_str_clean = delay_str.lower().rstrip("ms").strip()
+            delay_ms = max(0, int(delay_str_clean))
+        except ValueError:
+            logger.warning(f"Invalid TRAIGENT_MOCK_DELAY_MS value '{delay_str}'")
+            return
+
+        if delay_ms > 0:
+            await asyncio.sleep(delay_ms / 1000.0)
+
     @staticmethod
     def _should_expand_input_mapping(
         func: Callable[..., Any], payload: CollectionsMapping[str, Any]
@@ -1039,6 +1065,9 @@ class BaseEvaluator(ABC):
                     finally:
                         if temporary_executor is not None:
                             temporary_executor.shutdown(wait=False, cancel_futures=True)
+
+            # Apply mock delay if enabled (simulates LLM latency for trace visibility)
+            await self._apply_mock_delay_if_enabled()
 
             return output, None
 

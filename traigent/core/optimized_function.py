@@ -691,6 +691,13 @@ class OptimizedFunction:
         else:
             algorithm_kwargs = dict(algorithm_kwargs)
 
+        # Fail fast on invalid parallel_trials usage - users must use parallel_config
+        if "parallel_trials" in algorithm_kwargs:
+            raise ValueError(
+                "parallel_trials is not a valid parameter for optimize(). "
+                "Use parallel_config={'trial_concurrency': N} instead."
+            )
+
         runtime_tvl_spec_kw = algorithm_kwargs.pop("tvl_spec", None)
         runtime_tvl_env_kw = algorithm_kwargs.pop("tvl_environment", None)
         runtime_tvl_bundle_kw = algorithm_kwargs.pop("tvl", None)
@@ -920,13 +927,18 @@ class OptimizedFunction:
 
         for key in (
             "parallel_config",
-            "parallel_trials",
             "max_total_examples",
             "samples_include_pruned",
-            "tvl_metadata",
         ):
             if key in overrides and key not in algorithm_kwargs:
                 algorithm_kwargs[key] = overrides[key]
+
+        # Fail fast on invalid parallel_trials usage - users must use parallel_config
+        if "parallel_trials" in overrides or "parallel_trials" in algorithm_kwargs:
+            raise ValueError(
+                "parallel_trials is not a valid parameter for optimize(). "
+                "Use parallel_config={'trial_concurrency': N} instead."
+            )
 
         return updated_algorithm, updated_max_trials, updated_timeout
 
@@ -1219,6 +1231,10 @@ class OptimizedFunction:
             orchestrator_kwargs["plateau_window"] = algorithm_kwargs["plateau_window"]
         if "plateau_epsilon" in algorithm_kwargs:
             orchestrator_kwargs["plateau_epsilon"] = algorithm_kwargs["plateau_epsilon"]
+        if "cost_limit" in algorithm_kwargs:
+            orchestrator_kwargs["cost_limit"] = algorithm_kwargs["cost_limit"]
+        if "cost_approved" in algorithm_kwargs:
+            orchestrator_kwargs["cost_approved"] = algorithm_kwargs["cost_approved"]
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,

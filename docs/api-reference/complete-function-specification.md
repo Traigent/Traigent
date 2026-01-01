@@ -62,7 +62,7 @@ def optimize(
 | --- | --- | --- |
 | `evaluation` | `EvaluationOptions \| dict \| None` | Bundle for `eval_dataset`, `custom_evaluator`, `scoring_function`, and `metric_functions`. |
 | `injection` | `InjectionOptions \| dict \| None` | Bundle for `injection_mode`, `config_param`, `auto_override_frameworks`, and `framework_targets`. |
-| `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, `max_total_examples`, `reps_per_trial`, and `reps_aggregation`. |
+| `execution` | `ExecutionOptions \| dict \| None` | Bundle for execution settings including `execution_mode`, `local_storage_path`, `parallel_config`, `privacy_enabled`, and `max_total_examples`. |
 | `mock` | `MockModeOptions \| dict \| None` | Bundle for mock-mode settings: `enabled`, `override_evaluator`, `base_accuracy`, `variance`. |
 
 **ExecutionOptions Fields** (open-source builds run in `edge_analytics` only; other modes are roadmap-compatible but not currently provisioned)
@@ -76,8 +76,6 @@ def optimize(
 | `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
-| `reps_per_trial` | `int` | `1` | Number of repetitions per configuration for statistical stability. Set to 3-5 for noisy evaluations. |
-| `reps_aggregation` | `str` | `"mean"` | How to aggregate metrics across repetitions: `"mean"`, `"median"`, `"min"`, `"max"`. |
 
 **Legacy Compatibility**
 

@@ -8,7 +8,14 @@ from .builders import (
     failure_scenario,
     multi_objective_scenario,
 )
-from .scenario import (
+from .scenario import (  # Dataset size constants; Scenario classes
+    DATASET_SIZE_ALGORITHM,
+    DATASET_SIZE_BASIC,
+    DATASET_SIZE_CONVERGENCE,
+    DATASET_SIZE_MINIMAL,
+    DATASET_SIZE_PARALLEL,
+    DATASET_SIZE_STOP_CONDITION,
+    DEFAULT_DATASET_SIZE,
     ConstraintSpec,
     EvaluatorSpec,
     ExpectedOutcome,
@@ -25,6 +32,14 @@ from .trace_expectations import (
 from .validators import ResultValidator
 
 __all__ = [
+    # Dataset size constants
+    "DEFAULT_DATASET_SIZE",
+    "DATASET_SIZE_MINIMAL",
+    "DATASET_SIZE_BASIC",
+    "DATASET_SIZE_ALGORITHM",
+    "DATASET_SIZE_CONVERGENCE",
+    "DATASET_SIZE_PARALLEL",
+    "DATASET_SIZE_STOP_CONDITION",
     # Scenario classes
     "TestScenario",
     "ObjectiveSpec",

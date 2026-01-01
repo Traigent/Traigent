@@ -805,11 +805,28 @@ def scenario_runner(
             return None, e
 
         # Run optimization
+        # Extract parallel configuration from scenario
+        # parallel_trials from mock_mode_config needs to be converted to parallel_config
+        parallel_config = None
+        if scenario.parallel_config:
+            parallel_config = scenario.parallel_config
+        elif scenario.mock_mode_config:
+            parallel_trials = scenario.mock_mode_config.get("parallel_trials")
+            if parallel_trials is not None:
+                # Convert legacy parallel_trials to parallel_config format
+                parallel_config = {"trial_concurrency": parallel_trials}
+                if parallel_trials > 1:
+                    parallel_config["mode"] = "parallel"
+
         try:
-            result = await decorated.optimize(
-                max_trials=scenario.max_trials,
-                timeout=scenario.timeout,
-            )
+            optimize_kwargs: dict[str, Any] = {
+                "max_trials": scenario.max_trials,
+                "timeout": scenario.timeout,
+            }
+            if parallel_config is not None:
+                optimize_kwargs["parallel_config"] = parallel_config
+
+            result = await decorated.optimize(**optimize_kwargs)
             return decorated, result
         except Exception as e:
             return decorated, e

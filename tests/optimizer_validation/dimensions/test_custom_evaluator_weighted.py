@@ -578,7 +578,7 @@ class TestCustomEvaluatorWithParallel:
                 "temperature": [0.3, 0.5, 0.7],
             },
             max_trials=6,
-            parallel_config={"max_workers": workers},
+            parallel_config={"thread_workers": workers},
             mock_mode_config={"optimizer": "random"},
             gist_template=f"custom-parallel-{workers} -> {{trial_count()}} | {{status()}}",
         )
@@ -1130,7 +1130,7 @@ class TestCustomEvaluatorWeightedAlgorithmMatrix:
                 "temperature": [0.3, 0.5, 0.7],
             },
             max_trials=6,
-            parallel_config={"max_workers": 2},
+            parallel_config={"thread_workers": 2},
             mock_mode_config={"optimizer": "random"},
             expected=ExpectedResult(required_metrics=["accuracy", "cost"]),
             gist_template="custom-wt-parallel -> {trial_count()} | {status()}",

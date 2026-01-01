@@ -280,19 +280,19 @@ def search_tests(keyword: str) -> list[dict[str, str]]:
     results: list[dict[str, str]] = []
 
     for test_id, test in graph.tests.items():
-        name = test.get("name", "")
-        description = test.get("description", "")
+        name = test.get("name", "") or ""
+        description = test.get("description", "") or ""
 
         if keyword_lower in name.lower() or keyword_lower in description.lower():
             results.append(
                 {
                     "id": test_id,
                     "name": name,
-                    "file": test.get("test_file", ""),
+                    "file": test.get("test_file", "") or "",
                     "description": (
                         description[:100] + "..."
-                        if len(description) > 100
-                        else description
+                        if description and len(description) > 100
+                        else (description or "")
                     ),
                 }
             )

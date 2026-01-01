@@ -545,7 +545,10 @@ exploration:
         assert overrides.get("max_trials") == 50
         assert overrides.get("cost_limit") == 10.0
         assert overrides.get("timeout") == 1800
-        assert overrides.get("parallel_trials") == 4
+        parallel_config = overrides.get("parallel_config")
+        assert parallel_config is not None
+        assert parallel_config.trial_concurrency == 4
+        assert "parallel_trials" not in overrides
 
     def test_exploration_and_optimization_conflict_raises(self, tmp_path: Path) -> None:
         """Error should be raised if both exploration and optimization exist."""
@@ -638,7 +641,10 @@ optimization:
         # Legacy budget values should be used
         assert overrides.get("max_trials") == 100
         assert overrides.get("timeout") == 3600
-        assert overrides.get("parallel_trials") == 8
+        parallel_config = overrides.get("parallel_config")
+        assert parallel_config is not None
+        assert parallel_config.trial_concurrency == 8
+        assert "parallel_trials" not in overrides
 
     def test_exploration_budgets_only_when_no_legacy(self, tmp_path: Path) -> None:
         """exploration.budgets fields are used when legacy budget is not set."""
@@ -669,7 +675,7 @@ exploration:
         assert overrides.get("timeout") == 2400
 
     def test_exploration_parallelism_only(self, tmp_path: Path) -> None:
-        """exploration.parallelism alone adds parallel_trials."""
+        """exploration.parallelism alone adds parallel_config."""
         spec_content = """
 tvars:
   - name: model
@@ -690,7 +696,10 @@ exploration:
         artifact = load_tvl_spec(spec_path=spec_file)
         overrides = artifact.runtime_overrides()
 
-        assert overrides.get("parallel_trials") == 6
+        parallel_config = overrides.get("parallel_config")
+        assert parallel_config is not None
+        assert parallel_config.trial_concurrency == 6
+        assert "parallel_trials" not in overrides
         # Should not have other budget keys
         assert "max_trials" not in overrides
         assert "timeout" not in overrides
@@ -719,6 +728,7 @@ exploration: {}
         assert "max_trials" not in overrides
         assert "timeout" not in overrides
         assert "parallel_trials" not in overrides
+        assert "parallel_config" not in overrides
         assert "cost_limit" not in overrides
 
     def test_legacy_budget_max_total_examples(self, tmp_path: Path) -> None:

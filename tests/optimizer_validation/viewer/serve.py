@@ -41,6 +41,11 @@ RESULTS_DIR.mkdir(exist_ok=True)
 # Test directory path (used for collection and validation)
 TEST_DIR = "tests/optimizer_validation"
 
+# Chat mode configuration
+# Set VIEWER_CHAT_USE_CLI=true to enable Claude CLI (requires claude CLI installed)
+# Default is false (local fallback mode) for reliability
+CHAT_USE_CLI = os.environ.get("VIEWER_CHAT_USE_CLI", "false").lower() == "true"
+
 # Allowed test target prefixes (security: restrict what can be run)
 ALLOWED_TARGET_PREFIX = f"{TEST_DIR}/"
 
@@ -228,6 +233,8 @@ def run_tests_async(job_id: str, test_target: str, result_file: Path) -> None:
     env["TRAIGENT_MOCK_MODE"] = "true"
     env["TRAIGENT_TRACE_ENABLED"] = "true"
     env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
+    # Add mock delay to make parallel execution visible in traces (50ms default)
+    env.setdefault("TRAIGENT_MOCK_DELAY_MS", "50")
 
     try:
         process = subprocess.run(
@@ -307,17 +314,43 @@ def get_latest_results() -> dict[str, Any] | None:
 
 
 def process_chat_message(message: str, history: list[dict[str, Any]]) -> dict[str, Any]:
-    """Process a chat message using Claude Code CLI.
+    """Process a chat message.
 
-    This invokes the Claude Code CLI with a prompt that includes context
-    about the test suite and access to the chatbot tools module.
+    Uses either Claude CLI (if VIEWER_CHAT_USE_CLI=true) or local tool execution.
+    Local mode is default for reliability (CLI can have fs.watch issues in subprocess).
 
     Args:
         message: The user's message
         history: Recent conversation history
 
     Returns:
-        Dict with 'response' text and 'tools_used' list
+        Dict with 'response' text, 'tools_used' list, and 'mode' indicator
+    """
+    if CHAT_USE_CLI:
+        result = _process_chat_with_cli(message, history)
+        # If CLI fails, fall back to local mode
+        if "CLI error" in result.get("response", "") or "Error:" in result.get(
+            "response", ""
+        ):
+            result = _process_chat_fallback(message)
+            result["mode"] = "local (CLI failed)"
+        else:
+            result["mode"] = "cli"
+        return result
+
+    # Default: use local tool execution for reliability
+    result = _process_chat_fallback(message)
+    result["mode"] = "local"
+    return result
+
+
+def _process_chat_with_cli(
+    message: str, history: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Process chat using Claude Code CLI.
+
+    Note: This can fail with fs.watch errors when invoked as subprocess.
+    Use VIEWER_CHAT_USE_CLI=true to enable, but expect potential failures.
     """
     # Build context from recent history
     context_lines = []
@@ -334,28 +367,11 @@ def process_chat_message(message: str, history: list[dict[str, Any]]) -> dict[st
     # Build the prompt for Claude Code CLI
     cli_prompt = f"""You are a test suite assistant for Traigent's optimizer validation tests.
 
-## Your Role
-Answer questions about the test suite using the chatbot tools module.
-
 ## Available Tools (via Python)
-You have access to these functions in `tests.optimizer_validation.chatbot.tools`:
 - `get_test_stats()` - Get overall test statistics
 - `list_dimensions()` - List all test dimensions and values
 - `search_tests(keyword)` - Search tests by keyword
-- `get_test_details(test_id)` - Get details for a specific test
-- `get_coverage_matrix(dim1, dim2)` - Get coverage matrix for two dimensions
 - `get_coverage_gaps(dim1, dim2)` - Find uncovered dimension pairs
-- `query_knowledge_graph(query_name, parameters)` - Run predefined queries
-
-## Test Dimensions
-- InjectionMode: context, seamless, parameter, attribute
-- ExecutionMode: edge_analytics, privacy, hybrid, cloud, standard
-- Algorithm: random, grid, optuna_tpe, optuna_cmaes, optuna_random, bayesian
-- ConfigSpaceType: categorical_only, continuous_only, mixed, single_value
-- ObjectiveConfig: single_maximize, single_minimize, multi_objective, weighted
-- StopCondition: max_trials, timeout, convergence, config_exhaustion
-- ParallelMode: sequential, parallel
-- ConstraintUsage: none, config_only, metric_based
 
 ## Recent Conversation
 {history_context}
@@ -363,73 +379,40 @@ You have access to these functions in `tests.optimizer_validation.chatbot.tools`
 ## Current Question
 {message}
 
-## Instructions
-1. Use the Python tools to answer the question
-2. Be concise and helpful
-3. If you need to run Python code, use the tools module
-4. Format results clearly for the user"""
+Be concise and helpful. Use the tools to answer questions about tests."""
 
     try:
-        # Run Claude Code CLI with the prompt using Opus model
         result = subprocess.run(
             [
                 "claude",
-                "--print",  # Print response only
+                "--print",
                 "--model",
-                "opus",  # Use Opus model
-                "--dangerously-skip-permissions",  # Non-interactive mode
+                "sonnet",  # Use Sonnet for faster responses
+                "--dangerously-skip-permissions",
                 cli_prompt,
             ],
             capture_output=True,
             text=True,
-            timeout=180,  # 3 minute timeout for Opus
+            timeout=60,
             cwd=str(PROJECT_ROOT),
         )
 
         if result.returncode == 0:
             response_text = result.stdout.strip()
-            # Extract any tool mentions from the response
-            tools_used = []
-            tool_keywords = [
-                "get_test_stats",
-                "list_dimensions",
-                "search_tests",
-                "get_test_details",
-                "get_coverage_matrix",
-                "get_coverage_gaps",
-                "query_knowledge_graph",
-            ]
-            for tool in tool_keywords:
-                if tool in response_text or tool in result.stderr:
-                    tools_used.append(tool)
-
             return {
-                "response": (
-                    response_text if response_text else "No response generated."
-                ),
-                "tools_used": tools_used,
-            }
-        else:
-            # CLI returned an error
-            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-            return {
-                "response": f"CLI error: {error_msg[:500]}",
+                "response": response_text if response_text else "No response.",
                 "tools_used": [],
             }
+        else:
+            error_msg = result.stderr.strip() if result.stderr else "Unknown error"
+            return {"response": f"CLI error: {error_msg[:300]}", "tools_used": []}
 
     except subprocess.TimeoutExpired:
-        return {
-            "response": "Request timed out. Please try a simpler question.",
-            "tools_used": [],
-        }
+        return {"response": "Request timed out.", "tools_used": []}
     except FileNotFoundError:
-        # Claude CLI not installed, fall back to direct tool execution
-        return _process_chat_fallback(message)
+        return {"response": "CLI error: claude not installed", "tools_used": []}
     except Exception as e:
-        return {
-            "response": f"Error: {str(e)}",
-            "tools_used": [],
-        }
+        return {"response": f"Error: {str(e)}", "tools_used": []}
 
 
 def _process_chat_fallback(message: str) -> dict[str, Any]:
