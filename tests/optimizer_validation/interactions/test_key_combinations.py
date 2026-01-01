@@ -45,6 +45,14 @@ class TestKeyInjectionExecutionCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -70,6 +78,14 @@ class TestKeyInjectionExecutionCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -95,6 +111,14 @@ class TestKeyInjectionExecutionCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -120,6 +144,14 @@ class TestKeyInjectionExecutionCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -165,6 +197,14 @@ class TestMultiObjectiveWithConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -213,6 +253,14 @@ class TestMultiObjectiveWithConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -301,6 +349,14 @@ class TestComplexWorkflows:
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         # Validate the optimization completed
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -343,6 +399,14 @@ class TestEdgeCaseCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -374,5 +438,13 @@ class TestEdgeCaseCombinations:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

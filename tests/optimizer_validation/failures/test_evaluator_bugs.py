@@ -139,6 +139,14 @@ class TestEvaluatorReturnsInvalidType:
 
         # Should handle gracefully (may raise or produce failed trials)
         # The key is no unexpected crash
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -165,6 +173,14 @@ class TestEvaluatorReturnsInvalidType:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -191,6 +207,14 @@ class TestEvaluatorReturnsInvalidType:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -304,6 +328,14 @@ class TestEvaluatorMalformedOutput:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -334,6 +366,14 @@ class TestScoringFunctionBugs:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -360,6 +400,14 @@ class TestScoringFunctionBugs:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully (may convert or fail)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -390,6 +438,14 @@ class TestMetricFunctionBugs:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -422,5 +478,13 @@ class TestMetricFunctionBugs:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

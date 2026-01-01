@@ -331,6 +331,14 @@ class TestRandomSearchExploration:
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         # Verify values are in range
         if hasattr(result, "trials") and result.trials:
             temps = []
@@ -387,6 +395,14 @@ class TestRandomSearchExploration:
         func, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         # Verify config validity
         if hasattr(result, "trials") and result.trials:
@@ -458,6 +474,14 @@ class TestAlgorithmWithSingleValueSpace:
         func, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         # All trials should have identical config
         if hasattr(result, "trials") and result.trials:
@@ -531,6 +555,14 @@ class TestOptunaTPEAlgorithm:
             ), f"TPE failed with {space_type}: {result}"
 
         # Always emit evidence regardless of outcome
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -588,6 +620,14 @@ class TestOptunaCMAESAlgorithm:
         assert not isinstance(
             result, Exception
         ), f"CMA-ES failed with {space_type}: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -630,6 +670,14 @@ class TestOptunaCMAESAlgorithm:
 
         # CMA-ES with categorical is implementation-dependent
         # Document the behavior but always emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -691,5 +739,13 @@ class TestOptunaRandomAlgorithm:
             ), f"Random failed with {space_type}: {result}"
 
         # Always emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

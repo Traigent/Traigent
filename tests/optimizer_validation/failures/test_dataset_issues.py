@@ -51,6 +51,14 @@ class TestEmptyDataset:
         # Should fail gracefully with appropriate error
         # Either raises exception or produces failed trials
         # Emit evidence regardless of outcome
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -88,6 +96,14 @@ class TestMalformedDataset:
         func, result = await scenario_runner(scenario)
 
         # Should handle gracefully - emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -121,6 +137,14 @@ class TestMalformedDataset:
         func, result = await scenario_runner(scenario)
 
         # Should handle gracefully - emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -151,6 +175,14 @@ class TestMalformedDataset:
         func, result = await scenario_runner(scenario)
 
         # Should handle gracefully - emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -181,6 +213,14 @@ class TestMalformedDataset:
         func, result = await scenario_runner(scenario)
 
         # Should handle gracefully - emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -214,6 +254,14 @@ class TestMissingDataset:
         assert isinstance(result, Exception), "Expected exception for missing file"
 
         # Emit evidence for expected failure
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -240,6 +288,14 @@ class TestDatasetEdgeCases:
 
         # Should work with single example
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -273,6 +329,14 @@ class TestDatasetEdgeCases:
 
         # Should handle unicode correctly
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -308,6 +372,14 @@ class TestDatasetEdgeCases:
         func, result = await scenario_runner(scenario)
 
         # Should handle long inputs - emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -338,6 +410,14 @@ class TestDatasetEdgeCases:
 
         # Should handle empty strings
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         # Emit evidence
         validation = result_validator(scenario, result)
@@ -372,6 +452,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully - string input may be valid for some functions
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -400,6 +488,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -429,6 +525,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -458,6 +562,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -491,6 +603,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle nested nulls gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -519,6 +639,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle empty dict input
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -547,6 +675,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle empty array input
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -578,6 +714,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle complex expected outputs
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -609,6 +753,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle mixed types gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -642,6 +794,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle special characters in keys
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -676,6 +836,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle deeply nested structures
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -706,6 +874,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle large arrays
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -739,6 +915,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle binary-like strings
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -769,6 +953,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle numeric string keys
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -798,6 +990,14 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle whitespace-only values
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -829,5 +1029,13 @@ class TestMalformedInputShapes:
 
         func, result = await scenario_runner(scenario)
         # Should handle duplicate keys (uses last value)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

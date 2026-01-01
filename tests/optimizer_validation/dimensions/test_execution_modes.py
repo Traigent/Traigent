@@ -43,6 +43,14 @@ class TestExecutionModeMatrix:
         # Should not raise exception
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         # Validate result
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -82,6 +90,14 @@ class TestInvalidExecutionMode:
         _, result = await scenario_runner(scenario)
 
         # Should fail with ValueError
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -107,6 +123,14 @@ class TestEdgeAnalyticsMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -130,6 +154,14 @@ class TestEdgeAnalyticsMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -155,6 +187,14 @@ class TestPrivacyMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -180,6 +220,14 @@ class TestHybridMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -205,6 +253,14 @@ class TestStandardMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -230,6 +286,14 @@ class TestCloudMode:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -260,6 +324,14 @@ class TestExecutionModeEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should either use default or fail gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -283,6 +355,14 @@ class TestExecutionModeEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should fail validation or use default
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -311,6 +391,14 @@ class TestExecutionModeEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should fail with validation error
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -334,6 +422,14 @@ class TestExecutionModeEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Document case sensitivity behavior
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -357,5 +453,13 @@ class TestExecutionModeEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should fail or strip whitespace
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

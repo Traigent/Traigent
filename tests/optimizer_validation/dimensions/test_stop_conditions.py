@@ -579,6 +579,14 @@ class TestStopReasonValues:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         assert result.stop_reason is not None, "stop_reason should not be None"
         assert (
             result.stop_reason in valid_stop_reasons
@@ -624,6 +632,14 @@ class TestStopReasonValues:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         # Verify stop_reason attribute exists
         assert hasattr(result, "stop_reason"), "Result should have stop_reason"
         # Stop reason should be valid (not None)
@@ -699,6 +715,14 @@ class TestStopReasonValues:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         # Verify config space was actually limited
         unique_configs = {tuple(sorted(t.config.items())) for t in result.trials}
@@ -916,6 +940,14 @@ class TestStopConditionEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -996,6 +1028,14 @@ class TestStopConditionEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -1041,6 +1081,14 @@ class TestOtherStopConditions:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -1073,6 +1121,14 @@ class TestOtherStopConditions:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -1165,6 +1221,14 @@ class TestStopReasonPropagation:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         # Verify stop_reason attribute exists
         assert hasattr(result, "stop_reason")
         # Emit evidence
@@ -1204,6 +1268,14 @@ class TestStopReasonPropagation:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         # stop_reason should be accessible directly
         _ = result.stop_reason  # Should not raise
         # Emit evidence
@@ -1311,6 +1383,14 @@ class TestStopConditionsWithParallelModes:
 
         # Should complete without crashing regardless of mode
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         # stop_reason should be valid (not None)
         assert result.stop_reason in (
             "timeout",
@@ -1371,6 +1451,14 @@ class TestStopConditionsWithParallelModes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         assert result.stop_reason is not None, "stop_reason should not be None"
         assert (
             result.stop_reason in valid_stop_reasons

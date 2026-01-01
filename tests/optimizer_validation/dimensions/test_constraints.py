@@ -47,6 +47,14 @@ class TestConfigOnlyConstraints:
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         # Note: Constraints may be checked at different stages depending on implementation
         # The optimizer may still evaluate configs and then apply constraints to results
         # We don't assert on individual trial configs here as behavior varies
@@ -90,6 +98,14 @@ class TestConfigOnlyConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -131,6 +147,14 @@ class TestMetricDependentConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -168,6 +192,14 @@ class TestMetricDependentConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -300,6 +332,14 @@ class TestCompoundConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -333,6 +373,14 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -363,6 +411,14 @@ class TestConstraintEdgeCases:
 
         # Should handle gracefully - no valid configs exist
         # May result in error or empty results
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -391,6 +447,14 @@ class TestConstraintEdgeCases:
 
         # None is falsy, so should act like False
         # Document observed behavior
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -418,6 +482,14 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle exception gracefully
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -453,6 +525,14 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle partial failures
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -484,6 +564,14 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should work but document side effects
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -575,5 +663,13 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

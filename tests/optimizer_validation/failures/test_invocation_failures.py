@@ -42,6 +42,14 @@ class TestInvalidConfigSpace:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -67,6 +75,14 @@ class TestInvalidConfigSpace:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -96,6 +112,14 @@ class TestInvalidConfigSpace:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -124,6 +148,14 @@ class TestInvalidConfigSpace:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -151,6 +183,14 @@ class TestInvalidConfigSpace:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -184,6 +224,14 @@ class TestInvalidObjectives:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -208,6 +256,14 @@ class TestInvalidObjectives:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -236,6 +292,14 @@ class TestInvalidObjectives:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -282,6 +346,14 @@ class TestInvalidConstraints:
         assert validation.passed, validation.summary()
         assert not isinstance(result, Exception)
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -310,6 +382,14 @@ class TestInvalidMockConfig:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -341,6 +421,14 @@ class TestInvalidExecutionConfig:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -368,10 +456,17 @@ class TestInvalidExecutionConfig:
 
         _, result = await scenario_runner(scenario)
 
+        # Zero max_trials should either raise an exception or return 0 trials
+        if isinstance(result, Exception):
+            # Validation error is expected for zero max_trials
+            assert "max_trials" in str(result).lower() or "positive" in str(result).lower()
+        else:
+            # If no exception, should have 0 trials (as per scenario expectation)
+            if hasattr(result, "trials"):
+                assert len(result.trials) == 0, f"Zero max_trials should yield 0 trials, got {len(result.trials)}"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
-
-        # Should complete with zero trials or fail
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -394,6 +489,14 @@ class TestInvalidExecutionConfig:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -427,6 +530,14 @@ class TestInvalidExecutionConfig:
 
         _, result = await scenario_runner(scenario)
 
+        # Zero timeout should complete without error but with 0 trials
+        assert not isinstance(result, Exception), f"Zero timeout should not crash: {result}"
+
+        # Zero timeout means immediate timeout, so 0 trials expected
+        if hasattr(result, "trials"):
+            # Per docstring: "zero timeout results in 0 trials due to immediate timeout"
+            assert len(result.trials) == 0, f"Zero timeout should yield 0 trials, got {len(result.trials)}"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -448,6 +559,14 @@ class TestInvalidExecutionConfig:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -479,6 +598,14 @@ class TestInvalidConfigKeyNames:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -505,6 +632,14 @@ class TestInvalidConfigKeyNames:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -529,6 +664,14 @@ class TestInvalidConfigKeyNames:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -555,6 +698,14 @@ class TestInvalidConfigKeyNames:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -589,6 +740,14 @@ class TestInvalidObjectiveNames:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -610,6 +769,14 @@ class TestInvalidObjectiveNames:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -634,6 +801,14 @@ class TestInvalidObjectiveNames:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -661,6 +836,14 @@ class TestInvalidObjectiveNames:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -700,6 +883,14 @@ class TestInvalidConstraintSignatures:
 
         _, result = await scenario_runner(scenario)
 
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -734,6 +925,14 @@ class TestInvalidConstraintSignatures:
         )
 
         _, result = await scenario_runner(scenario)
+
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

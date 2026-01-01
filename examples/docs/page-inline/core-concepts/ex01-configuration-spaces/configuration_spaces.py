@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Configuration Spaces - Defining Parameters to Optimize."""
+
 from __future__ import annotations
 
 import json

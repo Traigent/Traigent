@@ -121,6 +121,14 @@ class TestTimeoutStops:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -157,6 +165,14 @@ class TestTimeoutStops:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -444,6 +460,14 @@ class TestProgressTracking:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -553,7 +577,11 @@ class TestResourceCleanup:
         assert not isinstance(result2, Exception), f"Unexpected error: {result2}"
 
         if hasattr(result2, "trials"):
-            assert len(result2.trials) == 2
+            assert len(result2.trials) == 2, f"Expected 2 trials, got {len(result2.trials)}"
+            # Verify trial configs are valid
+            for trial in result2.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
 
         validation = result_validator(scenario2, result2)
         assert validation.passed, validation.summary()

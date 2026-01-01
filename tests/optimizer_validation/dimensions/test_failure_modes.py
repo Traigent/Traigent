@@ -55,6 +55,11 @@ class TestTimeoutFailureMode:
         # It should not crash
         assert not isinstance(result, Exception)
 
+        # Verify 0 trials for strict timeout (expected per scenario)
+        if hasattr(result, "trials"):
+            # This test expects 0 trials due to very short timeout
+            assert len(result.trials) == 0, f"Strict timeout should yield 0 trials, got {len(result.trials)}"
+
         # Should have stop reason timeout or similar
         if hasattr(result, "stop_reason"):
             assert result.stop_reason in [

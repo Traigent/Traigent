@@ -242,6 +242,14 @@ class TestParallelFailureContainment:
             pass
 
         # Emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -272,6 +280,14 @@ class TestParallelFailureContainment:
         # Result can be Exception or partial result
 
         # Emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -313,6 +329,14 @@ class TestParallelFailureContainment:
 
         # Should complete without hanging
         # Emit evidence
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -370,6 +394,14 @@ class TestEffectiveParallelConfig:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -465,6 +497,14 @@ class TestStopConditionPriority:
         # Should complete without errors
         assert not isinstance(result, Exception), f"Failed: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         # Verify stop_reason is either timeout or max_trials
         stop_reason = getattr(result, "stop_reason", None)
         if stop_reason:
@@ -544,6 +584,14 @@ class TestTrialResultIntegrity:
 
         assert not isinstance(result, Exception), f"Failed: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         if hasattr(result, "trials"):
             for i, trial in enumerate(result.trials):
                 # Completed trials should have metrics
@@ -577,6 +625,14 @@ class TestTrialResultIntegrity:
 
         assert not isinstance(result, Exception), f"Failed: {result}"
 
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+
         if hasattr(result, "trials"):
             for i, trial in enumerate(result.trials):
                 assert hasattr(trial, "config"), f"Trial {i} missing config"
@@ -604,6 +660,14 @@ class TestTrialResultIntegrity:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
 
         if hasattr(result, "trials") and hasattr(result, "best_config"):
             if result.best_config and result.trials:
