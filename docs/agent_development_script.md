@@ -244,5 +244,6 @@ Note: evaluation wiring can still be code-driven (datasets, evaluators, rubrics)
 Once you have an eval set and scoring in place, Traigent’s SDK helps you explore configs and ship behind gates.
 
 Next steps:
-- Review the TVL spec reference for syntax and examples
-- Explore runnable examples in the Traigent repo
+- Review the TVL spec reference for syntax and examples: `api-reference/complete-function-specification.md`
+- Explore runnable examples in `../examples/`
+- For local testing, set `TRAIGENT_MOCK_MODE=true` to avoid real API calls

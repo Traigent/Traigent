@@ -1,6 +1,6 @@
 id: CONC-CloudService
 name: Cloud Service
-purpose: "Connect to Traigent/OptiGen backend for hybrid/cloud optimization, session sync, and billing-aware operations."
+purpose: "Connect to Traigent backend for hybrid/cloud optimization, session sync, and billing-aware operations."
 state:
   - name: auth_manager
     type: "AuthManager"

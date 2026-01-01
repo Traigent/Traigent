@@ -226,7 +226,10 @@ class TestOptimizationScenarios(DecoratorTestBase):
                 "temperature": [0.0, 0.5, 1.0],
             },
             objectives=["accuracy"],
-            constraints={"max_cost": 10.0, "max_latency": 1000},
+            constraints=[
+                lambda cfg: cfg.get("temperature", 0) <= 0.8,
+                lambda cfg, metrics: metrics.get("cost", 0) <= 10.0,
+            ],
         )
         def test_func(text: str) -> str:
             return f"Response: {text}"

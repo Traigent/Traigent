@@ -377,6 +377,12 @@ class TestYourProviderPluginMetadata:
         assert "your_provider_sdk" in packages
 ```
 
+Run tests in mock mode to avoid real API calls:
+
+```bash
+TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
+```
+
 ## Code Quality Standards
 
 ### Required Elements

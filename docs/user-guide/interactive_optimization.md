@@ -372,9 +372,9 @@ await asyncio.sleep(1.0)  # Add delay between trials if needed
 
 ## Next Steps
 
-1. Check out the [complete example](../../examples/interactive_optimization.py)
+1. Explore the [examples catalog](../../examples/docs/START_HERE.md)
 2. Learn about [agent-based optimization](./agent_optimization.md)
-3. Read the [API reference](../api/interactive_optimizer.md)
+3. Read the [API reference](../api-reference/interactive_optimizer.md)
 4. Join our [community forum](https://community.traigent.ai) for support
 
 ---

@@ -1,10 +1,11 @@
 # Traigent SDK API Reference
 
-Authoritative reference for Traigent SDK **v0.8.0 (Beta)**.
+Authoritative reference for Traigent SDK **v0.9.0 (Beta)**.
 
 ## Quick Navigation
 
 - **[Decorator Reference](./decorator-reference.md)** - Detailed `@traigent.optimize()` decorator documentation with all parameters and examples
+- **[Interactive Optimizer](./interactive_optimizer.md)** - Hybrid optimization API surface
 - **[Telemetry Documentation](./telemetry.md)** - What data is collected, retention policies, and how to opt-out
 - **[Thread Pool Examples](./thread-pool-examples.md)** - Using thread pools with proper context propagation
 - **[Complete API Specification](#core-decorator)** - Full API reference (this document)
@@ -19,9 +20,9 @@ Authoritative reference for Traigent SDK **v0.8.0 (Beta)**.
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
-    configuration_space: dict[str, Any] | None = None,
+    configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Callable] | None = None,
+    constraints: list[Constraint | Callable[..., Any]] | None = None,
     # TVL integration
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
@@ -44,9 +45,30 @@ def optimize(
 | Parameter | Type | Default | Description |
 | --- | --- | --- | --- |
 | `objectives` | `list[str] \| ObjectiveSchema \| None` | `["accuracy"]` | Target metrics to optimize. Lists are converted to `ObjectiveSchema` with sensible defaults. Provide an `ObjectiveSchema` for explicit weights/orientations. |
-| `configuration_space` | `dict[str, Any] \| None` | `None` | Search space describing tunable parameters. Lists denote discrete choices; `(min, max)` tuples denote ranges. Required for optimization. |
-| `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys fall back to values detected in the decorated function. |
-| `constraints` | `list[Callable] \| None` | `None` | Hard constraints evaluated before running a trial. Callables accept `(config, metrics=None)` and return `True/False`. |
+| `configuration_space` | `dict[str, Any] \| ConfigSpace \| None` | `None` | Search space describing tunable parameters. Lists denote discrete choices; `(min, max)` tuples denote ranges. `Range`, `IntRange`, `LogRange`, `Choices`, and `ConfigSpace` are supported directly. Required for optimization. |
+| `default_config` | `dict[str, Any] \| None` | `None` | Baseline configuration applied before the first trial. Missing keys remain unset unless you provide defaults via `default_config` or parameter defaults (for example `Range(..., default=...)`). |
+| `constraints` | `list[Constraint \| Callable[..., Any]] \| None` | `None` | Hard constraints evaluated before running a trial. Accepts SE-friendly `Constraint` objects and/or callables that take `(config, metrics=None)` and return `True/False`. |
+
+**SE-friendly tuned variables (first-class)**
+
+Traigent treats the SE-friendly tuned variable objects as first-class citizens.
+You can pass them directly in `configuration_space`, or supply a `ConfigSpace`
+object with structured constraints.
+
+```python
+from traigent import Choices, ConfigSpace, Range, implies
+
+temp = Range(0.0, 2.0, name="temperature")
+model = Choices(["gpt-4", "gpt-3.5"], name="model")
+space = ConfigSpace(
+    tvars={"temperature": temp, "model": model},
+    constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+)
+
+@traigent.optimize(configuration_space=space)
+def my_agent(question: str) -> str:
+    return answer(question)
+```
 
 **TVL Integration** (Tuned Variable Language)
 
@@ -69,35 +91,22 @@ def optimize(
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` is supported today; `"cloud"`, `"hybrid"`, `"standard"` are reserved for managed backends. |
+| `execution_mode` | `str` | `"edge_analytics"` | `"edge_analytics"` is supported today; `"cloud"`, `"hybrid"`, `"standard"` are reserved for managed backends. `"privacy"` is accepted as a legacy alias for `"hybrid"` and sets `privacy_enabled=True`. |
 | `local_storage_path` | `str \| None` | `None` | Custom directory for persisted results. Falls back to `TRAIGENT_RESULTS_FOLDER` or `~/.traigent/`. |
 | `minimal_logging` | `bool` | `True` | Suppresses verbose logs in privacy-sensitive modes. |
 | `parallel_config` | `ParallelConfig \| dict \| None` | `None` | Unified concurrency configuration. |
 | `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
+| `reps_per_trial` | `int` | `1` | Number of repeated evaluations per configuration to stabilize noisy metrics. |
+| `reps_aggregation` | `str` | `"mean"` | Aggregation strategy for repeated metrics (`"mean"`, `"median"`, `"min"`, `"max"`). |
 
 **Legacy Compatibility**
 
 | Parameter | Type | Description |
 | --- | --- | --- |
 | `legacy` | `LegacyOptimizeArgs \| dict \| None` | Adapter for the previous decorator signature. Pass a dict with historic keyword arguments; values merge with explicit parameters. |
-| `**runtime_overrides` | `Any` | Additional settings routed to downstream components. See Recognised Keys below. |
-
-**Recognised `runtime_overrides` Keys**
-
-| Key | Description |
-| --- | --- |
-| `algorithm` | Optimizer to use: `"grid"`, `"random"`, `"bayesian"`, `"optuna"`. |
-| `max_trials` | Maximum number of trials to execute. |
-| `timeout` | Wall-clock budget in seconds. |
-| `cache_policy` | One of `"allow_repeats"` (default) or other cache policies. |
-| `cost_limit` | Maximum USD spending per optimization run. Defaults to `TRAIGENT_RUN_COST_LIMIT` env var or `$2.00`. |
-| `cost_approved` | Skip cost approval prompt. Use with caution in production. |
-| `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
-| `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
-
-> **Removed parameters**: `commercial_mode`, `auto_optimize`, `trigger`, `batch_size`, `parallel_trials` have been retired. Use the grouped options or `parallel_config` instead.
+| `**runtime_overrides` | `Any` | Legacy keyword compatibility and inline tuned-variable definitions. Unknown keys raise `TypeError`; use `.optimize()` for run controls like `algorithm`, `timeout`, `cache_policy`, `cost_limit`, and stop conditions. |
 
 **Usage Notes**
 
@@ -108,7 +117,8 @@ def optimize(
 - `privacy_enabled=True` applies in local/edge contexts; cloud/hybrid execution is not available yet in OSS builds.
 - `config_param` is required whenever you choose `injection_mode="parameter"`; forgetting it leaves your function without injected configs.
 - Provide plain lists for quick starts; Traigent infers orientations (maximize for accuracy-like metrics, minimize for cost/latency) and assigns equal weights. Use an `ObjectiveSchema` when you need explicit control over orientations, weights, or metric metadata.
-- Removed decorator kwargs `auto_optimize`, `trigger`, `batch_size`, and `parallel_trials`. Use the grouped options or `parallel_config` instead.
+- Inline tuned-variable definitions accept `Range`, `IntRange`, `LogRange`, `Choices`, or numeric `(low, high)` tuples. Inline lists are not recognized; use `Choices([...])` instead.
+- If you pass a `ConfigSpace` with constraints, omit `constraints=`. Supplying both raises `TypeError`.
 
 #### Parallel configuration precedence
 
@@ -363,15 +373,6 @@ def override_config(
 
 - Supply an `ObjectiveSchema` here if you need explicit orientations or weights for a single optimization run.
 
-### `traigent.set_strategy()`
-
-```python
-def set_strategy(
-    algorithm: str = "bayesian",
-    **kwargs: Any
-) -> StrategyConfig
-```
-
 ### `traigent.get_available_strategies()`
 
 ```python
@@ -459,21 +460,12 @@ class OptimizationStatus(Enum):
     CANCELLED = "cancelled"
 ```
 
-### StrategyConfig
-
-```python
-@dataclass
-class StrategyConfig:
-    algorithm: str
-    parameters: dict[str, Any]
-```
-
 ## Utility Classes
 
 ### Constraints
-- `temperature_constraint(min_val, max_val)`
-- `model_cost_constraint(max_cost)`
-- `max_tokens_constraint(max_tokens)`
+- `temperature_constraint(min_temp, max_temp)`
+- `model_cost_constraint(max_cost_per_1k_tokens)`
+- `max_tokens_constraint(min_tokens, max_tokens)`
 - `ConstraintManager`
 
 ### Callbacks
@@ -521,7 +513,7 @@ Configuration class for Traigent settings
 import traigent
 
 @traigent.optimize(
-    eval_dataset="qa_dataset.jsonl",
+    evaluation={"eval_dataset": "qa_dataset.jsonl"},
     objectives=["accuracy"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4"],
@@ -543,7 +535,7 @@ best_config = answer_question.get_best_config()
 
 ```python
 @traigent.optimize(
-    eval_dataset="support_tickets.jsonl",
+    evaluation={"eval_dataset": "support_tickets.jsonl"},
     objectives=["accuracy", "cost", "latency"],
     configuration_space={
         "model": ["gpt-4o-mini", "gpt-4", "claude-3-haiku"],
@@ -552,6 +544,27 @@ best_config = answer_question.get_best_config()
     }
 )
 def process_ticket(ticket: str) -> str:
+    return support_chain.process(ticket)
+```
+
+### Constraints (Utility Helper)
+
+```python
+from traigent import temperature_constraint
+
+temp_guard = temperature_constraint(0.1, 0.7)
+
+@traigent.optimize(
+    evaluation={"eval_dataset": "support_tickets.jsonl"},
+    objectives=["accuracy", "cost"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4"],
+        "temperature": (0.0, 1.0),
+        "max_tokens": [100, 500, 1000],
+    },
+    constraints=[temp_guard.validate],
+)
+def process_ticket_with_constraints(ticket: str) -> str:
     return support_chain.process(ticket)
 ```
 
@@ -568,8 +581,7 @@ def custom_eval(func, config, example):
     )
 
 @traigent.optimize(
-    eval_dataset="dataset.jsonl",
-    custom_evaluator=custom_eval,
+    evaluation={"eval_dataset": "dataset.jsonl", "custom_evaluator": custom_eval},
     objectives=["accuracy", "custom_metric"]
 )
 def my_function(input_text: str) -> str:
@@ -578,4 +590,4 @@ def my_function(input_text: str) -> str:
 
 ---
 
-This documentation reflects Traigent SDK v1.1.0.
+This documentation reflects Traigent SDK v0.9.0.

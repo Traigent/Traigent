@@ -456,5 +456,6 @@ async def process_items_async(items):
 
 - [Decorator Reference](./decorator-reference.md) - Configuration options
 - [API Reference](./complete-function-specification.md) - Full API documentation
-- [Parallel Configuration Guide](../guides/parallel-configuration.md) - Configuring parallelism
+- [Parallel Configuration Guide](../guides/parallel-configuration.md) - Concurrency tuning and precedence
+- [Evaluation Guide](../guides/evaluation.md) - Parallel evaluation and concurrency tips
 - [Context Management Source](../../traigent/config/context.py) - Implementation details

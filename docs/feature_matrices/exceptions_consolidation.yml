@@ -6,9 +6,10 @@
 
 id: REPORT-EXCEPTIONS-CONSOLIDATION
 type: consolidation_report
-last_updated: "2025-12-01"
+last_updated: "2026-01-01"
 priority: high
 description: "Duplicate exception classes require consolidation for maintainability"
+notes: "Historical snapshot; re-audit with rg before making consolidation changes."
 
 # Canonical Source
 canonical_location:
@@ -96,8 +97,8 @@ duplicates:
     notes: "Security-critical - test thoroughly after change"
 
   - id: DUP-006
-    exception_name: TraigentError vs TraigentError
-    description: "Two root error classes with different capitalization"
+    exception_name: TraigentError duplicate
+    description: "Two root error classes defined in utils/exceptions.py and utils/error_handler.py"
     locations:
       - file: traigent/utils/exceptions.py
         line: 9
@@ -110,9 +111,9 @@ duplicates:
         class_name: TraigentError
         parent: Exception
         status: duplicate
-    recommendation: "Consolidate to TraigentError (lowercase 'i'), deprecate TraigentError"
+    recommendation: "Prefer utils/exceptions.py as canonical; keep error_handler.py focused on formatting"
     priority: critical
-    notes: "Root class - affects entire exception hierarchy"
+    notes: "Root class duplication affects exception hierarchy"
 
   - id: DUP-007
     exception_name: ConfigurationError

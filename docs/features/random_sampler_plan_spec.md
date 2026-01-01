@@ -6,6 +6,7 @@ The plan-aware sampling primitives live under `traigent/core/samplers/`:
 
 - `base.py` – shared sampler interface.
 - `random_sampler.py` – plan-capable `RandomSampler` implementation.
+- `factory.py` – sampler construction helpers (`SamplerFactory`).
 - `__init__.py` – re-exports `RandomSampler`, `RandomSamplerPlan`, and `SamplerFactory`.
 
 This document describes the externally visible behaviours of those modules so reviewers can confirm the implementation matches the contract.
@@ -165,4 +166,3 @@ All behaviours above are exercised in `tests/unit/core/test_samplers.py`, includ
 - Threaded consumption of a shared plan (`test_random_sampler_plan_thread_safety`).
 - Async `asyncio.to_thread` consumption (`test_random_sampler_plan_async_to_thread`).
 - Cross-instance plan reuse for fair trials (`test_random_sampler_plan_shared_across_instances`).
-

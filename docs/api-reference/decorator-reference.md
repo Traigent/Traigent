@@ -33,9 +33,9 @@ def optimize(
     *,
     # Core optimization parameters
     objectives: list[str] | ObjectiveSchema | None = None,
-    configuration_space: dict[str, Any] | None = None,
+    configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Callable[..., Any]] | None = None,
+    constraints: list[Constraint | Callable[..., Any]] | None = None,
 
     # TVL integration
     tvl_spec: str | Path | None = None,
@@ -145,7 +145,7 @@ Banded objectives use TOST (Two One-Sided Tests) to statistically verify that th
 
 #### `configuration_space`
 
-- **Type**: `dict[str, Any] | None`
+- **Type**: `dict[str, Any] | ConfigSpace | None`
 - **Default**: `None`
 - **Description**: Search space describing tunable parameters
 
@@ -179,6 +179,23 @@ configuration_space={
 }
 ```
 
+**SE-friendly tuned variables (first-class)**:
+
+```python
+from traigent import Choices, Range
+
+@traigent.optimize(
+    configuration_space={
+        "model": Choices(["gpt-4", "gpt-3.5"]),
+        "temperature": Range(0.0, 2.0),
+    },
+)
+def my_agent(prompt: str) -> str:
+    return run(prompt)
+```
+
+You can also pass a `ConfigSpace` object when you want to bundle `tvars` and structured constraints together.
+
 #### `default_config`
 
 - **Type**: `dict[str, Any] | None`
@@ -195,9 +212,11 @@ configuration_space={
 
 #### `constraints`
 
-- **Type**: `list[Callable[..., Any]] | None`
+- **Type**: `list[Constraint | Callable[..., Any]] | None`
 - **Default**: `None`
 - **Description**: Validation functions that return True/False
+
+Constraint objects and callables can be mixed; Traigent normalizes them to a common callable interface internally.
 
 **Configuration-only Constraints**:
 
@@ -225,6 +244,22 @@ def cost_constraint(config, metrics=None):
     constraints=[cost_constraint],
     ...
 )
+```
+
+**Structured Constraints (SE-friendly)**:
+
+```python
+from traigent import Choices, Range, implies
+
+model = Choices(["gpt-4", "gpt-3.5"], name="model")
+temp = Range(0.0, 2.0, name="temperature")
+
+@traigent.optimize(
+    configuration_space={"model": model, "temperature": temp},
+    constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+)
+def my_agent(prompt: str) -> str:
+    return run(prompt)
 ```
 
 ### TVL Integration
@@ -562,18 +597,6 @@ from traigent.core.objectives import ObjectiveSchema, ObjectiveDefinition
 def my_agent(query: str) -> str:
     return process(query)
 ```
-
-## Removed Parameters
-
-The following parameters have been removed and will raise `TypeError` if used:
-
-- `auto_optimize` - Removed in v0.8.0
-- `trigger` - Removed in v0.8.0
-- `batch_size` - Use `parallel_config` instead
-- `parallel_trials` - Use `parallel_config` instead
-- `commercial_mode` - Removed
-
-Use the grouped option bundles or `parallel_config` for equivalent functionality.
 
 ## Related Documentation
 

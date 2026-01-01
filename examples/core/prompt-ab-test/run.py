@@ -101,9 +101,7 @@ GLOBAL_PARALLEL_CONFIG = ParallelConfig(
     thread_workers=DEFAULT_WORKERS,
 )
 
-traigent.configure(
-    parallel_config=GLOBAL_PARALLEL_CONFIG, parallel_workers=DEFAULT_WORKERS
-)
+traigent.configure(parallel_config=GLOBAL_PARALLEL_CONFIG)
 print(
     "Resolved concurrency: "
     f"profile={CONCURRENCY_PROFILE or 'auto'}, "

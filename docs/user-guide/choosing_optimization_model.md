@@ -2,6 +2,8 @@
 
 Traigent SDK offers two distinct optimization models. This guide helps you choose the right approach for your use case.
 
+> **OSS note:** The open-source build supports `edge_analytics` only. Interactive and agent optimization require a managed backend (TraigentCloudClient + API key).
+
 ## Quick Decision Guide
 
 ```mermaid
@@ -21,7 +23,7 @@ graph TD
 
 **How it works:**
 
-- Optimization logic runs in the cloud
+- Optimization guidance runs in a remote service
 - Function execution happens locally
 - Only configuration suggestions and results are exchanged
 
@@ -43,7 +45,7 @@ graph TD
 
 **How it works:**
 
-- Complete agent specification sent to cloud
+- Complete agent specification sent to the managed backend
 - Execution and optimization happen in the cloud
 - Results returned after optimization completes
 
@@ -84,7 +86,7 @@ graph TD
 from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-cloud_client = TraigentCloudClient(api_key="your-api-key")
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
 
 # For a custom local function
 async def my_custom_function(text: str, temperature: float) -> str:
@@ -132,7 +134,7 @@ from traigent.cloud.client import TraigentCloudClient
 from traigent.cloud.models import AgentSpecification
 from traigent.evaluators.base import Dataset, EvaluationExample
 
-cloud_client = TraigentCloudClient(api_key="your-api-key")
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
 
 # Define a standard AI agent
 agent_spec = AgentSpecification(

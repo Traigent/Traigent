@@ -17,7 +17,7 @@ The SDK is built on a few key pillars:
 1.  **Interception:** We use Python decorators to intercept function calls.
 2.  **Injection:** We inject optimized parameters into the function at runtime.
 3.  **Optimization Loop:** We run experiments (trials) to find the best parameters.
-4.  **Backend Sync:** We sync results to the Traigent Cloud (or local storage in dev mode).
+4.  **Backend Sync:** OSS runs local-only; cloud/hybrid sync requires a managed backend.
 
 ### Key Directories
 - `traigent/api/`: Public facing decorators (`@optimize`).
@@ -34,14 +34,14 @@ Here is a technical breakdown of our current optimization capabilities:
 | **Random Search** | Stable | `traigent/optimizers/random.py` - Good baseline. |
 | **Bayesian Opt (Native)** | **Legacy / Beta** | `traigent/optimizers/bayesian.py` - Custom Gaussian Process implementation. **Known limitations** with categorical variables and multi-objective optimization. Scheduled for replacement. |
 | **Optuna Integration** | **Mature / Adapter** | `traigent/optimizers/optuna_adapter.py` - Wraps the industry-standard Optuna library. Supports TPE, CMA-ES, and NSGA-II. Currently available as an alternative backend; planned to become the default. |
-| **Smart Sampling** | Beta | `traigent/analytics/subset_selection.py` - TF-IDF & Clustering to select representative test sets. |
+| **Subset Selection (cloud-only)** | Experimental | `traigent/cloud/subset_selection.py` - representative sampling utilities used by cloud services. |
 | **Meta-Learning** | Alpha | `traigent/analytics/meta_learning.py` - Logic to recommend algorithms based on problem shape. |
 
 ## 4. Technical Observations (The "Real" State)
 *Based on a recent code audit:*
 
 1.  **Bayesian Optimizer Limitations:** The native `bayesian.py` implementation assumes a maximization problem and has hardcoded convergence limits. It struggles with purely categorical search spaces (e.g., choosing between 'gpt-4' and 'claude-3').
-2.  **Optuna Strategy:** We have a robust adapter for Optuna (`optuna_adapter.py`) which solves the categorical variable issue using TPE (Tree-structured Parzen Estimator). There is an active plan (`docs/plans/optuna_integration_plan.md`) to migrate this to be the *core* optimizer, replacing the native Bayesian implementation.
+2.  **Optuna Strategy:** We have a robust adapter for Optuna (`optuna_adapter.py`) which solves the categorical variable issue using TPE (Tree-structured Parzen Estimator). The long-term plan is to make this the default optimizer.
 3.  **Async Architecture:** The cloud sync operations are async, but the core optimization loop in `Orchestrator` often runs synchronously in local mode.
 4.  **Mock Mode:** For development, we rely heavily on `TRAIGENT_MOCK_MODE=true` to avoid burning API credits.
 
@@ -53,18 +53,18 @@ Here is a technical breakdown of our current optimization capabilities:
 ## 6. Getting Started Guide (Step-by-Step)
 
 ### Phase 1: Environment Setup
-1.  **Prerequisites**: Python 3.11+ (matches SDK target).
+1.  **Prerequisites**: Python 3.8+ (matches SDK target).
 2.  **Installation**:
     ```bash
-    git clone https://github.com/Traigent/Traigent.git
-    cd Traigent
+    git clone https://github.com/traigent/traigent-sdk.git
+    cd traigent-sdk
     python3 -m venv .venv && source .venv/bin/activate
-    pip install -e ".[dev,integrations]"
+    pip install -e ".[dev,integrations,analytics,security]"
     ```
     *   *Success Criteria*: `python -c "import traigent; print('✅ Installed')"` prints the success message.
 3.  **Verification**:
     ```bash
-    make test-unit
+    TRAIGENT_MOCK_MODE=true make test-unit
     ```
     *   *Success Criteria*: All unit tests pass (green).
 

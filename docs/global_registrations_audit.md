@@ -4,7 +4,9 @@
 
 Audit of all global registration systems in the Traigent codebase to identify potential issues similar to the Spider grid optimizer problem.
 
-**Date:** 2025-10-18
+**Date:** 2026-01-01
+
+**Note:** In this repo, only `paper_experiments/case_study_fever/` is present. Spider and other case-study references below are historical.
 
 ## Global Registries Found
 
@@ -81,11 +83,11 @@ def register_plugin(plugin: TraigentPlugin) -> None:
 
 ## Case Study Registrations
 
-### ❌ Spider Custom Grid Optimizer (REMOVED)
+### Historical: Spider Custom Grid Optimizer (REMOVED)
 
-**Previous Location:** `paper_experiments/case_study_spider/pipeline.py:49-61`
+**Previous Location:** `paper_experiments/case_study_spider/pipeline.py:49-61` (no longer in this repo)
 
-**Status:** ❌ **REMOVED** (was anti-pattern)
+**Status:** **REMOVED** (was anti-pattern)
 
 **What it did:**
 ```python
@@ -104,20 +106,14 @@ register_optimizer("grid", _OrderedGridSearchOptimizer)  # ← Module-level!
 
 **Resolution:** Completely removed. Spider now uses standard `GridSearchOptimizer`.
 
-### ✅ All Other Case Studies
+### Current Case Studies
 
 **Checked:**
 - `case_study_fever/`
-- `case_study_kilt/`
-- `case_study_rag/`
-- `case_study_spider/` (after fix)
-- `case_study_squad/`
-- `case_study_summarization/`
-- `case_study_triviaqa/`
 
 **Result:** ✅ **NONE** found
 
-No other case studies perform global registrations at module import time.
+No case studies in this repo perform global registrations at module import time.
 
 ## Potential Risks
 

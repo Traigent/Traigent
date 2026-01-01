@@ -6,7 +6,8 @@ optimization:
   strategy: "bayesian"  # Options: grid, random, bayesian
   max_trials: 10
   timeout: 3600  # 1 hour
-  parallel_trials: 3
+  parallel_config:
+    trial_concurrency: 3
   early_stopping:
     enabled: true
     patience: 5

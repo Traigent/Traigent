@@ -85,9 +85,9 @@ Additional utilities:
 - `RateLimitedOptimizer` – wraps a coordinator and throttles how quickly new
   trials are requested, useful for constrained edge deployments.
 
-Refer to the [Optuna Integration Plan](../plans/optuna_integration_plan.md) for
-the detailed architecture and design decisions behind the coordinator and
-batching layers.
+Implementation details live alongside the coordinator and batching utilities in
+`traigent/optimizers/optuna_coordinator.py` and
+`traigent/optimizers/batch_optimizers.py`.
 
 ### Conditional Parameters
 

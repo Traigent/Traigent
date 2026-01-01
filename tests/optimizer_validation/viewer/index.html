@@ -73,6 +73,27 @@
         .header-actions {
             display: flex;
             gap: 10px;
+            align-items: center;
+        }
+
+        .run-controls {
+            display: flex;
+            gap: 0;
+        }
+
+        .run-controls select {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-right: none;
+            padding: 8px 12px;
+            border-radius: 6px 0 0 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .run-controls button {
+            border-radius: 0 6px 6px 0;
         }
 
         button {
@@ -1276,7 +1297,14 @@
                 </div>
                 <a href="coverage_analysis.html" style="text-decoration: none;"><button>Coverage Analysis</button></a>
                 <button onclick="refreshTests()">Refresh</button>
-                <button class="primary" id="run-all-btn" onclick="runAllTests()">Run All Tests</button>
+                <div class="run-controls">
+                    <select id="run-mode-select">
+                        <option value="all">Run All</option>
+                        <option value="failed">Run Failed</option>
+                        <option value="not-run">Run Not Run</option>
+                    </select>
+                    <button class="primary" id="run-all-btn" onclick="runSelectedMode()">Run</button>
+                </div>
             </div>
         </header>
 
@@ -1503,6 +1531,28 @@
             }
         }
 
+        async function fetchPersistentResults() {
+            // Load stored test results that survive page refresh
+            try {
+                const response = await fetch('/api/persistent-results');
+                if (response.ok) {
+                    const data = await response.json();
+                    // Merge persistent results into testResults
+                    let loadedCount = 0;
+                    for (const [nodeid, result] of Object.entries(data)) {
+                        testResults[nodeid] = result;
+                        loadedCount++;
+                    }
+                    if (loadedCount > 0) {
+                        console.log(`[persistent] Loaded ${loadedCount} stored test results`);
+                        renderTree();
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch persistent results:', error);
+            }
+        }
+
         function processResults(data) {
             if (data.tests) {
                 // Merge new results with existing ones (preserves history across runs)
@@ -1528,9 +1578,43 @@
             }
         }
 
+        // Track which streaming results we've already processed
+        let lastStreamingCount = 0;
+
+        function processStreamingResults(streaming) {
+            // Process streaming results as tests complete (real-time updates)
+            if (!streaming.tests || streaming.tests.length === 0) return;
+
+            // Only process new tests (avoid re-processing)
+            const newTests = streaming.tests.slice(lastStreamingCount);
+            if (newTests.length === 0) return;
+
+            lastStreamingCount = streaming.tests.length;
+
+            let processedCount = 0;
+            for (const test of newTests) {
+                // Streaming format uses nodeid directly
+                testResults[test.nodeid] = {
+                    outcome: test.outcome,
+                    duration: test.duration,
+                    longrepr: test.longrepr || null,
+                    evidence: null  // Evidence comes in final results
+                };
+                processedCount++;
+            }
+
+            console.log(`[streaming] Processed ${processedCount} new test results (total: ${streaming.completed_count})`);
+        }
+
+        function resetStreamingState() {
+            // Reset streaming tracking when starting a new test run
+            lastStreamingCount = 0;
+        }
+
         async function runTest(testId) {
             try {
                 pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
                 runningTarget = testId;  // Track which specific test is running
                 setRunningState(true, `Running: ${testId.split('::').pop()}`);
                 const response = await fetch('/api/run', {
@@ -1552,8 +1636,9 @@
         async function runAllTests() {
             try {
                 pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
                 runningTarget = 'tests/optimizer_validation/';  // Running all tests
-                setRunningState(true, 'Running all 250 tests...');
+                setRunningState(true, 'Running all tests...');
                 const response = await fetch('/api/run', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -1570,9 +1655,84 @@
             }
         }
 
+        // Get list of failed test IDs
+        function getFailedTests() {
+            const failed = [];
+            for (const [testId, result] of Object.entries(testResults)) {
+                if (result.outcome === 'failed') {
+                    failed.push(testId);
+                }
+            }
+            return failed;
+        }
+
+        // Get list of tests that haven't been run yet
+        function getNotRunTests() {
+            const notRun = [];
+            const allTestIds = new Set(allTests.map(t => t.id));
+            const ranTestIds = new Set(Object.keys(testResults));
+
+            for (const testId of allTestIds) {
+                if (!ranTestIds.has(testId)) {
+                    notRun.push(testId);
+                }
+            }
+            return notRun;
+        }
+
+        // Run tests based on selected mode
+        async function runSelectedMode() {
+            const mode = document.getElementById('run-mode-select').value;
+
+            if (mode === 'all') {
+                runAllTests();
+                return;
+            }
+
+            let testIds = [];
+            let message = '';
+
+            if (mode === 'failed') {
+                testIds = getFailedTests();
+                message = `Running ${testIds.length} failed tests...`;
+                if (testIds.length === 0) {
+                    alert('No failed tests to run.');
+                    return;
+                }
+            } else if (mode === 'not-run') {
+                testIds = getNotRunTests();
+                message = `Running ${testIds.length} not-run tests...`;
+                if (testIds.length === 0) {
+                    alert('All tests have been run.');
+                    return;
+                }
+            }
+
+            try {
+                pollCount = 0;
+                resetStreamingState();
+                runningTarget = 'tests/optimizer_validation/';  // Running subset
+                setRunningState(true, message);
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tests: testIds })
+                });
+                const data = await response.json();
+                currentJobId = data.job_id;
+                runStartTime = Date.now();
+                pollJobStatus(data.job_id);
+            } catch (error) {
+                console.error('Failed to start tests:', error);
+                runningTarget = null;
+                setRunningState(false);
+            }
+        }
+
         async function runCategory(categoryPath) {
             try {
                 pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
                 runningTarget = `tests/optimizer_validation/${categoryPath}/`;  // Running category
                 setRunningState(true, `Running: ${categoryPath}/`);
                 const response = await fetch('/api/run', {
@@ -1647,12 +1807,20 @@
 
                 const data = await response.json();
 
-                // Update elapsed time in status
-                if (runStartTime) {
+                // Update elapsed time in status (with streaming progress if available)
+                if (runStartTime && data.status === 'running') {
                     const elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
                     const statusText = document.getElementById('global-status-text');
-                    if (statusText && data.status === 'running') {
-                        statusText.textContent = `Running... (${elapsed}s)`;
+                    if (statusText) {
+                        // Show streaming progress if available
+                        if (data.streaming && data.streaming.completed_count > 0) {
+                            const passed = data.streaming.passed || 0;
+                            const failed = data.streaming.failed || 0;
+                            const total = data.streaming.completed_count || 0;
+                            statusText.textContent = `Running... ${total} done (${passed} ✓, ${failed} ✗) - ${elapsed}s`;
+                        } else {
+                            statusText.textContent = `Running... (${elapsed}s)`;
+                        }
                     }
                 }
 
@@ -1679,11 +1847,15 @@
                         showTestDetails(selectedTest);
                     }
                 } else if (data.status === 'running') {
-                    // Update UI to show running state
-                    if (selectedTest) {
-                        showRunningState();
+                    // Process streaming results if available
+                    if (data.streaming && data.streaming.tests && data.streaming.tests.length > 0) {
+                        processStreamingResults(data.streaming);
                     }
-                    renderTree(); // Update tree to show running dots
+                    // Update UI - show test details which handles both running and completed states
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                    renderTree(); // Update tree to show running dots and completed tests
                     setTimeout(() => pollJobStatus(jobId), 1000);
                 } else if (data.status === 'error' || data.error) {
                     console.error('Job failed:', data.error);
@@ -2811,12 +2983,13 @@
 
         function renderTestItem(test) {
             const result = testResults[test.id];
-            // Only show running status if this specific test is being run
-            const isRunning = runningTarget && (
+            // Only show running status if this test is in the running scope AND hasn't completed yet
+            const isInRunningScope = runningTarget && (
                 runningTarget === test.id ||  // Exact match for single test
                 test.id.startsWith(runningTarget)  // Test is in running category
             );
-            const status = isRunning ? 'running' : (result?.outcome || 'pending');
+            // Show result if we have one, otherwise show running (if in scope) or pending
+            const status = result?.outcome || (isInRunningScope ? 'running' : 'pending');
             const selected = selectedTest?.id === test.id ? 'selected' : '';
 
             // Generate gist tooltip
@@ -2904,22 +3077,17 @@
 
             const result = testResults[test.id];
             const container = document.getElementById('main-content');
-            // Check if this specific test is running
-            const isRunning = runningTarget && (
+            // Check if this test is in the running scope AND hasn't completed yet
+            const isInRunningScope = runningTarget && (
                 runningTarget === test.id ||
                 test.id.startsWith(runningTarget)
             );
+            // Only show running state if no result exists yet
+            const isRunning = isInRunningScope && !result;
 
-            // Build result status HTML
+            // Build result status HTML - prioritize showing results over running state
             let resultHtml;
-            if (isRunning) {
-                resultHtml = `
-                    <div class="result-status running">
-                        <div class="spinner"></div>
-                        <span class="text">Running...</span>
-                    </div>
-                `;
-            } else if (result) {
+            if (result) {
                 resultHtml = `
                     <div class="result-status ${result.outcome}">
                         <span class="icon">${result.outcome === 'passed' ? '✅' : '❌'}</span>
@@ -2927,6 +3095,13 @@
                         <span class="duration">${(result.duration || 0).toFixed(3)}s</span>
                     </div>
                     ${result.longrepr ? `<div class="error-output">${escapeHtml(result.longrepr)}</div>` : ''}
+                `;
+            } else if (isRunning) {
+                resultHtml = `
+                    <div class="result-status running">
+                        <div class="spinner"></div>
+                        <span class="text">Running...</span>
+                    </div>
                 `;
             } else {
                 resultHtml = '<p style="color: var(--text-secondary)">Not run yet</p>';
@@ -4150,7 +4325,8 @@
         }
         applyViewMode();
         fetchTests();
-        fetchResults();
+        fetchPersistentResults();  // Load stored results first (survives refresh)
+        fetchResults();  // Then load latest run results
         fetchGraphData();
     
         /**

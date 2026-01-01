@@ -38,8 +38,8 @@ export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 
 ```bash
 # Clone and install - follow README EXACTLY
-git clone -b feature/responsible-optimization https://github.com/Traigent/Traigent.git
-cd Traigent
+git clone https://github.com/traigent/traigent-sdk.git
+cd traigent-sdk
 
 # Follow README instructions for your preferred method (pip or uv)
 # Document any deviations or errors
@@ -48,7 +48,7 @@ cd Traigent
 **Checklist:**
 - [ ] Clone succeeds without authentication issues
 - [ ] Virtual environment creation works
-- [ ] `pip install -e ".[dev,integrations,analytics]"` completes without errors
+- [ ] `pip install -e ".[dev,integrations,analytics,security]"` completes without errors
 - [ ] No deprecation warnings during install (note any that appear)
 - [ ] Total install time: _____ minutes
 
@@ -61,7 +61,7 @@ python -c "import traigent; print(traigent.__version__)"
 ```
 
 **Checklist:**
-- [ ] All three show version `0.8.0`
+- [ ] All three show version `0.9.0`
 - [ ] `traigent info` shows expected features and integrations
 - [ ] No import warnings when loading traigent module
 

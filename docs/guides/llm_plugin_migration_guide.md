@@ -1,6 +1,6 @@
 # LLM Plugin Migration Guide
 
-This guide explains how to migrate existing LLM plugins to use the new `LLMPlugin` base class.
+This guide explains how to migrate existing LLM plugins to use the `LLMPlugin` base class. Use it when you maintain a custom LLM integration that still subclasses `IntegrationPlugin`.
 
 ## Why Migrate?
 
@@ -207,30 +207,31 @@ class OpenAIPlugin(LLMPlugin):
         }
 ```
 
-## Plugin Assignment for Migration
+## Built-In LLM Plugins
 
-| Plugin | Assignee | Framework Enum |
-|--------|----------|----------------|
-| `openai_plugin.py` | Gemini | `Framework.OPENAI` |
-| `anthropic_plugin.py` | Gemini | `Framework.ANTHROPIC` |
-| `langchain_plugin.py` | Gemini | `Framework.LANGCHAIN` |
-| `azure_openai_plugin.py` | Gemini | `Framework.AZURE_OPENAI` |
-| `llamaindex_plugin.py` | Codex | `Framework.LLAMAINDEX` |
-| `bedrock_plugin.py` | Codex | `Framework.BEDROCK` |
-| `gemini_plugin.py` | Codex | `Framework.GEMINI` |
-| `cohere_plugin.py` | Codex | `Framework.COHERE` |
-| `huggingface_plugin.py` | Codex | `Framework.HUGGINGFACE` |
+Traigent ships LLM plugins for:
+
+- OpenAI (`traigent/integrations/llms/openai_plugin.py`)
+- Anthropic (`traigent/integrations/llms/anthropic_plugin.py`)
+- Azure OpenAI (`traigent/integrations/llms/azure_openai_plugin.py`)
+- Bedrock (`traigent/integrations/llms/bedrock_plugin.py`)
+- Gemini (`traigent/integrations/llms/gemini_plugin.py`)
+- Mistral (`traigent/integrations/llms/mistral_plugin.py`)
+- Cohere (`traigent/integrations/llms/cohere_plugin.py`)
+- HuggingFace (`traigent/integrations/llms/huggingface_plugin.py`)
+- LlamaIndex (`traigent/integrations/llms/llamaindex_plugin.py`)
+- LangChain (`traigent/integrations/llms/langchain_plugin.py`)
 
 ## Testing Your Migration
 
 Run the plugin tests after migration:
 
 ```bash
-pytest tests/unit/integrations/test_<plugin>_plugin.py -v
+TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_<plugin>_plugin.py -v
 ```
 
 Run the full integration test suite:
 
 ```bash
-pytest tests/unit/integrations/ -v
+TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -v
 ```

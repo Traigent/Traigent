@@ -13,7 +13,7 @@ Traigent provides four powerful configuration injection modes to seamlessly inte
 | **Parameter** | Function signature | Yes | Type-safe apps, team projects |
 | **Attribute** | None | No | External monitoring, debugging |
 
-## 1. Context Mode (Default) 🔄
+## 1. Context Mode (Default)
 
 Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.
 
@@ -85,7 +85,7 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 - Want the cleanest code possible
 - Have full control over source code
 
-## 2. Seamless Mode 🪄
+## 2. Seamless Mode
 
 Traigent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).
 
@@ -182,7 +182,7 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 - Code where you want minimal Traigent-specific changes
 - Functions with straightforward variable assignments
 
-## 3. Parameter Mode 💪
+## 3. Parameter Mode
 
 Explicit configuration injection with full type safety.
 
@@ -209,19 +209,21 @@ def train_model(
     model = create_model()
 
     optimizer = get_optimizer(
-        config.optimizer,
-        lr=config.learning_rate
+        config["optimizer"],
+        lr=config["learning_rate"]
     )
 
     for epoch in range(100):
-        for i in range(0, len(data), config.batch_size):
-            batch_data = data[i:i + config.batch_size]
-            batch_labels = labels[i:i + config.batch_size]
+        for i in range(0, len(data), config["batch_size"]):
+            batch_data = data[i:i + config["batch_size"]]
+            batch_labels = labels[i:i + config["batch_size"]]
 
             loss = train_step(model, batch_data, batch_labels, optimizer)
 
     return model
 ```
+
+> **Note:** `TraigentConfig` exposes built-in fields (e.g., `model`, `temperature`) as attributes and custom parameters via dict-style access (`config["learning_rate"]` or `config.get(...)`). Use a wrapper dataclass for stricter typing.
 
 ### Advanced Example with Custom Config Types
 
@@ -242,11 +244,11 @@ class TransformerConfig:
     @classmethod
     def from_traigent(cls, config: TraigentConfig) -> "TransformerConfig":
         return cls(
-            n_layers=config.n_layers,
-            n_heads=config.n_heads,
-            d_model=config.d_model,
-            dropout=config.dropout,
-            activation=config.activation
+            n_layers=config["n_layers"],
+            n_heads=config["n_heads"],
+            d_model=config["d_model"],
+            dropout=config["dropout"],
+            activation=config["activation"]
         )
 
 @traigent.optimize(
@@ -294,9 +296,9 @@ def create_application(
     config: TraigentConfig
 ) -> Application:
     # Use config to initialize all components
-    db = Database(pool_size=config.db_pool_size)
-    cache = Cache(ttl=config.cache_ttl)
-    rate_limiter = RateLimiter(limit=config.rate_limit)
+    db = Database(pool_size=config["db_pool_size"])
+    cache = Cache(ttl=config["cache_ttl"])
+    rate_limiter = RateLimiter(limit=config["rate_limit"])
 
     return Application(
         database=db,
@@ -326,11 +328,9 @@ def create_application(
 - Using dependency injection
 - Want IDE support and autocomplete
 
-## 4. Attribute Mode 🎨
+## 4. Attribute Mode
 
 Store configuration as a function attribute for external access.
-
-> Default attribute name: `current_config` (override with `attribute_name` if you need a different name).
 
 ### Basic Example
 
@@ -594,7 +594,7 @@ Understanding **when** to use each config access method is critical:
 | Lifecycle Phase | Access Method | Description |
 |-----------------|---------------|-------------|
 | **During/After Optimization** | `traigent.get_config()` | Unified accessor inside your optimized function. Works during trials and after `apply_best_config()`. |
-| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Only valid inside your optimized function while `.optimize()` is running. |
+| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Deprecated; prefer `traigent.get_config()` unless you need explicit trial-only access. |
 | **After Optimization** | `result.best_config` | The best configuration found, returned in `OptimizationResult`. Recommended for most post-optimization use. |
 | **After Optimization** | `func.current_config` | The config currently applied to the function (same as `best_config` after optimization). |
 
@@ -629,4 +629,4 @@ response = my_function("Hello!")  # Uses {"model": "gpt-4o", "temperature": 0.5}
 print(f"Applied config: {my_function.current_config}")    # ✅ Same as best_config
 ```
 
-> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`. Use `traigent.get_config()` inside your function for lifecycle-safe access.
+> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`. Prefer `traigent.get_config()` inside your function for lifecycle-safe access.

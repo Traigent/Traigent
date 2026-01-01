@@ -547,6 +547,6 @@ logger.setLevel(logging.DEBUG)
 
 ## Next Steps
 
-- See [examples/agent_optimization.py](../../examples/agent_optimization.py) for complete examples
-- Check [hybrid_optimization.md](hybrid_optimization.md) for combining both models
-- Read [ARCHITECTURE.md](../ARCHITECTURE.md) for system design details
+- See the [examples catalog](../../examples/docs/START_HERE.md) for runnable examples
+- Review [Execution Modes](../guides/execution-modes.md) for local/cloud/hybrid context
+- Read [Architecture Overview](../architecture/ARCHITECTURE.md) for system design details

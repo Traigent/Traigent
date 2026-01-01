@@ -4,7 +4,7 @@ This document describes what telemetry data Traigent SDK collects, how it's used
 
 ## Overview
 
-Traigent SDK collects telemetry data to improve the optimization experience and help diagnose issues. All telemetry collection respects user privacy and can be completely disabled.
+Traigent SDK collects telemetry data to improve the optimization experience and help diagnose issues. In the open-source build, telemetry stays local unless you opt into managed services. Telemetry can be completely disabled.
 
 ## What Data is Collected
 
@@ -13,10 +13,10 @@ Traigent SDK collects telemetry data to improve the optimization experience and 
 During optimization runs, Traigent collects:
 
 **Trial Lifecycle Events**:
-- Trial start/completion timestamps
+- Trial suggested/intermediate/completed timestamps
 - Trial status (completed, failed, pruned)
 - Trial duration
-- Trial configuration (parameter values being tested)
+- Trial configuration (parameter values being tested, with internal keys stripped)
 - Trial metrics (accuracy, cost, latency, etc.)
 
 **Optimization Run Metadata**:
@@ -37,8 +37,8 @@ During optimization runs, Traigent collects:
 
 Traigent does **not** collect:
 
-- **User prompts or inputs** (unless explicitly logged in debug mode)
-- **LLM responses or outputs** (unless explicitly logged in debug mode)
+- **User prompts or inputs**
+- **LLM responses or outputs**
 - **Evaluation dataset contents**
 - **Personal identifiable information (PII)**
 - **API keys or credentials**
@@ -58,10 +58,11 @@ When `privacy_enabled=True` is set in ExecutionOptions:
 ```
 
 Traigent will:
-- Redact all prompts and responses from logs
-- Minimize telemetry data collection
-- Store results only locally
-- Avoid sending any data to external services
+- Redact prompts/responses from stored evaluation artifacts when possible
+- Minimize logged content while keeping metrics and configuration metadata
+- Keep results local in open-source builds
+
+Privacy mode does not disable telemetry; use `TRAIGENT_DISABLE_TELEMETRY=true` for a full opt-out.
 
 ## How Telemetry is Used
 
@@ -80,11 +81,10 @@ Telemetry data is used for:
 - You control retention - delete files as needed
 - No data is sent to external servers
 
-**Cloud Mode** (when available):
-- Metadata is sent to Traigent backend for optimization coordination
-- Trial results are retained for 90 days
+**Cloud/Hybrid Mode** (managed service only):
+- Metadata can be sent to Traigent backend for optimization coordination
+- Retention policies depend on your managed-service agreement
 - You can request data deletion at any time
-- See Traigent Cloud Privacy Policy for details
 
 ## Opting Out of Telemetry
 
@@ -107,7 +107,7 @@ import traigent
 
 ### Accepted Values
 
-The following values are recognized as "opt-out":
+The following values are recognized as "opt-out" (case-insensitive):
 - `"true"`
 - `"1"`
 - `"yes"`
@@ -140,7 +140,7 @@ emitter = OptunaMetricsEmitter(
 
 # This call does nothing if TRAIGENT_DISABLE_TELEMETRY is set
 emitter.emit_trial_update(
-    event="trial_complete",
+    event="trial_completed",
     trial_id=123,
     study_name="my_optimization",
     payload={"metrics": {"accuracy": 0.95}},
@@ -170,15 +170,14 @@ class OptunaMetricsEmitter:
 
 ### Event Types
 
-When telemetry is enabled, the following events may be emitted:
+When telemetry is enabled, the following events may be emitted (not exhaustive):
 
-- `trial_start` - A new trial is beginning
-- `trial_complete` - A trial finished successfully
+- `trial_suggested` - Optuna proposed a new trial configuration
+- `trial_intermediate` - Intermediate metric reported (pruning signal)
+- `trial_completed` - A trial finished successfully
 - `trial_failed` - A trial encountered an error
 - `trial_pruned` - A trial was pruned early
-- `optimization_start` - Optimization run started
-- `optimization_complete` - Optimization run finished
-- `optimization_failed` - Optimization run failed
+- `trial_call_started` / `trial_call_completed` - Seamless injection wrapper lifecycle
 
 Each event includes:
 - `event`: Event type string
@@ -193,14 +192,13 @@ When using edge_analytics mode, data is stored locally:
 
 ```
 ~/.traigent/
-├── results/
-│   ├── optimization_<id>/
-│   │   ├── results.json      # Optimization results
-│   │   ├── trials.json       # Individual trial data
-│   │   └── metadata.json     # Run metadata
+├── sessions/
+│   ├── 20260101_120000_my_function.json  # Optimization session record (trials + metadata)
 │   └── ...
-└── cache/
-    └── ...
+├── cache/
+│   ├── model_responses/
+│   └── ...
+└── .locks/
 ```
 
 You can customize the storage location:
@@ -333,11 +331,11 @@ print(os.getenv("TRAIGENT_DISABLE_TELEMETRY"))
 
 ### Q: Can I enable telemetry for some optimizations but not others?
 
-**A**: The `TRAIGENT_DISABLE_TELEMETRY` environment variable is global. For per-optimization control, use `privacy_enabled` in ExecutionOptions.
+**A**: The `TRAIGENT_DISABLE_TELEMETRY` environment variable is process-wide. `privacy_enabled` reduces stored content but does not disable telemetry.
 
 ### Q: Where can I see what telemetry data was collected?
 
-**A**: In edge_analytics mode, check the JSON files in `~/.traigent/results/`. They contain the same data sent to telemetry listeners.
+**A**: In edge_analytics mode, check the JSON files in `~/.traigent/sessions/`. They contain the same trial metadata and metrics emitted to telemetry listeners.
 
 ### Q: Can I contribute telemetry data to improve Traigent?
 

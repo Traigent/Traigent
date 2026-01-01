@@ -7,6 +7,7 @@ Documentation for Traigent SDK features and configuration options.
 - **[Authentication](authentication.md)** - Authentication and credential management system
 - **[Seamless Injection](seamless_injection.md)** - Automatic parameter injection for zero-code optimization
 - **[Strict Metrics Nulls](strict_metrics_nulls.md)** - Null handling for missing metrics (feature flag)
+- **[Framework Override Enhancements](framework_override_enhanced_features.md)** - Dynamic framework parameter discovery and validation
 
 ## Overview
 

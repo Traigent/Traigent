@@ -2,12 +2,12 @@
 
 Release-ready, minimal install steps for the SDK and examples.
 
-## 🚀 Recommended Installs
+## Recommended Installs
 
 ### Fast path (pip)
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git
+git clone https://github.com/traigent/traigent-sdk.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
@@ -16,17 +16,17 @@ pip install -e ".[integrations]"          # Core + LangChain/OpenAI/Anthropic
 ### Faster path (uv)
 
 ```bash
-git clone https://github.com/Traigent/Traigent.git
+git clone https://github.com/traigent/traigent-sdk.git
 cd Traigent
 uv venv && source .venv/bin/activate
 uv pip install -e ".[integrations]"       # Same extras, faster resolver
 ```
 
-### Not on PyPI yet
+### PyPI vs source installs
 
-Traigent is currently distributed from GitHub. Keep using the commands above until the first PyPI release lands.
+For the latest changes, install from source (GitHub). If you're on a pinned release, you can use the corresponding PyPI package and extras once available for your environment.
 
-## 📦 Extras (from `pyproject.toml`)
+## Extras (from `pyproject.toml`)
 
 | Extra | What's included | Install example |
 | --- | --- | --- |
@@ -39,9 +39,11 @@ Traigent is currently distributed from GitHub. Keep using the commands above unt
 | `examples` | Full example/demo deps | `pip install -e ".[examples]"` |
 | `test` | pytest + tooling | `pip install -e ".[test]"` |
 | `dev` | Linters + tests | `pip install -e ".[dev]"` |
+| `docs` | MkDocs tooling | `pip install -e ".[docs]"` |
+| `tracing` | OpenTelemetry SDK | `pip install -e ".[tracing]"` |
 | `all` / `enterprise` | Everything above | `pip install -e ".[all]"` |
 
-## 📚 Common Scenarios
+## Common Scenarios
 
 - **Run quickstart examples (no API keys):**
 
@@ -55,7 +57,7 @@ Traigent is currently distributed from GitHub. Keep using the commands above unt
 
   ```bash
   pip install -e ".[dev,integrations,analytics]"
-  pytest tests/ -q
+  TRAIGENT_MOCK_MODE=true pytest tests/ -q
   ```
 
 - **Playground UI:**
@@ -71,7 +73,7 @@ Traigent is currently distributed from GitHub. Keep using the commands above unt
   pip install -e ".[all]"
   ```
 
-## ✅ Verify the install
+## Verify the install
 
 ```bash
 python - <<'PY'
@@ -80,7 +82,7 @@ print("Traigent version:", traigent.get_version_info()["version"])
 PY
 ```
 
-## 🐛 Troubleshooting (quick fixes)
+## Troubleshooting (quick fixes)
 
 - **`ModuleNotFoundError: langchain`** — install integrations: `pip install -e ".[integrations]"`.
 - **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_MODE=true`).

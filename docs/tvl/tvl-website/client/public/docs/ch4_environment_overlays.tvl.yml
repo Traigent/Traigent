@@ -36,8 +36,9 @@ optimization:
     max_trials:
       value: 80
       unit: count
-    parallel_trials: 8
     timeout_seconds: 3600
+  parallelism:
+    max_parallel_trials: 8
 environments:
   staging:
     overrides:

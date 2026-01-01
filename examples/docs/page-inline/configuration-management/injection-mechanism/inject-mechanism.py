@@ -43,6 +43,12 @@ def original_function():
 # What Traigent does internally:
 @traigent.optimize(configuration_space={"model": [...], "temperature": [...]})
 def my_function():
+
+    # Check for mock mode
+    import os
+
+    if os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+        return "Mock response"
     # 1. Traigent intercepts the ChatOpenAI constructor
     # 2. Gets optimal parameters from configuration space
     # 3. Overrides your parameters with optimal ones

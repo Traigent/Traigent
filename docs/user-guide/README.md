@@ -1,8 +1,8 @@
-# 📖 User Guide
+# User Guide
 
 Comprehensive guides for using Traigent SDK features and capabilities.
 
-## 📋 Contents
+## Contents
 
 - **[Agent Optimization](agent_optimization.md)** - Optimize AI agents and multi-step workflows
 - **[Choosing Models](choosing_optimization_model.md)** - Select the right optimization model for your use case
@@ -11,7 +11,7 @@ Comprehensive guides for using Traigent SDK features and capabilities.
 - **[Evaluation Guide](evaluation_guide.md)** - Measure and improve model performance
 - **[Optuna Integration](optuna_integration.md)** - Use the Optuna-backed optimizers and distributed coordinator
 
-## 🎯 Learning Path
+## Learning Path
 
 **New Users**: Start with [Injection Modes](injection_modes.md) to understand integration options
 

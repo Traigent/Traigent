@@ -42,9 +42,9 @@ RESULTS_DIR.mkdir(exist_ok=True)
 TEST_DIR = "tests/optimizer_validation"
 
 # Chat mode configuration
-# Set VIEWER_CHAT_USE_CLI=true to enable Claude CLI (requires claude CLI installed)
-# Default is false (local fallback mode) for reliability
-CHAT_USE_CLI = os.environ.get("VIEWER_CHAT_USE_CLI", "false").lower() == "true"
+# Set VIEWER_CHAT_USE_CLI=false to disable Claude CLI and use local fallback
+# Default is true (Claude CLI mode) for full functionality
+CHAT_USE_CLI = os.environ.get("VIEWER_CHAT_USE_CLI", "true").lower() == "true"
 
 # Allowed test target prefixes (security: restrict what can be run)
 ALLOWED_TARGET_PREFIX = f"{TEST_DIR}/"
@@ -55,8 +55,39 @@ _active_jobs: dict[str, dict[str, Any]] = {}
 # Chat conversation state (per-session, simplified for single user)
 _chat_messages: list[dict[str, Any]] = []
 
+# Persistent test results storage
+PERSISTENT_RESULTS_FILE = RESULTS_DIR / "persistent_results.json"
+
 # Evidence extraction prefix
 EVIDENCE_PREFIX = '{"type": "TEST_EVIDENCE"'
+
+
+def load_persistent_results() -> dict[str, Any]:
+    """Load persistent test results from disk."""
+    if PERSISTENT_RESULTS_FILE.exists():
+        try:
+            with open(PERSISTENT_RESULTS_FILE) as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_persistent_results(results: dict[str, Any]) -> None:
+    """Save test results to disk for persistence across refreshes."""
+    try:
+        with open(PERSISTENT_RESULTS_FILE, "w") as f:
+            json.dump(results, f, indent=2)
+    except OSError:
+        pass
+
+
+def update_persistent_results(new_results: dict[str, Any]) -> None:
+    """Merge new test results into persistent storage."""
+    existing = load_persistent_results()
+    # Update with new results (overwrites existing for same test ID)
+    existing.update(new_results)
+    save_persistent_results(existing)
 
 
 def extract_evidence(test_result: dict[str, Any]) -> dict[str, Any] | None:
@@ -212,22 +243,62 @@ def organize_tests(tests: list[dict[str, Any]]) -> dict[str, Any]:
     return tree
 
 
-def run_tests_async(job_id: str, test_target: str, result_file: Path) -> None:
-    """Run tests in a background thread."""
+def run_tests_async(
+    job_id: str, test_target: str, result_file: Path, test_ids: list[str] | None = None
+) -> None:
+    """Run tests in a background thread with streaming results.
+
+    Uses pytest's hook system to capture results as each test completes,
+    enabling real-time updates in the viewer.
+
+    Args:
+        job_id: Unique job identifier
+        test_target: Directory or file path to run
+        result_file: Where to write JSON results
+        test_ids: Optional list of specific test node IDs to run
+    """
     _active_jobs[job_id]["status"] = "running"
     _active_jobs[job_id]["start_time"] = time.time()
+    _active_jobs[job_id]["completed_tests"] = []
+    _active_jobs[job_id]["test_count"] = 0
+    _active_jobs[job_id]["passed"] = 0
+    _active_jobs[job_id]["failed"] = 0
+    _active_jobs[job_id]["skipped"] = 0
+
+    # Use a streaming JSON file for incremental results
+    streaming_file = RESULTS_DIR / f"{job_id}_streaming.json"
 
     cmd = [
         sys.executable,
         "-m",
         "pytest",
-        test_target,
-        "--json-report",
-        f"--json-report-file={result_file}",
-        "--json-report-indent=2",
-        "--log-cli-level=INFO",  # Capture INFO logs for evidence
-        "-v",
     ]
+
+    # Add test targets - either specific test IDs or a directory/file path
+    if test_ids:
+        cmd.extend(test_ids)
+    else:
+        cmd.append(test_target)
+
+    # Add common pytest options
+    cmd.extend(
+        [
+            "--json-report",
+            f"--json-report-file={result_file}",
+            "--json-report-indent=2",
+            "--log-cli-level=INFO",  # Capture INFO logs for evidence
+            "-v",
+            # Parallel execution with 4 workers
+            "-n",
+            "4",
+            # Timeout per test (60 seconds)
+            "--timeout=60",
+            # Load the streaming plugin and set output file
+            "-p",
+            "tests.optimizer_validation.viewer.streaming_plugin",
+            f"--streaming-results-file={streaming_file}",
+        ]
+    )
 
     env = os.environ.copy()
     env["TRAIGENT_MOCK_MODE"] = "true"
@@ -235,24 +306,101 @@ def run_tests_async(job_id: str, test_target: str, result_file: Path) -> None:
     env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
     # Add mock delay to make parallel execution visible in traces (50ms default)
     env.setdefault("TRAIGENT_MOCK_DELAY_MS", "50")
+    # Pass job ID for streaming updates
+    env["VIEWER_JOB_ID"] = job_id
 
     try:
-        process = subprocess.run(
+        # Run pytest with our streaming conftest
+        process = subprocess.Popen(
             cmd,
             env=env,
             cwd=str(PROJECT_ROOT),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
         )
+
+        # Monitor streaming file for updates while pytest runs
+        last_size = 0
+        while process.poll() is None:
+            # Check for streaming updates
+            if streaming_file.exists():
+                try:
+                    current_size = streaming_file.stat().st_size
+                    if current_size > last_size:
+                        with open(streaming_file) as f:
+                            content = f.read()
+                            # Parse JSONL format (one JSON object per line)
+                            for line in content.strip().split("\n"):
+                                if line.strip():
+                                    try:
+                                        test_result = json.loads(line)
+                                        _update_streaming_result(job_id, test_result)
+                                    except json.JSONDecodeError:
+                                        pass
+                        last_size = current_size
+                except OSError:
+                    pass
+            time.sleep(0.2)  # Check every 200ms
+
+        # Process completed
+        stdout, stderr = process.communicate()
         _active_jobs[job_id]["status"] = "completed"
         _active_jobs[job_id]["exit_code"] = process.returncode
-        _active_jobs[job_id]["stdout"] = process.stdout
-        _active_jobs[job_id]["stderr"] = process.stderr
+        _active_jobs[job_id]["stdout"] = stdout
+        _active_jobs[job_id]["stderr"] = stderr
+
+        # Clean up streaming file
+        if streaming_file.exists():
+            try:
+                streaming_file.unlink()
+            except OSError:
+                pass
+
     except Exception as e:
         _active_jobs[job_id]["status"] = "error"
         _active_jobs[job_id]["error"] = str(e)
 
     _active_jobs[job_id]["end_time"] = time.time()
+
+
+def _update_streaming_result(job_id: str, test_result: dict[str, Any]) -> None:
+    """Update job with a streaming test result."""
+    if job_id not in _active_jobs:
+        return
+
+    job = _active_jobs[job_id]
+    nodeid = test_result.get("nodeid", "")
+
+    # Check if we already have this test (avoid duplicates)
+    existing_ids = {t.get("nodeid") for t in job.get("completed_tests", [])}
+    if nodeid in existing_ids:
+        return
+
+    # Add to completed tests
+    job["completed_tests"].append(test_result)
+    job["test_count"] = len(job["completed_tests"])
+
+    # Update counters
+    outcome = test_result.get("outcome", "")
+    if outcome == "passed":
+        job["passed"] = job.get("passed", 0) + 1
+    elif outcome == "failed":
+        job["failed"] = job.get("failed", 0) + 1
+    elif outcome == "skipped":
+        job["skipped"] = job.get("skipped", 0) + 1
+
+    # Save to persistent storage immediately so results survive page refresh
+    if nodeid:
+        update_persistent_results(
+            {
+                nodeid: {
+                    "outcome": outcome,
+                    "duration": test_result.get("duration"),
+                    "longrepr": test_result.get("longrepr"),
+                }
+            }
+        )
 
 
 def is_valid_target(target: str) -> bool:
@@ -277,20 +425,29 @@ def is_valid_target(target: str) -> bool:
     return True
 
 
-def start_test_run(test_target: str) -> str:
-    """Start a test run and return job ID."""
+def start_test_run(test_target: str, test_ids: list[str] | None = None) -> str:
+    """Start a test run and return job ID.
+
+    Args:
+        test_target: Directory or file path to run (used when test_ids is None)
+        test_ids: Optional list of specific test node IDs to run
+
+    Returns:
+        Job ID string
+    """
     job_id = str(uuid.uuid4())[:8]
     result_file = RESULTS_DIR / f"{job_id}.json"
 
     _active_jobs[job_id] = {
         "id": job_id,
         "target": test_target,
+        "test_ids": test_ids,
         "result_file": str(result_file),
         "status": "pending",
     }
 
     thread = threading.Thread(
-        target=run_tests_async, args=(job_id, test_target, result_file)
+        target=run_tests_async, args=(job_id, test_target, result_file, test_ids)
     )
     thread.daemon = True
     thread.start()
@@ -584,6 +741,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._handle_get_tests()
         elif path == "/api/results":
             self._handle_get_results()
+        elif path == "/api/persistent-results":
+            self._handle_get_persistent_results()
         elif path.startswith("/api/run/status/"):
             job_id = path.split("/")[-1]
             self._handle_get_status(job_id)
@@ -653,10 +812,16 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         if results:
             self._send_json(results)
         else:
-            self._send_json({"error": "No results found"}, 404)
+            # Return empty results instead of 404 to avoid console errors
+            self._send_json({"tests": [], "summary": {}})
+
+    def _handle_get_persistent_results(self) -> None:
+        """Handle GET /api/persistent-results - return stored test results."""
+        results = load_persistent_results()
+        self._send_json(results)
 
     def _handle_get_status(self, job_id: str) -> None:
-        """Handle GET /api/run/status/:job_id - return job status."""
+        """Handle GET /api/run/status/:job_id - return job status with streaming updates."""
         if job_id not in _active_jobs:
             self._send_json({"error": "Job not found"}, 404)
             return
@@ -668,12 +833,39 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             "target": job["target"],
         }
 
+        # Include streaming progress for running jobs
+        if job["status"] == "running":
+            response["streaming"] = {
+                "completed_count": job.get("test_count", 0),
+                "passed": job.get("passed", 0),
+                "failed": job.get("failed", 0),
+                "skipped": job.get("skipped", 0),
+                "tests": job.get("completed_tests", []),
+            }
+
         if job["status"] == "completed":
             # Load results from file and extract evidence
             try:
                 with open(job["result_file"]) as f:
                     raw_results = json.load(f)
-                    response["results"] = process_results_with_evidence(raw_results)
+                    processed = process_results_with_evidence(raw_results)
+                    response["results"] = processed
+
+                    # Save results persistently for page refresh survival
+                    if processed and "tests" in processed:
+                        persistent_updates = {}
+                        for test in processed["tests"]:
+                            nodeid = test.get("nodeid")
+                            if nodeid:
+                                persistent_updates[nodeid] = {
+                                    "outcome": test.get("outcome"),
+                                    "duration": test.get("call", {}).get("duration")
+                                    or test.get("duration"),
+                                    "longrepr": test.get("call", {}).get("longrepr")
+                                    or test.get("longrepr"),
+                                    "evidence": test.get("evidence"),
+                                }
+                        update_persistent_results(persistent_updates)
             except (json.JSONDecodeError, OSError):
                 response["results"] = None
 
@@ -690,7 +882,12 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         self._send_json(response)
 
     def _handle_run_tests(self) -> None:
-        """Handle POST /api/run - start a test run."""
+        """Handle POST /api/run - start a test run.
+
+        Accepts JSON body with:
+        - target: Directory or file path to run (default: all validation tests)
+        - tests: Optional list of specific test node IDs to run
+        """
         content_length = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(content_length).decode("utf-8")
 
@@ -700,18 +897,31 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._send_json({"error": "Invalid JSON"}, 400)
             return
 
-        # Determine test target (default to all validation tests)
-        test_target = data.get("target", f"{TEST_DIR}/")
+        # Check for specific test IDs
+        test_ids = data.get("tests")
+        if test_ids:
+            # Validate all test IDs are within allowed paths
+            for test_id in test_ids:
+                if not test_id.startswith(TEST_DIR):
+                    self._send_json(
+                        {"error": f"Invalid test ID. Must be within {TEST_DIR}/"}, 403
+                    )
+                    return
+            # Start test run with specific test IDs
+            job_id = start_test_run(f"{TEST_DIR}/", test_ids)
+        else:
+            # Determine test target (default to all validation tests)
+            test_target = data.get("target", f"{TEST_DIR}/")
 
-        # Security: Validate target is within allowed paths
-        if not is_valid_target(test_target):
-            self._send_json(
-                {"error": f"Invalid target. Must be within {TEST_DIR}/"}, 403
-            )
-            return
+            # Security: Validate target is within allowed paths
+            if not is_valid_target(test_target):
+                self._send_json(
+                    {"error": f"Invalid target. Must be within {TEST_DIR}/"}, 403
+                )
+                return
 
-        # Start test run
-        job_id = start_test_run(test_target)
+            # Start test run
+            job_id = start_test_run(test_target)
 
         self._send_json({"job_id": job_id, "status": "started"})
 
@@ -859,6 +1069,7 @@ def start_server(host: str, port: int) -> None:
     print("    POST /api/run           - Run tests")
     print("    GET  /api/run/status/ID - Check job status")
     print("    POST /api/chat          - Chat with test assistant")
+    print(f"\n  Chat mode: {'Claude CLI' if CHAT_USE_CLI else 'Local fallback'}")
     print("\n  Press Ctrl+C to stop\n")
     print(f"{'='*60}\n")
 

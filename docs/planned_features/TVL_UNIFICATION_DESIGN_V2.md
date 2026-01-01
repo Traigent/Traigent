@@ -80,7 +80,8 @@ data:
 optimize:
   algorithm: nsga2
   max_trials: 100
-  parallel_trials: 4
+  parallel_config:
+    trial_concurrency: 4
   timeout_seconds: 3600  # Explicit unit in key name
 
 evaluate:
@@ -558,7 +559,7 @@ stages:
       # NARROW watching - only what this stage uses
       - optimize.algorithm
       - optimize.max_trials
-      - optimize.parallel_trials
+      - optimize.parallel_config.trial_concurrency
     metrics:
       - results/metrics.json
 

@@ -112,4 +112,4 @@ Open-source builds support `execution_mode="edge_analytics"` (local). Cloud/hybr
 
 ---
 
-Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).
+Ready for more? Dive into the [examples](../../examples/) and the [API reference](../api-reference/complete-function-specification.md).

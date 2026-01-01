@@ -1,12 +1,9 @@
-#+ Azure OpenAI Operations Guide (Experiments)
+# Azure OpenAI Operations Guide (Experiments)
 
 Run paper experiments against Azure OpenAI using a small adapter with mock support.
 
 ## Environment
 ```bash
-# Provider switch
-export TRAIGENT_LLM_PROVIDER=azure
-
 # Required for real runs
 export AZURE_OPENAI_ENDPOINT="https://<your-resource>.openai.azure.com"
 export AZURE_OPENAI_API_KEY="<key>"
@@ -15,6 +12,8 @@ export AZURE_OPENAI_API_KEY="<key>"
 
 # Mock mode (dry-run, no SDK needed)
 # export AZURE_OPENAI_MOCK=true
+
+# Note: use `--provider azure` in the experiment scripts below.
 ```
 
 ## Dependencies

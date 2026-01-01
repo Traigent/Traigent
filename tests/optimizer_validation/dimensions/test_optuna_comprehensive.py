@@ -96,6 +96,21 @@ class TestOptunaConfigSpaceTypes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify all trial configs only contain categorical values
+        if hasattr(result, "trials"):
+            valid_models = {"gpt-3.5-turbo", "gpt-4", "gpt-4o"}
+            valid_filters = {"strict", "moderate", "lenient"}
+            valid_formats = {"text", "json"}
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                if "model" in config:
+                    assert config["model"] in valid_models, f"Invalid model: {config['model']}"
+                if "safety_filter" in config:
+                    assert config["safety_filter"] in valid_filters
+                if "response_format" in config:
+                    assert config["response_format"] in valid_formats
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -139,6 +154,20 @@ class TestOptunaConfigSpaceTypes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify continuous parameters are within specified ranges
+        if hasattr(result, "trials"):
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                if "temperature" in config:
+                    assert 0.0 <= config["temperature"] <= 2.0, f"temperature out of range: {config['temperature']}"
+                if "top_p" in config:
+                    assert 0.1 <= config["top_p"] <= 1.0, f"top_p out of range: {config['top_p']}"
+                if "frequency_penalty" in config:
+                    assert -2.0 <= config["frequency_penalty"] <= 2.0
+                if "presence_penalty" in config:
+                    assert -2.0 <= config["presence_penalty"] <= 2.0
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -180,6 +209,25 @@ class TestOptunaConfigSpaceTypes:
         _, result = await scenario_runner(scenario)
 
         # Document behavior - may succeed with fallback or fail
+        # Track which degradation path was taken for observability
+        if isinstance(result, Exception):
+            # CMA-ES raised an error for categorical-only space - expected behavior
+            error_msg = str(result).lower()
+            incompatibility_terms = {"categorical", "cma", "continuous", "sampler"}
+            assert any(
+                term in error_msg for term in incompatibility_terms
+            ), f"Error should mention incompatibility: {result}"
+        elif hasattr(result, "trials"):
+            # CMA-ES succeeded with fallback - verify results are valid
+            valid_models = {"gpt-3.5-turbo", "gpt-4"}
+            valid_formats = {"json", "text"}
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                if "model" in config:
+                    assert config["model"] in valid_models
+                if "format" in config:
+                    assert config["format"] in valid_formats
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -232,6 +280,19 @@ class TestOptunaExecutionModes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            # Verify trial configs are valid
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        # Verify execution mode was applied if available in result metadata
+        if hasattr(result, "execution_mode"):
+            assert result.execution_mode == execution_mode
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -278,6 +339,15 @@ class TestOptunaObjectiveConfigs:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        # Verify trials were executed with maximize objective
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+
+        # Verify best_config exists for maximize objective
+        if hasattr(result, "best_config"):
+            assert result.best_config is not None, "Should have best_config for maximize"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 

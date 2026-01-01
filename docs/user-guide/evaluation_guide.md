@@ -380,6 +380,6 @@ def qa_system(question, temperature=0.5, max_tokens=100):
 
 ## Next Steps
 
-- [Custom Evaluator Examples](../examples/evaluation/custom_evaluator.py)
-- [Dataset Creation Tools](../examples/datasets/)
+- [Custom Evaluator Patterns](../../examples/docs/API_PATTERNS.md)
+- [Dataset Creation Tools](../../examples/datasets/)
 - [Troubleshooting Guide](../README.md#troubleshooting)

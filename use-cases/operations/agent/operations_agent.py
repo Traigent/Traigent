@@ -14,6 +14,7 @@ Usage:
 import asyncio
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,8 @@ _spec = importlib.util.spec_from_file_location("operations_evaluator", _evaluato
 _evaluator_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_evaluator_module)
 OperationsEvaluator = _evaluator_module.OperationsEvaluator
+
+DATASET_PATH = Path(__file__).parent.parent / "datasets" / "tasks_dataset.jsonl"
 
 
 def format_task_context(
@@ -82,6 +85,57 @@ Return a JSON object with:
 Respond with only the JSON object:"""
 
 
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled via environment variable."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+
+
+def _parse_json_response(content: str) -> dict[str, Any] | None:
+    """Parse a JSON object from model output, tolerating code fences."""
+    if not content:
+        return None
+
+    text = content.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z0-9]*\n?", "", text)
+        text = re.sub(r"\n```$", "", text)
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+
+
+def _normalize_llm_result(result: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Normalize LLM JSON into the expected response schema."""
+    if not isinstance(result, dict):
+        return None
+
+    actions = result.get("actions", [])
+    if isinstance(actions, str):
+        actions = [actions]
+    if not isinstance(actions, list) or not all(isinstance(a, str) for a in actions):
+        return None
+
+    should_escalate = result.get("should_escalate", result.get("escalate"))
+    if not isinstance(should_escalate, bool):
+        return None
+
+    escalation_reason = result.get("escalation_reason") or result.get("reason")
+
+    normalized = {"actions": actions, "should_escalate": should_escalate}
+    if escalation_reason:
+        normalized["escalation_reason"] = str(escalation_reason)
+
+    return normalized
+
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -91,7 +145,7 @@ Respond with only the JSON object:"""
     },
     objectives=["action_accuracy", "escalation_accuracy", "efficiency", "cost"],
     evaluation=EvaluationOptions(
-        eval_dataset="use-cases/operations/datasets/tasks_dataset.jsonl",
+        eval_dataset=str(DATASET_PATH),
         # OperationsEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
         scoring_function=OperationsEvaluator(),
     ),
@@ -132,32 +186,42 @@ def operations_workflow_agent(
         validation_strictness=validation_strictness,
     )
 
+    if is_mock_mode():
+        return generate_rule_based_response(
+            task_type, context, autonomy_level, validation_strictness
+        )
+
     # Use LangChain for LLM call
     try:
         from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "Install it with: pip install langchain-openai"
+        ) from exc
 
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-        )
-        response = llm.invoke(prompt)
+    llm = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+    )
+    response = llm.invoke(prompt)
 
-        # Parse JSON response
-        try:
-            result = json.loads(response.content)
-            return result
-        except json.JSONDecodeError:
-            # Fallback if response isn't valid JSON
-            return generate_rule_based_response(task_type, context, autonomy_level)
-    except ImportError:
-        # Fallback for mock mode without LangChain
-        return generate_rule_based_response(task_type, context, autonomy_level)
+    parsed = _parse_json_response(response.content)
+    normalized = _normalize_llm_result(parsed)
+    if normalized:
+        return normalized
+
+    # Fallback if response isn't valid JSON
+    return generate_rule_based_response(
+        task_type, context, autonomy_level, validation_strictness
+    )
 
 
 def generate_rule_based_response(
     task_type: str,
     context: dict[str, Any],
     autonomy_level: str,
+    validation_strictness: str = "standard",
 ) -> dict[str, Any]:
     """
     Generate a rule-based response when LLM is not available.
@@ -196,6 +260,14 @@ def generate_rule_based_response(
 
     actions = base_actions.get(task_type, ["validate_request", "check_policy"])
 
+    if validation_strictness == "strict":
+        extra_actions = [
+            action
+            for action in ["validate_request", "verify_authorization"]
+            if action not in actions
+        ]
+        actions = extra_actions + actions
+
     # Determine if escalation is needed
     should_escalate = False
     escalation_reason = None
@@ -224,10 +296,17 @@ def generate_rule_based_response(
         should_escalate = True
         escalation_reason = "Risk assessment requires human review"
 
-    if (
-        context.get("compliance_required")
-        and len(context.get("compliance_required", [])) > 0
-    ):
+    compliance_required = context.get("compliance_required")
+    if compliance_required:
+        has_requirements = (
+            len(compliance_required) > 0
+            if isinstance(compliance_required, (list, tuple, set))
+            else True
+        )
+    else:
+        has_requirements = False
+
+    if has_requirements:
         should_escalate = True
         escalation_reason = "Compliance requirements need verification"
 
@@ -259,7 +338,7 @@ async def run_optimization():
     print("=" * 60)
 
     # Check if mock mode is enabled
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+    mock_mode = is_mock_mode()
     print(f"\nMock Mode: {'Enabled' if mock_mode else 'Disabled'}")
 
     if not mock_mode:

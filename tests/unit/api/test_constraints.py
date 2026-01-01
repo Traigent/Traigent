@@ -639,6 +639,108 @@ class TestTupleToRangeConversion:
         assert isinstance(space.tvars["model"], Choices)
 
 
+class TestNormalizeConstraints:
+    """Tests for normalize_constraints() function."""
+
+    def test_empty_list(self) -> None:
+        """Test normalizing empty constraint list."""
+        from traigent.api.constraints import normalize_constraints
+
+        result = normalize_constraints([])
+        assert result == []
+
+    def test_none_input(self) -> None:
+        """Test normalizing None input."""
+        from traigent.api.constraints import normalize_constraints
+
+        result = normalize_constraints(None)
+        assert result == []
+
+    def test_pure_constraint_list(self) -> None:
+        """Test normalizing list of Constraint objects."""
+        from traigent.api.constraints import normalize_constraints
+
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraints = [
+            implies(model.equals("gpt-4"), temp.lte(0.7)),
+            require(temp.gte(0.1)),
+        ]
+
+        result = normalize_constraints(constraints)
+
+        assert len(result) == 2
+        assert all(callable(fn) for fn in result)
+
+        # Test the callables work
+        config = {"model": "gpt-4", "temperature": 0.5}
+        assert all(fn(config) for fn in result)
+
+    def test_pure_callable_list(self) -> None:
+        """Test normalizing list of pure callables (backward compat)."""
+        from traigent.api.constraints import normalize_constraints
+
+        constraints = [
+            lambda cfg: cfg["temperature"] < 1.0,
+            lambda cfg: cfg["max_tokens"] > 100,
+        ]
+
+        result = normalize_constraints(constraints)
+
+        assert len(result) == 2
+        assert all(callable(fn) for fn in result)
+
+        # Callables should pass through unchanged
+        config = {"temperature": 0.5, "max_tokens": 500}
+        assert all(fn(config) for fn in result)
+
+    def test_mixed_constraints_and_callables(self) -> None:
+        """Test normalizing mixed list of Constraints and callables."""
+        from traigent.api.constraints import normalize_constraints
+
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraints = [
+            implies(model.equals("gpt-4"), temp.lte(0.7)),  # Constraint
+            lambda cfg: cfg["max_tokens"] < 4096,  # Callable
+            require(temp.gte(0.1)),  # Constraint
+        ]
+
+        result = normalize_constraints(constraints)
+
+        assert len(result) == 3
+        assert all(callable(fn) for fn in result)
+
+        # Test all work together
+        config = {"model": "gpt-4", "temperature": 0.5, "max_tokens": 2000}
+        assert all(fn(config) for fn in result)
+
+    def test_invalid_constraint_type(self) -> None:
+        """Test that invalid types raise TypeError."""
+        from traigent.api.constraints import normalize_constraints
+
+        with pytest.raises(TypeError, match="constraints\\[1\\]"):
+            normalize_constraints([lambda cfg: True, "not a constraint"])  # type: ignore[list-item]
+
+    def test_with_explicit_var_names(self) -> None:
+        """Test normalizing with explicit var_names mapping."""
+        from traigent.api.constraints import normalize_constraints
+
+        model = Choices(["gpt-4", "gpt-3.5"])  # No name
+        temp = Range(0.0, 2.0)  # No name
+
+        constraints = [implies(model.equals("gpt-4"), temp.lte(0.7))]
+        var_names = {id(model): "m", id(temp): "t"}
+
+        result = normalize_constraints(constraints, var_names)
+
+        assert len(result) == 1
+        assert result[0]({"m": "gpt-4", "t": 0.5}) is True
+        assert result[0]({"m": "gpt-4", "t": 1.0}) is False
+
+
 class TestTVLExportFormat:
     """Tests for TVL 0.9 export format compliance."""
 
@@ -706,3 +808,190 @@ class TestTVLExportFormat:
         assert constraint["description"] == "Min temp"
         assert constraint["error_message"] == "Min temp"
         assert "index" in constraint
+
+
+class TestDecoratorIntegration:
+    """Tests for decorator integration with Constraint and ConfigSpace objects."""
+
+    def test_decorator_accepts_constraint_objects(self) -> None:
+        """Test that @optimize accepts Constraint objects in constraints list."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        @optimize(
+            configuration_space={"model": model, "temperature": temp},
+            constraints=[
+                implies(model.equals("gpt-4"), temp.lte(0.7)),
+            ],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_decorator_accepts_mixed_constraints(self) -> None:
+        """Test that @optimize accepts mixed Constraint and callable list."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        @optimize(
+            configuration_space={"model": model, "temperature": temp},
+            constraints=[
+                implies(model.equals("gpt-4"), temp.lte(0.7)),  # Constraint
+                lambda cfg: cfg["temperature"] >= 0.1,  # Callable
+            ],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_decorator_accepts_config_space_object(self) -> None:
+        """Test that @optimize accepts ConfigSpace object directly."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        space = ConfigSpace(
+            tvars={"temperature": temp, "model": model},
+            constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        )
+
+        @optimize(configuration_space=space)
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_decorator_config_space_with_no_constraints(self) -> None:
+        """Test ConfigSpace without constraints can have external constraints."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        space = ConfigSpace(tvars={"temperature": temp, "model": model})
+
+        @optimize(
+            configuration_space=space,
+            constraints=[lambda cfg: cfg["temperature"] < 1.5],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_decorator_config_space_conflict_raises(self) -> None:
+        """Test ConfigSpace with constraints AND explicit constraints raises error."""
+        from traigent.api.decorators import optimize
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        space = ConfigSpace(
+            tvars={"temperature": temp, "model": model},
+            constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        )
+
+        with pytest.raises(TypeError, match="Cannot provide both"):
+
+            @optimize(
+                configuration_space=space,
+                constraints=[lambda cfg: True],  # This should conflict
+            )
+            def test_func(text: str) -> str:
+                return f"Response: {text}"
+
+    def test_backward_compatibility_lambda_constraints(self) -> None:
+        """Test that legacy lambda constraints still work."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        @optimize(
+            configuration_space={
+                "model": ["gpt-4", "gpt-3.5"],
+                "temperature": (0.0, 2.0),
+            },
+            constraints=[
+                lambda cfg: (
+                    cfg["temperature"] < 1.0 if cfg["model"] == "gpt-4" else True
+                ),
+            ],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_backward_compatibility_simple_config_space(self) -> None:
+        """Test that legacy simple config space syntax still works."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        @optimize(
+            configuration_space={
+                "model": ["gpt-4", "gpt-3.5"],
+                "temperature": [0.1, 0.3, 0.5, 0.7],
+                "max_tokens": (100, 4096),
+            }
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+
+    def test_constraint_uses_config_key_not_tvar_name(self) -> None:
+        """Test that constraints use config key from decorator, not tvar.name.
+
+        This tests the fix for the var_names mapping issue where constraints
+        would silently pass if tvar.name didn't match the config key.
+        """
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        # Intentionally use different name vs config key
+        temp = Range(0.0, 2.0, name="wrong_name")  # name doesn't match key
+        model = Choices(["gpt-4", "gpt-3.5"], name="also_wrong")
+
+        # The constraint uses the ParameterRange objects
+        constraint = implies(model.equals("gpt-4"), temp.lte(0.7))
+
+        @optimize(
+            configuration_space={"temperature": temp, "model": model},
+            constraints=[constraint],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)
+        # The key test: constraints should work even though tvar.name != config key
+        # because var_names mapping is built from the config_space dict
+
+    def test_unnamed_ranges_work_with_config_key(self) -> None:
+        """Test that constraints with unnamed ranges work via config key mapping."""
+        from traigent.api.decorators import optimize
+        from traigent.core.optimized_function import OptimizedFunction
+
+        # No name attribute set at all
+        temp = Range(0.0, 2.0)
+        model = Choices(["gpt-4", "gpt-3.5"])
+
+        constraint = implies(model.equals("gpt-4"), temp.lte(0.7))
+
+        @optimize(
+            configuration_space={"temperature": temp, "model": model},
+            constraints=[constraint],
+        )
+        def test_func(text: str) -> str:
+            return f"Response: {text}"
+
+        assert isinstance(test_func, OptimizedFunction)

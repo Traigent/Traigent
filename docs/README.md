@@ -38,8 +38,16 @@ def answer_question(question: str) -> str:
 - **[Evaluation Guide](user-guide/evaluation_guide.md)** - Measure and improve performance
 - **[Optuna Integration](user-guide/optuna_integration.md)** - Optuna-backed optimizers, coordinator, and adapter
 
+### 🧭 [Guides](guides/)
+- **[Execution Modes](guides/execution-modes.md)** - Local, hybrid, and cloud execution behavior
+- **[Evaluation](guides/evaluation.md)** - Evaluation best practices and troubleshooting
+- **[Parallel Configuration](guides/parallel-configuration.md)** - Concurrency settings and tuning
+- **[Secrets Management](guides/secrets_management.md)** - Securely manage API keys
+
 ### 🔧 [API Reference](api-reference/)
 - **[Complete Function Specification](api-reference/complete-function-specification.md)** - Full API documentation
+- **[Interactive Optimizer](api-reference/interactive_optimizer.md)** - Hybrid optimization API surface
+- **[Thread Pool Examples](api-reference/thread-pool-examples.md)** - Context propagation in threads
 
 ### 🏗️ [Architecture](architecture/)
 - **[System Architecture](architecture/ARCHITECTURE.md)** - How Traigent works internally

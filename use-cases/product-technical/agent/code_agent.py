@@ -32,6 +32,8 @@ _evaluator_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_evaluator_module)
 CodeEvaluator = _evaluator_module.CodeEvaluator
 
+DATASET_PATH = Path(__file__).parent.parent / "datasets" / "coding_tasks.jsonl"
+
 
 CODE_GENERATION_PROMPT = """You are an expert Python programmer. Generate a function based on the following specification.
 
@@ -48,6 +50,11 @@ Requirements:
 {approach_instruction}
 
 Return ONLY the function code, no explanations or markdown:"""
+
+
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled via environment variable."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
 
 
 def get_approach_instruction(approach: str) -> str:
@@ -71,7 +78,7 @@ Then implement a solution that handles all these cases."""
     },
     objectives=["test_pass_rate", "code_quality", "efficiency", "cost"],
     evaluation=EvaluationOptions(
-        eval_dataset="use-cases/product-technical/datasets/coding_tasks.jsonl",
+        eval_dataset=str(DATASET_PATH),
         # CodeEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
         scoring_function=CodeEvaluator(),
     ),
@@ -114,29 +121,33 @@ def code_generation_agent(
         approach_instruction=approach_instruction,
     )
 
+    if is_mock_mode():
+        return generate_mock_code(task, function_name, signature)
+
     # Use LangChain for LLM call
     try:
         from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "Install it with: pip install langchain-openai"
+        ) from exc
 
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-        )
-        response = llm.invoke(prompt)
-        code = extract_code(response.content)
+    llm = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+    )
+    response = llm.invoke(prompt)
+    code = extract_code(response.content)
 
-        return {
-            "code": code,
-            "function_name": function_name,
-            "model": model,
-            "temperature": temperature,
-            "style": coding_style,
-            "approach": approach,
-        }
-
-    except ImportError:
-        # Fallback for mock mode without LangChain
-        return generate_mock_code(task, function_name, signature)
+    return {
+        "code": code,
+        "function_name": function_name,
+        "model": model,
+        "temperature": temperature,
+        "style": coding_style,
+        "approach": approach,
+    }
 
 
 def extract_code(response: str) -> str:
@@ -216,7 +227,7 @@ async def run_optimization():
     print("=" * 60)
 
     # Check if mock mode is enabled
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+    mock_mode = is_mock_mode()
     print(f"\nMock Mode: {'Enabled' if mock_mode else 'Disabled'}")
 
     if not mock_mode:

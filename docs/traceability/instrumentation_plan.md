@@ -6,6 +6,7 @@ Purpose: add runtime trace hooks using `tools.trace_sync.runtime` so `verify-run
 - Ensure CodeSync package is importable: from the CodeSync repo run `pip install -e .[dev]` or add its path to `PYTHONPATH`.
 - Runtime helpers to import in Traigent:  
   `from tools.trace_sync.runtime import flow_context, set_flow_id, concept_action, sync_rule, record_action`
+- This repo includes `tools/trace_sync_bootstrap.py` for optional monkey-patched instrumentation if you want to avoid code edits.
 - Default log: `<repo>/runtime/traces/runtime.log`; override via env `TRACE_SYNC_LOG_PATH` if needed.
 
 ## Instrumentation principles
