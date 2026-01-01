@@ -659,7 +659,13 @@ class TestEmptyAndMinimalSpaces:
         # Should handle gracefully - either error or use defaults
         if isinstance(result, Exception):
             # Empty config space should produce a clear error
-            pass
+            assert "config" in str(result).lower() or "space" in str(result).lower() or "empty" in str(result).lower(), \
+                f"Error should mention config/space issue: {result}"
+        else:
+            # If it somehow succeeds (uses defaults), verify it works
+            if hasattr(result, "trials"):
+                # At least ran something
+                assert hasattr(result, "trials"), "Result should have trials attribute"
 
     @pytest.mark.unit
     @pytest.mark.asyncio

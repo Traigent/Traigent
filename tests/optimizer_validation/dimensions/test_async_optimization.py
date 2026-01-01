@@ -606,6 +606,19 @@ class TestAsyncWithAllAlgorithms:
         assert not isinstance(
             result, Exception
         ), f"Unexpected error with {optimizer}: {result}"
+
+        # Verify trials were executed with valid configs
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, f"Should complete at least one trial with {optimizer}"
+            valid_models = {"gpt-3.5-turbo", "gpt-4"}
+            valid_temps = {0.3, 0.7}
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                if "model" in config:
+                    assert config["model"] in valid_models
+                if "temperature" in config:
+                    assert config["temperature"] in valid_temps
+
         validation = result_validator(scenario, result)
         assert validation.passed, f"{optimizer} failed: {validation.summary()}"
 

@@ -106,9 +106,16 @@ class TestInvalidExecutionMode:
         func, result = await scenario_runner(scenario)
 
         # Either fails with error or uses default - both are acceptable
-        if not isinstance(result, Exception):
+        if isinstance(result, Exception):
+            # Error is acceptable - verify it mentions execution/mode
+            assert "execution" in str(result).lower() or "mode" in str(result).lower() or "invalid" in str(result).lower(), \
+                f"Error should mention execution mode issue: {result}"
+        else:
+            # If it uses a default, verify the result is valid
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, "Should complete at least one trial with default mode"
             validation = result_validator(scenario, result)
-            # Record the result either way
+            assert validation.passed, validation.summary()
 
 
 # =============================================================================
@@ -819,6 +826,12 @@ class TestNonDeterministicReproducibility:
         # Both should complete
         assert not isinstance(result1, Exception), f"Run 1 error: {result1}"
         assert not isinstance(result2, Exception), f"Run 2 error: {result2}"
+
+        # Verify trials were executed in both runs
+        if hasattr(result1, "trials"):
+            assert len(result1.trials) >= 1, "Run 1 should complete at least one trial"
+        if hasattr(result2, "trials"):
+            assert len(result2.trials) >= 1, "Run 2 should complete at least one trial"
 
         # Results may differ (non-deterministic)
         # We just verify both runs work correctly

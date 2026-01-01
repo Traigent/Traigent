@@ -521,6 +521,13 @@ class TestResourceCleanup:
                 result, Exception
             ), f"Unexpected error on iteration {i}: {result}"
 
+            # Verify trials were executed
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, f"Sequential run {i} should complete at least one trial"
+                for trial in result.trials:
+                    config = getattr(trial, "config", {})
+                    assert config, f"Trial in run {i} should have config"
+
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_optimization_after_timeout(
@@ -628,3 +635,10 @@ class TestResourceCleanup:
             assert not isinstance(
                 result, Exception
             ), f"Unexpected error with {algo_name}: {result}"
+
+            # Verify trials were executed
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, f"{algo_name} should complete at least one trial"
+                for trial in result.trials:
+                    config = getattr(trial, "config", {})
+                    assert config, f"Trial in {algo_name} should have config"

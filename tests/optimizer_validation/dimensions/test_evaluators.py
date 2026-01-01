@@ -394,9 +394,16 @@ class TestEvaluatorEdgeCases:
             gist_template="eval-none -> {error_type()} | {status()}",
         )
 
-        _, _ = await scenario_runner(scenario)
+        _, result = await scenario_runner(scenario)
 
-        # Should handle None return gracefully
+        # Should handle None return gracefully - either error or partial result
+        if isinstance(result, Exception):
+            # Error is acceptable for evaluator returning None
+            assert "none" in str(result).lower() or "evaluator" in str(result).lower() or "return" in str(result).lower(), \
+                f"Error should mention evaluator issue: {result}"
+        else:
+            # If it handles gracefully, verify result structure
+            assert hasattr(result, "trials"), "Result should have trials attribute"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
