@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import psutil
 import pytest
 
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 
 
 class TestHighVolumeRequests:
@@ -70,7 +70,7 @@ class TestHighVolumeRequests:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -84,7 +84,7 @@ class TestHighVolumeRequests:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Create many concurrent requests
                         async def make_request(request_id):
@@ -181,7 +181,7 @@ class TestHighVolumeRequests:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -195,7 +195,7 @@ class TestHighVolumeRequests:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Launch extreme concurrency test
                         async def extreme_request_batch(batch_id):
@@ -331,7 +331,7 @@ class TestSessionSharingUnderLoad:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -339,7 +339,7 @@ class TestSessionSharingUnderLoad:
                         )
                         mock_auth_mgr.return_value = mock_auth_instance
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Create many concurrent operations that share sessions
                         async def shared_session_operation(op_id):
@@ -434,7 +434,7 @@ class TestSessionSharingUnderLoad:
                             mock_auth.get_headers = AsyncMock(
                                 return_value={
                                     "Authorization": f"Bearer {api_key}",
-                                    "X-TraiGent-Client": "test",
+                                    "X-Traigent-Client": "test",
                                 }
                             )
                             mock_auth.is_authenticated = AsyncMock(return_value=True)
@@ -444,7 +444,7 @@ class TestSessionSharingUnderLoad:
 
                         # Create and destroy many clients to test cleanup
                         async def client_lifecycle(client_id):
-                            client = TraiGentCloudClient(
+                            client = TraigentCloudClient(
                                 api_key=f"{api_key}_{client_id}"
                             )
 
@@ -520,7 +520,7 @@ class TestAuthenticationPerformanceUnderLoad:
 
             return {
                 "Authorization": f"Bearer {api_key}",
-                "X-TraiGent-Client": "performance-test",
+                "X-Traigent-Client": "performance-test",
             }
 
         def track_request_performance(*args, **kwargs):
@@ -559,7 +559,7 @@ class TestAuthenticationPerformanceUnderLoad:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Performance test with many requests
                         num_requests = 200
@@ -641,10 +641,10 @@ class TestAuthenticationPerformanceUnderLoad:
 
                                 async def header_factory():
                                     if key is None:
-                                        return {"X-TraiGent-Client": "test"}
+                                        return {"X-Traigent-Client": "test"}
                                     return {
                                         "Authorization": f"Bearer {key}",
-                                        "X-TraiGent-Client": "test",
+                                        "X-Traigent-Client": "test",
                                         "X-API-Key": key,
                                     }
 
@@ -677,7 +677,7 @@ class TestAuthenticationPerformanceUnderLoad:
                             mock_session.close = AsyncMock()
                             mock_cs.return_value = mock_session
 
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
 
                             # Make multiple requests per client
                             client_tasks = []
@@ -799,7 +799,7 @@ class TestErrorRecoveryUnderLoad:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -813,7 +813,7 @@ class TestErrorRecoveryUnderLoad:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Make many requests under error conditions
                         num_requests = 100
@@ -996,11 +996,11 @@ class TestClientIsolationUnderStress:
                                 async def header_factory():
                                     if key is None:
                                         return {
-                                            "X-TraiGent-Client": "test",
+                                            "X-Traigent-Client": "test",
                                         }
                                     return {
                                         "Authorization": f"Bearer {key}",
-                                        "X-TraiGent-Client": "test",
+                                        "X-Traigent-Client": "test",
                                         "X-API-Key": key,
                                     }
 
@@ -1025,7 +1025,7 @@ class TestClientIsolationUnderStress:
                             mock_session.close = AsyncMock()
                             mock_cs.return_value = mock_session
 
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
 
                         # Each client makes many requests rapidly
                         client_tasks = []
@@ -1156,7 +1156,7 @@ class TestMemoryAndResourceManagement:
                             mock_session.get = Mock(return_value=mock_context)
                             mock_cs.return_value = mock_session
 
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
                             clients.append(client)
 
             # Make requests with all clients

@@ -1,14 +1,26 @@
-"""TraiGent SDK - Open-source LLM optimization toolkit.
+"""Traigent SDK - Open-source LLM optimization toolkit.
 
-TraiGent makes it effortless to optimize your LLM applications with a simple decorator.
+Traigent makes it effortless to optimize your LLM applications with a simple decorator.
 
 Example:
     >>> import traigent
+    >>> from traigent import Range, IntRange, Choices, LogRange
+    >>>
+    >>> # New SE-friendly syntax with Range/Choices classes
     >>> @traigent.optimize(
     ...     eval_dataset="evals.jsonl",
     ...     objectives=["accuracy", "cost"],
+    ...     temperature=Range(0.0, 2.0),
+    ...     max_tokens=IntRange(100, 4096),
+    ...     model=Choices(["gpt-4o-mini", "gpt-4o"]),
+    ... )
+    ... def my_function(query: str) -> str:
+    ...     return process_query(query)
+    >>>
+    >>> # Legacy syntax still works
+    >>> @traigent.optimize(
     ...     configuration_space={
-    ...         "model": ["gpt-4o-mini", "GPT-4o"],
+    ...         "model": ["gpt-4o-mini", "gpt-4o"],
     ...         "temperature": (0.0, 1.0)
     ...     }
     ... )
@@ -29,8 +41,26 @@ import sys
 from traigent._version import get_version
 
 __version__ = get_version()
-__author__ = "TraiGent Team"
+__author__ = "Traigent Team"
 __email__ = "opensource@traigent.ai"
+
+from traigent.api.config_space import ConfigSpace
+
+# TVL constraint system
+from traigent.api.constraints import (
+    AndCondition,
+    BoolExpr,
+    Condition,
+    Constraint,
+    NotCondition,
+    OrCondition,
+    WhenBuilder,
+    constraints_to_callables,
+    implies,
+    normalize_constraints,
+    require,
+    when,
+)
 
 # Public API exports
 from traigent.api.decorators import optimize
@@ -47,6 +77,15 @@ from traigent.api.functions import (
     set_strategy,
 )
 
+# SE-friendly parameter range classes
+from traigent.api.parameter_ranges import (
+    Choices,
+    IntRange,
+    LogRange,
+    ParameterRange,
+    Range,
+)
+
 # Core types
 from traigent.api.types import (
     ConfigurationComparison,
@@ -56,6 +95,16 @@ from traigent.api.types import (
     SensitivityAnalysis,
     StrategyConfig,
     TrialResult,
+)
+from traigent.api.validation_protocol import (
+    ConstraintValidator,
+    ConstraintViolation,
+    PythonConstraintValidator,
+    SatResult,
+    SatStatus,
+)
+from traigent.api.validation_protocol import (
+    ValidationResult as ConstraintValidationResult,
 )
 
 # Thread context helpers
@@ -105,17 +154,43 @@ from traigent.visualization.plots import PlotGenerator, create_quick_plot
 __all__ = [
     # Main decorator
     "optimize",
+    # SE-friendly parameter range classes
+    "Range",
+    "IntRange",
+    "LogRange",
+    "Choices",
+    "ParameterRange",
+    # TVL constraint system
+    "AndCondition",
+    "BoolExpr",
+    "Condition",
+    "Constraint",
+    "ConfigSpace",
+    "ConstraintValidator",
+    "ConstraintViolation",
+    "ConstraintValidationResult",
+    "NotCondition",
+    "OrCondition",
+    "PythonConstraintValidator",
+    "SatResult",
+    "SatStatus",
+    "WhenBuilder",
+    "constraints_to_callables",
+    "implies",
+    "normalize_constraints",
+    "require",
+    "when",
     # Configuration functions
     "configure",
     "initialize",
     "override_config",
-    "set_strategy",
     "get_available_strategies",
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
     "get_optimization_insights",
     "get_version_info",
+    "set_strategy",
     # Configuration types
     "TraigentConfig",
     # Lifecycle and state
@@ -159,23 +234,5 @@ __all__ = [
     "StrategyConfig",
 ]
 
-# Legacy compatibility: expose the package via the builtins namespace.
-# DEPRECATED: This pollutes the global namespace and will be removed in v1.0.0.
-# Tests should use explicit imports: `import traigent`
-import os
-import warnings
-
-if os.environ.get("TRAIGENT_ENABLE_BUILTINS_COMPAT", "").lower() in ("1", "true"):
-    # Only enable if explicitly requested (for legacy test compatibility)
-    builtins.traigent = sys.modules[__name__]  # type: ignore[attr-defined]
-elif os.environ.get("PYTEST_CURRENT_TEST"):
-    # Auto-enable in pytest but warn about deprecation
-    warnings.warn(
-        "traigent is injected into builtins for test compatibility. "
-        "This is deprecated and will be removed in v1.0.0. "
-        "Use explicit 'import traigent' instead. "
-        "Set TRAIGENT_ENABLE_BUILTINS_COMPAT=1 to suppress this warning.",
-        DeprecationWarning,
-        stacklevel=1,
-    )
-    builtins.traigent = sys.modules[__name__]  # type: ignore[attr-defined]
+# NOTE: Legacy builtins injection removed in v0.9.0
+# Use explicit imports: `import traigent`

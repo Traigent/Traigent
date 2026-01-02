@@ -14,6 +14,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import (
+    ensure_within_base,
+    read_tracking_version,
+    resolve_base_path,
+    resolve_version,
+)
+
 
 @dataclass
 class CheckResult:
@@ -36,15 +47,24 @@ class PreflightChecker:
         self,
         base_path: str | Path = ".post_release_recommendation_fixes",
         source_todo: str | Path | None = None,
+        version: str | None = None,
     ) -> None:
         """Initialize checker.
 
         Args:
             base_path: Base path for fix workflow
             source_todo: Path to source POST_RELEASE_TODO.md
+            version: Release version override
         """
-        self.base_path = Path(base_path)
+        self.root_path = Path(base_path)
+        self.version = resolve_version(version)
+        self.base_path = resolve_base_path(self.root_path, self.version)
         self.source_todo = Path(source_todo) if source_todo else None
+
+    def _read_text_in_base(self, path: Path) -> str:
+        """Read text from a path validated under the base path."""
+        ensure_within_base(self.base_path, path)
+        return path.read_text()
 
     def run_all_checks(self) -> list[CheckResult]:
         """Run all pre-flight checks.
@@ -61,7 +81,10 @@ class PreflightChecker:
             self.check_pytest(),
             self.check_make_commands(),
             self.check_tracking_file(),
+            self.check_release_version(),
+            self.check_evidence_validation(),
             self.check_source_todo(),
+            self.check_pre_release_tracking(),
             self.check_no_active_session(),
         ]
         return checks
@@ -314,7 +337,7 @@ class PreflightChecker:
                 message="TRACKING.md not found. Run todo_importer.py first.",
             )
 
-        content = tracking_path.read_text()
+        content = self._read_text_in_base(tracking_path)
 
         # Check if it has actual items (not just template)
         if "| Pending |" in content or "| Complete |" in content:
@@ -331,12 +354,102 @@ class PreflightChecker:
             severity="warning",
         )
 
+    def check_release_version(self) -> CheckResult:
+        """Check release version alignment between env and tracking file."""
+        tracking_path = self.base_path / "TRACKING.md"
+        tracking_version = read_tracking_version(tracking_path, self.base_path)
+        env_version = self.version
+
+        if not env_version and not tracking_version:
+            return CheckResult(
+                name="Release Version",
+                passed=False,
+                message="No release version set (RR_VERSION) and none found in tracking",
+                severity="warning",
+            )
+
+        if tracking_version and env_version and tracking_version != env_version:
+            return CheckResult(
+                name="Release Version",
+                passed=False,
+                message=f"Mismatch: tracking={tracking_version}, RR_VERSION={env_version}",
+                severity="error",
+            )
+
+        version = tracking_version or env_version or "UNKNOWN"
+        return CheckResult(
+            name="Release Version",
+            passed=True,
+            message=f"Version: {version}",
+        )
+
+    def check_evidence_validation(self) -> CheckResult:
+        """Check that tracking evidence is machine-valid JSON."""
+        tracking_path = self.base_path / "TRACKING.md"
+        validator_path = Path(".release_review/automation/evidence_validator.py")
+
+        if not tracking_path.exists():
+            return CheckResult(
+                name="Evidence Validation",
+                passed=True,
+                message="Tracking file not found (skip evidence validation)",
+                severity="info",
+            )
+
+        if not validator_path.exists():
+            return CheckResult(
+                name="Evidence Validation",
+                passed=False,
+                message="Evidence validator not found at .release_review/automation/evidence_validator.py",
+                severity="warning",
+            )
+
+        python_cmd = self._resolve_python_command()
+        try:
+            result = subprocess.run(
+                [python_cmd, str(validator_path), "--file", str(tracking_path)],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            return CheckResult(
+                name="Evidence Validation",
+                passed=False,
+                message="Failed to run evidence validator",
+                severity="warning",
+            )
+
+        if result.returncode == 0:
+            return CheckResult(
+                name="Evidence Validation",
+                passed=True,
+                message="Tracking evidence is machine-valid JSON",
+            )
+
+        error = result.stderr.strip() or result.stdout.strip() or "Validation failed"
+        return CheckResult(
+            name="Evidence Validation",
+            passed=False,
+            message=error,
+            severity="error",
+        )
+
     def check_source_todo(self) -> CheckResult:
         """Check if source POST_RELEASE_TODO.md exists."""
         if not self.source_todo:
             # Try to find one
             release_review = Path(".release_review")
             if release_review.exists():
+                if self.version:
+                    candidate = release_review / self.version / "POST_RELEASE_TODO.md"
+                    if candidate.exists():
+                        return CheckResult(
+                            name="Source TODO",
+                            passed=True,
+                            message=f"Found: {candidate}",
+                            severity="info",
+                        )
                 todos = list(release_review.glob("*/POST_RELEASE_TODO.md"))
                 if todos:
                     return CheckResult(
@@ -365,6 +478,43 @@ class PreflightChecker:
             message=f"Not found: {self.source_todo}",
         )
 
+    def check_pre_release_tracking(self) -> CheckResult:
+        """Check for pre-release tracking file presence."""
+        if not self.version:
+            return CheckResult(
+                name="Pre-Release Tracking",
+                passed=True,
+                message="RR_VERSION not set (skip pre-release tracking check)",
+                severity="info",
+            )
+
+        tracking = Path(".release_review") / self.version / "PRE_RELEASE_REVIEW_TRACKING.md"
+        if tracking.exists():
+            return CheckResult(
+                name="Pre-Release Tracking",
+                passed=True,
+                message=f"Found: {tracking}",
+            )
+
+        return CheckResult(
+            name="Pre-Release Tracking",
+            passed=False,
+            message=f"Missing: {tracking}",
+            severity="warning",
+        )
+
+    def _resolve_python_command(self) -> str:
+        """Resolve python path for tooling."""
+        python_candidates = [
+            ".venv/bin/python",
+            ".venv/Scripts/python",
+            "venv/bin/python",
+        ]
+        for candidate in python_candidates:
+            if Path(candidate).exists():
+                return candidate
+        return sys.executable
+
     def check_no_active_session(self) -> CheckResult:
         """Check if there's an active (in-progress) session."""
         sessions_dir = self.base_path / "sessions"
@@ -384,7 +534,7 @@ class PreflightChecker:
 
             progress_file = session_dir / "PROGRESS.md"
             if progress_file.exists():
-                content = progress_file.read_text()
+                content = self._read_text_in_base(progress_file)
                 if "**Ended**: (In progress)" in content:
                     active_sessions.append(session_dir.name)
 
@@ -460,6 +610,10 @@ def main() -> None:
         help="Path to source POST_RELEASE_TODO.md",
     )
     parser.add_argument(
+        "--version",
+        help="Release version override (defaults to RR_VERSION)",
+    )
+    parser.add_argument(
         "--quiet", "-q",
         action="store_true",
         help="Only output if checks fail",
@@ -467,7 +621,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    checker = PreflightChecker(source_todo=args.source)
+    checker = PreflightChecker(source_todo=args.source, version=args.version)
     results = checker.run_all_checks()
 
     if args.quiet:

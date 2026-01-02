@@ -1,4 +1,4 @@
-"""Secure rate limiting implementation for TraiGent SDK.
+"""Secure rate limiting implementation for Traigent SDK.
 
 This module provides enhanced rate limiting with cryptographic identifier
 generation and distributed coordination support.

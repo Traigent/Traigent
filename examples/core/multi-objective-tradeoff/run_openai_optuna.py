@@ -264,24 +264,21 @@ DEFAULT_WORKERS = max(
 )
 TOTAL_CONFIGS = len(MODEL_CHOICES) * len(TEMPERATURE_CHOICES) * len(MAX_TOKENS_CHOICES)
 ENV_BATCH_SIZE = max(1, _parse_int_env("TRAIGENT_BATCH_SIZE", DEFAULT_WORKERS))
-ENV_PARALLEL_TRIALS = max(
-    1, _parse_int_env("TRAIGENT_PARALLEL_TRIALS", min(DEFAULT_WORKERS, 6))
+ENV_TRIAL_CONCURRENCY = max(
+    1, _parse_int_env("TRAIGENT_TRIAL_CONCURRENCY", min(DEFAULT_WORKERS, 6))
 )
 CONCURRENCY_PROFILE = os.getenv("TRAIGENT_CONCURRENCY_PROFILE", "auto").strip().lower()
 
 # Apply concurrency profile
 if CONCURRENCY_PROFILE == "sequential":
     BATCH_SIZE = 1
-    PARALLEL_TRIALS = 1
+    TRIAL_CONCURRENCY = 1
 elif CONCURRENCY_PROFILE == "parallel":
     BATCH_SIZE = max(2, min(DEFAULT_WORKERS * 2, 32))
-    PARALLEL_TRIALS = max(2, min(DEFAULT_WORKERS * 2, TOTAL_CONFIGS))
+    TRIAL_CONCURRENCY = max(2, min(DEFAULT_WORKERS * 2, TOTAL_CONFIGS))
 else:
     BATCH_SIZE = ENV_BATCH_SIZE
-    PARALLEL_TRIALS = min(TOTAL_CONFIGS, ENV_PARALLEL_TRIALS)
-
-# Configure TraiGent
-traigent.configure(parallel_workers=DEFAULT_WORKERS)
+    TRIAL_CONCURRENCY = min(TOTAL_CONFIGS, ENV_TRIAL_CONCURRENCY)
 
 parallel_mode = (
     "sequential"
@@ -292,7 +289,7 @@ parallel_mode = (
 PARALLEL_CONFIG = ParallelConfig(
     mode=parallel_mode,
     example_concurrency=BATCH_SIZE,
-    trial_concurrency=PARALLEL_TRIALS,
+    trial_concurrency=TRIAL_CONCURRENCY,
     thread_workers=DEFAULT_WORKERS,
 )
 

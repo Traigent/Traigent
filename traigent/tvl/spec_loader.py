@@ -1,4 +1,4 @@
-"""Load and normalize TVL specifications for the TraiGent SDK."""
+"""Load and normalize TVL specifications for the Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-TVLSPEC REQ-TVLSPEC-012 SYNC-OptimizationFlow
 
@@ -8,6 +8,7 @@ import ast
 import copy
 import math
 import re
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,27 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 from traigent.utils.exceptions import TVLValidationError
 from traigent.utils.logging import get_logger
 
+from .models import (
+    ConvergenceCriteria,
+    DerivedConstraint,
+    DomainSpec,
+    EnvironmentSnapshot,
+    EvaluationSet,
+    ExplorationBudgets,
+    PromotionPolicy,
+    RegistryResolver,
+    StructuralConstraint,
+    TVarDecl,
+    TVarType,
+    TVLHeader,
+    normalize_tvar_type,
+    parse_domain_spec,
+)
+
 logger = get_logger(__name__)
+
+# Constant for metrics reference detection in constraint expressions
+_METRICS_PREFIX = "metrics."
 
 
 @dataclass(slots=True)
@@ -63,7 +84,10 @@ class CompiledConstraint:
 
 @dataclass(slots=True)
 class TVLSpecArtifact:
-    """Normalized view of a TVL spec ready for the decorator/runtime."""
+    """Normalized view of a TVL spec ready for the decorator/runtime.
+
+    TVL 0.9 compatible artifact containing all parsed spec components.
+    """
 
     path: Path
     environment: str | None
@@ -74,11 +98,20 @@ class TVLSpecArtifact:
     metadata: dict[str, Any]
     budget: TVLBudget
     algorithm: str | None
+    promotion_policy: PromotionPolicy | None = None
+    tvars: list[TVarDecl] | None = None
+    derived_constraints: list[DerivedConstraint] | None = None
+    # TVL 0.9 additions
+    tvl_header: TVLHeader | None = None
+    environment_snapshot: EnvironmentSnapshot | None = None
+    evaluation_set: EvaluationSet | None = None
+    tvl_version: str | None = None
+    convergence: ConvergenceCriteria | None = None
+    exploration_budgets: ExplorationBudgets | None = None
+    exploration_parallelism: int | None = None
 
-    def runtime_overrides(self) -> dict[str, Any]:
-        """Return decorator/runtime overrides derived from the spec."""
-
-        overrides: dict[str, Any] = {}
+    def _apply_legacy_budget_overrides(self, overrides: dict[str, Any]) -> None:
+        """Apply legacy budget fields to overrides."""
         if self.algorithm:
             overrides.setdefault("algorithm", self.algorithm)
         if self.budget.max_trials is not None:
@@ -93,8 +126,49 @@ class TVLSpecArtifact:
             overrides.setdefault(
                 "samples_include_pruned", self.budget.samples_include_pruned
             )
-        if self.metadata:
-            overrides.setdefault("tvl_metadata", self.metadata)
+
+    def _apply_exploration_budget_overrides(self, overrides: dict[str, Any]) -> None:
+        """Apply TVL 0.9 exploration_budgets to overrides."""
+        if self.exploration_budgets is None:
+            return
+        if self.exploration_budgets.max_trials is not None:
+            overrides.setdefault("max_trials", self.exploration_budgets.max_trials)
+        if self.exploration_budgets.max_spend_usd is not None:
+            overrides.setdefault("cost_limit", self.exploration_budgets.max_spend_usd)
+        if self.exploration_budgets.max_wallclock_s is not None:
+            overrides.setdefault("timeout", self.exploration_budgets.max_wallclock_s)
+
+    def _convert_parallel_trials_to_config(self, overrides: dict[str, Any]) -> None:
+        """Convert parallel_trials to parallel_config structure."""
+        if "parallel_trials" not in overrides:
+            return
+        parallel_trials_value = overrides.get("parallel_trials")
+        if "parallel_config" not in overrides:
+            if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
+                from traigent.config.parallel import ParallelConfig
+
+                overrides["parallel_config"] = ParallelConfig.from_legacy(
+                    parallel_trials=parallel_trials_value
+                )
+        overrides.pop("parallel_trials", None)
+
+    def runtime_overrides(self) -> dict[str, Any]:
+        """Return decorator/runtime overrides derived from the spec."""
+        overrides: dict[str, Any] = {}
+
+        # Legacy budget fields first (they take precedence if set)
+        self._apply_legacy_budget_overrides(overrides)
+
+        # TVL 0.9 exploration_budgets (only set if not already set by legacy)
+        self._apply_exploration_budget_overrides(overrides)
+
+        # TVL 0.9 exploration parallelism
+        if self.exploration_parallelism is not None:
+            overrides.setdefault("parallel_trials", self.exploration_parallelism)
+
+        # Convert parallel_trials to unified parallel_config structure
+        self._convert_parallel_trials_to_config(overrides)
+
         return overrides
 
 
@@ -103,8 +177,21 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
-    """Load and normalize a TVL specification from disk."""
+    """Load and normalize a TVL specification from disk.
+
+    Supports both legacy format (configuration_space) and TVL 0.9 format (tvars).
+    Auto-detects format based on presence of 'tvars' vs 'configuration_space'.
+
+    Args:
+        spec_path: Path to the TVL spec file.
+        environment: Optional environment overlay key to apply.
+        validate_constraints: Whether to compile and validate structural constraints.
+        registry_resolver: Optional resolver used to materialize registry domains
+            into concrete configuration values. If a spec contains a registry
+            domain and no resolver is provided, spec loading fails fast.
+    """
 
     path = Path(spec_path).expanduser()
     if not path.is_file():
@@ -119,16 +206,94 @@ def load_tvl_spec(
         raise TVLValidationError("TVL specification must be a mapping")
 
     resolved = _apply_environment(raw_data, environment)
-    config_space, defaults, units = _parse_configuration_space(resolved)
+
+    # Parse TVL 0.9 header (tvl section)
+    tvl_header = _parse_tvl_header(resolved.get("tvl"))
+    tvl_version = resolved.get("tvl_version")
+    if isinstance(tvl_version, (int, float)):
+        tvl_version = str(tvl_version)
+
+    # Parse TVL 0.9 environment snapshot
+    environment_snapshot = _parse_environment_snapshot(resolved.get("environment"))
+
+    # Parse TVL 0.9 evaluation set
+    evaluation_set = _parse_evaluation_set(resolved.get("evaluation_set"))
+
+    # Detect format: TVL 0.9 uses 'tvars', legacy uses 'configuration_space'
+    has_tvars = "tvars" in resolved
+    has_config_space = "configuration_space" in resolved
+
+    if has_tvars and has_config_space:
+        raise TVLValidationError(
+            "TVL spec contains both 'tvars' (TVL 0.9) and 'configuration_space' "
+            "(legacy). Please remove 'configuration_space' to use the new format."
+        )
+
+    tvars: list[TVarDecl] | None = None
+    if has_tvars:
+        tvars, config_space, defaults, units = _parse_tvars(
+            resolved, registry_resolver=registry_resolver
+        )
+    elif has_config_space:
+        warnings.warn(
+            "TVL spec uses legacy 'configuration_space' format. "
+            "This format is deprecated in TVL 0.9; migrate to 'tvars'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        config_space, defaults, units = _parse_configuration_space(resolved)
+    else:
+        # Fallback or empty spec - handled by validation inside parsers if needed
+        config_space, defaults, units = {}, {}, {}
+
     objective_schema = _parse_objectives(resolved)
-    compiled_constraints = _compile_constraints(
+
+    constraints_section = resolved.get("constraints")
+    if isinstance(constraints_section, list) and constraints_section:
+        warnings.warn(
+            "TVL spec uses legacy 'constraints' list format. "
+            "This format is deprecated in TVL 0.9; use 'constraints: {structural: [...], derived: [...]}' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Parse constraints - support both legacy and TVL 0.9 format
+    compiled_constraints, derived_constraints = _compile_constraints_unified(
         resolved.get("constraints", []) or [], validate_constraints, path
     )
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
     ]
-    budget = _parse_budget(resolved.get("optimization"))
-    algorithm = _resolve_algorithm(resolved.get("optimization"))
+
+    has_exploration = "exploration" in resolved
+    has_optimization = "optimization" in resolved
+
+    # Error if both exploration and optimization are present
+    if has_exploration and has_optimization:
+        raise TVLValidationError(
+            "TVL spec contains both 'exploration' and 'optimization' sections. "
+            "Use only 'exploration' (TVL 0.9) or 'optimization' (legacy), not both."
+        )
+
+    if has_optimization and not has_exploration:
+        warnings.warn(
+            "TVL spec uses legacy 'optimization' section. "
+            "This format is deprecated in TVL 0.9; migrate to 'exploration'.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+    # Parse exploration section (supports both 'optimization' and 'exploration')
+    exploration_section = resolved.get("exploration") or resolved.get("optimization")
+    budget = _parse_budget(exploration_section)
+    algorithm = _resolve_algorithm(exploration_section)
+    convergence = _parse_convergence(exploration_section)
+    exploration_budgets = _parse_exploration_budgets(exploration_section)
+    exploration_parallelism = _parse_exploration_parallelism(exploration_section)
+
+    # Parse promotion policy (TVL 0.9)
+    promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))
+
     metadata = _build_metadata(
         resolved,
         path,
@@ -147,13 +312,45 @@ def load_tvl_spec(
         metadata=metadata,
         budget=budget,
         algorithm=algorithm,
+        promotion_policy=promotion_policy,
+        tvars=tvars,
+        derived_constraints=derived_constraints,
+        tvl_header=tvl_header,
+        environment_snapshot=environment_snapshot,
+        evaluation_set=evaluation_set,
+        tvl_version=tvl_version,
+        convergence=convergence,
+        exploration_budgets=exploration_budgets,
+        exploration_parallelism=exploration_parallelism,
     )
 
 
 def compile_constraint_expression(
     expression: str, *, label: str
 ) -> Callable[[dict[str, Any], dict[str, Any] | None], bool]:
-    """Compile a CEL-like constraint into a safe Python callable."""
+    """Compile a CEL-like constraint into a safe Python callable.
+
+    The expression language supports a subset of Python syntax for safety:
+    - Identifiers: `params.x`, `metrics.accuracy`
+    - Literals: Numbers, strings, booleans (`True`, `False`)
+    - Operators: `+`, `-`, `*`, `/`, `==`, `!=`, `<`, `<=`, `>`, `>=`
+    - Logical: `and`, `or`, `not`
+    - Functions: `min`, `max`, `abs`, `len`, `sum`, `any`, `all`
+
+    Note on Equality:
+    Constraint expressions are parsed as Python expressions, so equality must
+    be written as `==` (not `=`).
+
+    Args:
+        expression: The constraint expression string.
+        label: Label for the compiled code object (for tracebacks).
+
+    Returns:
+        A callable that takes (config, metrics) and returns a boolean.
+
+    Raises:
+        TVLValidationError: If the expression is invalid or unsafe.
+    """
 
     translated = _translate_expression(expression)
     try:
@@ -183,7 +380,7 @@ def compile_constraint_expression(
         try:
             # SECURITY: This eval() is safe because:
             # 1. Expression is parsed and validated by _validate_expression_ast()
-            # 2. Only whitelisted AST nodes are allowed (no imports, lambdas, etc.)
+            # 2. Only whitelisted AST nodes are allowed (no imports, lambdas)
             # 3. __builtins__ is empty, removing access to dangerous functions
             # 4. Context only exposes params, metrics, and safe math functions
             result = eval(code, {"__builtins__": {}}, context)  # nosec B307
@@ -268,6 +465,392 @@ def _normalize_parameter(
     )
 
 
+def _resolve_registry_domain(
+    name: str,
+    domain: DomainSpec,
+    registry_resolver: RegistryResolver | None,
+) -> list[Any]:
+    """Resolve a registry domain to concrete values."""
+    if registry_resolver is None:
+        raise TVLValidationError(
+            f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
+            "but no registry_resolver was provided."
+        )
+    if domain.registry is None:
+        raise TVLValidationError(
+            f"TVAR '{name}' has a registry domain but registry field is None"
+        )
+    resolved_values = registry_resolver.resolve(
+        domain.registry, filter_expr=domain.filter, version=domain.version
+    )
+    if not isinstance(resolved_values, list):
+        raise TVLValidationError(
+            f"RegistryResolver.resolve() must return a list; got {type(resolved_values)}"
+        )
+    if not resolved_values:
+        raise TVLValidationError(
+            f"Registry domain '{domain.registry}' for TVAR '{name}' resolved to no values"
+        )
+    return resolved_values
+
+
+def _parse_single_tvar(
+    idx: int, decl: dict[str, Any]
+) -> tuple[str, TVarType, str, DomainSpec, Any, str | None]:
+    """Parse a single TVAR declaration and validate its fields."""
+    if not isinstance(decl, dict):
+        raise TVLValidationError(f"TVAR declaration at index {idx} must be a mapping")
+
+    name = decl.get("name")
+    if not isinstance(name, str) or not name:
+        raise TVLValidationError(f"TVAR at index {idx} requires a 'name' string")
+
+    raw_type = decl.get("type")
+    if not isinstance(raw_type, str):
+        raise TVLValidationError(f"TVAR '{name}' requires a 'type' string")
+
+    tvar_type = normalize_tvar_type(raw_type)
+    if tvar_type is None:
+        raise TVLValidationError(f"TVAR '{name}' has unsupported type '{raw_type}'")
+
+    domain_data = decl.get("domain")
+    try:
+        domain = parse_domain_spec(name, tvar_type, domain_data)
+    except ValueError as exc:
+        raise TVLValidationError(str(exc)) from exc
+
+    unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
+    default = decl.get("default")
+
+    return name, tvar_type, raw_type, domain, default, unit
+
+
+def _parse_tvars(
+    resolved: dict[str, Any],
+    *,
+    registry_resolver: RegistryResolver | None = None,
+) -> tuple[list[TVarDecl], dict[str, Any], dict[str, Any], dict[str, str]]:
+    """Parse TVL 0.9 tvars array format.
+
+    Args:
+        resolved: The resolved TVL spec dictionary.
+        registry_resolver: Optional resolver used to materialize registry domains.
+
+    Returns:
+        Tuple of (tvars, configuration_space, defaults, units).
+    """
+    tvars_section = resolved.get("tvars")
+    if not isinstance(tvars_section, list) or not tvars_section:
+        raise TVLValidationError("tvars must be a non-empty array")
+
+    tvars: list[TVarDecl] = []
+    configuration_space: dict[str, Any] = {}
+    defaults: dict[str, Any] = {}
+    units: dict[str, str] = {}
+
+    for idx, decl in enumerate(tvars_section):
+        name, tvar_type, raw_type, domain, default, unit = _parse_single_tvar(idx, decl)
+
+        if unit:
+            units[name] = unit
+
+        tvar = TVarDecl(
+            name=name,
+            type=tvar_type,
+            raw_type=raw_type,
+            domain=domain,
+            default=default,
+            unit=unit,
+        )
+        tvars.append(tvar)
+
+        # Convert to configuration space format
+        if domain.kind == "registry":
+            configuration_space[name] = _resolve_registry_domain(
+                name, domain, registry_resolver
+            )
+        else:
+            configuration_space[name] = domain.to_configuration_space_entry()
+
+        if default is not None:
+            defaults[name] = default
+
+    return tvars, configuration_space, defaults, units
+
+
+def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:
+    """Parse TVL 0.9 promotion_policy section.
+
+    Args:
+        policy_data: The raw promotion_policy dictionary.
+
+    Returns:
+        PromotionPolicy if present, None otherwise.
+    """
+    if policy_data is None:
+        return None
+
+    if not isinstance(policy_data, dict):
+        raise TVLValidationError("promotion_policy must be a mapping")
+
+    try:
+        return PromotionPolicy.from_dict(policy_data)
+    except (ValueError, KeyError) as exc:
+        raise TVLValidationError(f"Invalid promotion_policy: {exc}") from exc
+
+
+def _parse_tvl_header(header_data: Any) -> TVLHeader | None:
+    """Parse TVL module header.
+
+    Args:
+        header_data: The raw tvl header dictionary.
+
+    Returns:
+        TVLHeader if present, None otherwise.
+    """
+    if header_data is None:
+        return None
+
+    if not isinstance(header_data, dict):
+        raise TVLValidationError("tvl header must be a mapping")
+
+    try:
+        return TVLHeader.from_dict(header_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid tvl header: {exc}") from exc
+
+
+def _parse_environment_snapshot(env_data: Any) -> EnvironmentSnapshot | None:
+    """Parse TVL 0.9 environment section.
+
+    Args:
+        env_data: The raw environment dictionary.
+
+    Returns:
+        EnvironmentSnapshot if present, None otherwise.
+    """
+    if env_data is None:
+        return None
+
+    if not isinstance(env_data, dict):
+        raise TVLValidationError("environment must be a mapping")
+
+    try:
+        return EnvironmentSnapshot.from_dict(env_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid environment: {exc}") from exc
+
+
+def _parse_evaluation_set(eval_data: Any) -> EvaluationSet | None:
+    """Parse TVL 0.9 evaluation_set section.
+
+    Args:
+        eval_data: The raw evaluation_set dictionary.
+
+    Returns:
+        EvaluationSet if present, None otherwise.
+    """
+    if eval_data is None:
+        return None
+
+    if not isinstance(eval_data, dict):
+        raise TVLValidationError("evaluation_set must be a mapping")
+
+    try:
+        return EvaluationSet.from_dict(eval_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid evaluation_set: {exc}") from exc
+
+
+def _parse_convergence(exploration_data: Any) -> ConvergenceCriteria | None:
+    """Parse convergence criteria from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        ConvergenceCriteria if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    convergence_data = exploration_data.get("convergence")
+    if convergence_data is None:
+        return None
+
+    if not isinstance(convergence_data, dict):
+        raise TVLValidationError("convergence must be a mapping")
+
+    try:
+        return ConvergenceCriteria.from_dict(convergence_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid convergence: {exc}") from exc
+
+
+def _parse_exploration_budgets(exploration_data: Any) -> ExplorationBudgets | None:
+    """Parse exploration budgets from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        ExplorationBudgets if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    budgets_data = exploration_data.get("budgets")
+    if budgets_data is None:
+        return None
+
+    if not isinstance(budgets_data, dict):
+        raise TVLValidationError("budgets must be a mapping")
+
+    try:
+        return ExplorationBudgets.from_dict(budgets_data)
+    except ValueError as exc:
+        raise TVLValidationError(f"Invalid budgets: {exc}") from exc
+
+
+def _parse_exploration_parallelism(exploration_data: Any) -> int | None:
+    """Parse parallelism config from exploration section.
+
+    Args:
+        exploration_data: The raw exploration dictionary.
+
+    Returns:
+        max_parallel_trials if present, None otherwise.
+    """
+    if not isinstance(exploration_data, dict):
+        return None
+
+    parallelism = exploration_data.get("parallelism")
+    if parallelism is None:
+        return None
+
+    if isinstance(parallelism, dict):
+        max_parallel = parallelism.get("max_parallel_trials")
+        if isinstance(max_parallel, int):
+            return max_parallel
+    return None
+
+
+def _compile_constraints_unified(
+    entries: list[Any] | dict[str, Any],
+    validate_constraints: bool,
+    path: Path,
+) -> tuple[list[CompiledConstraint], list[DerivedConstraint] | None]:
+    """Compile constraints supporting both legacy and TVL 0.9 formats.
+
+    Legacy format: list of constraint objects with type/rule/when/then
+    TVL 0.9 format: dict with 'structural' and/or 'derived' arrays
+
+    Returns:
+        Tuple of (compiled_constraints, derived_constraints).
+        derived_constraints is None for legacy format.
+    """
+    # Handle TVL 0.9 format (dict with structural/derived)
+    if isinstance(entries, dict):
+        structural = entries.get("structural", [])
+        derived_raw = entries.get("derived", [])
+        compiled = _compile_structural_constraints(structural, path)
+        derived = _parse_derived_constraints(derived_raw)
+        return compiled, derived
+
+    # Handle legacy format (list)
+    if isinstance(entries, list):
+        return _compile_constraints(entries, validate_constraints, path), None
+
+    return [], None
+
+
+def _parse_derived_constraints(entries: list[Any]) -> list[DerivedConstraint] | None:
+    """Parse TVL 0.9 derived constraints.
+
+    Derived constraints are linear arithmetic expressions over environment
+    symbols. They are stored as data only - actual SMT compilation is
+    handled by TVL tools, not the runtime.
+
+    Args:
+        entries: List of derived constraint dictionaries.
+
+    Returns:
+        List of DerivedConstraint objects, or None if empty.
+    """
+    if not entries:
+        return None
+
+    derived: list[DerivedConstraint] = []
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise TVLValidationError(
+                f"Derived constraint at index {index} must be a mapping"
+            )
+
+        try:
+            constraint = DerivedConstraint.from_dict(entry, index)
+        except ValueError as exc:
+            raise TVLValidationError(str(exc)) from exc
+
+        derived.append(constraint)
+
+    return derived if derived else None
+
+
+def _compile_structural_constraints(
+    entries: list[Any],
+    path: Path,
+) -> list[CompiledConstraint]:
+    """Compile TVL 0.9 structural constraints.
+
+    Structural constraints are typed DNF clauses that support:
+    - expr: standalone expression
+    - when/then: conditional implication
+    """
+    compiled: list[CompiledConstraint] = []
+
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise TVLValidationError(
+                f"Structural constraint at index {index} must be a mapping"
+            )
+
+        # Use explicit id from YAML if provided, otherwise generate from index
+        constraint_id = entry.get("id") or f"structural_{index}"
+        error_message = (
+            entry.get("error_message")
+            or f"Structural constraint {constraint_id} violated"
+        )
+
+        try:
+            struct_constraint = StructuralConstraint.from_dict(entry, index)
+        except ValueError as exc:
+            raise TVLValidationError(str(exc)) from exc
+
+        # Convert to rule expression
+        rule_expr = struct_constraint.to_rule_expression()
+
+        # Check if metrics are referenced (structural constraints shouldn't use metrics)
+        requires_metrics = _METRICS_PREFIX in rule_expr
+
+        compiled_rule = compile_constraint_expression(
+            rule_expr, label=f"{path}:{constraint_id}"
+        )
+
+        compiled.append(
+            CompiledConstraint(
+                identifier=constraint_id,
+                description=error_message,
+                requires_metrics=requires_metrics,
+                evaluator=compiled_rule,
+                constraint_type="structural",
+            )
+        )
+
+    return compiled
+
+
 def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
     if isinstance(range_value, (list, tuple)) and len(range_value) == 2:
         return float(range_value[0]), float(range_value[1])
@@ -281,7 +864,72 @@ def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
     )
 
 
+def _parse_banded_objective(
+    name: str, band_spec: dict[str, Any], weight: float, unit: str | None
+) -> ObjectiveDefinition:
+    """Parse a banded objective (TVL 0.9)."""
+    from .models import BandTarget
+
+    if not isinstance(band_spec, dict):
+        raise TVLValidationError(f"Objective '{name}' band must be a mapping")
+
+    target = band_spec.get("target")
+    if target is None:
+        raise TVLValidationError(f"Banded objective '{name}' requires a 'target'")
+
+    try:
+        band_target = BandTarget.from_dict(target)
+    except ValueError as exc:
+        raise TVLValidationError(
+            f"Invalid band target for objective '{name}': {exc}"
+        ) from exc
+
+    test_type = band_spec.get("test", "TOST")
+    if test_type != "TOST":
+        raise TVLValidationError(
+            f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
+        )
+
+    alpha = float(band_spec.get("alpha", 0.05))
+    if not 0 < alpha < 1:
+        raise TVLValidationError(
+            f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"
+        )
+
+    return ObjectiveDefinition(
+        name=name,
+        orientation="band",
+        weight=weight,
+        unit=unit,
+        band=band_target,
+        band_test="TOST",
+        band_alpha=alpha,
+    )
+
+
+def _parse_standard_objective(
+    name: str, entry: dict[str, Any], weight: float, unit: str | None
+) -> ObjectiveDefinition:
+    """Parse a standard objective with direction."""
+    direction = (entry.get("direction") or "maximize").lower()
+    if direction not in {"maximize", "minimize"}:
+        raise TVLValidationError(
+            f"Objective '{name}' direction must be 'maximize' or 'minimize'"
+        )
+    return ObjectiveDefinition(
+        name=name,
+        orientation=cast(Literal["maximize", "minimize"], direction),
+        weight=weight,
+        unit=unit,
+    )
+
+
 def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
+    """Parse objectives supporting both standard and banded objectives (TVL 0.9).
+
+    Standard objectives have a direction (maximize/minimize).
+    Banded objectives have a band with target, test, and alpha.
+    """
     objectives = resolved.get("objectives")
     if objectives is None:
         return None
@@ -295,21 +943,15 @@ def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
         name = entry.get("name")
         if not isinstance(name, str):
             raise TVLValidationError("Each objective requires a 'name'")
-        direction = (entry.get("direction") or "maximize").lower()
-        if direction not in {"maximize", "minimize"}:
-            raise TVLValidationError(
-                f"Objective '{name}' direction must be 'maximize' or 'minimize'"
-            )
+
         weight = float(entry.get("weight", 1.0))
         unit = entry.get("unit") if isinstance(entry.get("unit"), str) else None
-        definitions.append(
-            ObjectiveDefinition(
-                name=name,
-                orientation=cast(Literal["maximize", "minimize"], direction),
-                weight=weight,
-                unit=unit,
-            )
-        )
+
+        band_spec = entry.get("band")
+        if band_spec is not None:
+            definitions.append(_parse_banded_objective(name, band_spec, weight, unit))
+        else:
+            definitions.append(_parse_standard_objective(name, entry, weight, unit))
 
     return ObjectiveSchema.from_objectives(definitions)
 
@@ -369,8 +1011,14 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
     if not isinstance(optimization_section, dict):
         return None
     strategy = optimization_section.get("strategy")
+
+    # Handle TVL 0.9 dict format: {type: "nsga2", ...}
+    if isinstance(strategy, dict):
+        strategy = strategy.get("type")
+
     if not isinstance(strategy, str):
         return None
+
     normalized = strategy.lower()
     mapping = {
         "pareto_optimal": "nsga2",
@@ -387,7 +1035,7 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
 
 def _compile_constraints(
     entries: list[Any],
-    validate_constraints: bool,
+    _validate_constraints: bool,  # Reserved for future validation logic
     path: Path,
 ) -> list[CompiledConstraint]:
     compiled: list[CompiledConstraint] = []
@@ -414,7 +1062,9 @@ def _compile_constraints(
             then_compiled = compile_constraint_expression(
                 then_expr, label=f"{path}:{constraint_id}:then"
             )
-            requires_metrics = "metrics." in when_expr or "metrics." in then_expr
+            requires_metrics = (
+                _METRICS_PREFIX in when_expr or _METRICS_PREFIX in then_expr
+            )
 
             def _conditional(
                 config: dict[str, Any],
@@ -435,7 +1085,7 @@ def _compile_constraints(
                 raise TVLValidationError(
                     f"Constraint '{constraint_id}' requires a string 'rule' expression"
                 )
-            requires_metrics = "metrics." in rule_expr
+            requires_metrics = _METRICS_PREFIX in rule_expr
             compiled_rule = compile_constraint_expression(
                 rule_expr, label=f"{path}:{constraint_id}:rule"
             )

@@ -1,4 +1,4 @@
-"""Enterprise security and compliance module for TraiGent SDK."""
+"""Enterprise security and compliance module for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Security FUNC-SECURITY REQ-SEC-010 SYNC-CloudHybrid
 

@@ -3,7 +3,7 @@
 
 set -e
 
-echo "🚀 Setting up TraiGent CI/CD Auto-Tuning Pipeline"
+echo "🚀 Setting up Traigent CI/CD Auto-Tuning Pipeline"
 echo "================================================="
 
 # Colors for output
@@ -41,10 +41,10 @@ source venv/bin/activate
 echo -e "\n${YELLOW}Upgrading pip...${NC}"
 pip install --upgrade pip --quiet
 
-# Install TraiGent with dependencies
-echo -e "\n${YELLOW}Installing TraiGent SDK with dependencies...${NC}"
+# Install Traigent with dependencies
+echo -e "\n${YELLOW}Installing Traigent SDK with dependencies...${NC}"
 pip install -e ".[dev,integrations,bayesian]" --quiet
-echo -e "${GREEN}✓ TraiGent SDK installed${NC}"
+echo -e "${GREEN}✓ Traigent SDK installed${NC}"
 
 # Install DVC and CML
 echo -e "\n${YELLOW}Installing DVC and CML...${NC}"
@@ -115,7 +115,7 @@ echo -e "\n${YELLOW}Testing setup with mock mode...${NC}"
 TRAIGENT_MOCK_MODE=true python -c "
 import traigent
 from traigent import traigent as traigent_decorator
-print('TraiGent version:', traigent.__version__)
+print('Traigent version:', traigent.__version__)
 print('✓ Import successful')
 " 2>/dev/null
 

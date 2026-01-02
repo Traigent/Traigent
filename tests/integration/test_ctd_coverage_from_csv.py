@@ -244,7 +244,7 @@ class CTDTestGenerator:
         if n >= len(parameters):
             # Full factorial when n >= number of parameters
             for combo in itertools.product(*param_values):
-                all_combinations.append(dict(zip(param_names, combo)))
+                all_combinations.append(dict(zip(param_names, combo, strict=False)))
         else:
             # n-wise coverage
             # Get all n-tuples of parameters
@@ -255,7 +255,7 @@ class CTDTestGenerator:
                 # Generate combinations for this subset
                 for combo in itertools.product(*subset_values):
                     # Create a partial test case
-                    partial_case = dict(zip(subset_names, combo))
+                    partial_case = dict(zip(subset_names, combo, strict=False))
 
                     # Check if this combination is already covered
                     combo_key = tuple(sorted(partial_case.items()))
@@ -438,7 +438,7 @@ def test_generator(csv_path):
 
 @pytest.fixture
 def mock_traigent():
-    """Mock TraiGent client for testing."""
+    """Mock Traigent client for testing."""
     from unittest.mock import MagicMock, Mock
 
     mock_client = Mock()
@@ -738,6 +738,10 @@ def test_coverage_report(test_generator):
         print(f"  {integration}: {count}")
 
     print("=" * 60)
+
+    # Verify coverage report was generated successfully
+    assert len(test_suite) > 0, "Test suite should have test cases"
+    assert len(coverage_stats) > 0, "Coverage stats should be calculated"
 
 
 if __name__ == "__main__":

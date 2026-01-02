@@ -1,6 +1,6 @@
 # Traigent SDK Demo Videos
 
-This directory contains animated terminal demos showcasing Traigent's LLM optimization capabilities.
+This directory contains animated terminal demos showcasing Traigent's LLM optimization capabilities. TVL-specific demos live under `demos/scripts/`.
 
 ## Demo Videos
 
@@ -13,6 +13,8 @@ This directory contains animated terminal demos showcasing Traigent's LLM optimi
 ## Quick Start
 
 ```bash
+cd docs/demos
+
 # Make scripts executable
 chmod +x record-demos.sh scripts/*.sh
 
@@ -46,20 +48,18 @@ npm install -g svg-term-cli
 ## Directory Structure
 
 ```
-demos/
-├── .gitignore           # Exclude .venv/, node_modules/
-├── README.md            # This file
-├── record-demos.sh      # Master generation script
-├── mock-cli/
-│   └── traigent         # Mock CLI (if needed)
+docs/demos/
+├── README.md               # This file
+├── record-demos.sh         # Master generation script
 ├── scripts/
 │   ├── generate-cast.py    # Python cast file generator
 │   ├── demo-optimize.sh    # Video 1: Core optimization
 │   ├── demo-hooks.sh       # Video 2: Optimization callbacks
-│   └── demo-github-hooks.sh # Video 3: GitHub hooks & CI/CD
-└── output/
-    ├── *.cast           # asciinema format
-    └── *.svg            # Animated SVGs for GitHub
+│   └── demo-github-hooks.sh # Video 3: GitHub hooks and CI/CD
+├── output/
+│   ├── *.cast              # asciinema format
+│   └── *.svg               # Animated SVGs for GitHub
+└── test_agents/            # Sample agents + traigent.yml for hooks demo
 ```
 
 ## Embedding in README
@@ -110,9 +110,9 @@ You can preview cast files with asciinema:
 pip install asciinema
 
 # Play a recording
-asciinema play output/optimize.cast
+asciinema play docs/demos/output/optimize.cast
 ```
 
 ## Reference
 
-See `docs/DEMO_VIDEO_GUIDE.md` for complete implementation details and customization options.
+See `docs/DEMO_VIDEO_GUIDE.md` for implementation details and customization options. For TVL demos, see `demos/scripts/TVL_VIDEO_SCRIPTS.md`.

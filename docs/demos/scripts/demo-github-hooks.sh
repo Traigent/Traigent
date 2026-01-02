@@ -17,7 +17,7 @@ RESET='\033[0m'
 
 clear
 echo -e "${BLUE}${BOLD}┌────────────────────────────────────────────────────────────────┐${RESET}"
-echo -e "${BLUE}${BOLD}│  🛡️  TraiGent: Git Hooks for Agent Validation                   │${RESET}"
+echo -e "${BLUE}${BOLD}│  🛡️  Traigent: Git Hooks for Agent Validation                   │${RESET}"
 echo -e "${BLUE}${BOLD}└────────────────────────────────────────────────────────────────┘${RESET}"
 echo ""
 sleep 1

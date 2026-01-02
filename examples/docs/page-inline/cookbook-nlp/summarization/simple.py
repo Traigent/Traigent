@@ -59,7 +59,7 @@ if __name__ == "__main__":
         print("Best config:", res.best_config)
         print(
             "Test:",
-            summarize("TraiGent helps optimize LLM apps for quality, cost, and speed."),
+            summarize("Traigent helps optimize LLM apps for quality, cost, and speed."),
         )
 
     asyncio.run(_main())

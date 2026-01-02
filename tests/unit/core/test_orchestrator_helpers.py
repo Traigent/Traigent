@@ -68,26 +68,33 @@ class TestValidateConstructorArguments:
         max_trials = 10
         timeout = 60.0
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials, timeout)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials, timeout
+        )
+        assert result is None
 
     def test_none_max_trials_allowed(self):
         """Test that None max_trials is allowed (unlimited trials)."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
             optimizer, evaluator, max_trials=None, timeout=None
         )
+        assert result is None
 
     def test_zero_max_trials_allowed(self):
         """Test that zero max_trials is allowed (no trials)."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials=0, timeout=None)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials=0, timeout=None
+        )
+        assert result is None
 
     def test_invalid_optimizer_type(self):
         """Test that invalid optimizer type raises TypeError."""
@@ -176,8 +183,11 @@ class TestValidateConstructorArguments:
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials=10, timeout=0.0)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials=10, timeout=0.0
+        )
+        assert result is None
 
 
 class TestParallelTrialsNormalization:
@@ -418,8 +428,9 @@ class TestModuleValidateConstructorArguments:
         """Test that valid arguments pass without exception."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
-        # Should not raise
-        validate_constructor_arguments(optimizer, evaluator, 10, 100, 60.0)
+        # Should not raise - returns None on success
+        result = validate_constructor_arguments(optimizer, evaluator, 10, 100, 60.0)
+        assert result is None
 
     def test_invalid_optimizer_raises_type_error(self):
         """Test that non-BaseOptimizer raises TypeError."""
@@ -570,6 +581,89 @@ class TestModuleAllocateParallelCeilings:
         assert sum(result) == 30
 
 
+class TestAllocateParallelCeilingsSafetyMechanism:
+    """Test allocate_parallel_ceilings as a safety mechanism for parallel trials.
+
+    These tests verify that when spinning up N parallel trials with X remaining
+    budget, each trial gets at most X/N samples. This prevents any single trial
+    from consuming more than its fair share when running in parallel.
+    """
+
+    def test_single_trial_gets_full_budget(self):
+        """Test that a single trial can use the full remaining budget."""
+        # Single trial with 150 examples, budget of 10000
+        # Should get full dataset size (capped by dataset, not budget)
+        result = allocate_parallel_ceilings([150], 10000)
+        assert result == [150]
+
+    def test_parallel_trials_split_budget_evenly(self):
+        """Test that parallel trials split the budget evenly."""
+        # 3 parallel trials, each with 150 examples, budget of 300
+        # Each trial should get 100 samples (300 / 3)
+        result = allocate_parallel_ceilings([150, 150, 150], 300)
+        assert result == [100, 100, 100]
+        assert sum(result) == 300
+
+    def test_parallel_trials_dont_exceed_budget(self):
+        """Test that parallel trials don't exceed total budget."""
+        # 5 parallel trials with large datasets, limited budget
+        result = allocate_parallel_ceilings([1000, 1000, 1000, 1000, 1000], 100)
+        # Each gets 20 (100 / 5)
+        assert result == [20, 20, 20, 20, 20]
+        assert sum(result) == 100
+
+    def test_dataset_size_caps_allocation(self):
+        """Test that dataset size still caps allocation."""
+        # 2 parallel trials, one with small dataset
+        # Budget of 200, but first dataset only has 50
+        result = allocate_parallel_ceilings([50, 200], 200)
+        # First gets 50 (capped by dataset), second gets 100 + leftover
+        assert result[0] == 50
+        assert result[1] == 150  # Gets its share (100) plus leftover (50)
+        assert sum(result) == 200
+
+    def test_leftover_redistribution(self):
+        """Test that leftover from small datasets is redistributed."""
+        # 3 trials: first two have small datasets, third has large
+        result = allocate_parallel_ceilings([10, 20, 1000], 300)
+        # Base allocation: 100, 100, 100
+        # First capped at 10 (leftover 90), second capped at 20 (leftover 80)
+        # Third gets 100 + 90 + 80 = 270
+        assert result[0] == 10
+        assert result[1] == 20
+        assert result[2] == 270
+        assert sum(result) == 300
+
+    def test_all_datasets_smaller_than_share(self):
+        """Test when all datasets are smaller than their budget share."""
+        # 3 trials with small datasets, large budget
+        result = allocate_parallel_ceilings([10, 20, 30], 1000)
+        # Each gets capped at their dataset size
+        assert result == [10, 20, 30]
+        assert sum(result) == 60  # Total is less than budget
+
+    def test_budget_exactly_divisible(self):
+        """Test when budget divides evenly among trials."""
+        result = allocate_parallel_ceilings([100, 100, 100], 30)
+        assert result == [10, 10, 10]
+
+    def test_budget_with_remainder(self):
+        """Test when budget doesn't divide evenly."""
+        result = allocate_parallel_ceilings([100, 100, 100], 10)
+        # 10 / 3 = 3 with remainder 1, first trial gets extra
+        assert sum(result) == 10
+        assert result[0] == 4
+        assert result[1] == 3
+        assert result[2] == 3
+
+    def test_small_budget_still_allocates(self):
+        """Test allocation with very small budget."""
+        result = allocate_parallel_ceilings([100, 100, 100], 5)
+        # 5 / 3 = 1 with remainder 2
+        assert result == [2, 2, 1]
+        assert sum(result) == 5
+
+
 # =============================================================================
 # New Helper Functions (Phase 4)
 # =============================================================================
@@ -717,12 +811,18 @@ class TestConstraintRequiresMetrics:
 
     def test_lambda_single_param(self):
         """Test lambda with single parameter."""
-        single = lambda c: True
+
+        def single(c):
+            return True
+
         assert constraint_requires_metrics(single) is False
 
     def test_lambda_two_params(self):
         """Test lambda with two parameters."""
-        double = lambda c, m: True
+
+        def double(c, m):
+            return True
+
         assert constraint_requires_metrics(double) is True
 
     def test_non_callable_returns_false(self):
@@ -736,7 +836,8 @@ class TestEnforceConstraints:
 
     def test_empty_constraints_does_nothing(self):
         """Test that empty constraints list passes."""
-        enforce_constraints({}, {}, [], "test")  # Should not raise
+        result = enforce_constraints({}, {}, [], "test")
+        assert result is None  # Returns None on success
 
     def test_passing_constraint(self):
         """Test that passing constraint doesn't raise."""
@@ -744,7 +845,8 @@ class TestEnforceConstraints:
         def always_pass(config):
             return True
 
-        enforce_constraints({"a": 1}, None, [always_pass], "pre")
+        result = enforce_constraints({"a": 1}, None, [always_pass], "pre")
+        assert result is None  # Returns None on success
 
     def test_failing_constraint_raises_error(self):
         """Test that failing constraint raises TVLConstraintError."""
@@ -762,7 +864,10 @@ class TestEnforceConstraints:
         def metrics_constraint(config, metrics):
             return metrics.get("accuracy", 0) > 0.5
 
-        enforce_constraints({"a": 1}, {"accuracy": 0.7}, [metrics_constraint], "post")
+        result = enforce_constraints(
+            {"a": 1}, {"accuracy": 0.7}, [metrics_constraint], "post"
+        )
+        assert result is None  # Returns None on success
 
     def test_failing_metrics_constraint(self):
         """Test failing metrics constraint."""
@@ -809,7 +914,8 @@ class TestEnforceConstraints:
         def c2(config):
             return True
 
-        enforce_constraints({"a": 1}, None, [c1, c2], "pre")
+        result = enforce_constraints({"a": 1}, None, [c1, c2], "pre")
+        assert result is None  # Returns None on success
 
     def test_multiple_constraints_one_fails(self):
         """Test that first failing constraint raises."""

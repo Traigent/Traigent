@@ -89,6 +89,8 @@ class BaseOptimizer(ABC):
         self._trial_count = 0
         self._best_score: float | None = None
         self._best_config: dict[str, Any] | None = None
+        self._tried_config_hashes: set[str] = set()
+        self._config_space_cardinality: int | None = self._compute_cardinality()
 
     @abstractmethod
     def suggest_next_trial(self, history: list[TrialResult]) -> dict[str, Any]:
@@ -246,6 +248,129 @@ class BaseOptimizer(ABC):
         self._trial_count = 0
         self._best_score = None
         self._best_config = None
+        self._tried_config_hashes.clear()
+
+    def _get_dict_param_cardinality(self, definition: dict[str, Any]) -> int | None:
+        """Get cardinality for a dict-style parameter definition.
+
+        Returns:
+            Cardinality count, 0 for empty, or None for continuous types.
+        """
+        param_type = (definition.get("type") or "categorical").lower()
+
+        if param_type in {"fixed", "constant"}:
+            return 1
+
+        if param_type in {"categorical", "choice"}:
+            choices = definition.get("choices") or definition.get("values") or []
+            return len(choices) if choices else 0
+
+        if param_type in {"int", "integer"}:
+            low, high = definition.get("low"), definition.get("high")
+            if low is not None and high is not None:
+                step = definition.get("step", 1)
+                return max(((int(high) - int(low)) // int(step)) + 1, 1)
+            return None
+
+        # Float or other continuous types
+        return None
+
+    def _get_param_cardinality(self, definition: Any) -> int | None:
+        """Get cardinality for a single parameter definition.
+
+        Returns:
+            Cardinality count, 0 for empty, or None for continuous types.
+        """
+        if isinstance(definition, list):
+            return len(definition) if definition else 0
+
+        if isinstance(definition, tuple) and len(definition) == 2:
+            return None  # Continuous range
+
+        if isinstance(definition, dict):
+            return self._get_dict_param_cardinality(definition)
+
+        return 1  # Single fixed value
+
+    def _compute_cardinality(self) -> int | None:
+        """Compute the total number of unique configurations in the config space.
+
+        Returns:
+            The cardinality for fully discrete spaces, or None if the space
+            contains continuous parameters (infinite cardinality).
+        """
+        if not self.config_space:
+            return 0
+
+        cardinality = 1
+        for definition in self.config_space.values():
+            param_card = self._get_param_cardinality(definition)
+            if param_card is None:
+                return None
+            if param_card == 0:
+                return 0
+            cardinality *= param_card
+
+        return cardinality
+
+    def _hash_config(self, config: dict[str, Any]) -> str:
+        """Create a deterministic hash of a configuration for deduplication.
+
+        Args:
+            config: Configuration dictionary to hash
+
+        Returns:
+            A string hash of the configuration
+        """
+        import json
+
+        # Sort keys for deterministic ordering
+        sorted_items = sorted(config.items())
+        return json.dumps(sorted_items, sort_keys=True, default=str)
+
+    def register_tried_config(self, config: dict[str, Any]) -> bool:
+        """Register a configuration as tried and check if it's new.
+
+        Args:
+            config: Configuration that was tried
+
+        Returns:
+            True if this is a new configuration, False if already tried
+        """
+        config_hash = self._hash_config(config)
+        if config_hash in self._tried_config_hashes:
+            return False
+        self._tried_config_hashes.add(config_hash)
+        return True
+
+    def is_config_space_exhausted(self) -> bool:
+        """Check if all unique configurations have been tried.
+
+        Returns:
+            True if the config space is discrete and fully exhausted,
+            False otherwise (including for continuous spaces).
+        """
+        if self._config_space_cardinality is None:
+            # Continuous space - never exhausted by discrete counting
+            return False
+        if self._config_space_cardinality == 0:
+            # Empty space - immediately exhausted
+            return True
+        return len(self._tried_config_hashes) >= self._config_space_cardinality
+
+    @property
+    def config_space_cardinality(self) -> int | None:
+        """Get the total number of unique configurations possible.
+
+        Returns:
+            The cardinality for discrete spaces, None for continuous spaces.
+        """
+        return self._config_space_cardinality
+
+    @property
+    def unique_configs_tried(self) -> int:
+        """Get the number of unique configurations tried so far."""
+        return len(self._tried_config_hashes)
 
     def get_algorithm_info(self) -> dict[str, Any]:
         """Get information about this optimization algorithm.

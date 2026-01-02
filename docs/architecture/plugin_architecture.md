@@ -1,10 +1,10 @@
-# TraiGent Plugin Architecture Documentation
+# Traigent Plugin Architecture Documentation
 
 ## Overview
 
-The TraiGent integration system has been redesigned with a **hybrid plugin + configuration architecture** that provides:
+The Traigent integration system has been redesigned with a **hybrid plugin + configuration architecture** that provides:
 
-- **Type Safety**: Plugin interfaces with compile-time checking
+- **Type Safety**: Type hints and runtime validation in plugin interfaces
 - **Flexibility**: YAML configuration overrides without code changes
 - **Consistency**: Enforced structure across all integrations
 - **Extensibility**: Easy addition of new frameworks and vendors
@@ -60,11 +60,11 @@ The manager uses plugins to intercept and override framework calls:
 ```python
 manager = FrameworkOverrideManager()
 
-# Activate overrides for specific frameworks
-manager.activate_overrides(["openai", "anthropic"])
+# Activate overrides for specific framework classes
+manager.activate_overrides(["openai.OpenAI", "openai.AsyncOpenAI"])
 
 # Use as context manager
-with manager.override_context(["langchain"]):
+with manager.override_context(["langchain_openai.ChatOpenAI"]):
     # Framework calls are intercepted here
     pass
 ```
@@ -115,10 +115,11 @@ class MyFrameworkPlugin(IntegrationPlugin):
 # The plugin will be discovered automatically
 
 # Manual registration
+from pathlib import Path
 from traigent.integrations.plugin_registry import get_registry
 
 registry = get_registry()
-plugin = MyFrameworkPlugin()
+plugin = MyFrameworkPlugin(config_path=Path("configs/myframework.yaml"))
 registry.register(plugin)
 ```
 
@@ -127,7 +128,7 @@ registry.register(plugin)
 Create a YAML configuration file to customize the plugin without code changes:
 
 ```yaml
-# config/plugins/myframework.yaml
+# configs/myframework.yaml (example path)
 metadata:
   description: "Custom MyFramework settings"
 
@@ -150,7 +151,7 @@ validation:
 1. **User Code**: Calls framework with original parameters
 2. **Interception**: Plugin intercepts the call
 3. **Configuration Loading**: TraigentConfig provides optimization parameters
-4. **Mapping**: Plugin maps TraiGent parameters to framework parameters
+4. **Mapping**: Plugin maps Traigent parameters to framework parameters
 5. **Validation**: Plugin validates parameters against rules
 6. **Override**: Modified parameters passed to original framework
 
@@ -206,19 +207,19 @@ normalized = normalize_params(params, "langchain", "openai")
 # Or use the normalizer instance for more control
 normalizer = get_normalizer()
 
-# Convert to canonical TraiGent format first
+# Convert to canonical Traigent format first
 canonical = normalizer.to_canonical(params, Framework.LANGCHAIN)
 
 # Then convert to target framework
 openai_params = normalizer.from_canonical(canonical, Framework.OPENAI)
 ```
 
-**Supported Frameworks** (10 total):
+**Supported Frameworks** (11 total):
 
 - `TRAIGENT` - Canonical parameter names
 - `OPENAI`, `ANTHROPIC`, `LANGCHAIN`, `LLAMAINDEX`
 - `GEMINI`, `BEDROCK`, `AZURE_OPENAI`
-- `COHERE`, `HUGGINGFACE`
+- `COHERE`, `HUGGINGFACE`, `MISTRAL`
 
 **Parameters with Auto-Conversion**:
 
@@ -230,6 +231,8 @@ openai_params = normalizer.from_canonical(canonical, Framework.OPENAI)
 | `stream` | `stream` | `streaming` | `stream` | `stream` | `stream` |
 | `top_p` | `top_p` | `top_p` | `top_p` | `top_p` | `top_p` |
 | `top_k` | `top_k` | `top_k` | `top_k` | `top_k` | `top_k` |
+
+For the full mapping set (including Cohere, Mistral, Azure OpenAI, and LlamaIndex), see `traigent/integrations/utils/parameter_normalizer.py`.
 
 ### Dynamic Discovery
 
@@ -269,9 +272,9 @@ Higher priority plugins override lower priority ones for the same classes.
 
 Support multiple versions through:
 
-1. **Versioned Plugins**: `OpenAIV1Plugin`, `OpenAIV2Plugin`
-2. **Configuration Files**: `openai_v1.yaml`, `openai_v2.yaml`
-3. **Runtime Selection**: Based on detected package version
+1. **Plugin metadata**: `PluginMetadata.supports_versions` for package version constraints
+2. **Compatibility checks**: `VersionCompatibilityManager` for warnings and validation
+3. **Config overrides**: Optional per-version config files passed via `config_path`
 
 ### Custom Validation
 

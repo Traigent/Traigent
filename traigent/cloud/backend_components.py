@@ -188,7 +188,7 @@ class BackendSessionManager:
             "nonce": self.auth_manager.generate_request_nonce(),
         }
 
-        logger.info("Prepared TraiGent session payload for %s", session_id)
+        logger.info("Prepared Traigent session payload for %s", session_id)
         return {"session_id": session_id, "payload": payload}
 
 

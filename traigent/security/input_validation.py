@@ -1,4 +1,4 @@
-"""Comprehensive input validation for TraiGent SDK.
+"""Comprehensive input validation for Traigent SDK.
 
 Provides secure input validation, sanitization, and protection against
 injection attacks including SQL injection, XSS, and command injection.

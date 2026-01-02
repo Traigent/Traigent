@@ -33,9 +33,28 @@ _evaluator_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_evaluator_module)
 MessageQualityEvaluator = _evaluator_module.MessageQualityEvaluator
 
+DATASET_PATH = Path(__file__).parent.parent / "datasets" / "leads_dataset.jsonl"
+
+
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled via environment variable."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+
+
+def normalize_pain_points(lead: dict[str, Any]) -> list[str]:
+    """Normalize pain points into a list of strings."""
+    raw_points = lead.get("pain_points")
+    if isinstance(raw_points, list):
+        return [str(point) for point in raw_points if point]
+    if isinstance(raw_points, str):
+        return [raw_points] if raw_points else []
+    return []
+
 
 def format_lead_context(lead: dict[str, Any]) -> str:
     """Format lead information for the prompt."""
+    pain_points = normalize_pain_points(lead)
+    pain_points_text = ", ".join(pain_points) if pain_points else "None listed"
     return f"""
 Lead Information:
 - Name: {lead.get('name', 'Unknown')}
@@ -44,7 +63,7 @@ Lead Information:
 - Industry: {lead.get('industry', 'Unknown')}
 - Company Size: {lead.get('company_size', 'Unknown')}
 - Recent News: {lead.get('recent_news', 'None available')}
-- Pain Points: {', '.join(lead.get('pain_points', []))}
+- Pain Points: {pain_points_text}
 """
 
 
@@ -69,6 +88,61 @@ Guidelines:
 Write the outbound message:"""
 
 
+def generate_mock_message(
+    lead: dict[str, Any],
+    product: str,
+    sender_name: str,
+    tone: str,
+    personalization_depth: str,
+) -> str:
+    """Generate a mock outbound message when LLMs are unavailable."""
+    name = lead.get("name", "there")
+    first_name = name.split()[0] if isinstance(name, str) else "there"
+    title = lead.get("title", "a leader")
+    company = lead.get("company", "your company")
+    industry = lead.get("industry", "your space")
+    recent_news = lead.get("recent_news", "None available")
+    pain_points = normalize_pain_points(lead)
+    primary_pain_point = pain_points[0] if pain_points else "growth"
+
+    if personalization_depth == "basic":
+        hook = f"I noticed your role as {title} at {company}."
+    elif personalization_depth == "moderate":
+        if recent_news and recent_news != "None available":
+            hook = f"Congrats on {recent_news}!"
+        else:
+            hook = f"I imagine {primary_pain_point} is top of mind at {company}."
+    else:
+        hook_parts = []
+        if recent_news and recent_news != "None available":
+            hook_parts.append(f"Congrats on {recent_news}!")
+        hook_parts.append(
+            f"As {title} at {company}, {primary_pain_point} is likely top of mind."
+        )
+        hook = " ".join(hook_parts)
+
+    if tone == "friendly":
+        cta = "Open to a quick 15-minute chat to see if this is helpful?"
+        greeting = "Hi"
+    elif tone == "consultative":
+        cta = "Happy to share a few ideas if helpful - open to a brief call?"
+        greeting = "Hello"
+    else:
+        cta = "Would you be open to a 15-minute call to explore?"
+        greeting = "Hello"
+
+    sender_first = sender_name.split()[0] if sender_name else "Alex"
+
+    return f"""{greeting} {first_name},
+
+{hook} {product} helps teams in {industry} tackle challenges like {primary_pain_point}.
+
+{cta}
+
+Best,
+{sender_first}"""
+
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -78,8 +152,9 @@ Write the outbound message:"""
     },
     objectives=["message_quality", "compliance", "cost"],
     evaluation=EvaluationOptions(
-        eval_dataset="use-cases/gtm-acquisition/datasets/leads_dataset.jsonl",
-        custom_evaluator=MessageQualityEvaluator(),
+        eval_dataset=str(DATASET_PATH),
+        # MessageQualityEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=MessageQualityEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -120,36 +195,40 @@ def gtm_outreach_agent(
         tone=tone,
     )
 
-    # Use LangChain for LLM call (TraiGent intercepts and optimizes)
+    if is_mock_mode():
+        return generate_mock_message(
+            lead=lead,
+            product=product,
+            sender_name=sender_name,
+            tone=tone,
+            personalization_depth=personalization_depth,
+        )
+
+    # Use LangChain for LLM call (Traigent intercepts and optimizes)
     try:
         from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "Install it with: pip install langchain-openai"
+        ) from exc
 
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-        )
-        response = llm.invoke(prompt)
-        return response.content
-    except ImportError:
-        # Fallback for mock mode without LangChain
-        return f"""Hi {lead.get('name', 'there').split()[0]},
-
-Congratulations on {lead.get('recent_news', 'your recent achievements')}! As {lead.get('title', 'a leader')} at {lead.get('company', 'your company')}, I imagine {lead.get('pain_points', ['scaling'])[0] if lead.get('pain_points') else 'growth'} is top of mind.
-
-{product} helps companies in {lead.get('industry', 'your space')} tackle exactly these challenges. Would you be open to a 15-minute call to explore?
-
-Best,
-{sender_name.split()[0] if sender_name else 'Alex'}"""
+    llm = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+    )
+    response = llm.invoke(prompt)
+    return response.content
 
 
 async def run_optimization():
     """Run the GTM agent optimization."""
     print("=" * 60)
-    print("GTM & Acquisition Agent - TraiGent Optimization")
+    print("GTM & Acquisition Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+    mock_mode = is_mock_mode()
     print(f"\nMock Mode: {'Enabled' if mock_mode else 'Disabled'}")
 
     if not mock_mode:

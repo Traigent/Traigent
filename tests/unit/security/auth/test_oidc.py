@@ -11,7 +11,7 @@ from __future__ import annotations
 import hashlib
 import time
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

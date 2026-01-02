@@ -214,7 +214,7 @@ class TestParallelConcurrency:
             permit = await cost_enforcer.acquire_permit_async()
             assert permit.is_granted
 
-            async def try_release() -> bool:
+            async def try_release(permit=permit) -> bool:
                 return await cost_enforcer.release_permit_async(permit)
 
             # Launch two concurrent release attempts

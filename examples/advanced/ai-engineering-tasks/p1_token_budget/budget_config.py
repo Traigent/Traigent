@@ -7,7 +7,7 @@ different context components while maintaining task performance.
 
 # CUSTOM LOGIC - NOT PART OF TRAIGENT:
 # This example implements custom budget allocation logic.
-# Token budget management is not a built-in TraiGent feature.
+# Token budget management is not a built-in Traigent feature.
 
 from __future__ import annotations
 
@@ -128,7 +128,7 @@ class TokenBudgetConfig:
             self.buffer_pct /= total
 
 
-# TraiGent search space for token budget optimization
+# Traigent search space for token budget optimization
 TOKEN_BUDGET_SEARCH_SPACE = {
     # Allocation strategies
     "allocation_strategy": [

@@ -1,4 +1,4 @@
-"""Main decorator for TraiGent SDK.
+"""Main decorator for Traigent SDK.
 
 This module provides the primary @optimize decorator that enables zero-code-change
 optimization for any function containing LLM invocations. The decorator automatically
@@ -42,15 +42,23 @@ Examples:
 
 from __future__ import annotations
 
+import inspect
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+if TYPE_CHECKING:
+    from traigent.api.constraints import BoolExpr, Constraint
 
 from pydantic import BaseModel, ConfigDict
 
 from traigent.api.functions import _GLOBAL_CONFIG
+from traigent.api.parameter_ranges import (
+    is_inline_param_definition,
+    normalize_configuration_space,
+)
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -154,6 +162,88 @@ def _coerce_bundle(
     )
 
 
+def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
+    """Validate that custom_evaluator has the expected signature.
+
+    The custom_evaluator must accept (func, config, example) and return ExampleResult.
+    This catches interface mismatches early at decoration time.
+
+    Args:
+        evaluator: The custom evaluator callable to validate.
+
+    Raises:
+        ValidationError: If the evaluator signature doesn't match expectations.
+    """
+    # Get the callable to inspect (handle both functions and class instances)
+    if callable(evaluator) and not inspect.isfunction(evaluator):
+        # It's a class instance with __call__, inspect the __call__ method
+        # Note: We're accessing __call__ for signature inspection, not testing callability
+        callable_to_check = getattr(evaluator, "__call__", evaluator)  # noqa: B004
+    else:
+        callable_to_check = evaluator
+
+    try:
+        sig = inspect.signature(callable_to_check)
+    except (ValueError, TypeError):
+        # Can't inspect signature (e.g., built-in), skip validation
+        logger.debug(
+            "Could not inspect custom_evaluator signature, skipping validation"
+        )
+        return
+
+    params = list(sig.parameters.values())
+
+    # Filter out 'self' for bound methods
+    if params and params[0].name == "self":
+        params = params[1:]
+
+    # Check parameter count (must accept at least 3: func, config, example)
+    required_params = [
+        p
+        for p in params
+        if p.default is inspect.Parameter.empty
+        and p.kind
+        not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+    ]
+
+    param_names = [p.name for p in params]
+    metric_evaluator_params = {"prediction", "expected", "input_data"}
+    has_metric_evaluator_signature = metric_evaluator_params <= set(param_names)
+
+    # Error if signature looks like metric evaluator (has prediction, expected, input_data)
+    if has_metric_evaluator_signature:
+        raise ValidationError(
+            f"custom_evaluator signature mismatch.\n\n"
+            f"Expected: custom_evaluator(func, config, example) -> ExampleResult\n"
+            f"Got:      {evaluator.__class__.__name__}({', '.join(param_names)})\n\n"
+            f"This looks like a metric evaluator. Did you mean to use:\n"
+            f"    evaluation=EvaluationOptions(\n"
+            f"        metric_functions={{'accuracy': my_evaluator}}\n"
+            f"    )\n"
+            f"instead of:\n"
+            f"    evaluation=EvaluationOptions(\n"
+            f"        custom_evaluator=my_evaluator\n"
+            f"    )"
+        )
+
+    if len(required_params) < 3:
+        raise ValidationError(
+            f"custom_evaluator must accept (func, config, example), "
+            f"got {len(required_params)} required parameters: {param_names}"
+        )
+
+    # Warn if parameter names suggest wrong interface (but don't error)
+    suspicious_names = {"prediction", "expected", "input_data", "output", "response"}
+    found_suspicious = suspicious_names & set(param_names)
+    if found_suspicious:
+        logger.warning(
+            "custom_evaluator parameter names %s suggest metric evaluator interface. "
+            "custom_evaluator expects (func, config, example), not (prediction, expected, input_data). "
+            "Did you mean to use metric_functions instead?",
+            found_suspicious,
+        )
+
+
 _DEFAULT_SENTINEL = object()
 
 _OPTIMIZE_DEFAULTS: dict[str, Any] = {
@@ -184,6 +274,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "injection": None,
     "execution": None,
     "mock": None,
+    "max_trials": 50,
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -356,13 +447,13 @@ def _apply_tvl_artifact(
     options: TVLOptions,
     configuration_space: dict[str, Any] | None,
     objectives: list[str] | ObjectiveSchema | None,
-    constraints: list[Callable[..., Any]] | None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
     default_config: dict[str, Any] | None,
     runtime_overrides: dict[str, Any],
 ) -> tuple[
     dict[str, Any] | None,
     list[str] | ObjectiveSchema | None,
-    list[Callable[..., Any]] | None,
+    list[Constraint | BoolExpr | Callable[..., Any]] | None,
     dict[str, Any] | None,
 ]:
     if options.apply_configuration_space:
@@ -376,14 +467,17 @@ def _apply_tvl_artifact(
         objectives = artifact.objective_schema
 
     if options.apply_constraints and artifact.constraints:
-        constraints = list(constraints or []) + artifact.constraints
+        # artifact.constraints are already callables from TVL; cast for type compatibility
+        # Use string annotation since Constraint/BoolExpr are TYPE_CHECKING imports
+        tvl_constraints: list[Constraint | BoolExpr | Callable[..., Any]] = cast(
+            "list[Constraint | BoolExpr | Callable[..., Any]]", artifact.constraints
+        )
+        constraints = list(constraints or []) + tvl_constraints
 
     if options.apply_budget:
         overrides = artifact.runtime_overrides()
         for key, value in overrides.items():
             runtime_overrides.setdefault(key, value)
-    elif artifact.metadata:
-        runtime_overrides.setdefault("tvl_metadata", artifact.metadata)
 
     if not default_config and artifact.default_config:
         default_config = artifact.default_config
@@ -396,7 +490,7 @@ def optimize(
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Callable[..., Any]] | None = None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
@@ -407,9 +501,9 @@ def optimize(
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
-    """Decorator to make functions optimizable with TraiGent.
+    """Decorator to make functions optimizable with Traigent.
 
-    This is the main entry point for TraiGent optimization. Decorate any function
+    This is the main entry point for Traigent optimization. Decorate any function
     with @traigent.optimize to add zero-code-change optimization capabilities.
     The decorator automatically detects and optimizes LLM invocations without
     requiring any modifications to your existing code. Use the grouped bundles
@@ -417,7 +511,7 @@ def optimize(
     expansive signature when needed.
 
     Args:
-        objectives: Target metrics to optimize. Accepts a list of names (TraiGent
+        objectives: Target metrics to optimize. Accepts a list of names (Traigent
             infers sensible orientations and equal weights) or an ObjectiveSchema
             for explicit weights, orientations, and metadata. Omitted values fall
             back to ``traigent.configure(objectives=...)`` or ``["accuracy"]``.
@@ -652,11 +746,68 @@ def optimize(
             "or ExecutionOptions instead."
         )
 
+    # Extract inline parameter definitions (Range, IntRange, Choices, tuples)
+    # from runtime_overrides and merge into configuration_space
+    inline_params: dict[str, Any] = {}
+    remaining_overrides: dict[str, Any] = {}
+    for key, value in combined_runtime_overrides.items():
+        if is_inline_param_definition(value):
+            inline_params[key] = value
+        else:
+            remaining_overrides[key] = value
+
+    # Reject unknown non-parameter kwargs to catch typos (per Gemini feedback)
+    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
+    if unknown_keys:
+        raise TypeError(
+            f"Unknown keyword arguments: {sorted(unknown_keys)}. "
+            f"If you meant to define parameter ranges, use Range(), IntRange(), "
+            f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
+        )
+    combined_runtime_overrides = remaining_overrides
+
     eval_dataset = combined_settings["eval_dataset"]
     objectives = combined_settings["objectives"]
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
+
+    # Check for conflicting constraints: ConfigSpace with constraints AND explicit constraints
+    original_config_space = configuration_space
+    config_space_has_constraints = (
+        hasattr(original_config_space, "constraints")
+        and original_config_space.constraints
+    )
+    if config_space_has_constraints and constraints:
+        raise TypeError(
+            "Cannot provide both ConfigSpace with constraints and explicit constraints. "
+            "Either include constraints in your ConfigSpace or pass them separately."
+        )
+
+    # Extract constraints from ConfigSpace if present (and no explicit constraints)
+    config_space_constraints = None
+    config_space_var_names = None
+    if config_space_has_constraints:
+        config_space_constraints = getattr(original_config_space, "constraints", None)
+        # Build var_names mapping from ConfigSpace tvars for constraint normalization
+        config_space_var_names = getattr(original_config_space, "var_names", None)
+
+    # Normalize configuration_space and merge inline params (inline takes precedence)
+    # Also extract defaults from Range/Choices objects
+    if inline_params or configuration_space:
+        configuration_space, param_defaults = normalize_configuration_space(
+            configuration_space, inline_params
+        )
+        # Merge param defaults with explicit default_config (explicit takes precedence)
+        if param_defaults:
+            default_config = {**param_defaults, **(default_config or {})}
+
+    # Merge ConfigSpace constraints if no explicit constraints were provided
+    if config_space_constraints and not constraints:
+        constraints = config_space_constraints
+
+    # Note: Constraint normalization is deferred until after TVL artifact application
+    # to allow merging of user constraints with TVL constraints
     injection_mode = combined_settings["injection_mode"]
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
@@ -711,6 +862,10 @@ def optimize(
             evaluation_bundle.metric_functions,
             defaults,
         )
+
+    # Validate custom_evaluator signature early to catch interface mismatches
+    if custom_evaluator is not None:
+        _validate_custom_evaluator_signature(custom_evaluator)
 
     if injection_bundle:
         injection_mode = _resolve_option(
@@ -779,6 +934,21 @@ def optimize(
             defaults,
         )
 
+        # Enterprise-gated features: reps_per_trial and reps_aggregation
+        # These are reserved for future Traigent Enterprise editions
+        if execution_bundle.reps_per_trial != 1:
+            raise NotImplementedError(
+                "reps_per_trial is not available in this version. "
+                "This feature requires Traigent Enterprise. "
+                "Contact sales@traigent.ai for more information."
+            )
+        if execution_bundle.reps_aggregation != "mean":
+            raise NotImplementedError(
+                "reps_aggregation is not available in this version. "
+                "This feature requires Traigent Enterprise. "
+                "Contact sales@traigent.ai for more information."
+            )
+
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
     )
@@ -802,6 +972,12 @@ def optimize(
             default_config=default_config,
             runtime_overrides=combined_runtime_overrides,
         )
+        if (
+            tvl_options.apply_evaluation_set
+            and eval_dataset is None
+            and tvl_artifact.evaluation_set is not None
+        ):
+            eval_dataset = tvl_artifact.evaluation_set.dataset
         logger.info(
             "TVL spec %s applied%s",
             tvl_artifact.path,
@@ -922,7 +1098,7 @@ def optimize(
         if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
             logger.warning(
                 "local_storage_path is ignored when execution_mode='cloud'. "
-                "Cloud mode uses TraiGent cloud storage."
+                "Cloud mode uses Traigent cloud storage."
             )
 
         if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
@@ -940,13 +1116,23 @@ def optimize(
                 "Decorator parallel configuration sources: %s", parallel_sources
             )
 
+        # Normalize Constraint/BoolExpr objects to callables for the optimizer
+        # This is done after TVL artifact application to include all constraints
+        normalized_constraints: list[Callable[..., bool]] | None = None
+        if constraints:
+            from traigent.api.constraints import normalize_constraints
+
+            normalized_constraints = normalize_constraints(
+                constraints, config_space_var_names
+            )
+
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
             configuration_space=configuration_space,
             default_config=default_config,
-            constraints=constraints,
+            constraints=normalized_constraints,
             injection_mode=actual_injection_mode,
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,

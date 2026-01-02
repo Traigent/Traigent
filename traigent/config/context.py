@@ -250,7 +250,7 @@ def set_trial_context(payload: dict[str, Any] | None) -> Token[dict[str, Any] | 
 
 
 class ContextSnapshot:
-    """Snapshot of all TraiGent context variables for thread propagation.
+    """Snapshot of all Traigent context variables for thread propagation.
 
     Python's contextvars don't automatically propagate to ThreadPoolExecutor
     workers. This class captures all context for manual propagation.
@@ -366,7 +366,7 @@ class ContextRestorer:
 
 
 def copy_context_to_thread() -> ContextSnapshot:
-    """Capture all TraiGent context variables for propagation to worker threads.
+    """Capture all Traigent context variables for propagation to worker threads.
 
     Python's contextvars don't automatically propagate to ThreadPoolExecutor
     workers. Use this function to capture all context, then restore it in the
@@ -390,7 +390,7 @@ def copy_context_to_thread() -> ContextSnapshot:
         ...     futures = [executor.submit(worker_func, snapshot, d) for d in data]
 
     Note:
-        TraiGent's built-in parallel evaluator already handles context
+        Traigent's built-in parallel evaluator already handles context
         propagation. This helper is only needed when you create your own
         ThreadPoolExecutor within an optimized function.
 

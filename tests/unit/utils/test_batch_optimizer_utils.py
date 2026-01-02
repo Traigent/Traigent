@@ -412,4 +412,5 @@ class TestProgressCallback:
         callback(3, 10)
 
         # Test completion
-        callback(10, 10)
+        result = callback(10, 10)
+        assert result is None  # Callback returns None

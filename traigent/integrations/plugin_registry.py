@@ -1,4 +1,4 @@
-"""Plugin registry and discovery system for TraiGent integrations.
+"""Plugin registry and discovery system for Traigent integrations.
 
 This module provides the central registry for managing integration plugins,
 including discovery, registration, and lifecycle management.

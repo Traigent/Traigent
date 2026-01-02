@@ -1,4 +1,4 @@
-"""Plugin registry system for TraiGent SDK."""
+"""Plugin registry system for Traigent SDK."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 
 
 class TraigentPlugin(ABC):
-    """Abstract base class for TraiGent plugins."""
+    """Abstract base class for Traigent plugins."""
 
     @property
     @abstractmethod
@@ -50,7 +50,7 @@ class TraigentPlugin(ABC):
 
     @property
     def traigent_version(self) -> str:
-        """Minimum TraiGent version required."""
+        """Minimum Traigent version required."""
         return "0.1.0"
 
     @abstractmethod
@@ -143,7 +143,7 @@ class IntegrationPlugin(TraigentPlugin):
 
 
 class PluginRegistry:
-    """Registry for managing TraiGent plugins."""
+    """Registry for managing Traigent plugins."""
 
     def __init__(self) -> None:
         """Initialize plugin registry."""

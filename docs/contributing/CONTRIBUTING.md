@@ -1,8 +1,8 @@
-# Contributing to TraiGent SDK
+# Contributing to Traigent SDK
 
-Thank you for your interest in contributing to TraiGent SDK! We welcome contributions from the community and are excited to work with you to make AI agent discovery more accessible and powerful.
+Thank you for your interest in contributing to Traigent SDK! We welcome contributions from the community and are excited to work with you to make AI agent discovery more accessible and powerful.
 
-## 🚀 Getting Started
+## Getting Started
 
 1. **Fork the repository** on GitHub
 2. **Clone your fork** locally:
@@ -16,12 +16,15 @@ Thank you for your interest in contributing to TraiGent SDK! We welcome contribu
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-   # Install dependencies
+   # Install dependencies (preferred)
+   make install-dev
+
+   # Or use pip directly
    pip install -r requirements/requirements-dev.txt
-   pip install -e .
+   pip install -e ".[dev,integrations,analytics,security]"
    ```
 
-## 🌿 Development Workflow
+## Development Workflow
 
 1. **Create a feature branch**:
    ```bash
@@ -29,13 +32,16 @@ Thank you for your interest in contributing to TraiGent SDK! We welcome contribu
    ```
 
 2. **Make your changes** and ensure:
-   - Code follows our style guidelines (we use `ruff` for linting)
+   - Code follows our style guidelines (Black + isort for formatting, Ruff for linting)
    - All tests pass
    - New features include tests
    - Documentation is updated
+   - Run `make format && make lint` before committing
 
 3. **Run tests locally**:
    ```bash
+   export TRAIGENT_MOCK_MODE=true
+
    # Run unit tests
    python -m pytest tests/unit/ -v
 
@@ -68,26 +74,35 @@ Thank you for your interest in contributing to TraiGent SDK! We welcome contribu
 
 6. **Create a Pull Request** on GitHub
 
-## 📝 Code Style
+## Code Style
 
-- We use `ruff` for linting and formatting
-- Follow PEP 8 guidelines
-- Maximum line length is 120 characters
-- Use type hints where applicable
+- Formatting: Black (line length 88) + isort (profile "black")
+- Linting: Ruff (lint only)
+- Use type hints for all public APIs
 - Add docstrings to all public functions and classes
 
-Run linting:
+Run formatting and linting:
 ```bash
-ruff check traigent/
-ruff format traigent/
+make format
+make lint
 ```
 
-## 🧪 Testing
+Or manually:
+```bash
+isort traigent/ tests/ examples/
+black traigent/ tests/ examples/
+ruff check traigent/ --fix
+black --check traigent/
+isort --check-only traigent/
+```
+
+## Testing
 
 - Write tests for all new features
 - Maintain or improve code coverage
 - Use pytest for testing
 - Tests should be in the `tests/` directory mirroring the source structure
+- Use `pytest -m "unit"` or `pytest -m "integration"` for targeted runs
 
 Example test structure:
 ```python
@@ -103,14 +118,14 @@ def test_feature_behavior():
     assert result.is_valid()
 ```
 
-## 📚 Documentation
+## Documentation
 
 - Update README.md if adding new features
 - Add docstrings following Google style
 - Update relevant documentation in `docs/`
 - Include examples for new features
 
-## 🎯 Areas for Contribution
+## Areas for Contribution
 
 ### High Priority
 - **Test Coverage**: Help us reach 90%+ coverage
@@ -124,7 +139,7 @@ def test_feature_behavior():
 - Performance improvements
 - UI/UX enhancements for the playground
 
-## 🤝 Pull Request Guidelines
+## Pull Request Guidelines
 
 1. **PR Title**: Use conventional commit format
 2. **Description**: Clearly describe what changes you made and why
@@ -155,25 +170,25 @@ Brief description of changes
 - [ ] No new warnings
 ```
 
-## 🐛 Reporting Issues
+## Reporting Issues
 
 When reporting issues, please include:
 - Python version
-- TraiGent SDK version
+- Traigent SDK version
 - Minimal reproducible example
 - Error messages and stack traces
 - Expected vs actual behavior
 
-## 💬 Communication
+## Communication
 
 - **GitHub Issues**: For bugs and feature requests
 - **GitHub Discussions**: For questions and ideas
 - **Pull Requests**: For code contributions
 
-## 🏗️ Project Structure
+## Project Structure
 
 ```
-TraigentSDK/
+Traigent/
 ├── traigent/          # Main package
 │   ├── api/           # Public API
 │   ├── core/          # Core functionality
@@ -185,12 +200,12 @@ TraigentSDK/
 └── docs/             # Documentation
 ```
 
-## 📄 License
+## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License.
 
-## 🙏 Thank You!
+## Thank You
 
-Your contributions help make TraiGent SDK better for everyone. We appreciate your time and effort!
+Your contributions help make Traigent SDK better for everyone. We appreciate your time and effort!
 
 If you have any questions, feel free to open an issue or start a discussion.

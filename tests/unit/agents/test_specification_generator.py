@@ -57,7 +57,7 @@ def spec_generator():
 
 @pytest.fixture
 def sample_traigent_config():
-    """Create a sample TraiGent configuration."""
+    """Create a sample Traigent configuration."""
     return TraigentConfig(
         model="gpt-4o-mini",
         temperature=0.7,
@@ -78,7 +78,7 @@ def sample_traigent_config():
 
 @pytest.fixture
 def mock_optimized_function():
-    """Create a mock optimized function with TraiGent attributes."""
+    """Create a mock optimized function with Traigent attributes."""
     func = Mock()
     func.__name__ = "customer_support_agent"
     func.__doc__ = "Handle customer support queries efficiently"
@@ -538,7 +538,7 @@ import requests.auth
 
     def test_from_optimized_function(self, spec_generator):
         """Test generating specification from optimized function."""
-        # Add TraiGent config to function
+        # Add Traigent config to function
         sample_customer_support_function._traigent_config = {
             "configuration_space": {"model": ["gpt-4o-mini"], "temperature": 0.7},
             "objectives": ["accuracy"],
@@ -619,7 +619,7 @@ import requests.auth
     def test_extract_optimization_config_from_traigent_config(
         self, spec_generator, sample_traigent_config
     ):
-        """Test extracting optimization config from TraiGent config object."""
+        """Test extracting optimization config from Traigent config object."""
         func = Mock()
         func._traigent_config = sample_traigent_config
 
@@ -868,7 +868,7 @@ class TestIntegrationScenarios:
             """
             return {"response": "helpful answer", "urgency": urgency}
 
-        # Add TraiGent configuration
+        # Add Traigent configuration
         customer_support_bot._traigent_config = {
             "configuration_space": {
                 "model": ["gpt-4o-mini", "gpt-4o"],

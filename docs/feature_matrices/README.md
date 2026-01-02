@@ -3,7 +3,7 @@
 **Traceability**: CONC-Layer-Infra CONC-Quality-Maintainability REQ-TRACE-GAP-004
 
 This directory contains machine-readable feature matrices that track implementation
-completeness across TraiGent SDK modules.
+completeness across Traigent SDK modules.
 
 ## Purpose
 
@@ -28,13 +28,15 @@ Feature matrices provide:
 
 ### Module Coverage
 
-> Matrices are stale—regenerate before relying on coverage numbers.
+> Matrices are stale. Regenerate before relying on coverage numbers.
 
 ### Critical Issues Found
 
 > Issue list is historical. Re-run the matrix generation tooling to obtain current gaps and compliance.
 
 ## Remediation Priority
+
+Note: The phase status below is historical. Validate against current code before acting on it.
 
 ### Phase 1: Critical Fixes ✅ COMPLETED
 1. ~~Add thread-safety to analytics modules~~ ✅
@@ -88,9 +90,10 @@ for module in matrix['modules']:
 
 ## Related Documents
 
-- [Gap Detection Requirements](../../reports/traceability/gap_detection_requirements.md)
+- [Traceability Requirements](../traceability/requirements.yml)
 - [Traceability Schema](../traceability/schema.md)
-- [Integration Feature Matrix](../../reports/refactoring/integration_feature_matrix.md)
+- [Optimizer Matrix](optimizers.yml)
+- [Invoker Matrix](invokers.yml)
 
 ---
 *Generated: stale; regenerate before use*

@@ -2,7 +2,7 @@
 P0-2: Context Engineering and RAG Optimization
 ==============================================
 
-This example demonstrates how TraiGent optimizes context engineering strategies
+This example demonstrates how Traigent optimizes context engineering strategies
 for RAG (Retrieval-Augmented Generation) systems - addressing one of the most
 critical challenges in modern LLM applications.
 

@@ -1,4 +1,4 @@
-"""Performance benchmark tests for TraiGent SDK optimization models."""
+"""Performance benchmark tests for Traigent SDK optimization models."""
 
 import asyncio
 import statistics
@@ -90,7 +90,7 @@ class PerformanceMetrics:
             return
 
         fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        fig.suptitle("TraiGent SDK Performance Benchmarks", fontsize=16)
+        fig.suptitle("Traigent SDK Performance Benchmarks", fontsize=16)
 
         # Trial durations
         if self.metrics["trial_durations"]:

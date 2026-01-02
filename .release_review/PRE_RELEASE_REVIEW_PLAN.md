@@ -1,4 +1,4 @@
-# TraiGent Pre-Release Review Plan (SDK v0.8.0)
+# Traigent Pre-Release Review Plan (SDK Release)
 
 This plan breaks the repo into reviewable components with concrete checklists and required evidence.
 Assignments and sign-offs live in `.release_review/PRE_RELEASE_REVIEW_TRACKING.md`.
@@ -37,6 +37,7 @@ The release is approved when:
    - Runs the most relevant tests for that component (or the full suite if unsure).
    - Verifies docs/examples relevant to the component are accurate (where applicable).
 3. Owner records **evidence**:
+   - Machine-validated JSON evidence in the tracking table (see `CAPTAIN_PROTOCOL.md`).
    - A short written summary (what was checked, findings, follow-ups).
    - Links to PRs/issues/commits for any fixes.
    - Commands + PASS output (or CI run links).

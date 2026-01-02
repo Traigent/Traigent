@@ -1,5 +1,5 @@
 """
-Comprehensive test suite for TraiGent Optimization Validation System.
+Comprehensive test suite for Traigent Optimization Validation System.
 
 Tests all components of the automated validation system:
 - Function discovery engine
@@ -359,7 +359,7 @@ class TestCLIIntegration:
         """Test check command help output."""
         result = cli_runner.invoke(cli, ["check", "--help"])
         assert result.exit_code == 0
-        assert "Validate TraiGent optimization" in result.output
+        assert "Validate Traigent optimization" in result.output
         assert "--functions" in result.output
         assert "--threshold" in result.output
 
@@ -525,7 +525,9 @@ def analyze_sentiment(text: str, model: str = "default", temperature: float = 0.
         try:
             # Test function discovery
             functions = discover_optimized_functions(temp_file)
-            assert len(functions) >= 0  # May find functions or not due to mock setup
+            assert isinstance(
+                functions, list
+            )  # May find functions or not due to mock setup
 
             # Test CLI integration
             runner = CliRunner()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Configuration Spaces - Defining Parameters to Optimize."""
+
 from __future__ import annotations
 
 import json
@@ -110,7 +111,11 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 def intelligent_assistant(query: str) -> str:
     """An intelligent assistant that answers queries with optimal parameters."""
 
-    # Get the current configuration from TraiGent
+    # Check for mock mode
+    if os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+        return "This is a mock response for testing purposes."
+
+    # Get the current configuration from Traigent
     current = traigent.get_config()
     config = current if isinstance(current, dict) else {}
 
@@ -193,25 +198,31 @@ def demonstrate_configuration_types() -> None:
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("TraiGent Core Concepts: Configuration Spaces")
-    print("=" * 60)
+    import asyncio
 
-    # Show configuration types
-    demonstrate_configuration_types()
+    async def main():
+        print("=" * 60)
+        print("Traigent Core Concepts: Configuration Spaces")
+        print("=" * 60)
 
-    print("\nRunning optimization with configuration space...")
+        # Show configuration types
+        demonstrate_configuration_types()
 
-    # Run the optimization
-    results = intelligent_assistant.optimize()
+        print("\nRunning optimization with configuration space...")
 
-    if results:
-        print("\nBest configuration found:")
-        print(f"  Model: {results.best_config.get('model')}")
-        print(f"  Temperature: {results.best_config.get('temperature')}")
-        print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
-        print(f"  Response Style: {results.best_config.get('response_style')}")
+        # Run the optimization
+        results = await intelligent_assistant.optimize()
 
-        # Test with the optimized configuration
-        test_response = intelligent_assistant("What is machine learning?")
-        print(f"\nTest response: {test_response[:200]}...")
+        if results:
+            print("\nBest configuration found:")
+            print(f"  Model: {results.best_config.get('model')}")
+            print(f"  Temperature: {results.best_config.get('temperature')}")
+            print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
+            style = results.best_config.get("response_style")
+            print(f"  Response Style: {style}")
+
+            # Test with the optimized configuration
+            test_response = intelligent_assistant("What is machine learning?")
+            print(f"\nTest response: {test_response[:200]}...")
+
+    asyncio.run(main())

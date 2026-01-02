@@ -1,8 +1,8 @@
 """
-Streamlit Core Modules for TraiGent Control Center
+Streamlit Core Modules for Traigent Control Center
 =================================================
 
-This package contains modular components for the TraiGent Streamlit application,
+This package contains modular components for the Traigent Streamlit application,
 organized by functionality for better separation of concerns.
 
 Modules:

@@ -157,6 +157,8 @@ async def test_formats():
         import traceback
 
         traceback.print_exc()
+        # Skip test when backend is unavailable
+        pytest.skip(f"Backend server not available: {e}")
 
 
 if __name__ == "__main__":

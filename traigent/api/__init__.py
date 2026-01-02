@@ -1,4 +1,4 @@
-"""Public API module for TraiGent SDK."""
+"""Public API module for Traigent SDK."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Usability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
@@ -18,6 +18,7 @@ from traigent.api.types import (
     OptimizationStatus,
     ParetoFront,
     SensitivityAnalysis,
+    StopReason,
     StrategyConfig,
     TrialResult,
 )
@@ -35,5 +36,6 @@ __all__ = [
     "ConfigurationComparison",
     "ParetoFront",
     "OptimizationStatus",
+    "StopReason",
     "StrategyConfig",
 ]

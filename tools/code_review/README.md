@@ -216,7 +216,7 @@ This is designed to be a reusable asset. To contribute:
 
 ## 🔗 Related Projects
 
-- **TraiGent SDK**: AI optimization framework (parent project)
+- **Traigent SDK**: AI optimization framework (parent project)
 - **OptiGen**: LLM experimentation platform
 
 ## 📞 Support
@@ -227,4 +227,4 @@ For issues, questions, or contributions, please contact [your contact info].
 
 **Version**: 1.0.0
 **Last Updated**: October 14, 2024
-**Extracted From**: TraiGent SDK cleanup effort
+**Extracted From**: Traigent SDK cleanup effort

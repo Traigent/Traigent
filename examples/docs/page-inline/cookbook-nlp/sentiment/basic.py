@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cookbook NLP - Sentiment Analysis (Basic)
 
-Simple, seamless optimization with TraiGent.
+Simple, seamless optimization with Traigent.
 Exact-match accuracy over a small evaluation set; no custom plumbing.
 """
 import json

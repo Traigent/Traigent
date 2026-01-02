@@ -830,8 +830,9 @@ class TestUpdateLastSubmission:
         with patch(
             "pathlib.Path.write_text", side_effect=PermissionError("Access denied")
         ):
-            # Should not raise exception
-            analytics_instance._update_last_submission()
+            # Should not raise exception - just verify it completes without error
+            result = analytics_instance._update_last_submission()
+            assert result is None  # Method returns None on success or failure
 
 
 class TestCloudIncentiveData:
@@ -956,6 +957,7 @@ class TestCloudIncentiveData:
             "avg_improvement_percent": None,
         }
         message = analytics_instance._generate_personalized_message(stats)
+        assert isinstance(message, str)
         assert len(message) > 0
 
     def test_generate_personalized_message_new_user(
@@ -1050,8 +1052,9 @@ class TestConvenienceFunctions:
             local_storage_path=temp_storage_path,
         )
 
-        # Should not raise exception
-        collect_and_submit_analytics(config)
+        # Should not raise exception - verify it completes successfully
+        result = collect_and_submit_analytics(config)
+        assert result is None  # Function returns None
 
     def test_collect_and_submit_analytics_wrong_mode(
         self, temp_storage_path: str
@@ -1063,8 +1066,9 @@ class TestConvenienceFunctions:
             local_storage_path=temp_storage_path,
         )
 
-        # Should not raise exception
-        collect_and_submit_analytics(config)
+        # Should not raise exception - verify it completes successfully
+        result = collect_and_submit_analytics(config)
+        assert result is None  # Function returns None
 
     def test_collect_and_submit_analytics_in_async_context(
         self, temp_storage_path: str
@@ -1078,13 +1082,15 @@ class TestConvenienceFunctions:
             local_storage_path=temp_storage_path,
         )
 
-        async def test_async() -> None:
+        async def test_async() -> bool:
             # Should not raise exception even in async context
-            collect_and_submit_analytics(config)
+            result = collect_and_submit_analytics(config)
             # Add await to make this properly async
             await asyncio.sleep(0)
+            return result is None
 
-        asyncio.run(test_async())
+        completed = asyncio.run(test_async())
+        assert completed  # Verify the async context completed successfully
 
     def test_collect_and_submit_analytics_error_handling(
         self, temp_storage_path: str
@@ -1100,8 +1106,9 @@ class TestConvenienceFunctions:
             "traigent.utils.local_analytics.LocalAnalytics",
             side_effect=Exception("Init error"),
         ):
-            # Should not raise exception
-            collect_and_submit_analytics(config)
+            # Should not raise exception - verify it completes successfully
+            result = collect_and_submit_analytics(config)
+            assert result is None  # Function returns None even on error
 
     def test_get_enhanced_cloud_incentives(self, temp_storage_path: str) -> None:
         """Test get_enhanced_cloud_incentives function."""

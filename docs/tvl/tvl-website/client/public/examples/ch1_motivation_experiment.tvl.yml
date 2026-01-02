@@ -1,6 +1,13 @@
+# TVL 0.9 Example: RAG Campus Orientation
+#
+# Adaptive RAG configuration for onboarding questions that drift with
+# semester timelines, budgets, and latency promises.
+# Migrated from legacy format to TVL 0.9.
+
 spec:
   id: rag-campus-orientation
   version: 0.1.0
+
 metadata:
   owner: "mlops@traigent.ai"
   description: >
@@ -10,30 +17,35 @@ metadata:
     - rag
     - campus
     - tvl-book
+
 units:
   time: [milliseconds, seconds]
   currency: [USD]
   ratio: [dimensionless]
-configuration_space:
-  model:
-    type: categorical
-    values: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku"]
-  temperature:
-    type: continuous
-    range:
-      min: 0.1
-      max: 0.8
+
+# TVL 0.9 typed variables (replaces configuration_space)
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku"]
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.1, 0.8]
     unit: ratio
-  max_tokens:
-    type: discrete
-    values: [256, 512, 768]
+
+  - name: max_tokens
+    type: enum[int]
+    domain: [256, 512, 768]
     unit: tokens
-  retrieval_depth:
-    type: integer
-    range:
-      min: 2
-      max: 6
+
+  - name: retrieval_depth
+    type: int
+    domain:
+      range: [2, 6]
     unit: count
+
 objectives:
   - name: answer_quality
     direction: maximize
@@ -41,26 +53,30 @@ objectives:
     direction: minimize
   - name: token_cost
     direction: minimize
-optimization:
+
+# TVL 0.9 exploration section (replaces optimization)
+exploration:
   strategy: pareto_optimal
   pareto_config:
     selection_method: crowding_distance
-  budget:
-    max_trials:
-      value: 60
-      unit: count
-    parallel_trials: 6
+  budgets:
+    max_trials: 60
     timeout_seconds: 2400
+  parallelism:
+    max_parallel_trials: 6
+
+# TVL 0.9 structural constraints (replaces flat constraints list)
 constraints:
-  - id: campus-hour-latency
-    type: expression
-    rule: 'params.response_latency_ms <= 1200'
-    error_message: "Keep responses under 1.2s during campus rush"
-  - id: premium-model-budget
-    type: conditional
-    when: 'params.model == "gpt-4o"'
-    then: 'params.token_cost_usd <= 0.04'
-    error_message: "Premium models need budget guardrails"
+  structural:
+    - expr: 'params.response_latency_ms <= 1200'
+      id: campus-hour-latency
+      error_message: "Keep responses under 1.2s during campus rush"
+
+    - when: 'params.model == "gpt-4o"'
+      then: 'params.token_cost_usd <= 0.04'
+      id: premium-model-budget
+      error_message: "Premium models need budget guardrails"
+
 environments:
   base:
     objectives:
@@ -68,19 +84,20 @@ environments:
         threshold:
           value: 900
           unit: milliseconds
+
   finals_week:
     extends: base
     overrides:
-      configuration_space:
-        retrieval_depth:
-          range:
-            min: 3
-            max: 8
-      optimization:
-        budget:
-          max_trials:
-            value: 90
-            unit: count
+      tvars:
+        - name: retrieval_depth
+          type: int
+          domain:
+            range: [3, 8]
+          unit: count
+      exploration:
+        budgets:
+          max_trials: 90
+
 evaluation:
   workloads:
     - name: onboarding_faq
@@ -94,13 +111,16 @@ evaluation:
       aggregation: p95
     token_cost:
       aggregation: mean
+
 promotion:
   gate: strict_dominance
   reviewers: ["ops@traigent.ai"]
+
 triagent:
   pipeline: RAGOrientation
   deployment_targets: ["staging", "production"]
   manifest_output: artifacts/params.yaml
+
 dvl:
   version: ">=0.4.0"
   drift_tests:

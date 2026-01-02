@@ -14,6 +14,12 @@ This directory contains automation scripts to support the multi-agent release re
 | `metrics.py` | Track agent effectiveness across releases | Post-release analysis |
 | `rotation_scheduler.py` | Generate model rotation schedules | Captain uses for multi-round reviews |
 
+## Conventions
+
+- Artifacts live under `.release_review/<version>/artifacts/` and are ignored by git.
+- Evidence in tracking must be machine-validated JSON (see `evidence_validator.py`).
+- Rotation schedules are exported into `.release_review/<version>/ROTATION_HISTORY.md` when saved.
+
 ## Quick Start
 
 ### For Captain
@@ -40,11 +46,22 @@ result = guard.validate_changes(
 if not result["valid"]:
     print(f"SCOPE VIOLATION: {result['violations']}")
 
-# Validate evidence format
-evidence = "Tests: 47/47 | Commits: abc123 | Model: Claude/Opus4.5 | Time: 2025-12-13T10:00:00Z"
+# Optional: override base branch via env
+# export RR_BASE_BRANCH=release-review/v0.9.0
+
+# Validate evidence format (JSON)
+evidence = (
+    '{"format":"standard","commits":["abc123"],'
+    '"tests":{"command":"pytest tests/unit/core -q","status":"PASS","passed":47,"total":47},'
+    '"models":"Claude/Opus4.5","reviewer":"claude + captain",'
+    '"timestamp":"2025-12-13T10:00:00Z","followups":"None","accepted_risks":"None"}'
+)
 parsed = validator.validate(evidence)
 if not parsed["valid"]:
     print(f"Invalid evidence: {parsed['error']}")
+
+# Validate evidence across the tracking file
+# python evidence_validator.py --file .release_review/PRE_RELEASE_REVIEW_TRACKING.md
 ```
 
 ### For Agents
@@ -96,8 +113,8 @@ stats = scheduler.get_model_stats()
 # Generate schedule for round 2
 python rotation_scheduler.py generate 2 v0.9.0
 
-# Rotate from previous version
-python rotation_scheduler.py rotate v0.8.0
+# Rotate from previous version into a new target version
+python rotation_scheduler.py rotate v0.8.0 v0.9.0
 
 # Compare two rounds
 python rotation_scheduler.py compare 1 2

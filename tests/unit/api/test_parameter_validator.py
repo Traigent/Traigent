@@ -41,8 +41,9 @@ class TestParameterValidator:
         valid_modes = ["edge_analytics", "privacy", "standard", "cloud", "hybrid"]
 
         for mode in valid_modes:
-            # Should not raise exception
-            self.validator._validate_execution_mode(mode)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_execution_mode(mode)
+            assert result is None, f"Expected None for valid mode {mode}"
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""
@@ -64,16 +65,18 @@ class TestParameterValidator:
         ]
 
         for mode in valid_modes:
-            # Should not raise exception
-            self.validator._validate_injection_mode(mode)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_injection_mode(mode)
+            assert result is None, f"Expected None for valid mode {mode}"
 
     def test_validate_injection_mode_string(self):
         """Test validation of injection mode string values."""
         valid_strings = ["context", "parameter", "attribute", "seamless"]
 
         for mode_str in valid_strings:
-            # Should not raise exception
-            self.validator._validate_injection_mode(mode_str)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_injection_mode(mode_str)
+            assert result is None, f"Expected None for valid mode {mode_str}"
 
     def test_validate_injection_mode_invalid(self):
         """Test validation of invalid injection modes."""
@@ -89,8 +92,9 @@ class TestParameterValidator:
         valid_paths = ["test.jsonl", "/path/to/data.jsonl", "dataset.json"]
 
         for path in valid_paths:
-            # Should not raise exception
-            self.validator._validate_dataset(path)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_dataset(path)
+            assert result is None, f"Expected None for valid path {path}"
 
     def test_validate_dataset_list(self):
         """Test validation of dataset path lists."""
@@ -113,8 +117,9 @@ class TestParameterValidator:
         ]
 
         for dataset_list in valid_lists:
-            # Should not raise exception
-            self.validator._validate_dataset(dataset_list)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_dataset(dataset_list)
+            assert result is None, "Expected None for valid dataset list"
 
     def test_validate_dataset_sequence_with_dataset_objects(self):
         """Dataset iterables can contain Dataset instances."""
@@ -130,8 +135,10 @@ class TestParameterValidator:
         )
 
         # Should accept tuples and mixed entries containing Dataset objects
-        self.validator._validate_dataset((dataset,))
-        self.validator._validate_dataset(["path.jsonl", dataset])
+        result1 = self.validator._validate_dataset((dataset,))
+        result2 = self.validator._validate_dataset(["path.jsonl", dataset])
+        assert result1 is None, "Expected None for tuple with Dataset"
+        assert result2 is None, "Expected None for mixed list with Dataset"
 
     def test_validate_dataset_invalid_list(self):
         """Test validation of invalid dataset lists."""
@@ -157,8 +164,9 @@ class TestParameterValidator:
         ]
 
         for objectives in valid_objectives:
-            # Should not raise exception
-            self.validator._validate_objectives(objectives)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_objectives(objectives)
+            assert result is None, f"Expected None for valid objectives {objectives}"
 
     def test_validate_objectives_invalid_type(self):
         """Test validation of invalid objective types."""
@@ -182,8 +190,9 @@ class TestParameterValidator:
         ]
 
         for space in valid_spaces:
-            # Should not raise exception
-            self.validator._validate_configuration_space(space)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_configuration_space(space)
+            assert result is None, f"Expected None for valid config space {space}"
 
     def test_validate_configuration_space_invalid(self):
         """Test validation of invalid configuration spaces."""
@@ -214,8 +223,9 @@ class TestParameterValidator:
         ]
 
         for constraints in valid_constraints:
-            # Should not raise exception
-            self.validator._validate_constraints(constraints)
+            # Should not raise exception - validate returns None on success
+            result = self.validator._validate_constraints(constraints)
+            assert result is None, "Expected None for valid constraints"
 
     def test_validate_constraints_invalid(self):
         """Test validation of invalid constraints."""
@@ -240,7 +250,9 @@ class TestParameterValidator:
             InjectionMode.SEAMLESS,
         ]
 
-        for string_mode, expected_enum in zip(string_modes, expected_enums):
+        for string_mode, expected_enum in zip(
+            string_modes, expected_enums, strict=False
+        ):
             result = self.validator._normalize_injection_mode(string_mode)
             assert result == expected_enum
 

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class Framework(Enum):
     """Supported LLM frameworks."""
 
-    TRAIGENT = "traigent"  # Canonical TraiGent parameter names
+    TRAIGENT = "traigent"  # Canonical Traigent parameter names
     OPENAI = "openai"
     ANTHROPIC = "anthropic"
     LANGCHAIN = "langchain"
@@ -37,7 +37,7 @@ class Framework(Enum):
 class ParameterAlias:
     """Defines how a parameter maps across frameworks."""
 
-    canonical: str  # TraiGent canonical name
+    canonical: str  # Traigent canonical name
     aliases: dict[Framework, str] = field(default_factory=dict)
     description: str = ""
 
@@ -314,7 +314,7 @@ class ParameterNormalizer:
         >>> normalized = normalizer.convert(params, from_framework=Framework.LANGCHAIN, to_framework=Framework.OPENAI)
         >>> # Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}
 
-        >>> # Or convert to canonical TraiGent format first
+        >>> # Or convert to canonical Traigent format first
         >>> canonical = normalizer.to_canonical(params, from_framework=Framework.LANGCHAIN)
         >>> # Result: {"model": "gpt-4", "stream": True, "max_tokens": 100}
     """
@@ -341,7 +341,7 @@ class ParameterNormalizer:
         *,
         strict: bool = False,
     ) -> dict[str, Any]:
-        """Convert parameters from a specific framework to canonical TraiGent format.
+        """Convert parameters from a specific framework to canonical Traigent format.
 
         Args:
             params: Parameters in framework-specific format
@@ -349,7 +349,7 @@ class ParameterNormalizer:
             strict: If True, raise error for unknown parameters. If False, pass through.
 
         Returns:
-            Parameters with canonical TraiGent names
+            Parameters with canonical Traigent names
 
         Raises:
             ValueError: If strict=True and unknown parameters are encountered
@@ -378,10 +378,10 @@ class ParameterNormalizer:
         *,
         strict: bool = False,
     ) -> dict[str, Any]:
-        """Convert parameters from canonical TraiGent format to a specific framework.
+        """Convert parameters from canonical Traigent format to a specific framework.
 
         Args:
-            params: Parameters in canonical TraiGent format
+            params: Parameters in canonical Traigent format
             to_framework: The target framework
             strict: If True, raise error for unknown parameters. If False, pass through.
 
@@ -470,7 +470,7 @@ class ParameterNormalizer:
             param_name: A parameter name from any framework
 
         Returns:
-            The canonical TraiGent parameter name, or None if not found
+            The canonical Traigent parameter name, or None if not found
         """
         # Check if it's already a canonical name
         if param_name in self._registry:
@@ -488,7 +488,7 @@ class ParameterNormalizer:
         """Get all framework-specific names for a canonical parameter.
 
         Args:
-            canonical_name: The canonical TraiGent parameter name
+            canonical_name: The canonical Traigent parameter name
 
         Returns:
             Dict mapping frameworks to their specific parameter names
@@ -501,7 +501,7 @@ class ParameterNormalizer:
         """Get list of all canonical parameter names.
 
         Returns:
-            List of canonical TraiGent parameter names
+            List of canonical Traigent parameter names
         """
         return list(self._registry.keys())
 
@@ -516,7 +516,7 @@ class ParameterNormalizer:
         """Get the framework-specific parameter name for a canonical parameter.
 
         Args:
-            canonical: The canonical TraiGent parameter name
+            canonical: The canonical Traigent parameter name
             framework: The target framework
 
         Returns:

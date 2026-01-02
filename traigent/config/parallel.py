@@ -26,6 +26,31 @@ class ParallelConfig:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ParallelConfig:
+        """Create ParallelConfig from a dictionary.
+
+        Args:
+            raw: Dictionary with parallel configuration keys.
+
+        Returns:
+            ParallelConfig instance.
+
+        Raises:
+            ValueError: If unknown keys are present in the dictionary.
+        """
+        _VALID_KEYS = {
+            "mode",
+            "trial_concurrency",
+            "example_concurrency",
+            "thread_workers",
+        }
+
+        unknown = set(raw.keys()) - _VALID_KEYS
+        if unknown:
+            raise ValueError(
+                f"Unknown parallel_config key(s): {sorted(unknown)}. "
+                "Valid keys: mode, trial_concurrency, example_concurrency, thread_workers"
+            )
+
         return cls(
             mode=raw.get("mode"),
             trial_concurrency=raw.get("trial_concurrency"),

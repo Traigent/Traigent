@@ -1,6 +1,6 @@
-# TraiGent SDK Test Suite
+# Traigent SDK Test Suite
 
-This directory contains the main test suite for the TraiGent SDK.
+This directory contains the main test suite for the Traigent SDK.
 
 ## Test Organization
 

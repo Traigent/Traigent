@@ -167,7 +167,7 @@ class UnifiedAuthConfig:
 
 @dataclass
 class APIKey:
-    """TraiGent Cloud API key configuration."""
+    """Traigent Cloud API key configuration."""
 
     key: str
     name: str
@@ -335,7 +335,7 @@ class SecureToken:
 class AuthManager:
     """Authentication manager for SDK and backend integration.
 
-    This manager handles authentication for both TraiGent Cloud services and
+    This manager handles authentication for both Traigent Cloud services and
     backend integrations, providing a single entry point for acquiring
     credentials and generating request headers.
     """
@@ -831,8 +831,9 @@ class AuthManager:
         if self._credentials.mode == AuthMode.API_KEY:
             api_key_value = self._get_api_key_for_internal_use()
             if api_key_value:
-                headers["Authorization"] = f"Bearer {api_key_value}"
+                # Include both headers for backward compatibility
                 headers["X-API-Key"] = api_key_value
+                headers["Authorization"] = f"Bearer {api_key_value}"
 
         elif self._credentials.mode == AuthMode.JWT_TOKEN:
             # Use separate token lock to prevent TOCTOU race on token expiration check (S1 fix)
@@ -873,10 +874,10 @@ class AuthManager:
 
         # Add target-specific headers
         if target in ["cloud", "both"]:
-            headers["X-TraiGent-Client"] = "sdk"
+            headers["X-Traigent-Client"] = "sdk"
 
         if target in ["backend", "both"]:
-            headers["X-TraiGent-Service"] = "sdk"
+            headers["X-Traigent-Service"] = "sdk"
             headers["X-Backend-Integration"] = "true"
 
         return headers
@@ -1063,9 +1064,10 @@ class AuthManager:
         # Ensure credentials continue to reference the key for downstream usage
         credentials.api_key = api_key_value
 
+        # Include both headers for backward compatibility
         headers = {
-            "Authorization": f"Bearer {api_key_value}",
             "X-API-Key": api_key_value,
+            "Authorization": f"Bearer {api_key_value}",
         }
 
         return AuthResult(

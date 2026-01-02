@@ -8,9 +8,21 @@ from __future__ import annotations
 
 import re
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import (
+    ensure_within_base,
+    read_tracking_version,
+    resolve_base_path,
+    resolve_version,
+)
 
 
 class SessionInitializer:
@@ -21,15 +33,36 @@ class SessionInitializer:
     def __init__(
         self,
         base_path: str | Path = ".post_release_recommendation_fixes",
+        version: str | None = None,
     ) -> None:
         """Initialize session initializer.
 
         Args:
             base_path: Base path for fix workflow
+            version: Release version override
         """
-        self.base_path = Path(base_path)
+        self.root_path = Path(base_path)
+        self.version = resolve_version(version)
+        self.base_path = resolve_base_path(self.root_path, self.version)
         self.tracking_path = self.base_path / "TRACKING.md"
-        self.template_dir = self.base_path / "sessions" / "TEMPLATE"
+        self.template_dir = self.root_path / "templates"
+        self.tracking_version = read_tracking_version(
+            self.tracking_path, self.base_path
+        )
+
+    def _ensure_within_base(self, path: Path) -> None:
+        """Ensure file operations remain within the base path."""
+        ensure_within_base(self.base_path, path)
+
+    def _read_text(self, path: Path) -> str:
+        """Read text from a path validated under the base path."""
+        self._ensure_within_base(path)
+        return path.read_text()
+
+    def _write_text(self, path: Path, content: str) -> None:
+        """Write text to a path validated under the base path."""
+        self._ensure_within_base(path)
+        path.write_text(content)
 
     def init_session(
         self,
@@ -62,6 +95,15 @@ class SessionInitializer:
         session_dir.mkdir(parents=True, exist_ok=True)
         (session_dir / "artifacts").mkdir(exist_ok=True)
 
+        # Ensure versioned USER_QUESTIONS.md exists
+        user_questions = self.base_path / "USER_QUESTIONS.md"
+        template_questions = self.root_path / "USER_QUESTIONS.md"
+        if not user_questions.exists() and template_questions.exists():
+            shutil.copy(template_questions, user_questions)
+
+        # Ensure versioned TEMPLATE exists (copied from shared templates)
+        self._ensure_versioned_template()
+
         # Determine targeted fixes
         if fix_ids:
             targeted = fix_ids
@@ -81,6 +123,25 @@ class SessionInitializer:
 
         return session_dir
 
+    def _ensure_versioned_template(self) -> None:
+        """Ensure versioned TEMPLATE exists under the release workspace."""
+        template_root = self.template_dir
+        if not template_root.exists():
+            return
+
+        versioned_template = self.base_path / "sessions" / "TEMPLATE"
+        versioned_template.mkdir(parents=True, exist_ok=True)
+
+        progress_template = template_root / "PROGRESS.md"
+        if progress_template.exists():
+            shutil.copy(progress_template, versioned_template / "PROGRESS.md")
+
+        artifacts_template = template_root / "artifacts" / "README.md"
+        if artifacts_template.exists():
+            artifacts_dir = versioned_template / "artifacts"
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(artifacts_template, artifacts_dir / "README.md")
+
     def _get_fixes_by_scope(self, scope: str) -> list[str]:
         """Get pending fix IDs by priority scope.
 
@@ -93,7 +154,7 @@ class SessionInitializer:
         if not self.tracking_path.exists():
             return []
 
-        content = self.tracking_path.read_text()
+        content = self._read_text(self.tracking_path)
         fixes = []
         current_priority = ""
 
@@ -130,7 +191,7 @@ class SessionInitializer:
         if not self.tracking_path.exists():
             return {}
 
-        content = self.tracking_path.read_text()
+        content = self._read_text(self.tracking_path)
         details: dict[str, str] = {"id": fix_id}
 
         # Find the item details section
@@ -176,14 +237,30 @@ class SessionInitializer:
 
         # Get details for each fix
         fix_details = [self._get_fix_details(fix_id) for fix_id in targeted]
+        metadata = self._read_tracking_metadata()
+        release_version = (
+            metadata.get("version")
+            or self.tracking_version
+            or self.version
+            or "UNKNOWN"
+        )
+        source_todo = metadata.get("source", "UNKNOWN")
+        release_review_tracking = (
+            f".release_review/{release_version}/PRE_RELEASE_REVIEW_TRACKING.md"
+            if release_version != "UNKNOWN"
+            else "UNKNOWN"
+        )
 
         lines = [
             f"# Session Progress: {session_id}",
             "",
             f"**Session ID**: {session_id}",
+            f"**Release Version**: {release_version}",
             f"**Started**: {timestamp}",
             "**Ended**: (In progress)",
             f"**Tracking File**: [TRACKING.md](../../TRACKING.md)",
+            f"**Source TODO**: {source_todo}",
+            f"**Release Review Tracking**: {release_review_tracking}",
             "",
             "## Scope",
             "",
@@ -216,7 +293,7 @@ class SessionInitializer:
                 f"- **Owner**: (unassigned)",
                 f"- **Branch**: (not created)",
                 f"- **Started**: -",
-                f"- **Evidence**: (pending)",
+                f"- **Evidence**: (pending JSON)",
                 "",
             ])
 
@@ -245,7 +322,7 @@ class SessionInitializer:
         ])
 
         progress_file = session_dir / "PROGRESS.md"
-        progress_file.write_text("\n".join(lines))
+        self._write_text(progress_file, "\n".join(lines))
 
     def get_latest_session(self) -> Path | None:
         """Get the most recent session directory.
@@ -268,6 +345,18 @@ class SessionInitializer:
         # Sort by name (date-based) descending
         return sorted(sessions, reverse=True)[0]
 
+    def _read_tracking_metadata(self) -> dict[str, str]:
+        """Read tracking metadata for version/source."""
+        if not self.tracking_path.exists():
+            return {}
+        metadata: dict[str, str] = {}
+        for line in self._read_text(self.tracking_path).splitlines():
+            if line.startswith("**Release Version**:"):
+                metadata["version"] = line.split(":", 1)[1].strip().strip("`")
+            elif line.startswith("**Source**:"):
+                metadata["source"] = line.split(":", 1)[1].strip()
+        return metadata
+
     def resume_session(self) -> dict[str, Any]:
         """Get information for resuming the latest session.
 
@@ -282,7 +371,7 @@ class SessionInitializer:
         if not progress_file.exists():
             return {"error": f"No PROGRESS.md in {latest}"}
 
-        content = progress_file.read_text()
+        content = self._read_text(progress_file)
 
         # Parse session state
         info: dict[str, Any] = {
@@ -318,7 +407,17 @@ def main() -> None:
     """CLI entry point."""
     import sys
 
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    version = None
+    if "--version" in args:
+        idx = args.index("--version")
+        if idx + 1 >= len(args):
+            print("Usage: session_init.py --version <version> <command> [args]")
+            sys.exit(1)
+        version = args[idx + 1]
+        del args[idx:idx + 2]
+
+    if len(args) < 1:
         print("Usage: session_init.py <command> [args]")
         print("Commands:")
         print("  init [scope]     - Initialize new session (scope: high/medium/low/all)")
@@ -326,11 +425,11 @@ def main() -> None:
         print("  latest           - Show latest session path")
         sys.exit(1)
 
-    command = sys.argv[1]
-    initializer = SessionInitializer()
+    command = args[0]
+    initializer = SessionInitializer(version=version)
 
     if command == "init":
-        scope = sys.argv[2] if len(sys.argv) > 2 else "high"
+        scope = args[1] if len(args) > 1 else "high"
         if scope not in SessionInitializer.SCOPE_OPTIONS:
             print(f"Invalid scope: {scope}")
             print(f"Options: {', '.join(SessionInitializer.SCOPE_OPTIONS)}")

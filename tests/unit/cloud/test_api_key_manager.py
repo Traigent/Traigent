@@ -12,8 +12,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from traigent.cloud.api_key_manager import API_KEY_TOKEN_TTL, APIKeyManager
-from traigent.cloud.auth import APIKey, AuthCredentials, SecureToken, UnifiedAuthConfig
+from traigent.cloud.api_key_manager import APIKeyManager
+from traigent.cloud.auth import APIKey, AuthCredentials, UnifiedAuthConfig
 
 
 @pytest.fixture
@@ -200,6 +200,23 @@ class TestValidateFormat:
         """Test validation of valid API key."""
         assert manager.validate_format(valid_api_key) is True
 
+    def test_validate_format_uk_prefix_valid(self, manager: APIKeyManager) -> None:
+        """Test validation accepts uk_ prefixed keys from backend."""
+        # uk_ prefix + 43 alphanumeric chars = 46 total (backend format)
+        key = "uk_" + "b" * 43
+        assert len(key) == 46
+        assert manager.validate_format(key) is True
+
+    def test_validate_format_uk_prefix_alphanumeric(
+        self, manager: APIKeyManager
+    ) -> None:
+        """Test validation accepts uk_ keys with mixed alphanumerics."""
+        # uk_ (3 chars) + 43 alphanumeric chars = 46 total (backend format)
+        suffix = "aB1cD2eF3gH4iJ5kL6mN7oP8qR9sT0uV1wX2yZ3aB4c"
+        key = "uk_" + suffix
+        assert len(key) == 46  # Verify length
+        assert manager.validate_format(key) is True
+
     def test_validate_format_wrong_prefix(self, manager: APIKeyManager) -> None:
         """Test validation rejects wrong prefix."""
         key = "ak_" + "a" * 61
@@ -210,9 +227,24 @@ class TestValidateFormat:
         key = "tg_" + "a" * 50  # Too short
         assert manager.validate_format(key) is False
 
+    def test_validate_format_uk_wrong_length(self, manager: APIKeyManager) -> None:
+        """Test validation rejects uk_ keys with wrong length."""
+        # uk_ keys should be exactly 46 chars, test with 50 (too long)
+        key = "uk_" + "a" * 47  # 50 chars total, should be 46
+        assert manager.validate_format(key) is False
+        # Also test too short
+        key_short = "uk_" + "a" * 30  # 33 chars total
+        assert manager.validate_format(key_short) is False
+
     def test_validate_format_invalid_chars(self, manager: APIKeyManager) -> None:
         """Test validation rejects invalid characters."""
         key = "tg_" + "a" * 50 + "!@#$%^&*()+"
+        assert manager.validate_format(key) is False
+
+    def test_validate_format_uk_invalid_chars(self, manager: APIKeyManager) -> None:
+        """Test validation rejects uk_ keys with invalid characters."""
+        # 46 char key with invalid chars at end
+        key = "uk_" + "a" * 38 + "!@#$%"  # 46 chars with invalid chars
         assert manager.validate_format(key) is False
 
     def test_validate_format_none(self, manager: APIKeyManager) -> None:

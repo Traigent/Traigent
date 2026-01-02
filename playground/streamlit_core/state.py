@@ -3,7 +3,7 @@ Session State Management Module
 ==============================
 
 This module handles initialization and management of Streamlit session state
-for the TraiGent control center application.
+for the Traigent control center application.
 """
 
 import os

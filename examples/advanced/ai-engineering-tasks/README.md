@@ -1,10 +1,10 @@
-# AI Engineering Tasks - TraiGent Optimization Examples
+# AI Engineering Tasks - Traigent Optimization Examples
 
-**Systematic optimization of common AI engineering challenges using TraiGent**
+**Systematic optimization of common AI engineering challenges using Traigent**
 
 ## 🎯 Overview
 
-This collection demonstrates how TraiGent helps solve the most pressing challenges faced by AI engineers in their daily work. Each example provides a complete, working implementation of systematic LLM optimization for universal problems that affect every AI engineering team.
+This collection demonstrates how Traigent helps solve the most pressing challenges faced by AI engineers in their daily work. Each example provides a complete, working implementation of systematic LLM optimization for universal problems that affect every AI engineering team.
 
 Based on extensive research into 2024/2025 AI engineering pain points, these examples focus on:
 - **Context engineering** replacing prompt engineering as the primary challenge
@@ -32,7 +32,7 @@ Examples are organized by priority based on universal impact and implementation 
 ### Installation
 
 ```bash
-# Ensure TraiGent is installed
+# Ensure Traigent is installed
 pip install traigent
 
 # Navigate to examples
@@ -44,7 +44,7 @@ python p0_structured_output/main.py
 
 ### Basic Usage Pattern
 
-All examples follow the same TraiGent optimization pattern:
+All examples follow the same Traigent optimization pattern:
 
 ```python
 import traigent
@@ -56,7 +56,7 @@ import traigent
     max_trials=100                 # Number of configurations to test
 )
 def optimize_my_task(**config):
-    # TraiGent will call this with different configurations
+    # Traigent will call this with different configurations
     # to find the optimal parameters
     pass
 
@@ -102,7 +102,7 @@ advanced/ai-engineering-tasks/
 
 **Problem:** Multiple output strategies available (JSON mode, function calling, XML tags) with no clear winner. Wrong choice leads to parsing failures and corrupted data.
 
-**Solution:** TraiGent systematically tests all combinations to find optimal configuration.
+**Solution:** Traigent systematically tests all combinations to find optimal configuration.
 
 **Key Features:**
 - 5 output format strategies (JSON mode, function calling, XML tags, etc.)
@@ -122,7 +122,7 @@ advanced/ai-engineering-tasks/
 
 **Problem:** Teams spend 40% of development time determining optimal context composition. Wrong configuration leads to hallucinations, missing information, or excessive costs.
 
-**Solution:** TraiGent optimizes retrieval strategies, chunk sizes, reranking, and budget allocation.
+**Solution:** Traigent optimizes retrieval strategies, chunk sizes, reranking, and budget allocation.
 
 **Key Features:**
 - 5 retrieval methods (BM25, dense, hybrid, HyDE, query expansion)
@@ -142,7 +142,7 @@ advanced/ai-engineering-tasks/
 
 **Problem:** 20-40% accuracy variations based solely on example selection, yet most teams use random or manually curated examples.
 
-**Solution:** TraiGent discovers optimal selection strategies for your specific task.
+**Solution:** Traigent discovers optimal selection strategies for your specific task.
 
 **Key Features:**
 - 9 selection methods (semantic KNN, MMR, curriculum, contrastive, etc.)
@@ -193,7 +193,7 @@ from common_ai_engineering_tasks.p0_structured_output import EXTRACTION_SEARCH_S
 @optimize(config_space=EXTRACTION_SEARCH_SPACE)
 def extract_invoice_data(text: str, **config):
     # Your existing extraction code
-    # TraiGent will optimize the config parameters
+    # Traigent will optimize the config parameters
     return extracted_data
 ```
 
@@ -229,7 +229,7 @@ production_extractor = YourExtractor(**optimal_config)
 
 ## 📈 Performance Benchmarks
 
-| Task | Baseline | TraiGent Optimized | Improvement | Time to Optimize |
+| Task | Baseline | Traigent Optimized | Improvement | Time to Optimize |
 |------|----------|-------------------|-------------|------------------|
 | Structured Output | 85% success | 99.8% success | +17% | 30 minutes |
 | Context Engineering | $0.05/query | $0.025/query | -50% cost | 45 minutes |
@@ -243,12 +243,12 @@ We welcome contributions! Areas where we'd love help:
 
 1. **Additional use cases** - What AI engineering problems do you face?
 2. **Real-world datasets** - Help make examples more realistic
-3. **Integration examples** - Show TraiGent with your favorite frameworks
+3. **Integration examples** - Show Traigent with your favorite frameworks
 4. **Performance improvements** - Make optimization even faster
 
 ## 📚 References
 
-- [TraiGent Documentation](../../README.md)
+- [Traigent Documentation](../../README.md)
 - [Use Case Specifications](../../use-case.md)
 - [Original Research](https://github.com/traigent/research)
 
@@ -258,4 +258,4 @@ MIT License - See [LICENSE](../../LICENSE) for details.
 
 ---
 
-*These examples are part of the TraiGent SDK, demonstrating systematic optimization of common AI engineering challenges. Each example is production-ready and can be adapted to your specific use case.*
+*These examples are part of the Traigent SDK, demonstrating systematic optimization of common AI engineering challenges. Each example is production-ready and can be adapted to your specific use case.*

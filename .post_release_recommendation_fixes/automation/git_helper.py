@@ -6,8 +6,11 @@ Utilities for branch management, merging, and rollback.
 
 from __future__ import annotations
 
+import os
 import re
+import shlex
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -78,7 +81,7 @@ class GitHelper:
         self,
         fix_id: str,
         description: str,
-        base: str = "main",
+        base: str | None = None,
     ) -> BranchInfo:
         """Create a fix branch.
 
@@ -107,7 +110,8 @@ class GitHelper:
             )
 
         # Create new branch
-        self._run_git("checkout", "-b", branch_name, base)
+        base_branch = base or os.environ.get("RR_BASE_BRANCH", "main")
+        self._run_git("checkout", "-b", branch_name, base_branch)
 
         return BranchInfo(
             name=branch_name,
@@ -155,7 +159,7 @@ class GitHelper:
     def merge_fix_branch(
         self,
         branch: str,
-        target: str = "main",
+        target: str | None = None,
         squash: bool = True,
     ) -> MergeResult:
         """Merge a fix branch to target.
@@ -169,7 +173,8 @@ class GitHelper:
             MergeResult
         """
         # Checkout target
-        self._run_git("checkout", target)
+        target_branch = target or os.environ.get("RR_BASE_BRANCH", "main")
+        self._run_git("checkout", target_branch)
 
         # Attempt merge
         merge_args = ["merge"]
@@ -297,7 +302,7 @@ class GitHelper:
             commit_sha=sha_result.stdout.strip(),
         )
 
-    def get_branch_status(self, branch: str, target: str = "main") -> BranchInfo:
+    def get_branch_status(self, branch: str, target: str | None = None) -> BranchInfo:
         """Get ahead/behind status for a branch.
 
         Args:
@@ -308,11 +313,12 @@ class GitHelper:
             BranchInfo with ahead/behind counts
         """
         # Get ahead/behind counts
+        target_branch = target or os.environ.get("RR_BASE_BRANCH", "main")
         result = self._run_git(
             "rev-list",
             "--left-right",
             "--count",
-            f"{target}...{branch}",
+            f"{target_branch}...{branch}",
             check=False,
         )
 
@@ -349,27 +355,56 @@ class GitHelper:
 
         env = os.environ.copy()
         env["TRAIGENT_MOCK_MODE"] = "true"
+        test_command = env.get("RR_TEST_COMMAND")
+
+        if test_command:
+            cmd = shlex.split(test_command)
+        else:
+            python_cmd = ".venv/bin/python"
+            if not Path(python_cmd).exists():
+                python_cmd = sys.executable
+            cmd = [python_cmd, "-m", "pytest", test_path, "-q", "--tb=no"]
 
         try:
             result = subprocess.run(
-                ["pytest", test_path, "-q", "--tb=no"],
+                cmd,
                 cwd=self.repo_path,
                 capture_output=True,
                 text=True,
                 timeout=300,  # 5 minute timeout
                 env=env,
             )
-
-            # Parse summary line
-            lines = result.stdout.strip().split("\n")
-            summary = lines[-1] if lines else "Unknown"
-
+            summary = self._extract_pytest_summary(result.stdout, result.stderr)
             return result.returncode == 0, summary
 
         except subprocess.TimeoutExpired:
             return False, "Test timeout (5 min)"
         except FileNotFoundError:
             return False, "pytest not found"
+
+    def _extract_pytest_summary(self, stdout: str, stderr: str) -> str:
+        """Extract a stable pytest summary line from output."""
+        combined = []
+        if stdout:
+            combined.extend(stdout.splitlines())
+        if stderr:
+            combined.extend(stderr.splitlines())
+
+        summary_pattern = re.compile(
+            r"\b\d+\s+(passed|failed|error|errors|skipped|xfailed|xpassed|deselected)\b",
+            re.IGNORECASE,
+        )
+
+        for line in reversed(combined):
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("=") and stripped.endswith("="):
+                return stripped
+            if summary_pattern.search(stripped):
+                return stripped
+
+        return "Unknown"
 
     def format_and_lint(self) -> tuple[bool, str]:
         """Run make format and make lint.
@@ -467,7 +502,7 @@ def main() -> None:
             sys.exit(1)
 
         branch = sys.argv[2]
-        target = sys.argv[3] if len(sys.argv) > 3 else "main"
+        target = sys.argv[3] if len(sys.argv) > 3 else None
 
         result = helper.merge_fix_branch(branch, target)
         if result.success:

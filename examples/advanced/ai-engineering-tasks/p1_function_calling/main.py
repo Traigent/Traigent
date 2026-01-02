@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-P1-1: Function Calling and Tool Use Reliability with TraiGent
+P1-1: Function Calling and Tool Use Reliability with Traigent
 ==========================================================
 
-This example demonstrates how TraiGent systematically optimizes function calling
+This example demonstrates how Traigent systematically optimizes function calling
 reliability to achieve 95%+ correct tool selection and 98%+ valid parameter formatting.
 
 The optimization explores tool description formats, parameter validation strategies,
@@ -64,20 +64,20 @@ def print_header() -> None:
     console.print(
         Panel.fit(
             "[bold blue]P1-1: Function Calling and Tool Use Reliability[/bold blue]\n"
-            "[dim]Optimize tool selection and parameter validation with TraiGent[/dim]",
+            "[dim]Optimize tool selection and parameter validation with Traigent[/dim]",
             border_style="blue",
         )
     )
 
 
 def create_evaluation_function(tasks: list[Any]) -> Any:
-    """Create the evaluation function for TraiGent optimization."""
+    """Create the evaluation function for Traigent optimization."""
 
     def evaluate_function_config(**config_params) -> dict[str, float]:
         """
         Evaluate function calling configuration on the task dataset.
 
-        This function is called by TraiGent for each configuration trial.
+        This function is called by Traigent for each configuration trial.
         It tests tool selection accuracy and parameter validation across tasks.
         """
 
@@ -185,14 +185,14 @@ def optimize_function_calling(
     **kwargs,
 ) -> None:
     """
-    TraiGent-optimized function for function calling reliability.
+    Traigent-optimized function for function calling reliability.
 
-    This function will be called by TraiGent with different parameter combinations
+    This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for reliable tool use.
     """
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
-    # TraiGent will inject the optimal parameters and track results
+    # Traigent will inject the optimal parameters and track results
     pass
 
 
@@ -264,7 +264,7 @@ def display_results(
         status = "🚀 Optimized"
 
         table.add_row(
-            "TraiGent Optimized",
+            "Traigent Optimized",
             f"{best_metrics.get('tool_selection_accuracy', 0):.3f}",
             f"{best_metrics.get('parameter_validity_rate', 0):.3f}",
             f"{best_metrics.get('execution_success_rate', 0):.3f}",
@@ -422,16 +422,16 @@ async def main() -> None:
     # Run baseline comparisons
     baseline_results = run_baseline_comparison(tasks)
 
-    # Set up TraiGent evaluation
+    # Set up Traigent evaluation
     create_evaluation_function(tasks)
 
-    # Configure TraiGent optimization
+    # Configure Traigent optimization
     # traigent.configure(
     #     verbose=True
     # )
     # Note: verbose parameter doesn't exist in traigent.configure() API
 
-    console.print("\n[yellow]Starting TraiGent optimization...[/yellow]")
+    console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(
         "[dim]This will systematically explore tool description and error handling strategies...[/dim]\n"
     )
@@ -510,7 +510,7 @@ if __name__ == "__main__":
         console.print(f"✅ Generated {len(tasks)} sample function calling tasks\n")
 
         # Show configuration space
-        console.print("[bold]TraiGent Configuration Space:[/bold]")
+        console.print("[bold]Traigent Configuration Space:[/bold]")
         for key, values in FUNCTION_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 

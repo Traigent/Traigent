@@ -1,1 +1,1 @@
-"""Playground module for TraiGent experimentation and problem generation."""
+"""Playground module for Traigent experimentation and problem generation."""

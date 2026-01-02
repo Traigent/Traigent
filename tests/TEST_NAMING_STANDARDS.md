@@ -1,7 +1,7 @@
-# Test Naming Standards for TraiGent SDK
+# Test Naming Standards for Traigent SDK
 
 ## Overview
-This document defines the standardized naming conventions for test files across the TraiGent SDK to improve organization, discoverability, and maintainability.
+This document defines the standardized naming conventions for test files across the Traigent SDK to improve organization, discoverability, and maintainability.
 
 ## Naming Convention
 
@@ -13,7 +13,7 @@ This document defines the standardized naming conventions for test files across 
 ### Examples
 
 #### Good Names
-- `test_traigent_cloud_client.py` (tests TraiGentCloudClient)
+- `test_traigent_cloud_client.py` (tests TraigentCloudClient)
 - `test_bayesian_optimizer.py` (tests BayesianOptimizer)
 - `test_decorator_framework_override.py` (tests decorator framework override feature)
 - `test_retry_circuit_breaker.py` (tests circuit breaker in retry system)
@@ -65,7 +65,7 @@ tests/e2e/
 ### Format: `Test{Component}{Functionality}`
 
 Examples:
-- `TestTraiGentCloudClient`
+- `TestTraigentCloudClient`
 - `TestBayesianOptimizer`
 - `TestDecoratorFrameworkOverride`
 - `TestCloudAuthentication`

@@ -112,7 +112,7 @@ schedule = scheduler.rotate_from("v0.8.0")
 
 #### Tracking Rotation History
 
-Maintain `.release_review/<version>/ROTATION_HISTORY.md`:
+Maintain `.release_review/<version>/ROTATION_HISTORY.md`. The rotation scheduler writes an auto-generated block between markers; keep any manual notes outside the block:
 
 ```markdown
 # Rotation History
@@ -157,15 +157,15 @@ Maintain `.release_review/<version>/ROTATION_HISTORY.md`:
 ## Release Review Workspace (Versioned + Ignored Artifacts)
 
 This repo uses `.release_review/` as a dedicated home for the review system:
-- **Versioned (commit these)**: plan, tracking, captain protocol (share status with the team).
-- **Ignored (do not commit)**: `.release_review/artifacts/` (agent notes, scratch outputs).
+- **Versioned (commit these)**: plan, tracking, captain protocol, rotation schedule/history (share status with the team).
+- **Ignored (do not commit)**: `.release_review/<version>/artifacts/` (agent notes, scratch outputs).
 
 Store any agent-generated files under:
-- `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...`
+- `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...`
 
 Examples:
-- `.release_review/artifacts/traigent-integrations/codex/20251213/notes.md`
-- `.release_review/artifacts/release-blockers/claude/20251213/fix-plan.md`
+- `.release_review/v0.9.0/artifacts/traigent-integrations/codex/20251213/notes.md`
+- `.release_review/v0.9.0/artifacts/release-blockers/claude/20251213/fix-plan.md`
 
 **Rule**: `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` is the canonical state across sessions. If chat history is lost, restart from that file.
 
@@ -308,17 +308,22 @@ When a fix requires changes outside the assigned component scope:
 
 ## Evidence Policy (What Goes in the Tracking File)
 
-For each component, Evidence MUST include:
-- **Commit(s)**: SHA(s) and branch name
-- **Tests**: exact command(s) run + PASS/FAIL summary
-- **Models**: confirm model policy used (or record actual model)
-- **Reviewer**: assigned agent + approving captain
-- **Timestamp**: ISO-8601 date/time of approval
-- **Follow-ups**: links/IDs to any tickets created (or “None”)
-- **Accepted risks**: explicit statement (or “None”)
+For each component, Evidence MUST be **machine-validated JSON** with these fields:
+- `format`: `standard` or `legacy`
+- `commits`: list of commit SHAs
+- `tests`: `{command,status,passed,total}`
+- `models`: model string used for review
+- `reviewer`: `<agent> + <captain>`
+- `timestamp`: ISO-8601 date/time of approval
+- `followups`: links/IDs or `None`
+- `accepted_risks`: explicit statement or `None`
 
-Example (single line is fine):
-`Commits: abc1234 on review/integrations/codex/20251213 | Tests: TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -q → PASS (42 passed) | Models: Codex/GPT-5.2/xhigh | Reviewer: codex + @captain | Timestamp: 2025-12-13T14:30:00Z | Follow-ups: #1234 | Accepted risks: None`
+Rules:
+- Use `format=standard` for all new reviews.
+- `format=legacy` is only for backfilled historical entries; it may use `UNKNOWN` values.
+
+Example (single line is required in the Evidence column):
+`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.2/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
 
 ## Iteration Limits and Escalation
 
@@ -407,7 +412,7 @@ See `.release_review/START_REVIEW.md` for copy-paste prompts to start a review.
 
 Quick start:
 ```
-You are the release-review captain for TraiGent SDK version <VERSION>.
+You are the release-review captain for Traigent SDK version <VERSION>.
 Read and follow: .release_review/CAPTAIN_PROTOCOL.md
 Execute complete review start-to-finish. Do NOT stop until complete.
 Start now.
@@ -479,7 +484,7 @@ Use these templates when invoking sub-agents.
 
 **Constraints**:
 - Do NOT edit `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` (captain will update).
-- If you create any files (notes, reports, scratch outputs), put them under `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...`.
+- If you create any files (notes, reports, scratch outputs), put them under `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...`.
 - Keep changes minimal; no broad refactors unless required to fix a real issue.
 - If you find a large issue, propose a ticket + smallest safe mitigation for release.
 
@@ -526,7 +531,7 @@ Model policy for all work:
 
 2) Create/checkout the integration branch: `release-review/v0.8.0` (or `release-review/<version>`). This branch is the shared source of truth for tracking progress.
 
-3) Any agent-generated notes/reports must go under `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...` (git-ignored).
+3) Any agent-generated notes/reports must go under `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...` (git-ignored).
 
 4) Use `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` priority order and run up to **3 concurrent threads** at a time. Each thread must be a distinct component scope to avoid conflicts.
 
@@ -826,7 +831,7 @@ Captain randomly selects **20% of component reviews** and:
 
 For tamper-evident results:
 ```bash
-pytest --json-report --json-report-file=.release_review/artifacts/<component>/test_results.json
+pytest --json-report --json-report-file=.release_review/<version>/artifacts/<component>/test_results.json
 ```
 
 Captain validates JSON structure matches agent claims.
@@ -886,7 +891,7 @@ If agent exceeds 2x expected time, captain intervenes to check for scope creep o
 Agents should save progress every 10-15 minutes:
 
 ```
-.release_review/artifacts/<component>/<model>/.checkpoint_<timestamp>.json
+.release_review/<version>/artifacts/<component>/<model>/.checkpoint_<timestamp>.json
 ```
 
 Checkpoint format:

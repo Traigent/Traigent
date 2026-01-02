@@ -1,6 +1,6 @@
-# TraiGent Playground
+# Traigent Playground
 
-This directory contains the TraiGent Playground - a comprehensive Streamlit application for managing LLM optimization problems and running TraiGent optimizations.
+This directory contains the Traigent Playground - a comprehensive Streamlit application for managing LLM optimization problems and running Traigent optimizations.
 
 ## 🚀 Quick Start
 

@@ -8,6 +8,7 @@ Used by captain before approving any agent work.
 from __future__ import annotations
 
 import fnmatch
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -27,17 +28,20 @@ class ScopeGuard:
     def get_modified_files(
         self,
         branch: str,
-        base_branch: str = "main",
+        base_branch: str | None = None,
     ) -> list[str]:
         """Get list of files modified in branch compared to base.
 
         Args:
             branch: Branch to check
-            base_branch: Base branch to compare against
+            base_branch: Base branch to compare against (defaults to RR_BASE_BRANCH or "main")
 
         Returns:
             List of modified file paths
         """
+        if base_branch is None:
+            base_branch = os.environ.get("RR_BASE_BRANCH", "main")
+
         try:
             result = subprocess.run(
                 ["git", "diff", "--name-only", f"{base_branch}...{branch}"],
@@ -55,14 +59,14 @@ class ScopeGuard:
         self,
         branch: str,
         allowed_paths: list[str],
-        base_branch: str = "main",
+        base_branch: str | None = None,
     ) -> dict[str, Any]:
         """Check if all changes are within assigned scope.
 
         Args:
             branch: Branch to validate
             allowed_paths: List of allowed path patterns (supports glob)
-            base_branch: Base branch to compare against
+            base_branch: Base branch to compare against (defaults to RR_BASE_BRANCH or "main")
 
         Returns:
             Validation result with violations list
@@ -107,7 +111,7 @@ class ScopeGuard:
         for pattern in allowed_paths:
             # Handle directory patterns (e.g., "traigent/core/")
             if pattern.endswith("/"):
-                if file.startswith(pattern) or file.startswith(pattern.rstrip("/")):
+                if file.startswith(pattern):
                     return True
             # Handle glob patterns (e.g., "traigent/**/*.py")
             elif "*" in pattern:

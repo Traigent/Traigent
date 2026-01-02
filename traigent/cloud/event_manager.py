@@ -1,4 +1,4 @@
-"""Event Management for TraiGent SDK.
+"""Event Management for Traigent SDK.
 
 Focused component responsible for lifecycle event recording and management,
 extracted from the SessionLifecycleManager to follow Single Responsibility Principle.

@@ -1,0 +1,417 @@
+@prefix : <http://traigent.io/test#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# =============================================================================
+# Traigent Test Ontology
+# =============================================================================
+# This ontology describes the test suite structure for Traigent optimizer
+# validation tests. It defines 10 key dimensions and their possible values.
+# =============================================================================
+
+<http://traigent.io/test> a owl:Ontology ;
+    rdfs:label "Traigent Test Ontology" ;
+    rdfs:comment "Ontology for optimizer validation test scenarios" .
+
+# =============================================================================
+# Core Classes
+# =============================================================================
+
+:TestScenario a owl:Class ;
+    rdfs:label "Test Scenario" ;
+    rdfs:comment "A test scenario validating optimizer behavior" .
+
+:TestResult a owl:Class ;
+    rdfs:label "Test Result" ;
+    rdfs:comment "The result of running a test scenario" .
+
+# =============================================================================
+# Dimension Classes
+# =============================================================================
+
+:InjectionMode a owl:Class ;
+    rdfs:label "Injection Mode" ;
+    rdfs:comment "How parameters are injected into the optimized function" .
+
+:ExecutionMode a owl:Class ;
+    rdfs:label "Execution Mode" ;
+    rdfs:comment "Where and how optimization runs" .
+
+:Algorithm a owl:Class ;
+    rdfs:label "Algorithm" ;
+    rdfs:comment "The optimization algorithm used" .
+
+:ConfigSpaceType a owl:Class ;
+    rdfs:label "Config Space Type" ;
+    rdfs:comment "The type of configuration search space" .
+
+:ObjectiveConfig a owl:Class ;
+    rdfs:label "Objective Config" ;
+    rdfs:comment "The objective configuration for optimization" .
+
+:StopCondition a owl:Class ;
+    rdfs:label "Stop Condition" ;
+    rdfs:comment "When optimization should stop" .
+
+:ParallelMode a owl:Class ;
+    rdfs:label "Parallel Mode" ;
+    rdfs:comment "Sequential or parallel trial execution" .
+
+:ConstraintUsage a owl:Class ;
+    rdfs:label "Constraint Usage" ;
+    rdfs:comment "Type of constraints applied to optimization" .
+
+:FailureMode a owl:Class ;
+    rdfs:label "Failure Mode" ;
+    rdfs:comment "Type of failure being tested" .
+
+:ExpectedOutcome a owl:Class ;
+    rdfs:label "Expected Outcome" ;
+    rdfs:comment "The expected result of the test" .
+
+# =============================================================================
+# Dimension Properties (TestScenario -> Dimension)
+# =============================================================================
+
+:hasInjectionMode a owl:ObjectProperty ;
+    rdfs:label "has injection mode" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :InjectionMode .
+
+:hasExecutionMode a owl:ObjectProperty ;
+    rdfs:label "has execution mode" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ExecutionMode .
+
+:hasAlgorithm a owl:ObjectProperty ;
+    rdfs:label "has algorithm" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :Algorithm .
+
+:hasConfigSpaceType a owl:ObjectProperty ;
+    rdfs:label "has config space type" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ConfigSpaceType .
+
+:hasObjectiveConfig a owl:ObjectProperty ;
+    rdfs:label "has objective config" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ObjectiveConfig .
+
+:hasStopCondition a owl:ObjectProperty ;
+    rdfs:label "has stop condition" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :StopCondition .
+
+:hasParallelMode a owl:ObjectProperty ;
+    rdfs:label "has parallel mode" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ParallelMode .
+
+:hasConstraintUsage a owl:ObjectProperty ;
+    rdfs:label "has constraint usage" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ConstraintUsage .
+
+:hasFailureMode a owl:ObjectProperty ;
+    rdfs:label "has failure mode" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :FailureMode .
+
+:hasExpectedOutcome a owl:ObjectProperty ;
+    rdfs:label "has expected outcome" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :ExpectedOutcome .
+
+# =============================================================================
+# Result Properties
+# =============================================================================
+
+:hasResult a owl:ObjectProperty ;
+    rdfs:label "has result" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range :TestResult .
+
+:hasTrialCount a owl:DatatypeProperty ;
+    rdfs:label "has trial count" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:integer .
+
+:hasBestScore a owl:DatatypeProperty ;
+    rdfs:label "has best score" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:float .
+
+:hasStatus a owl:DatatypeProperty ;
+    rdfs:label "has status" ;
+    rdfs:comment "PASS or FAIL" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:string .
+
+:hasActualOutcome a owl:DatatypeProperty ;
+    rdfs:label "has actual outcome" ;
+    rdfs:comment "SUCCESS, EXCEPTION, PARTIAL, or FAILURE" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:string .
+
+:hasErrorType a owl:DatatypeProperty ;
+    rdfs:label "has error type" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:string .
+
+:hasStopReason a owl:DatatypeProperty ;
+    rdfs:label "has stop reason" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:string .
+
+:hasDuration a owl:DatatypeProperty ;
+    rdfs:label "has duration" ;
+    rdfs:comment "Duration in seconds" ;
+    rdfs:domain :TestResult ;
+    rdfs:range xsd:float .
+
+# =============================================================================
+# Scenario Metadata Properties
+# =============================================================================
+
+:hasName a owl:DatatypeProperty ;
+    rdfs:label "has name" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasDescription a owl:DatatypeProperty ;
+    rdfs:label "has description" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasTestFile a owl:DatatypeProperty ;
+    rdfs:label "has test file" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasTestClass a owl:DatatypeProperty ;
+    rdfs:label "has test class" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasTestMethod a owl:DatatypeProperty ;
+    rdfs:label "has test method" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasGistTemplate a owl:DatatypeProperty ;
+    rdfs:label "has gist template" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:string .
+
+:hasConfigSpaceSize a owl:DatatypeProperty ;
+    rdfs:label "has config space size" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:integer .
+
+:hasMaxTrials a owl:DatatypeProperty ;
+    rdfs:label "has max trials" ;
+    rdfs:domain :TestScenario ;
+    rdfs:range xsd:integer .
+
+# =============================================================================
+# InjectionMode Individuals
+# =============================================================================
+
+:injection_context a :InjectionMode ;
+    rdfs:label "context" ;
+    rdfs:comment "Thread-local context variable injection" .
+
+:injection_seamless a :InjectionMode ;
+    rdfs:label "seamless" ;
+    rdfs:comment "AST transformation for zero-code-change" .
+
+:injection_parameter a :InjectionMode ;
+    rdfs:label "parameter" ;
+    rdfs:comment "Explicit config parameter injection" .
+
+:injection_attribute a :InjectionMode ;
+    rdfs:label "attribute" ;
+    rdfs:comment "Object attribute storage injection" .
+
+# =============================================================================
+# ExecutionMode Individuals
+# =============================================================================
+
+:execution_edge_analytics a :ExecutionMode ;
+    rdfs:label "edge_analytics" ;
+    rdfs:comment "Local execution with analytics" .
+
+:execution_privacy a :ExecutionMode ;
+    rdfs:label "privacy" ;
+    rdfs:comment "Local execution, no data transmission" .
+
+:execution_hybrid a :ExecutionMode ;
+    rdfs:label "hybrid" ;
+    rdfs:comment "Local with cloud fallback" .
+
+:execution_cloud a :ExecutionMode ;
+    rdfs:label "cloud" ;
+    rdfs:comment "Full cloud execution" .
+
+:execution_standard a :ExecutionMode ;
+    rdfs:label "standard" ;
+    rdfs:comment "Default execution mode" .
+
+# =============================================================================
+# Algorithm Individuals
+# =============================================================================
+
+:algorithm_random a :Algorithm ;
+    rdfs:label "random" ;
+    rdfs:comment "Random search algorithm" .
+
+:algorithm_grid a :Algorithm ;
+    rdfs:label "grid" ;
+    rdfs:comment "Grid search (exhaustive)" .
+
+:algorithm_optuna_tpe a :Algorithm ;
+    rdfs:label "optuna_tpe" ;
+    rdfs:comment "Optuna TPE sampler" .
+
+:algorithm_optuna_cmaes a :Algorithm ;
+    rdfs:label "optuna_cmaes" ;
+    rdfs:comment "Optuna CMA-ES sampler" .
+
+:algorithm_optuna_random a :Algorithm ;
+    rdfs:label "optuna_random" ;
+    rdfs:comment "Optuna random sampler" .
+
+:algorithm_bayesian a :Algorithm ;
+    rdfs:label "bayesian" ;
+    rdfs:comment "Bayesian optimization" .
+
+# =============================================================================
+# ConfigSpaceType Individuals
+# =============================================================================
+
+:config_categorical_only a :ConfigSpaceType ;
+    rdfs:label "categorical_only" ;
+    rdfs:comment "Only categorical parameters" .
+
+:config_continuous_only a :ConfigSpaceType ;
+    rdfs:label "continuous_only" ;
+    rdfs:comment "Only continuous parameters" .
+
+:config_mixed a :ConfigSpaceType ;
+    rdfs:label "mixed" ;
+    rdfs:comment "Both categorical and continuous" .
+
+:config_single_value a :ConfigSpaceType ;
+    rdfs:label "single_value" ;
+    rdfs:comment "Single-value parameters" .
+
+# =============================================================================
+# ObjectiveConfig Individuals
+# =============================================================================
+
+:objective_single_maximize a :ObjectiveConfig ;
+    rdfs:label "single_maximize" ;
+    rdfs:comment "Single objective, maximize" .
+
+:objective_single_minimize a :ObjectiveConfig ;
+    rdfs:label "single_minimize" ;
+    rdfs:comment "Single objective, minimize" .
+
+:objective_multi_objective a :ObjectiveConfig ;
+    rdfs:label "multi_objective" ;
+    rdfs:comment "Multiple objectives" .
+
+:objective_weighted a :ObjectiveConfig ;
+    rdfs:label "weighted" ;
+    rdfs:comment "Weighted multi-objective" .
+
+# =============================================================================
+# StopCondition Individuals
+# =============================================================================
+
+:stop_max_trials a :StopCondition ;
+    rdfs:label "max_trials" ;
+    rdfs:comment "Stop after N trials" .
+
+:stop_timeout a :StopCondition ;
+    rdfs:label "timeout" ;
+    rdfs:comment "Stop after T seconds" .
+
+:stop_convergence a :StopCondition ;
+    rdfs:label "convergence" ;
+    rdfs:comment "Stop when converged" .
+
+:stop_config_exhaustion a :StopCondition ;
+    rdfs:label "config_exhaustion" ;
+    rdfs:comment "Stop when all configs tried" .
+
+# =============================================================================
+# ParallelMode Individuals
+# =============================================================================
+
+:parallel_sequential a :ParallelMode ;
+    rdfs:label "sequential" ;
+    rdfs:comment "One trial at a time" .
+
+:parallel_parallel a :ParallelMode ;
+    rdfs:label "parallel" ;
+    rdfs:comment "Multiple concurrent trials" .
+
+# =============================================================================
+# ConstraintUsage Individuals
+# =============================================================================
+
+:constraint_none a :ConstraintUsage ;
+    rdfs:label "none" ;
+    rdfs:comment "No constraints" .
+
+:constraint_config_only a :ConstraintUsage ;
+    rdfs:label "config_only" ;
+    rdfs:comment "Config-based constraints" .
+
+:constraint_metric_based a :ConstraintUsage ;
+    rdfs:label "metric_based" ;
+    rdfs:comment "Metric-based constraints" .
+
+# =============================================================================
+# FailureMode Individuals
+# =============================================================================
+
+:failure_function_raises a :FailureMode ;
+    rdfs:label "function_raises" ;
+    rdfs:comment "User function throws exception" .
+
+:failure_evaluator_bug a :FailureMode ;
+    rdfs:label "evaluator_bug" ;
+    rdfs:comment "Evaluator has a bug" .
+
+:failure_invalid_config a :FailureMode ;
+    rdfs:label "invalid_config" ;
+    rdfs:comment "Bad configuration provided" .
+
+:failure_dataset_issue a :FailureMode ;
+    rdfs:label "dataset_issue" ;
+    rdfs:comment "Dataset problems" .
+
+# =============================================================================
+# ExpectedOutcome Individuals
+# =============================================================================
+
+:outcome_success a :ExpectedOutcome ;
+    rdfs:label "success" ;
+    rdfs:comment "All trials succeed" .
+
+:outcome_partial a :ExpectedOutcome ;
+    rdfs:label "partial" ;
+    rdfs:comment "Some trials fail" .
+
+:outcome_failure a :ExpectedOutcome ;
+    rdfs:label "failure" ;
+    rdfs:comment "Optimization fails" .
+
+:outcome_error a :ExpectedOutcome ;
+    rdfs:label "error" ;
+    rdfs:comment "Error expected" .

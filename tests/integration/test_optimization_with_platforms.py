@@ -78,9 +78,7 @@ class TestOptimizationWithPlatforms:
 
         # Mock function to optimize
         @traigent.optimize(
-            optimizer="grid",
             configuration_space=config_space,
-            num_trials=20,
             objectives=["quality", "cost", "latency"],
         )
         async def multi_platform_task(
@@ -141,8 +139,6 @@ class TestOptimizationWithPlatforms:
         ):
 
             @traigent.optimize(
-                optimizer="random",
-                num_trials=10,
                 configuration_space={
                     "platform": ["openai", "anthropic", "cohere", "langchain"],
                     "temperature": [0.0, 0.5, 1.0],
@@ -187,9 +183,7 @@ class TestOptimizationWithPlatforms:
             "temperature": [0.0, 0.5, 1.0],
         }
 
-        @traigent.optimize(
-            optimizer="grid", configuration_space=config_space, num_trials=5
-        )
+        @traigent.optimize(configuration_space=config_space)
         async def platform_specific_task(
             text: str,
             platform: str = "anthropic",
@@ -247,10 +241,7 @@ class TestOptimizationWithPlatforms:
         selected_configs = []
 
         @traigent.optimize(
-            optimizer="bayesian",
             configuration_space=config_space,
-            num_trials=20,  # Only 20 trials from potentially thousands of combinations
-            subset_selection_strategy="diversity",  # Ensure platform diversity
             objectives=["performance", "cost"],
         )
         async def subset_selection_task(
@@ -311,8 +302,6 @@ class TestOptimizationWithPlatforms:
         """Test optimization with streaming responses."""
 
         @traigent.optimize(
-            optimizer="random",
-            num_trials=5,
             configuration_space={
                 "platform": ["openai", "anthropic", "cohere"],
                 "stream": [True, False],
@@ -357,13 +346,11 @@ class TestOptimizationWithPlatforms:
         # Define test tools
 
         @traigent.optimize(
-            optimizer="grid",
             configuration_space={
                 "platform": ["openai", "anthropic", "langchain"],
                 "use_tools": [True, False],
                 "temperature": [0.0, 0.5, 1.0],
             },
-            num_trials=10,
         )
         async def tool_calling_task(
             prompt: str,
@@ -417,18 +404,11 @@ class TestOptimizationWithPlatforms:
         }
 
         @traigent.optimize(
-            optimizer="random",
-            num_trials=20,
             configuration_space={
                 "platform": ["openai", "anthropic", "cohere", "huggingface"],
                 "temperature": [0.0, 0.3, 0.5, 0.7, 1.0],
             },
             objectives=["quality", "speed"],
-            callbacks=[
-                lambda trial: aggregated_results.update(
-                    {"total_trials": aggregated_results["total_trials"] + 1}
-                )
-            ],
         )
         async def aggregation_task(
             text: str, platform: str = "openai", temperature: float = 0.5
@@ -482,12 +462,10 @@ class TestOptimizationWithPlatforms:
         failover_log = []
 
         @traigent.optimize(
-            optimizer="grid",
             configuration_space={
                 "platform": ["openai", "anthropic", "cohere"],
                 "retry_on_failure": [True, False],
             },
-            num_trials=10,
         )
         async def failover_task(
             text: str, platform: str = "openai", retry_on_failure: bool = True
@@ -558,11 +536,8 @@ class TestOptimizationWithPlatforms:
         }
 
         @traigent.optimize(
-            optimizer="bayesian",  # Use Bayesian for smart exploration
             configuration_space=config_space,
-            num_trials=30,
             objectives=["quality", "latency", "cost", "reliability"],
-            early_stopping_rounds=5,  # Stop if no improvement
             parallel_config={"trial_concurrency": 3},  # Run 3 trials in parallel
         )
         async def complex_optimization_task(
@@ -718,8 +693,6 @@ class TestOptimizationWithPlatforms:
         recovery_log = []
 
         @traigent.optimize(
-            optimizer="random",
-            num_trials=20,
             configuration_space={
                 "platform": ["openai", "anthropic", "cohere", "huggingface"],
                 "retry_strategy": [

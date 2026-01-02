@@ -34,6 +34,9 @@ _evaluator_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_evaluator_module)
 RAGEvaluator = _evaluator_module.RAGEvaluator
 
+DATASET_PATH = Path(__file__).parent.parent / "datasets" / "qa_dataset.jsonl"
+ABSTENTION_MESSAGE = "I don't have information about that in the documentation."
+
 
 def load_knowledge_base() -> list[dict]:
     """Load the CloudStack documentation knowledge base."""
@@ -112,6 +115,11 @@ Question: {question}
 Provide a helpful answer based on the documentation above. If you cannot find the answer in the provided documents, clearly state that."""
 
 
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled via environment variable."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+
+
 @traigent.optimize(
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
@@ -126,8 +134,9 @@ Provide a helpful answer based on the documentation above. If you cannot find th
         "cost",
     ],
     evaluation=EvaluationOptions(
-        eval_dataset="use-cases/knowledge-rag/datasets/qa_dataset.jsonl",
-        custom_evaluator=RAGEvaluator(),
+        eval_dataset=str(DATASET_PATH),
+        # RAGEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=RAGEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -176,56 +185,77 @@ def rag_qa_agent(question: str) -> dict[str, Any]:
         question=question,
     )
 
+    if is_mock_mode():
+        return generate_mock_response(
+            question, retrieved_docs, source_ids, top_k, confidence_threshold
+        )
+
     # Use LangChain for LLM call
     try:
         from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "Install it with: pip install langchain-openai"
+        ) from exc
 
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-        )
-        response = llm.invoke(prompt)
-        answer = response.content
+    llm = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+    )
+    response = llm.invoke(prompt)
+    answer = response.content
 
-        # Determine if this is an abstention
-        abstention_phrases = [
-            "don't have information",
-            "not mentioned",
-            "cannot find",
-            "no information",
-            "not in the documentation",
-            "unable to find",
-        ]
-        is_abstention = any(phrase in answer.lower() for phrase in abstention_phrases)
+    # Determine if this is an abstention
+    abstention_phrases = [
+        "don't have information",
+        "not mentioned",
+        "cannot find",
+        "no information",
+        "not in the documentation",
+        "unable to find",
+    ]
+    is_abstention = any(phrase in answer.lower() for phrase in abstention_phrases)
 
-        # Estimate confidence based on retrieval quality
-        confidence = min(len(retrieved_docs) / top_k, 1.0) if not is_abstention else 0.3
+    # Estimate confidence based on retrieval quality
+    confidence = min(len(retrieved_docs) / max(top_k, 1), 1.0)
+    if is_abstention:
+        confidence = min(confidence, 0.3)
 
+    if is_abstention or not retrieved_docs or confidence < confidence_threshold:
         return {
-            "answer": answer,
-            "sources": source_ids,
+            "answer": ABSTENTION_MESSAGE,
+            "sources": [],
             "confidence": confidence,
             "retrieved_count": len(retrieved_docs),
-            "is_abstention": is_abstention,
+            "is_abstention": True,
         }
 
-    except ImportError:
-        # Fallback for mock mode without LangChain
-        return generate_mock_response(question, retrieved_docs, source_ids)
+    return {
+        "answer": answer,
+        "sources": source_ids,
+        "confidence": confidence,
+        "retrieved_count": len(retrieved_docs),
+        "is_abstention": False,
+    }
 
 
 def generate_mock_response(
     question: str,
     retrieved_docs: list[dict],
     source_ids: list[str],
+    top_k: int,
+    confidence_threshold: float,
 ) -> dict[str, Any]:
     """Generate a mock response for testing without LLM."""
-    if not retrieved_docs:
+    confidence = min(len(retrieved_docs) / max(top_k, 1), 1.0)
+
+    if not retrieved_docs or confidence < confidence_threshold:
         return {
-            "answer": "I don't have information about that in the documentation.",
+            "answer": ABSTENTION_MESSAGE,
             "sources": [],
-            "confidence": 0.3,
-            "retrieved_count": 0,
+            "confidence": confidence,
+            "retrieved_count": len(retrieved_docs),
             "is_abstention": True,
         }
 
@@ -236,7 +266,7 @@ def generate_mock_response(
     return {
         "answer": answer,
         "sources": source_ids,
-        "confidence": 0.8,
+        "confidence": confidence,
         "retrieved_count": len(retrieved_docs),
         "is_abstention": False,
     }
@@ -245,11 +275,11 @@ def generate_mock_response(
 async def run_optimization():
     """Run the RAG agent optimization."""
     print("=" * 60)
-    print("Knowledge & RAG Agent - TraiGent Optimization")
+    print("Knowledge & RAG Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+    mock_mode = is_mock_mode()
     print(f"\nMock Mode: {'Enabled' if mock_mode else 'Disabled'}")
 
     if not mock_mode:

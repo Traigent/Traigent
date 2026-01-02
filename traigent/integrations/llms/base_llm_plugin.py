@@ -172,7 +172,7 @@ class LLMPlugin(IntegrationPlugin):
 
         Args:
             kwargs: Original keyword arguments
-            config: TraiGent configuration
+            config: Traigent configuration
 
         Returns:
             Modified kwargs with overrides applied

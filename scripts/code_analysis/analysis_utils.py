@@ -7,10 +7,10 @@ import csv
 import json
 import statistics
 import subprocess
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Iterable, Iterator, Sequence
 
 LANGUAGE_MAP = {
     ".py": "Python",
@@ -134,9 +134,7 @@ class CyclomaticVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def generic_visit(self, node: ast.AST) -> None:
-        if isinstance(
-            node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)
-        ):
+        if isinstance(node, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith)):
             self.complexity += 1
         elif isinstance(node, ast.IfExp):
             self.complexity += 1
@@ -186,9 +184,7 @@ def iter_functions(module_ast: ast.AST, module_name: str) -> Iterator[FunctionIn
         yield from _extract_functions(node, module_name, parent_name="")
 
 
-def _extract_functions(
-    node: ast.AST, module_name: str, parent_name: str
-) -> Iterator[FunctionInfo]:
+def _extract_functions(node: ast.AST, module_name: str, parent_name: str) -> Iterator[FunctionInfo]:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         qualified_name = (
             f"{module_name}.{node.name}"
@@ -262,9 +258,7 @@ def run_command(args: Sequence[str], cwd: Path) -> subprocess.CompletedProcess[s
         )
 
 
-def write_csv(
-    path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]
-) -> None:
+def write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)

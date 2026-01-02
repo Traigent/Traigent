@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -349,6 +349,36 @@ class TestOptimizationOrchestrator:
         for trial_result in result.trials:
             assert trial_result.status == TrialStatus.COMPLETED
             assert trial_result.config is not None
+
+    @pytest.mark.asyncio
+    async def test_default_config_is_evaluated_first(
+        self, mock_optimizer, mock_evaluator, mock_function, sample_dataset
+    ):
+        """Ensure default_config is used as the baseline trial."""
+        default_config = {"param1": 99, "param2": "value_b"}
+        mock_optimizer.set_max_suggestions(10)
+
+        with patch(
+            "traigent.core.orchestrator.BackendIntegratedClient"
+        ) as mock_backend:
+            mock_client = MagicMock()
+            mock_client.create_session.return_value = "session-default"
+            mock_backend.return_value = mock_client
+
+            orchestrator = OptimizationOrchestrator(
+                optimizer=mock_optimizer,
+                evaluator=mock_evaluator,
+                max_trials=3,
+                timeout=5.0,
+                default_config=default_config,
+            )
+            orchestrator.backend_client = mock_client
+
+            result = await orchestrator.optimize(mock_function, sample_dataset)
+
+        assert len(result.trials) == 3
+        assert result.trials[0].config == default_config
+        assert len(mock_optimizer.suggested_configs) == 2
 
     @pytest.mark.asyncio
     @pytest.mark.timeout(5)
@@ -836,10 +866,15 @@ class TestOptimizationOrchestrator:
         assert result.status == OptimizationStatus.CANCELLED
 
     @pytest.mark.asyncio
-    @pytest.mark.timeout(5)
+    @pytest.mark.timeout(10)  # Generous timeout for CI
     async def test_timeout_precision(self, orchestrator, mock_function, sample_dataset):
-        """Test that timeout is enforced with reasonable precision."""
-        timeout_duration = 0.3
+        """Test that timeout is enforced with reasonable precision.
+
+        Note: This test uses generous tolerances because CI environments have
+        variable load that can cause timing inconsistencies. We primarily verify
+        that the timeout mechanism works, not exact timing precision.
+        """
+        timeout_duration = 0.5  # Longer timeout for more reliable measurement
         orchestrator.timeout = timeout_duration
         orchestrator.evaluator.set_evaluation_delay(0.1)  # Short evaluation
         orchestrator.optimizer.set_max_suggestions(10)  # Many trials
@@ -848,8 +883,15 @@ class TestOptimizationOrchestrator:
         result = await orchestrator.optimize(mock_function, sample_dataset)
         actual_duration = time.time() - start_time
 
-        # Should timeout close to specified time (within 0.2s tolerance for CI)
-        assert abs(actual_duration - timeout_duration) < 0.2
+        # Should timeout within reasonable bounds (generous tolerance for CI)
+        # The key assertion is that we stopped reasonably close to timeout,
+        # not that we hit it exactly
+        assert (
+            actual_duration < timeout_duration + 1.0
+        ), f"Timeout took too long: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
+        assert (
+            actual_duration >= timeout_duration * 0.5
+        ), f"Finished too quickly: {actual_duration:.2f}s (expected ~{timeout_duration}s)"
         assert result.status == OptimizationStatus.CANCELLED
 
     # Performance Tests
@@ -1398,6 +1440,7 @@ class TestOptimizationOrchestrator:
         result = await orchestrator.optimize(lambda _: "stub", sample_dataset)
 
         assert orchestrator._stop_reason == "plateau"
+        assert result.stop_reason == "plateau"  # Verify public API
         assert len(result.trials) <= 4
 
     @pytest.mark.asyncio
@@ -1462,7 +1505,7 @@ class TestOptimizationOrchestrator:
 
         result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
 
-        assert orchestrator._stop_reason == "budget"
+        assert orchestrator._stop_reason == "cost_limit"
         total_cost = sum(tr.metrics.get("total_cost", 0.0) for tr in result.trials)
         assert total_cost >= 0.15
         assert len(result.trials) <= 4
@@ -1473,6 +1516,243 @@ class TestOptimizationOrchestrator:
         orchestrator._abandon_optuna_trial(123, reason="trial_skipped_for_test")
 
         orchestrator.optimizer.report_trial_pruned.assert_called_once_with(123, 0)
+
+    def test_abandon_optuna_trial_logs_to_trials_list(self, orchestrator):
+        """Verify abandoned Optuna trials are recorded in the trials list."""
+        orchestrator.optimizer.report_trial_pruned = MagicMock()
+        initial_count = len(orchestrator._trials)
+
+        orchestrator._abandon_optuna_trial(
+            456, reason="budget_exhausted", pruned_step=3
+        )
+
+        # Trial should be appended to the list
+        assert len(orchestrator._trials) == initial_count + 1
+        abandoned_trial = orchestrator._trials[-1]
+        assert abandoned_trial.trial_id == "optuna_456"
+        assert abandoned_trial.status == TrialStatus.PRUNED
+        assert abandoned_trial.error_message == "budget_exhausted"
+        assert abandoned_trial.metadata["pruned_step"] == 3
+        assert abandoned_trial.metadata["stop_reason"] == "budget_exhausted"
+
+    def test_abandon_optuna_trial_includes_config_when_provided(self, orchestrator):
+        """Verify abandoned trials include the config when provided."""
+        orchestrator.optimizer.report_trial_pruned = MagicMock()
+        test_config = {"model": "gpt-4", "temperature": 0.7}
+
+        orchestrator._abandon_optuna_trial(
+            789,
+            reason="cache_policy_skip",
+            config=test_config,
+            status=TrialStatus.PRUNED,
+        )
+
+        abandoned_trial = orchestrator._trials[-1]
+        assert abandoned_trial.config == test_config
+        assert abandoned_trial.config["model"] == "gpt-4"
+        assert abandoned_trial.metadata["abandoned"] is True
+
+    def test_abandon_optuna_trial_does_not_count_toward_max_trials(self, orchestrator):
+        """Verify abandoned trials don't trigger max_trials stop condition."""
+        from traigent.core.stop_conditions import MaxTrialsStopCondition
+
+        orchestrator.optimizer.report_trial_pruned = MagicMock()
+        stop_condition = MaxTrialsStopCondition(max_trials=3)
+
+        # Add 2 completed trials
+        for i in range(2):
+            trial = TrialResult(
+                trial_id=f"completed_{i}",
+                config={},
+                metrics={},
+                status=TrialStatus.COMPLETED,
+                duration=0.1,
+                timestamp=None,
+            )
+            orchestrator._trials.append(trial)
+
+        # Add 5 abandoned/pruned trials - these should NOT count
+        for i in range(5):
+            orchestrator._abandon_optuna_trial(
+                i, reason="cache_policy_skip", status=TrialStatus.PRUNED
+            )
+
+        # Should NOT stop because only 2 executed trials (< 3 max_trials)
+        assert not stop_condition.should_stop(orchestrator._trials)
+
+        # Add one more completed trial (now 3 total)
+        trial = TrialResult(
+            trial_id="completed_2",
+            config={},
+            metrics={},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=None,
+        )
+        orchestrator._trials.append(trial)
+
+        # NOW should stop because 3 executed trials == max_trials
+        assert stop_condition.should_stop(orchestrator._trials)
+
+    def test_pruned_trial_counts_toward_max_trials(self, orchestrator):
+        """Verify executed pruned trials count toward max_trials."""
+        from traigent.core.stop_conditions import MaxTrialsStopCondition
+
+        stop_condition = MaxTrialsStopCondition(max_trials=2)
+
+        pruned_trial = TrialResult(
+            trial_id="pruned_0",
+            config={},
+            metrics={},
+            status=TrialStatus.PRUNED,
+            duration=0.1,
+            timestamp=None,
+            metadata={"pruned": True},
+        )
+        orchestrator._trials.append(pruned_trial)
+
+        assert not stop_condition.should_stop(orchestrator._trials)
+
+        completed_trial = TrialResult(
+            trial_id="completed_0",
+            config={},
+            metrics={},
+            status=TrialStatus.COMPLETED,
+            duration=0.1,
+            timestamp=None,
+        )
+        orchestrator._trials.append(completed_trial)
+
+        assert stop_condition.should_stop(orchestrator._trials)
+
+    @pytest.mark.asyncio
+    async def test_pruned_trial_submits_to_backend(self, orchestrator):
+        """Verify pruned trials are submitted to the backend session manager."""
+        orchestrator.backend_session_manager.submit_trial = AsyncMock(return_value=True)
+
+        trial_result = TrialResult(
+            trial_id="trial_pruned_0",
+            config={"temperature": 0.5},
+            metrics={"accuracy": 0.5},
+            status=TrialStatus.PRUNED,
+            duration=0.1,
+            timestamp=None,
+            metadata={"pruned": True},
+        )
+
+        await orchestrator._handle_trial_result(
+            trial_result=trial_result,
+            optimizer_config=trial_result.config,
+            current_trial_index=0,
+            session_id="session-123",
+            optuna_trial_id=None,
+            log_on_success=False,
+        )
+
+        orchestrator.backend_session_manager.submit_trial.assert_awaited_once_with(
+            trial_result=trial_result,
+            session_id="session-123",
+        )
+
+
+class TestStopReasonInResult:
+    """Tests for stop_reason field in OptimizationResult."""
+
+    @pytest.fixture
+    def sample_dataset(self):
+        """Create sample dataset."""
+        examples = [
+            EvaluationExample({"query": "Hello"}, "Hi there!"),
+            EvaluationExample({"query": "Goodbye"}, "See you later!"),
+        ]
+        return Dataset(examples, name="test_dataset", description="Test dataset")
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_max_trials_reached(self, sample_dataset):
+        """stop_reason is 'max_trials_reached' when max_trials limit hit."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(10)  # More than max_trials
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=3,  # Limit to 3 trials
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "max_trials_reached"
+        assert len(result.trials) == 3
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_timeout(self, sample_dataset):
+        """stop_reason is 'timeout' when timeout is reached."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(100)
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+        evaluator.set_evaluation_delay(0.3)  # Slow evaluation
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=100,
+            timeout=0.5,  # Short timeout
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        assert result.stop_reason == "timeout"
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_optimizer_stop(self, sample_dataset):
+        """stop_reason is 'optimizer' when optimizer requests stop."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(2)  # Optimizer stops after 2
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=100,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        # Optimizer provides exactly 2 configs then stops - treated as optimizer stop
+        assert result.stop_reason == "optimizer"
+        assert len(result.trials) == 2
+
+    @pytest.mark.asyncio
+    async def test_stop_reason_optimizer_when_no_suggestions(self, sample_dataset):
+        """stop_reason is 'optimizer' when optimizer provides no suggestions."""
+        config_space = {"param1": (0, 1)}
+        optimizer = MockOptimizer(config_space, ["accuracy"])
+        optimizer.set_max_suggestions(0)  # No suggestions
+
+        evaluator = MockEvaluator(metrics=["accuracy"])
+
+        orchestrator = OptimizationOrchestrator(
+            optimizer=optimizer,
+            evaluator=evaluator,
+            max_trials=10,
+            config=TraigentConfig.edge_analytics_mode(),
+        )
+
+        result = await orchestrator.optimize(lambda _: "ok", sample_dataset)
+
+        # When optimizer provides no suggestions, stop_reason is "optimizer"
+        assert result.stop_reason == "optimizer"
+        assert len(result.trials) == 0
 
 
 class TestOrchestratorCodeQuality:

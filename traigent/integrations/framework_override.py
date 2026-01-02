@@ -1,13 +1,13 @@
 """Automatic Framework Parameter Override System.
 
 This module provides the core functionality for seamless framework optimization
-where TraiGent automatically overrides framework parameters during optimization
+where Traigent automatically overrides framework parameters during optimization
 without requiring any changes to user code.
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility CONC-Quality-Maintainability FUNC-INTEGRATIONS FUNC-INVOKERS REQ-INT-008 REQ-INJ-002 SYNC-IntegrationHook
 
 Key Features:
 - Automatic monkey patching of framework constructors and methods
-- Parameter mapping from TraiGent config to framework parameters
+- Parameter mapping from Traigent config to framework parameters
 - Support for multiple frameworks (OpenAI, LangChain, Anthropic, Cohere, HuggingFace)
 - Streaming and tool/function calling support
 - Method-level parameter injection for completion calls
@@ -124,7 +124,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _create_override_constructor(
         self, original_constructor: Callable[..., Any], class_name: str
     ) -> Callable[..., Any]:
-        """Create an overridden constructor that injects TraiGent parameters.
+        """Create an overridden constructor that injects Traigent parameters.
 
         Args:
             original_constructor: Original class constructor
@@ -142,7 +142,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return original_constructor(*args, **kwargs)
 
-            # Get current TraiGent configuration
+            # Get current Traigent configuration
             config = get_config()
             if not config:
                 return original_constructor(*args, **kwargs)
@@ -191,7 +191,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
     def _create_override_method(
         self, original_method: Callable[..., Any], class_name: str, method_name: str
     ) -> Callable[..., Any]:
-        """Create an overridden method that injects TraiGent parameters.
+        """Create an overridden method that injects Traigent parameters.
 
         Args:
             original_method: Original method
@@ -213,7 +213,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return original_method(instance, *args, **kwargs)
 
-            # Get current TraiGent configuration
+            # Get current Traigent configuration
             config = get_config()
             if not config:
                 return original_method(instance, *args, **kwargs)
@@ -263,7 +263,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return await original_method(instance, *args, **kwargs)
 
-            # Get current TraiGent configuration
+            # Get current Traigent configuration
             config = get_config()
             if not config:
                 return await original_method(instance, *args, **kwargs)
@@ -675,7 +675,7 @@ class FrameworkOverrideManager(BaseOverrideManager):
             if not getattr(override_active, "enabled", False):
                 return original_method(*args, **kwargs)
 
-            # Get current TraiGent configuration
+            # Get current Traigent configuration
             config = get_config()
             if not config:
                 return original_method(*args, **kwargs)
@@ -795,7 +795,7 @@ def register_framework_mapping(
 
     Args:
         target_class: Framework class name or class object
-        parameter_mapping: Mapping from TraiGent parameters to framework parameters
+        parameter_mapping: Mapping from Traigent parameters to framework parameters
     """
     _framework_override_manager.register_framework_target(
         target_class, parameter_mapping

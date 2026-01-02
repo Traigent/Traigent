@@ -1,7 +1,7 @@
 """Version compatibility management for framework integrations.
 
 This module handles parameter mapping across different SDK versions,
-ensuring TraiGent works with various framework versions.
+ensuring Traigent works with various framework versions.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
@@ -232,7 +232,7 @@ class VersionCompatibilityManager:
 
         migrated = {}
         for param_name, param_value in params.items():
-            # Find the TraiGent parameter name
+            # Find the Traigent parameter name
             traigent_param = old_reverse.get(param_name, param_name)
 
             # Map to new format

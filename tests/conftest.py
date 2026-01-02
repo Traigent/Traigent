@@ -1,4 +1,4 @@
-"""Shared test fixtures and configuration for TraiGent test suite.
+"""Shared test fixtures and configuration for Traigent test suite.
 
 This module provides:
 - Common test datasets and examples
@@ -26,6 +26,9 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.grid import GridSearchOptimizer
 from traigent.utils.logging import get_logger
+
+# Import rate limit fixtures for all tests
+pytest_plugins = ["tests.fixtures.rate_limit_fixtures"]
 
 # Increase recursion limit to handle complex test scenarios
 sys.setrecursionlimit(2000)
@@ -120,7 +123,7 @@ def cloud_session_cleanup(monkeypatch):
     """Automatically delete cloud sessions created during tests when enabled.
 
     When `TRAIGENT_RUN_CLOUD_TESTS` is truthy, this fixture tracks every session
-    created through `BackendIntegratedClient` or `TraiGentCloudClient` and
+    created through `BackendIntegratedClient` or `TraigentCloudClient` and
     deletes it via the new backend cleanup endpoint after the test completes.
     """
 
@@ -195,14 +198,14 @@ def cloud_session_cleanup(monkeypatch):
             )
 
     try:
-        from traigent.cloud.client import TraiGentCloudClient
+        from traigent.cloud.client import TraigentCloudClient
     except ImportError:
-        TraiGentCloudClient = None  # type: ignore
+        TraigentCloudClient = None  # type: ignore
 
-    if TraiGentCloudClient is not None and hasattr(
-        TraiGentCloudClient, "create_optimization_session"
+    if TraigentCloudClient is not None and hasattr(
+        TraigentCloudClient, "create_optimization_session"
     ):
-        original_create_opt_session = TraiGentCloudClient.create_optimization_session
+        original_create_opt_session = TraigentCloudClient.create_optimization_session
 
         @functools.wraps(original_create_opt_session)
         async def wrapped_create_opt_session(self, *args, **kwargs):
@@ -214,7 +217,7 @@ def cloud_session_cleanup(monkeypatch):
             return response
 
         monkeypatch.setattr(
-            TraiGentCloudClient,
+            TraigentCloudClient,
             "create_optimization_session",
             wrapped_create_opt_session,
         )
@@ -659,13 +662,13 @@ def temp_cache_dir():
 
 @pytest.fixture
 def traigent_config():
-    """Basic TraiGent configuration for testing."""
+    """Basic Traigent configuration for testing."""
     return TraigentConfig(execution_mode="edge_analytics", detailed_metrics=True)
 
 
 @pytest.fixture
 def privacy_config():
-    """TraiGent configuration for privacy mode testing."""
+    """Traigent configuration for privacy mode testing."""
     return TraigentConfig(execution_mode="privacy", detailed_metrics=False)
 
 

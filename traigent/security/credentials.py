@@ -1,4 +1,4 @@
-"""Enhanced secure credential management for TraiGent SDK.
+"""Enhanced secure credential management for Traigent SDK.
 
 This module provides production-hardened credential storage with:
 - Memory-safe handling (no plain text in memory)

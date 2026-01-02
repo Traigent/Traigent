@@ -1,8 +1,8 @@
-# Security Guide for TraiGent
+# Security Guide for Traigent
 
 ## Overview
 
-This document outlines the security improvements implemented in TraiGent and provides guidance for secure usage of the framework.
+This document outlines the security improvements implemented in Traigent and provides guidance for secure usage of the framework.
 
 ## Recent Security Improvements
 
@@ -10,7 +10,7 @@ This document outlines the security improvements implemented in TraiGent and pro
 
 **Previous Risk**: The original `SeamlessParameterProvider` used `exec()` for dynamic code injection, creating a critical security vulnerability that could allow arbitrary code execution.
 
-**Solution Implemented**: Complete replacement with AST-based transformation using `SafeSeamlessProvider`.
+**Solution Implemented**: AST-based transformation in `SeamlessParameterProvider` using `ConfigTransformer` and `SafeASTCompiler`.
 
 #### Key Benefits:
 - **No arbitrary code execution**: AST transformation is inherently safer than exec()
@@ -21,6 +21,8 @@ This document outlines the security improvements implemented in TraiGent and pro
 ### 2. Complete Authentication Implementations
 
 All authentication methods that were marked as TODO have been fully implemented:
+
+**Optional dependencies**: SAML requires `python3-saml`, OIDC requires `pyjwt`, TOTP requires `pyotp`, and SMS requires `twilio`. Install as needed.
 
 #### SAML Authentication
 - Full SAML 2.0 support using python3-saml
@@ -49,43 +51,15 @@ All authentication methods that were marked as TODO have been fully implemented:
 ### 3. Centralized Credential Management
 
 A new secure credential store has been implemented with:
-- **Encryption at rest**: All credentials encrypted using Fernet (symmetric encryption)
-- **Master key management**: Secure generation and storage of encryption keys
-- **Environment variable support**: Seamless integration with existing deployment practices
-- **Credential rotation**: Built-in support for key rotation with history tracking
+- **Encryption at rest**: AES-256-GCM via `cryptography`
+- **Key derivation**: PBKDF2 with per-store salts
+- **Environment variable support**: `TRAIGENT_<NAME>` for named credentials
+- **Credential rotation**: Built-in rotation helpers and access tracking
 - **Audit logging**: All credential operations are logged
 
-## Migration Guide
+## Seamless Injection Safety
 
-### Migrating from SeamlessParameterProvider to SafeSeamlessProvider
-
-The new `SafeSeamlessProvider` is a drop-in replacement for the original provider. To migrate:
-
-#### Option 1: Automatic Migration (Recommended)
-```python
-from traigent.config.providers_safe import migrate_to_safe_provider
-
-# This replaces the provider globally
-migrate_to_safe_provider("seamless")
-```
-
-#### Option 2: Manual Migration
-```python
-from traigent.config.providers_safe import SafeSeamlessProvider
-
-# Use in your optimization decorators
-@traigent.optimize(
-    injection_mode="seamless",  # Same as before
-    configuration_space={"model": ["gpt-3.5", "gpt-4"]}
-)
-def my_function():
-    model = "gpt-3.5"  # Will be safely overridden
-    return f"Using {model}"
-```
-
-### Compatibility Notes
-
-The `SafeSeamlessProvider` maintains 100% API compatibility with the original provider. Your existing code will continue to work without modifications. The only difference is the elimination of security vulnerabilities.
+Seamless injection already uses AST-based rewrites in `traigent/config/providers.py`. No migration is required; `injection_mode="seamless"` is the safe default.
 
 ## Authentication Setup
 
@@ -174,11 +148,10 @@ is_valid = provider.verify_sms_code("user_id_123", "123456")
 ### 1. Initial Setup
 
 ```python
-from traigent.security.credentials import get_credential_store, get_api_key_manager
-from traigent.security.credentials import CredentialType
+from traigent.security.credentials import get_secure_credential_store, CredentialType
 
-# Initialize credential store with custom path and master key
-store = get_credential_store()
+# Initialize credential store with secure defaults
+store = get_secure_credential_store()
 
 # Store API keys securely
 store.set("OPENAI_API_KEY", "sk-...", CredentialType.API_KEY)
@@ -189,25 +162,17 @@ store.set("DATABASE_PASSWORD", "secure_password", CredentialType.PASSWORD)
 
 Set environment variables for automatic loading:
 ```bash
-export TRAIGENT_MASTER_KEY="your-master-encryption-key"
+export TRAIGENT_MASTER_PASSWORD="your-master-password"
 export TRAIGENT_OPENAI_API_KEY="sk-..."
 export TRAIGENT_DATABASE_PASSWORD="secure_password"
 ```
 
-### 3. Using the API Key Manager
+### 3. Reading credentials
 
 ```python
-from traigent.security.credentials import get_api_key_manager
-
-manager = get_api_key_manager()
-
 # Get API keys (checks env vars first, then encrypted store)
-openai_key = manager.get_openai_key()
-anthropic_key = manager.get_anthropic_key()
-
-# Validate all keys
-validation = manager.validate_api_keys()
-print(validation)  # {'openai': True, 'anthropic': False, ...}
+openai_key = store.get("OPENAI_API_KEY")
+database_password = store.get("DATABASE_PASSWORD")
 ```
 
 ### 4. Credential Rotation
@@ -215,11 +180,6 @@ print(validation)  # {'openai': True, 'anthropic': False, ...}
 ```python
 # Rotate a credential (keeps history)
 store.rotate_credential("DATABASE_PASSWORD", "new_secure_password")
-
-# Export template for environment variables
-template = store.export_env_template()
-with open(".env.template", "w") as f:
-    f.write(template)
 ```
 
 ## Security Checklist
@@ -253,7 +213,7 @@ with open(".env.template", "w") as f:
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability in TraiGent, please report it to:
+If you discover a security vulnerability in Traigent, please report it to:
 - Email: security@traigent.ai
 - Do not create public GitHub issues for security vulnerabilities
 - Include detailed steps to reproduce the issue
@@ -299,10 +259,10 @@ All security tests should pass before deployment.
 
 ## Conclusion
 
-These security improvements significantly enhance TraiGent's security posture by:
+These security improvements significantly enhance Traigent's security posture by:
 1. Eliminating critical code injection vulnerabilities
 2. Providing enterprise-grade authentication options
 3. Ensuring secure credential management
 4. Maintaining backward compatibility
 
-For questions or additional security guidance, please refer to the TraiGent documentation or contact the security team.
+For questions or additional security guidance, please refer to the Traigent documentation or contact the security team.

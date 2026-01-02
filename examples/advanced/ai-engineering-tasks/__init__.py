@@ -1,8 +1,8 @@
 """
-TraiGent AI Engineering Tasks Examples
+Traigent AI Engineering Tasks Examples
 ====================================
 
-This package contains practical examples demonstrating how TraiGent can optimize
+This package contains practical examples demonstrating how Traigent can optimize
 common challenges faced by AI engineers in their daily work.
 
 The examples are organized by priority based on universal impact and implementation complexity:

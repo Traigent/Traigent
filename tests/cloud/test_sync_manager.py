@@ -91,16 +91,16 @@ class TestSyncManager:
         expected_base_url = BackendConfig.get_backend_api_url().rstrip("/")
         assert self.sync_manager.base_url == expected_base_url
         assert self.sync_manager.storage is not None
-        assert (
-            self.sync_manager.session.headers["Authorization"]
-            == f"Bearer {self.api_key}"
-        )
+        # API key may be in X-API-Key or Authorization header
+        headers = self.sync_manager.session.headers
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     def test_initialization_without_api_key(self):
         """Test sync manager initialization without API key."""
         sync_manager = SyncManager(self.config)
         assert sync_manager.api_key is None
-        assert "Authorization" not in sync_manager.session.headers
+        headers = sync_manager.session.headers
+        assert "Authorization" not in headers and "X-API-Key" not in headers
 
     def test_get_sync_status_empty(self):
         """Test getting sync status with no sessions."""
@@ -653,10 +653,9 @@ class TestSyncManager:
         """Test request session management and connection pooling."""
         # Verify session is properly configured
         assert isinstance(self.sync_manager.session, requests.Session)
-        assert (
-            self.sync_manager.session.headers["Authorization"]
-            == f"Bearer {self.api_key}"
-        )
+        # API key may be in X-API-Key or Authorization header
+        headers = self.sync_manager.session.headers
+        assert "X-API-Key" in headers or "Authorization" in headers
 
         # Test that session is reused for multiple requests
         with patch.object(self.sync_manager.session, "post") as mock_post:

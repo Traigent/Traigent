@@ -10,7 +10,7 @@
 
 ## Executive Summary
 
-This document presents the **refined TVL (Type-safe Validation Language) unification architecture** for TraiGent, incorporating critical P0 refinements from architectural review. TVL becomes the single source of truth for configuration, with `params.yaml` as deterministic generated output and DVC as the orchestration layer.
+This document presents the **refined TVL (Type-safe Validation Language) unification architecture** for Traigent, incorporating critical P0 refinements from architectural review. TVL becomes the single source of truth for configuration, with `params.yaml` as deterministic generated output and DVC as the orchestration layer.
 
 **Key Refinements in v2.0**:
 - ✅ **Deterministic export** - No volatile fields in params.yaml
@@ -25,7 +25,7 @@ This document presents the **refined TVL (Type-safe Validation Language) unifica
 
 ### 1.1 Core Principle
 
-**TVL defines → TraiGent executes → DVC orchestrates → params.yaml bridges (deterministically)**
+**TVL defines → Traigent executes → DVC orchestrates → params.yaml bridges (deterministically)**
 
 ### 1.2 Component Roles (Refined)
 
@@ -35,7 +35,7 @@ This document presents the **refined TVL (Type-safe Validation Language) unifica
 | **params.yaml** | Generated DVC bridge (deterministic) | No timestamps, no volatile data |
 | **provenance.json** | Volatile metadata tracker | Timestamps, versions, runtime info |
 | **tvl.lock** | Resolved inheritance graph | Deterministic dependency resolution |
-| **TraiGent** | Optimization executor | Reads TVL directly for full semantics |
+| **Traigent** | Optimization executor | Reads TVL directly for full semantics |
 | **DVC** | Pipeline orchestrator | Watches narrow params subsets |
 
 ### 1.3 Data Flow (Updated)
@@ -46,7 +46,7 @@ graph TB
     B -->|resolve| C[tvl.lock]
     C -->|export| D[params.yaml<br/>DETERMINISTIC]
     C -->|metadata| E[provenance.json<br/>VOLATILE]
-    A -->|direct| F[TraiGent]
+    A -->|direct| F[Traigent]
     D -->|narrow watch| G[DVC Pipeline]
     F -->|results| H[Metrics]
     E -->|track| H
@@ -80,7 +80,8 @@ data:
 optimize:
   algorithm: nsga2
   max_trials: 100
-  parallel_trials: 4
+  parallel_config:
+    trial_concurrency: 4
   timeout_seconds: 3600  # Explicit unit in key name
 
 evaluate:
@@ -558,7 +559,7 @@ stages:
       # NARROW watching - only what this stage uses
       - optimize.algorithm
       - optimize.max_trials
-      - optimize.parallel_trials
+      - optimize.parallel_config.trial_concurrency
     metrics:
       - results/metrics.json
 
@@ -599,7 +600,7 @@ traigent_tvl/
 
 ### 6.2 Phase 2: Integration (Week 2)
 
-- Integrate with TraiGent optimizer
+- Integrate with Traigent optimizer
 - Add DVC pipeline stages
 - Create migration scripts
 
@@ -708,7 +709,7 @@ environments:
 
 ## 9. Conclusion
 
-TVL Unification v2.0 addresses all critical review feedback while maintaining the vision of a single source of truth for TraiGent configuration. The deterministic export, CEL constraints, and strict override semantics ensure production readiness.
+TVL Unification v2.0 addresses all critical review feedback while maintaining the vision of a single source of truth for Traigent configuration. The deterministic export, CEL constraints, and strict override semantics ensure production readiness.
 
 **Next Steps:**
 1. Review and approve this v2.0 design

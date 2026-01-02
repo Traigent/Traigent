@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Documentation Dashboard for TraiGent SDK
+Documentation Dashboard for Traigent SDK
 
 Provides a visual overview of documentation health, coverage, and status.
 Tracks metrics, identifies issues, and suggests improvements.
@@ -226,7 +226,7 @@ class DocumentationDashboard:
 
         # Check terminology (simplified)
         terms_variations = {
-            "TraiGent": ["Traigent", "TRAIGENT", "traigent sdk"],
+            "Traigent": ["Traigent", "TRAIGENT", "traigent sdk"],
             "optimization": ["optimisation"],
         }
 
@@ -506,7 +506,7 @@ class DocumentationDashboard:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Documentation Dashboard for TraiGent")
+    parser = argparse.ArgumentParser(description="Documentation Dashboard for Traigent")
     parser.add_argument("--simple", action="store_true", help="Simple text output")
     parser.add_argument("--json", action="store_true", help="Export as JSON")
     parser.add_argument("--output", help="Output file for JSON export")

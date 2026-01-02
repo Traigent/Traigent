@@ -4030,82 +4030,82 @@
 <polygon fill="black" stroke="black" points="48468.67,-22.52 48478.67,-19.01 48468.67,-15.52 48468.67,-22.52"/>
 <text text-anchor="middle" x="37885" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient__safe_owner_fingerprint -->
+<!-- traigent_cloud_client_TraigentCloudClient__safe_owner_fingerprint -->
 <g id="node253" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient__safe_owner_fingerprint</title>
+<title>traigent_cloud_client_TraigentCloudClient__safe_owner_fingerprint</title>
 <polygon fill="lightgrey" stroke="black" points="268902.5,-117 268559.5,-117 268559.5,-81 268902.5,-81 268902.5,-117"/>
-<text text-anchor="middle" x="268731" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraiGentCloudClient__safe_owner_fingerprint</text>
+<text text-anchor="middle" x="268731" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraigentCloudClient__safe_owner_fingerprint</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient__safe_owner_fingerprint&#45;&gt;logger_debug -->
+<!-- traigent_cloud_client_TraigentCloudClient__safe_owner_fingerprint&#45;&gt;logger_debug -->
 <g id="edge355" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient__safe_owner_fingerprint&#45;&gt;logger_debug</title>
+<title>traigent_cloud_client_TraigentCloudClient__safe_owner_fingerprint&#45;&gt;logger_debug</title>
 <path fill="none" stroke="black" d="M268559.05,-81.61C268556.01,-81.4 268552.99,-81.2 268550,-81 268229.58,-59.98 268149.04,-60.99 267828,-54 266635.26,-28.03 262626.58,-19.9 262181.29,-19.07"/>
 <polygon fill="black" stroke="black" points="262181.16,-15.57 262171.15,-19.05 262181.15,-22.57 262181.16,-15.57"/>
 <text text-anchor="middle" x="268204" y="-56.6" font-family="Times,serif" font-size="8.00">4</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_optimize_function -->
+<!-- traigent_cloud_client_TraigentCloudClient_optimize_function -->
 <g id="node254" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient_optimize_function</title>
+<title>traigent_cloud_client_TraigentCloudClient_optimize_function</title>
 <polygon fill="lightgrey" stroke="black" points="100835,-117 100521,-117 100521,-81 100835,-81 100835,-117"/>
-<text text-anchor="middle" x="100678" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraiGentCloudClient_optimize_function</text>
+<text text-anchor="middle" x="100678" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraigentCloudClient_optimize_function</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;len -->
+<!-- traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;len -->
 <g id="edge357" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;len</title>
+<title>traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;len</title>
 <path fill="none" stroke="black" d="M100598.19,-81C100546.74,-70.92 100478.25,-59.14 100417,-54 100274.71,-42.06 59436.79,-36.14 59294,-36 54740.46,-31.41 49105.19,-20.19 48555.61,-19.09"/>
 <polygon fill="black" stroke="black" points="48555.35,-15.59 48545.35,-19.07 48555.34,-22.59 48555.35,-15.59"/>
 <text text-anchor="middle" x="100492" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;logger_info -->
+<!-- traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;logger_info -->
 <g id="edge358" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;logger_info</title>
+<title>traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;logger_info</title>
 <path fill="none" stroke="black" d="M100768.41,-80.94C100792.77,-75.76 100819.02,-69.67 100843,-63 100854.78,-59.72 100856.94,-56.03 100869,-54 100943.52,-41.46 187852.43,-36.05 187928,-36 194959.19,-31.64 203680.24,-19.95 204343.69,-19.05"/>
 <polygon fill="black" stroke="black" points="204343.73,-22.55 204353.73,-19.04 204343.72,-15.55 204343.73,-22.55"/>
 <text text-anchor="middle" x="100872" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;time_time -->
+<!-- traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;time_time -->
 <g id="edge356" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_optimize_function&#45;&gt;time_time</title>
+<title>traigent_cloud_client_TraigentCloudClient_optimize_function&#45;&gt;time_time</title>
 <path fill="none" stroke="black" d="M100726.72,-80.97C100757.84,-70.98 100799.28,-59.31 100837,-54 101021.01,-28.09 103990.56,-20.02 104370.99,-19.09"/>
 <polygon fill="black" stroke="black" points="104371.01,-22.59 104381,-19.07 104370.99,-15.59 104371.01,-22.59"/>
 <text text-anchor="middle" x="100840" y="-56.6" font-family="Times,serif" font-size="8.00">3</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient__fallback_optimization -->
+<!-- traigent_cloud_client_TraigentCloudClient__fallback_optimization -->
 <g id="node255" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient__fallback_optimization</title>
+<title>traigent_cloud_client_TraigentCloudClient__fallback_optimization</title>
 <polygon fill="lightgrey" stroke="black" points="107543.5,-117 107206.5,-117 107206.5,-81 107543.5,-81 107543.5,-117"/>
-<text text-anchor="middle" x="107375" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraiGentCloudClient__fallback_optimization</text>
+<text text-anchor="middle" x="107375" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraigentCloudClient__fallback_optimization</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient__fallback_optimization&#45;&gt;time_time -->
+<!-- traigent_cloud_client_TraigentCloudClient__fallback_optimization&#45;&gt;time_time -->
 <g id="edge359" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient__fallback_optimization&#45;&gt;time_time</title>
+<title>traigent_cloud_client_TraigentCloudClient__fallback_optimization&#45;&gt;time_time</title>
 <path fill="none" stroke="black" d="M107206.37,-81.68C107203.22,-81.44 107200.1,-81.22 107197,-81 106929.83,-62.26 106862.7,-62.15 106595,-54 105728.86,-27.64 104668.87,-20.45 104451.19,-19.21"/>
 <polygon fill="black" stroke="black" points="104451.19,-15.71 104441.17,-19.16 104451.15,-22.71 104451.19,-15.71"/>
 <text text-anchor="middle" x="106879" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_check_service_status -->
+<!-- traigent_cloud_client_TraigentCloudClient_check_service_status -->
 <g id="node256" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient_check_service_status</title>
+<title>traigent_cloud_client_TraigentCloudClient_check_service_status</title>
 <polygon fill="lightgrey" stroke="black" points="183125,-117 182795,-117 182795,-81 183125,-81 183125,-117"/>
-<text text-anchor="middle" x="182960" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraiGentCloudClient_check_service_status</text>
+<text text-anchor="middle" x="182960" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_client_TraigentCloudClient_check_service_status</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;isinstance -->
+<!-- traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;isinstance -->
 <g id="edge361" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;isinstance</title>
+<title>traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;isinstance</title>
 <path fill="none" stroke="black" d="M182910.4,-80.96C182878.45,-70.9 182835.79,-59.16 182797,-54 182728.43,-44.88 143707.33,-19.97 142224.37,-19.03"/>
 <polygon fill="black" stroke="black" points="142224.16,-15.53 142214.15,-19.02 142224.15,-22.53 142224.16,-15.53"/>
 <text text-anchor="middle" x="182845" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;str -->
+<!-- traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;str -->
 <g id="edge362" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;str</title>
+<title>traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;str</title>
 <path fill="none" stroke="black" d="M182965.42,-80.67C182969.43,-70.98 182975.98,-59.72 182986,-54 183018.17,-35.63 225621.96,-36.03 225659,-36 231936.49,-31.05 239718.91,-19.96 240347.31,-19.06"/>
 <polygon fill="black" stroke="black" points="240347.68,-22.56 240357.67,-19.04 240347.67,-15.56 240347.68,-22.56"/>
 <text text-anchor="middle" x="182989" y="-56.6" font-family="Times,serif" font-size="8.00">4</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;getattr -->
+<!-- traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;getattr -->
 <g id="edge360" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient_check_service_status&#45;&gt;getattr</title>
+<title>traigent_cloud_client_TraigentCloudClient_check_service_status&#45;&gt;getattr</title>
 <path fill="none" stroke="black" d="M182939.09,-80.97C182925.45,-70.99 182906.74,-59.32 182888,-54 182788.12,-25.66 175722.02,-19.5 175121.57,-19.03"/>
 <polygon fill="black" stroke="black" points="175121.24,-15.53 175111.24,-19.02 175121.24,-22.53 175121.24,-15.53"/>
 <text text-anchor="middle" x="182912" y="-56.6" font-family="Times,serif" font-size="8.00">4</text>
@@ -5004,68 +5004,68 @@
 <polygon fill="black" stroke="black" points="142137.91,-22.53 142147.91,-19.02 142137.91,-15.53 142137.91,-22.53"/>
 <text text-anchor="middle" x="130856" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService__validate_request -->
+<!-- traigent_cloud_service_TraigentCloudService__validate_request -->
 <g id="node308" class="node">
-<title>traigent_cloud_service_TraiGentCloudService__validate_request</title>
+<title>traigent_cloud_service_TraigentCloudService__validate_request</title>
 <polygon fill="lightgrey" stroke="black" points="130546.5,-117 130217.5,-117 130217.5,-81 130546.5,-81 130546.5,-117"/>
-<text text-anchor="middle" x="130382" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraiGentCloudService__validate_request</text>
+<text text-anchor="middle" x="130382" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraigentCloudService__validate_request</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService__validate_request&#45;&gt;isinstance -->
+<!-- traigent_cloud_service_TraigentCloudService__validate_request&#45;&gt;isinstance -->
 <g id="edge447" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService__validate_request&#45;&gt;isinstance</title>
+<title>traigent_cloud_service_TraigentCloudService__validate_request&#45;&gt;isinstance</title>
 <path fill="none" stroke="black" d="M130546.84,-81.67C130549.92,-81.44 130552.97,-81.21 130556,-81 130828.91,-61.69 130897.48,-60.44 131171,-54 132346.44,-26.34 141432.75,-19.52 142137.68,-19.03"/>
 <polygon fill="black" stroke="black" points="142137.91,-22.53 142147.9,-19.02 142137.9,-15.53 142137.91,-22.53"/>
 <text text-anchor="middle" x="131174" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_process_optimization_request -->
+<!-- traigent_cloud_service_TraigentCloudService_process_optimization_request -->
 <g id="node309" class="node">
-<title>traigent_cloud_service_TraiGentCloudService_process_optimization_request</title>
+<title>traigent_cloud_service_TraigentCloudService_process_optimization_request</title>
 <polygon fill="lightgrey" stroke="black" points="102502,-117 102114,-117 102114,-81 102502,-81 102502,-117"/>
-<text text-anchor="middle" x="102308" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraiGentCloudService_process_optimization_request</text>
+<text text-anchor="middle" x="102308" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraigentCloudService_process_optimization_request</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;len -->
+<!-- traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;len -->
 <g id="edge450" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;len</title>
+<title>traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;len</title>
 <path fill="none" stroke="black" d="M102241.56,-80.94C102198.88,-70.88 102142.06,-59.14 102091,-54 101943.15,-39.13 59442.6,-36.15 59294,-36 54740.46,-31.45 49105.19,-20.2 48555.61,-19.09"/>
 <polygon fill="black" stroke="black" points="48555.35,-15.59 48545.35,-19.07 48555.34,-22.59 48555.35,-15.59"/>
 <text text-anchor="middle" x="102154" y="-56.6" font-family="Times,serif" font-size="8.00">3</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;logger_info -->
+<!-- traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;logger_info -->
 <g id="edge449" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;logger_info</title>
+<title>traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;logger_info</title>
 <path fill="none" stroke="black" d="M102435.94,-80.99C102518.31,-70.91 102627.77,-59.13 102725,-54 103020.43,-38.43 187632.16,-36.18 187928,-36 194959.19,-31.63 203680.24,-19.95 204343.69,-19.05"/>
 <polygon fill="black" stroke="black" points="204343.73,-22.55 204353.73,-19.04 204343.72,-15.55 204343.73,-22.55"/>
 <text text-anchor="middle" x="102728" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;time_time -->
+<!-- traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;time_time -->
 <g id="edge448" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService_process_optimization_request&#45;&gt;time_time</title>
+<title>traigent_cloud_service_TraigentCloudService_process_optimization_request&#45;&gt;time_time</title>
 <path fill="none" stroke="black" d="M102348.18,-80.93C102373.68,-71 102407.67,-59.41 102439,-54 102635.46,-20.09 104106.59,-18.91 104370.52,-18.98"/>
 <polygon fill="black" stroke="black" points="104370.79,-22.48 104380.79,-18.98 104370.79,-15.48 104370.79,-22.48"/>
 <text text-anchor="middle" x="102442" y="-56.6" font-family="Times,serif" font-size="8.00">5</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService__run_enhanced_optimization -->
+<!-- traigent_cloud_service_TraigentCloudService__run_enhanced_optimization -->
 <g id="node310" class="node">
-<title>traigent_cloud_service_TraiGentCloudService__run_enhanced_optimization</title>
+<title>traigent_cloud_service_TraigentCloudService__run_enhanced_optimization</title>
 <polygon fill="lightgrey" stroke="black" points="212259,-117 211877,-117 211877,-81 212259,-81 212259,-117"/>
-<text text-anchor="middle" x="212068" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraiGentCloudService__run_enhanced_optimization</text>
+<text text-anchor="middle" x="212068" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraigentCloudService__run_enhanced_optimization</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService__run_enhanced_optimization&#45;&gt;logger_info -->
+<!-- traigent_cloud_service_TraigentCloudService__run_enhanced_optimization&#45;&gt;logger_info -->
 <g id="edge451" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService__run_enhanced_optimization&#45;&gt;logger_info</title>
+<title>traigent_cloud_service_TraigentCloudService__run_enhanced_optimization&#45;&gt;logger_info</title>
 <path fill="none" stroke="black" d="M211956.73,-80.95C211885.99,-70.96 211792.35,-59.29 211709,-54 211514.91,-41.68 204999.95,-20.94 204424.51,-19.13"/>
 <polygon fill="black" stroke="black" points="204424.23,-15.63 204414.22,-19.09 204424.21,-22.63 204424.23,-15.63"/>
 <text text-anchor="middle" x="211810" y="-56.6" font-family="Times,serif" font-size="8.00">3</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_get_optimization_history -->
+<!-- traigent_cloud_service_TraigentCloudService_get_optimization_history -->
 <g id="node311" class="node">
-<title>traigent_cloud_service_TraiGentCloudService_get_optimization_history</title>
+<title>traigent_cloud_service_TraigentCloudService_get_optimization_history</title>
 <polygon fill="lightgrey" stroke="black" points="104383.5,-117 104020.5,-117 104020.5,-81 104383.5,-81 104383.5,-117"/>
-<text text-anchor="middle" x="104202" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraiGentCloudService_get_optimization_history</text>
+<text text-anchor="middle" x="104202" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_cloud_service_TraigentCloudService_get_optimization_history</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService_get_optimization_history&#45;&gt;time_time -->
+<!-- traigent_cloud_service_TraigentCloudService_get_optimization_history&#45;&gt;time_time -->
 <g id="edge452" class="edge">
-<title>traigent_cloud_service_TraiGentCloudService_get_optimization_history&#45;&gt;time_time</title>
+<title>traigent_cloud_service_TraigentCloudService_get_optimization_history&#45;&gt;time_time</title>
 <path fill="none" stroke="black" d="M104247.09,-80.96C104284.06,-66.98 104335.87,-47.4 104371.29,-34.01"/>
 <polygon fill="black" stroke="black" points="104372.7,-37.22 104380.82,-30.41 104370.23,-30.67 104372.7,-37.22"/>
 <text text-anchor="middle" x="104315" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>
@@ -13679,15 +13679,15 @@
 <polygon fill="black" stroke="black" points="48468.84,-22.51 48478.84,-19.01 48468.84,-15.51 48468.84,-22.51"/>
 <text text-anchor="middle" x="31744" y="-56.6" font-family="Times,serif" font-size="8.00">4</text>
 </g>
-<!-- traigent_utils_diagnostics_TraiGentDiagnostics__check_virtual_env -->
+<!-- traigent_utils_diagnostics_TraigentDiagnostics__check_virtual_env -->
 <g id="node810" class="node">
-<title>traigent_utils_diagnostics_TraiGentDiagnostics__check_virtual_env</title>
+<title>traigent_utils_diagnostics_TraigentDiagnostics__check_virtual_env</title>
 <polygon fill="lightgrey" stroke="black" points="189016,-117 188672,-117 188672,-81 189016,-81 189016,-117"/>
-<text text-anchor="middle" x="188844" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_utils_diagnostics_TraiGentDiagnostics__check_virtual_env</text>
+<text text-anchor="middle" x="188844" y="-96.5" font-family="Helvetica,sans-Serif" font-size="10.00">traigent_utils_diagnostics_TraigentDiagnostics__check_virtual_env</text>
 </g>
-<!-- traigent_utils_diagnostics_TraiGentDiagnostics__check_virtual_env&#45;&gt;hasattr -->
+<!-- traigent_utils_diagnostics_TraigentDiagnostics__check_virtual_env&#45;&gt;hasattr -->
 <g id="edge1256" class="edge">
-<title>traigent_utils_diagnostics_TraiGentDiagnostics__check_virtual_env&#45;&gt;hasattr</title>
+<title>traigent_utils_diagnostics_TraigentDiagnostics__check_virtual_env&#45;&gt;hasattr</title>
 <path fill="none" stroke="black" d="M188671.56,-81.75C188668.68,-81.5 188665.83,-81.25 188663,-81 188382.35,-56.58 188044.13,-30.71 187929.34,-22.04"/>
 <polygon fill="black" stroke="black" points="187929.49,-18.54 187919.26,-21.27 187928.96,-25.52 187929.49,-18.54"/>
 <text text-anchor="middle" x="188432" y="-56.6" font-family="Times,serif" font-size="8.00">2</text>

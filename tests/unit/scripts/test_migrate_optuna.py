@@ -9,7 +9,10 @@ from scripts.db.migrate_optuna import apply_migrations
 
 def test_migration_dry_run(tmp_path):
     db_url = f"sqlite:///{tmp_path/'dryrun.db'}"
-    apply_migrations(db_url, tmp_path, dry_run=True)
+    result = apply_migrations(db_url, tmp_path, dry_run=True)
+    assert result is None or isinstance(
+        result, (int, list)
+    )  # Returns None or migration count/list
 
 
 def test_migration_applies_to_sqlite(tmp_path):

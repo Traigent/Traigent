@@ -1,4 +1,4 @@
-"""MLflow integration for TraiGent experiment tracking."""
+"""MLflow integration for Traigent experiment tracking."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS FUNC-ANALYTICS REQ-INT-008 REQ-ANLY-011 SYNC-Observability
 
@@ -20,6 +20,16 @@ except ImportError:
 
     # Mock mlflow for type hints
     class mlflow:  # type: ignore[no-redef]
+        _tracking_uri = None
+        _active_experiment = None
+        _experiments: dict[str, Any] = {}
+        _current_run: Any = None
+
+        class tracking:  # type: ignore[no-redef]
+            class MlflowClient:
+                def get_run(self, run_id: str) -> Any:
+                    raise RuntimeError("MLflow not available")
+
         @staticmethod
         def start_run(*args, **kwargs) -> Any:
             class MockRun:
@@ -28,7 +38,28 @@ except ImportError:
 
                 info = Info()
 
-            return MockRun()
+            run = MockRun()
+            mlflow._current_run = run
+            return run
+
+        @staticmethod
+        def set_tracking_uri(uri: str) -> None:
+            mlflow._tracking_uri = uri
+
+        @staticmethod
+        def get_experiment_by_name(name: str) -> Any | None:
+            return mlflow._experiments.get(name)
+
+        @staticmethod
+        def create_experiment(name: str) -> str:
+            experiment_id = f"exp_{len(mlflow._experiments)}"
+            experiment = type("MockExperiment", (), {"experiment_id": experiment_id})()
+            mlflow._experiments[name] = experiment
+            return experiment_id
+
+        @staticmethod
+        def set_experiment(name: str) -> None:
+            mlflow._active_experiment = name
 
         @staticmethod
         def end_run(*args, **kwargs) -> None:
@@ -67,7 +98,7 @@ logger = get_logger(__name__)
 
 
 class TraigentMLflowTracker:
-    """MLflow experiment tracker for TraiGent optimizations."""
+    """MLflow experiment tracker for Traigent optimizations."""
 
     def __init__(
         self,
@@ -451,7 +482,7 @@ class MLflowOptimizationCallback:
 def create_mlflow_tracker(
     tracking_uri: str | None = None, experiment_name: str = "traigent_optimization"
 ) -> TraigentMLflowTracker:
-    """Create MLflow tracker for TraiGent.
+    """Create MLflow tracker for Traigent.
 
     Args:
         tracking_uri: MLflow tracking URI
@@ -466,7 +497,7 @@ def create_mlflow_tracker(
 def enable_mlflow_autolog(
     tracking_uri: str | None = None, experiment_name: str = "traigent_optimization"
 ) -> MLflowOptimizationCallback:
-    """Enable automatic MLflow logging for TraiGent optimizations.
+    """Enable automatic MLflow logging for Traigent optimizations.
 
     Args:
         tracking_uri: MLflow tracking URI
@@ -489,7 +520,7 @@ def log_traigent_optimization(
     experiment_name: str = "traigent_optimization",
     run_name: str | None = None,
 ) -> str:
-    """Log TraiGent optimization result to MLflow.
+    """Log Traigent optimization result to MLflow.
 
     Args:
         result: Optimization result
@@ -529,7 +560,7 @@ def compare_traigent_runs(
     metrics: list[str] | None = None,
     tracking_uri: str | None = None,
 ) -> dict[str, Any]:
-    """Compare multiple TraiGent optimization runs.
+    """Compare multiple Traigent optimization runs.
 
     Args:
         run_ids: MLflow run IDs to compare
@@ -549,7 +580,7 @@ def get_best_traigent_run(
     maximize: bool = True,
     tracking_uri: str | None = None,
 ) -> dict[str, Any] | None:
-    """Get best TraiGent run from experiment.
+    """Get best Traigent run from experiment.
 
     Args:
         experiment_name: Experiment name

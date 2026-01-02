@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-TraiGent Quick Start Script
+Traigent Quick Start Script
 
-One-command setup for new users to get started with TraiGent.
+One-command setup for new users to get started with Traigent.
 Handles dependency checking, environment setup, and runs a demo.
 """
 
@@ -106,18 +106,18 @@ def install_dependencies():
                 print(e.stderr.decode() if e.stderr else "")
                 return False
 
-    # Install TraiGent itself
-    print_info("Installing TraiGent SDK...")
+    # Install Traigent itself
+    print_info("Installing Traigent SDK...")
     try:
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "-e", ".", "--quiet"],
             check=True,
             capture_output=True,
         )
-        print_success("TraiGent SDK installed")
+        print_success("Traigent SDK installed")
         return True
     except subprocess.CalledProcessError as e:
-        print_error("Failed to install TraiGent SDK")
+        print_error("Failed to install Traigent SDK")
         print(e.stderr.decode() if e.stderr else "")
         return False
 
@@ -127,7 +127,7 @@ def verify_imports():
     print_header("Verifying Imports")
 
     required_imports = [
-        ("traigent", "TraiGent SDK"),
+        ("traigent", "Traigent SDK"),
         ("langchain", "LangChain"),
         ("langchain_openai", "LangChain OpenAI"),
         ("langchain_chroma", "LangChain Chroma"),
@@ -158,7 +158,7 @@ def setup_environment():
         print_info(".env file already exists")
     else:
         print_info("Creating .env file with mock credentials...")
-        env_content = """# TraiGent Environment Variables
+        env_content = """# Traigent Environment Variables
 # For mock mode testing (no real API calls)
 TRAIGENT_MOCK_MODE=true
 
@@ -188,7 +188,7 @@ os.environ["TRAIGENT_MOCK_MODE"] = "true"
 import traigent
 from pathlib import Path
 
-print("🚀 TraiGent Quick Demo")
+print("🚀 Traigent Quick Demo")
 print("-" * 40)
 
 # Create a simple optimization function
@@ -214,7 +214,7 @@ print("   - model: ['gpt-3.5-turbo', 'gpt-4']")
 result = analyze_sentiment("This is a good product")
 print(f"\\n🎯 Test result: {result}")
 
-print("\\n✅ TraiGent is working correctly!")
+print("\\n✅ Traigent is working correctly!")
 print("\\n📚 Next steps:")
 print("1. Check out examples in the examples/ directory")
 print("2. Read the documentation at README.md")
@@ -276,8 +276,8 @@ def print_next_steps():
 
 def main():
     """Main entry point."""
-    print_header("🚀 TraiGent Quick Start")
-    print("This script will set up TraiGent and verify everything works.\n")
+    print_header("🚀 Traigent Quick Start")
+    print("This script will set up Traigent and verify everything works.\n")
 
     # Check Python version
     if not check_python_version():

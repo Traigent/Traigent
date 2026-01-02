@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 import pytest
 
-# Import TraiGent components
+# Import Traigent components
 import traigent
 
 # Import our testing infrastructure
@@ -21,8 +21,8 @@ from traigent.api.decorators import optimize
 from traigent.evaluators.base import Dataset, EvaluationExample
 
 
-class MockTraiGentCloudClientWithPrivacyServer:
-    """Mock TraiGent cloud client that uses our privacy server for testing."""
+class MockTraigentCloudClientWithPrivacyServer:
+    """Mock Traigent cloud client that uses our privacy server for testing."""
 
     def __init__(self, privacy_server: DummyPrivacyServer):
         self.server = privacy_server
@@ -84,7 +84,7 @@ def sensitive_eval_dataset():
 def privacy_server_with_mock_client():
     """Create privacy server with mock client."""
     server = DummyPrivacyServer()
-    client = MockTraiGentCloudClientWithPrivacyServer(server)
+    client = MockTraigentCloudClientWithPrivacyServer(server)
     return client, server
 
 
@@ -129,13 +129,6 @@ class TestPrivacyDecoratorE2E:
                     "max_tokens": [200, 300, 400],
                 },
                 execution_mode="privacy",  # Privacy-first mode
-                max_trials=20,
-                optimization_strategy={
-                    "exploration_ratio": 0.3,
-                    "privacy_mode": True,
-                    "min_examples_per_trial": 3,
-                    "max_subset_size": 10,
-                },
             )
             async def process_medical_query(**kwargs):
                 """
@@ -191,7 +184,7 @@ class TestPrivacyDecoratorE2E:
 
             # Patch the cloud client to use our privacy server
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -278,7 +271,6 @@ class TestPrivacyDecoratorE2E:
                     "param2": ["A", "B", "C"],
                 },
                 execution_mode="privacy",
-                max_trials=10,
             )
             def secure_function(input_data):
                 """Function using context-based config access."""
@@ -299,7 +291,7 @@ class TestPrivacyDecoratorE2E:
                 return {"performance": performance}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -345,7 +337,6 @@ class TestPrivacyDecoratorE2E:
                 objectives=["success_rate"],
                 configuration_space={"tolerance": [1, 2, 3, 4, 5]},
                 execution_mode="privacy",
-                max_trials=12,
             )
             def challenging_function(input_data, **config):
                 """Function that may fail on difficult inputs."""
@@ -362,7 +353,7 @@ class TestPrivacyDecoratorE2E:
                 return {"success_rate": success_rate}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -437,12 +428,6 @@ class TestPrivacyDecoratorE2E:
                     "ensemble_size": [1, 3, 5],
                 },
                 execution_mode="privacy",
-                max_trials=35,
-                optimization_strategy={
-                    "min_examples_per_trial": 5,
-                    "max_subset_size": 25,
-                    "adaptive_sampling": True,
-                },
             )
             def financial_risk_assessment(**kwargs):
                 """Assess financial risk using sensitive data locally."""
@@ -493,7 +478,7 @@ class TestPrivacyDecoratorE2E:
                 }
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -572,7 +557,6 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["metric"],
                 configuration_space={"param": [1, 2, 3]},
                 execution_mode="privacy",
-                max_trials=8,
             )
             def sometimes_empty_function(input_data, **config):
                 """Function that sometimes returns empty results."""
@@ -585,7 +569,7 @@ class TestPrivacyIntegrationEdgeCases:
                 return {"metric": 0.8}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 
@@ -629,7 +613,6 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["score"],
                 configuration_space={"x": [1, 2, 3]},
                 execution_mode="privacy",
-                max_trials=6,
             )
             def function_a(**kwargs):
                 return {"score": 0.8 + kwargs.get("x", 1) * 0.05}
@@ -639,13 +622,12 @@ class TestPrivacyIntegrationEdgeCases:
                 objectives=["performance"],
                 configuration_space={"y": [0.1, 0.5, 0.9]},
                 execution_mode="privacy",
-                max_trials=6,
             )
             def function_b(**kwargs):
                 return {"performance": 0.7 + kwargs.get("y", 0.5)}
 
             with patch(
-                "traigent.cloud.client.TraiGentCloudClient"
+                "traigent.cloud.client.TraigentCloudClient"
             ) as mock_cloud_client:
                 mock_cloud_client.return_value = mock_client
 

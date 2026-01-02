@@ -1,12 +1,12 @@
-# 🚀 Welcome to TraiGent SDK - Your AI Optimization Journey Starts Here!
+# 🚀 Welcome to Traigent SDK - Your AI Optimization Journey Starts Here!
 
-I'll walk you through TraiGent SDK step-by-step, as if you're completely new to it. TraiGent is a **zero-code-change optimization platform** that automatically finds the best AI configuration for your specific use case. Think of it as an intelligent tuner that tests different AI models and settings to maximize performance while minimizing costs.
+I'll walk you through Traigent SDK step-by-step, as if you're completely new to it. Traigent is a **zero-code-change optimization platform** that automatically finds the best AI configuration for your specific use case. Think of it as an intelligent tuner that tests different AI models and settings to maximize performance while minimizing costs.
 
 ---
 
-## 📖 Chapter 1: Understanding What TraiGent Does
+## 📖 Chapter 1: Understanding What Traigent Does
 
-### The Core Problem TraiGent Solves
+### The Core Problem Traigent Solves
 
 When building AI applications, you face countless decisions:
 
@@ -15,26 +15,26 @@ When building AI applications, you face countless decisions:
 - How many retrieval results? (k=3 for speed, k=10 for thoroughness)
 - What prompt style works best?
 
-**TraiGent automatically tests all these combinations** to find what works best for YOUR specific task, without you changing your existing code!
+**Traigent automatically tests all these combinations** to find what works best for YOUR specific task, without you changing your existing code!
 
 ### The Magic: Tuned Variables
 
-TraiGent identifies **Tuned Variables** - parameters that affect your AI's behavior and can be optimized:
+Traigent identifies **Tuned Variables** - parameters that affect your AI's behavior and can be optimized:
 
 - ✅ **Model selection** (`gpt-4` vs `gpt-3.5-turbo`)
 - ✅ **Temperature** (creativity level)
 - ✅ **Token limits** (response length)
 - ✅ **Retrieval depth** (RAG k parameter)
 
-### 🧪 Try Example 1: See TraiGent in Action
+### 🧪 Try Example 1: See Traigent in Action
 
-Run the simple optimization example to see how TraiGent tests different configurations.
+Run the simple optimization example to see how Traigent tests different configurations.
 
 ---
 
 ## 📖 Chapter 2: Installation & Setup
 
-### Step 1: Install TraiGent
+### Step 1: Install Traigent
 
 ```bash
 # Clone the repository (recommended for examples)
@@ -45,7 +45,7 @@ cd Traigent
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 
-# Install TraiGent with all integrations
+# Install Traigent with all integrations
 pip install -r requirements/requirements.txt
 pip install -r requirements/requirements-integrations.txt
 pip install -e .
@@ -62,7 +62,7 @@ You should see optimization results showing different configurations being teste
 
 ---
 
-## 📖 Chapter 3: Your First TraiGent Optimization
+## 📖 Chapter 3: Your First Traigent Optimization
 
 ### The Simplest Example - Zero Code Changes!
 
@@ -78,7 +78,7 @@ def answer_question(question: str) -> str:
     return response.content
 ```
 
-Now add TraiGent optimization - **your code stays exactly the same**:
+Now add Traigent optimization - **your code stays exactly the same**:
 
 ```python
 import traigent
@@ -114,7 +114,7 @@ Create `questions.jsonl`:
 import asyncio
 
 async def main():
-    # TraiGent tests different models and temperatures
+    # Traigent tests different models and temperatures
     results = await answer_question.optimize(max_trials=10)
 
     print(f"✨ Best configuration found:")
@@ -128,15 +128,15 @@ asyncio.run(main())
 
 ### 🧪 Try Example 2: Zero Code Changes Demo
 
-Experience how TraiGent optimizes your existing code without any modifications!
+Experience how Traigent optimizes your existing code without any modifications!
 
 ---
 
-## 📖 Chapter 4: Understanding TraiGent's Two Modes
+## 📖 Chapter 4: Understanding Traigent's Two Modes
 
 ### Mode 1: Seamless Mode (Default) - Zero Code Changes
 
-TraiGent **automatically intercepts** your LLM calls and overrides parameters:
+Traigent **automatically intercepts** your LLM calls and overrides parameters:
 
 ```python
 @traigent.optimize(
@@ -144,7 +144,7 @@ TraiGent **automatically intercepts** your LLM calls and overrides parameters:
     configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]}
 )
 def my_agent(text):
-    # TraiGent magically overrides these values during optimization
+    # Traigent magically overrides these values during optimization
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
     return llm.invoke(text)
 ```
@@ -175,7 +175,7 @@ See how to use explicit configuration control for maximum flexibility.
 
 ## 📖 Chapter 5: Multi-Objective Optimization
 
-TraiGent can optimize for multiple goals simultaneously:
+Traigent can optimize for multiple goals simultaneously:
 
 ```python
 @traigent.optimize(
@@ -187,7 +187,7 @@ TraiGent can optimize for multiple goals simultaneously:
     }
 )
 def smart_agent(query):
-    # TraiGent finds the best balance of accuracy, cost, and speed
+    # Traigent finds the best balance of accuracy, cost, and speed
     pass
 ```
 
@@ -199,7 +199,7 @@ def smart_agent(query):
 
 ### 🧪 Try Example 4: Multi-Objective Optimization
 
-Learn how TraiGent balances multiple competing objectives.
+Learn how Traigent balances multiple competing objectives.
 
 ---
 
@@ -218,7 +218,7 @@ Your data never leaves your machine:
 
 ### Cloud Mode - Advanced Algorithms
 
-Use TraiGent's cloud for smarter optimization:
+Use Traigent's cloud for smarter optimization:
 
 ```python
 @traigent.optimize(
@@ -283,7 +283,7 @@ def customer_support(query: str, knowledge_base: list) -> str:
 
 ### 🧪 Try Example 6: RAG Optimization
 
-See how TraiGent optimizes both LLM and retrieval parameters together.
+See how Traigent optimizes both LLM and retrieval parameters together.
 
 ---
 
@@ -484,7 +484,7 @@ async def deploy_optimized_agent():
 
 ### 🧪 Try Example 10: Complete Application
 
-Run a full production-ready example with all TraiGent features combined.
+Run a full production-ready example with all Traigent features combined.
 
 ---
 
@@ -493,7 +493,7 @@ Run a full production-ready example with all TraiGent features combined.
 ### Essential Commands
 
 ```bash
-# Install TraiGent
+# Install Traigent
 pip install -e .
 
 # Run with mock mode
@@ -548,6 +548,6 @@ custom_evaluator=my_evaluator_function
 3. Read the architecture guide for deep understanding
 4. Join the community to share your experiences
 
-**Congratulations!** You've completed the TraiGent walkthrough. You're now ready to optimize your AI applications with data-driven decisions instead of guesswork!
+**Congratulations!** You've completed the Traigent walkthrough. You're now ready to optimize your AI applications with data-driven decisions instead of guesswork!
 
-Remember: TraiGent transforms the way you build AI applications - from guessing parameters to data-driven optimization. Start with your existing code, add the decorator, and watch TraiGent find the perfect configuration for YOUR specific needs! 🎯
+Remember: Traigent transforms the way you build AI applications - from guessing parameters to data-driven optimization. Start with your existing code, add the decorator, and watch Traigent find the perfect configuration for YOUR specific needs! 🎯

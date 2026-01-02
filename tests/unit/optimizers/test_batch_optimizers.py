@@ -271,7 +271,9 @@ class TestMultiObjectiveBatchOptimizer:
 
             assert result.best_config is not None
             assert result.best_score >= 0
-            assert len(result.trials) == 5
+            # Config space has 4 combinations (2x2), so optimization stops after 4
+            # even though 5 trials were requested (budget-saving early termination)
+            assert len(result.trials) == 4
             assert "pareto_frontier" in result.convergence_info
             assert "objectives" in result.convergence_info
             assert result.convergence_info["objectives"] == self.objectives

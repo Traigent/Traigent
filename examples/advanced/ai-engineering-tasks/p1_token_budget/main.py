@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-P1-2: Token Budget Optimization with TraiGent
+P1-2: Token Budget Optimization with Traigent
 ===========================================
 
-This example demonstrates how TraiGent systematically optimizes token allocation
+This example demonstrates how Traigent systematically optimizes token allocation
 across context components to achieve 40-60% cost reduction while maintaining quality.
 
 The optimization explores allocation strategies, truncation methods, and context
@@ -68,7 +68,7 @@ def print_header() -> None:
     console.print(
         Panel.fit(
             "[bold blue]P1-2: Token Budget Optimization[/bold blue]\\n"
-            "[dim]Optimize token allocation across context components with TraiGent[/dim]",
+            "[dim]Optimize token allocation across context components with Traigent[/dim]",
             border_style="blue",
         )
     )
@@ -77,13 +77,13 @@ def print_header() -> None:
 def create_evaluation_function(
     tasks: list, budget_scenario: str = "standard"
 ) -> Callable:
-    """Create the evaluation function for TraiGent optimization."""
+    """Create the evaluation function for Traigent optimization."""
 
     def evaluate_budget_config(**config_params) -> dict[str, float]:
         """
         Evaluate token budget configuration on the task dataset.
 
-        This function is called by TraiGent for each configuration trial.
+        This function is called by Traigent for each configuration trial.
         It tests allocation strategies across different task complexities and budget constraints.
         """
 
@@ -192,14 +192,14 @@ def optimize_token_budget(
     **kwargs,
 ) -> None:
     """
-    TraiGent-optimized function for token budget optimization.
+    Traigent-optimized function for token budget optimization.
 
-    This function will be called by TraiGent with different parameter combinations
+    This function will be called by Traigent with different parameter combinations
     to find the optimal configuration for cost-effective token allocation.
     """
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
-    # TraiGent will inject the optimal parameters and track results
+    # Traigent will inject the optimal parameters and track results
     pass
 
 
@@ -275,7 +275,7 @@ def display_results(
         status = "🚀 Optimized"
 
         table.add_row(
-            "TraiGent Optimized",
+            "Traigent Optimized",
             f"{best_metrics.get('avg_performance', 0):.3f}",
             f"${best_metrics.get('avg_cost_per_query', 0):.6f}",
             f"{best_metrics.get('content_preservation', 0):.1%}",
@@ -504,16 +504,16 @@ async def main() -> None:
     # Run baseline comparisons
     baseline_results = run_baseline_comparison(tasks, budget_scenario)
 
-    # Set up TraiGent evaluation
+    # Set up Traigent evaluation
     create_evaluation_function(tasks, budget_scenario)
 
-    # Configure TraiGent optimization
+    # Configure Traigent optimization
     # traigent.configure(
     #     verbose=True
     # )
     # Note: verbose parameter doesn't exist in traigent.configure() API
 
-    console.print("\\n[yellow]Starting TraiGent optimization...[/yellow]")
+    console.print("\\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print(
         "[dim]This will systematically explore allocation strategies and truncation methods...[/dim]\\n"
     )
@@ -597,7 +597,7 @@ if __name__ == "__main__":
         console.print(f"✅ Generated {len(tasks)} sample token budget tasks\\n")
 
         # Show configuration space
-        console.print("[bold]TraiGent Configuration Space:[/bold]")
+        console.print("[bold]Traigent Configuration Space:[/bold]")
         for key, values in TOKEN_BUDGET_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 

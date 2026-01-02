@@ -53,14 +53,15 @@ class NotAnOptimizer:
 
 
 @pytest.fixture(autouse=True)
-def enable_optuna_flag(monkeypatch):
-    """Ensure Optuna-related registrations are enabled for registry tests."""
+def reset_optuna_flag(monkeypatch):
+    """Reset Optuna flag state for registry tests.
 
-    monkeypatch.setenv("TRAIGENT_OPTUNA_ENABLED", "1")
+    Optuna is enabled by default, so we just ensure consistent state.
+    """
+    monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
     flag_registry.reset()
     yield
     flag_registry.reset()
-    monkeypatch.delenv("TRAIGENT_OPTUNA_ENABLED", raising=False)
 
 
 class TestOptimizerRegistry:

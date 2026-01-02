@@ -1,4 +1,4 @@
-"""Secure cryptographic utilities for TraiGent SDK."""
+"""Secure cryptographic utilities for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Security CONC-Quality-Reliability FUNC-SECURITY REQ-SEC-010 SYNC-CloudHybrid
 

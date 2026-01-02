@@ -6,7 +6,7 @@
 id: MATRIX-OPTIMIZERS
 module_type: optimizer
 requirement: REQ-OPT-ALG-004
-last_updated: "2025-12-01"
+last_updated: "2026-01-01"
 description: "Optimization algorithm implementations and their feature coverage"
 
 base_contract:
@@ -174,24 +174,22 @@ capabilities:
           - suggest_next_trial_async
           - should_stop
           - should_stop_async
-        notes: "Full async support for remote service calls"
+        notes: "Remote service client with async support"
 
-      - class_name: RemoteOptimizer
+  - id: CAP-OPT-CLOUD
+    name: "Cloud Optimizer"
+    description: "Cloud-backed optimizer with async support"
+    implementations:
+      - class_name: CloudOptimizer
         code_unit: traigent/optimizers/cloud_optimizer.py
-        status: partial
-        completion: 0.9
+        status: complete
+        completion: 1.0
         implemented_methods:
           - suggest_next_trial
           - suggest_next_trial_async
           - should_stop
-        missing_methods:
           - should_stop_async
-        gaps:
-          - type: method
-            name: should_stop_async
-            priority: low
-            description: "Async version of should_stop not overridden"
-        notes: "Alternative cloud optimizer, missing async should_stop"
+        notes: "Async API for cloud orchestration"
 
   # ---------- Batch/Parallel Optimizers ----------
   - id: CAP-OPT-PARALLEL-BATCH
@@ -241,18 +239,17 @@ capabilities:
 # Summary Statistics
 summary:
   total_implementations: 15
-  complete: 14
-  partial: 1
+  complete: 15
+  partial: 0
   missing: 0
-  coverage_percentage: 96.7
+  coverage_percentage: 100.0
 
 # Feature Support Matrix
 feature_support:
   async_methods:
     full_support:
       - RemoteOptimizer (traigent/optimizers/remote.py)
-    partial_support:
-      - RemoteOptimizer (traigent/optimizers/cloud_optimizer.py)
+      - CloudOptimizer (traigent/optimizers/cloud_optimizer.py)
     uses_default:
       - RandomSearchOptimizer
       - GridSearchOptimizer
@@ -272,6 +269,7 @@ feature_support:
       - GridSearchOptimizer
       - BayesianOptimizer
       - RemoteOptimizer
+      - CloudOptimizer
       - Batch optimizers
       - InteractiveOptimizer
 
@@ -309,13 +307,3 @@ identified_gaps:
       - GridSearchOptimizer
       - BayesianOptimizer
       - RemoteOptimizer
-
-  - id: GAP-OPT-003
-    type: method
-    name: "Duplicate RemoteOptimizer"
-    priority: high
-    description: "Two different RemoteOptimizer implementations exist"
-    affected:
-      - traigent/optimizers/remote.py
-      - traigent/optimizers/cloud_optimizer.py
-    recommendation: "Consolidate into single implementation"

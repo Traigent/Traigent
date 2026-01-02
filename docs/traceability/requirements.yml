@@ -124,7 +124,7 @@
   name: "Cloud/hybrid sync"
   title: "Cloud and hybrid execution with backend synchronization"
   description: >
-    Support authenticated access to TraiGent/OptiGen backend services for session
+    Support authenticated access to Traigent backend services for session
     creation, trial suggestion/submission, dataset conversion, subset selection, and billing.
   acceptance_criteria:
     - Unified auth manager resolves credentials (env, CLI-stored) and emits secure headers.

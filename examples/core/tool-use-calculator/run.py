@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Math QA with tool-use toggle via parameter injection and strategy API (random + parallel)."""
+"""Math QA with tool-use toggle via parameter injection and parallel config."""
 
 from __future__ import annotations
 
@@ -208,9 +208,16 @@ if __name__ == "__main__":
 
     async def main() -> None:
         workers = 2 if not MOCK else 1
-        strategy = traigent.set_strategy(algorithm="random", parallel_workers=workers)
         trials = 8 if not MOCK else 4
-        r = await solve_math.optimize(max_trials=trials, strategy=strategy)
+        parallel_config = {
+            "trial_concurrency": 2 if workers > 1 else 1,
+            "thread_workers": workers,
+        }
+        r = await solve_math.optimize(
+            max_trials=trials,
+            algorithm="random",
+            parallel_config=parallel_config,
+        )
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

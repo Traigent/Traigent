@@ -111,7 +111,8 @@ class TestPasswordValidation:
         ]
 
         for password in valid_passwords:
-            InputValidator.validate_password(password)  # Should not raise
+            result = InputValidator.validate_password(password)  # Should not raise
+            assert result is None  # Validation returns None on success
 
     def test_password_too_short(self):
         """Test password that's too short."""

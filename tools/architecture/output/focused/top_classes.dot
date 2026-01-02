@@ -10,7 +10,7 @@ digraph TopClasses {
     cls2 [label="BackendIntegratedClient\ncloud.backend_client\n55 methods" fillcolor="#ef9a9a"];
     cls3 [label="CostOptimizationAI\nanalytics.intelligence\n54 methods" fillcolor="#ef9a9a"];
     cls4 [label="OptimizedFunction\ncore.optimized_function\n50 methods" fillcolor="#ef9a9a"];
-    cls5 [label="TraiGentCloudClient\ncloud.client\n46 methods" fillcolor="#ffcc80"];
+    cls5 [label="TraigentCloudClient\ncloud.client\n46 methods" fillcolor="#ffcc80"];
     cls6 [label="RemoteServiceRegistry\noptimizers.service_registry\n40 methods" fillcolor="#ffcc80"];
     cls7 [label="OptimizationResult\napi.types\n28 methods" fillcolor="#fff9c4"];
     cls8 [label="SpecificationGenerator\nagents.specification_generator\n26 methods" fillcolor="#fff9c4"];

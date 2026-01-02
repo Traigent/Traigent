@@ -1,0 +1,4508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Optimizer Validation Tests</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --success: #4ade80;
+            --error: #f87171;
+            --warning: #fbbf24;
+            --running: #60a5fa;
+            --border: #334155;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 320px 1fr 360px;
+            grid-template-rows: auto 1fr;
+            height: 100vh;
+        }
+
+        .container.chatbot-collapsed {
+            grid-template-columns: 320px 1fr 48px;
+        }
+
+        header {
+            grid-column: 1 / -1;
+            background: var(--bg-secondary);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+        }
+
+        header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        header h1 .count {
+            background: var(--bg-tertiary);
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: normal;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .run-controls {
+            display: flex;
+            gap: 0;
+        }
+
+        .run-controls select {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            border-right: none;
+            padding: 8px 12px;
+            border-radius: 6px 0 0 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .run-controls button {
+            border-radius: 0 6px 6px 0;
+        }
+
+        button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .sidebar {
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+            margin-bottom: 12px;
+        }
+
+        .search-box::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .view-controls {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        .view-controls label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--text-secondary);
+        }
+
+        .view-controls select {
+            width: 100%;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .view-subcontrol {
+            display: grid;
+            gap: 6px;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .tree-node {
+            margin-bottom: 2px;
+        }
+
+        .tree-header {
+            display: flex;
+            align-items: center;
+            padding: 6px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        .tree-header:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .tree-header .toggle {
+            width: 16px;
+            color: var(--text-secondary);
+            font-size: 10px;
+        }
+
+        .tree-header .name {
+            flex: 1;
+        }
+
+        .tree-header .count {
+            color: var(--text-secondary);
+            font-size: 11px;
+        }
+
+        .tree-header .pill {
+            font-size: 10px;
+            color: var(--text-secondary);
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            padding: 1px 6px;
+            border-radius: 10px;
+        }
+
+        .tree-header .meta {
+            font-size: 10px;
+            color: var(--text-secondary);
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .tree-children {
+            padding-left: 16px;
+            display: none;
+        }
+
+        .tree-node.expanded > .tree-children {
+            display: block;
+        }
+
+        .test-item {
+            display: flex;
+            align-items: center;
+            padding: 5px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            gap: 6px;
+            position: relative;
+        }
+
+        .test-item:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .test-item.selected {
+            background: var(--accent);
+        }
+
+        /* Gist Tooltip Styles */
+        .gist-tooltip {
+            position: absolute;
+            left: 100%;
+            top: 50%;
+            transform: translateY(-50%);
+            margin-left: 8px;
+            padding: 6px 10px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            white-space: nowrap;
+            z-index: 1000;
+            font-size: 11px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease-in-out;
+        }
+
+        .test-item:hover .gist-tooltip {
+            opacity: 1;
+        }
+
+        .gist-tooltip::before {
+            content: '';
+            position: absolute;
+            left: -6px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 6px solid transparent;
+            border-right-color: var(--border);
+        }
+
+        .gist-tooltip::after {
+            content: '';
+            position: absolute;
+            left: -5px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 5px solid transparent;
+            border-right-color: var(--bg-primary);
+        }
+
+        .gist-tooltip .gist-text {
+            color: var(--text-primary);
+        }
+
+        .gist-tooltip .gist-placeholder {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        .gist-tooltip .gist-pass {
+            color: var(--success);
+            font-weight: 600;
+        }
+
+        .gist-tooltip .gist-fail {
+            color: var(--error);
+            font-weight: 600;
+        }
+
+        .gist-tooltip .gist-pending {
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .status-dot.passed { background: var(--success); }
+        .status-dot.failed { background: var(--error); }
+        .status-dot.running { background: var(--running); animation: pulse 1s infinite; }
+        .status-dot.pending { background: var(--text-secondary); }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .main-content {
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .empty-state {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 60px 20px;
+        }
+
+        .empty-state h2 {
+            font-size: 18px;
+            margin-bottom: 8px;
+        }
+
+        .test-details {
+            max-width: 800px;
+        }
+
+        .test-details h2 {
+            font-size: 16px;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+
+        .test-details .description {
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            font-size: 13px;
+        }
+
+        .detail-section {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+
+        .detail-section h3 {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .detail-item {
+            font-size: 13px;
+        }
+
+        .detail-item .label {
+            color: var(--text-secondary);
+            font-size: 11px;
+            margin-bottom: 2px;
+        }
+
+        .detail-item .value {
+            font-family: 'Monaco', 'Menlo', monospace;
+            word-break: break-all;
+        }
+
+        .actions-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .result-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+        }
+
+        .result-status.passed {
+            background: rgba(74, 222, 128, 0.1);
+            border: 1px solid var(--success);
+        }
+
+        .result-status.failed {
+            background: rgba(248, 113, 113, 0.1);
+            border: 1px solid var(--error);
+        }
+
+        .result-status.running {
+            background: rgba(96, 165, 250, 0.1);
+            border: 1px solid var(--running);
+        }
+
+        .result-status .icon {
+            font-size: 20px;
+        }
+
+        .result-status .text {
+            flex: 1;
+        }
+
+        .result-status .duration {
+            color: var(--text-secondary);
+            font-size: 12px;
+        }
+
+        .error-output {
+            background: var(--bg-primary);
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+            color: var(--error);
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 2px 6px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 11px;
+            margin-right: 4px;
+        }
+
+        /* Global running indicator */
+        .global-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: rgba(96, 165, 250, 0.15);
+            border: 1px solid var(--running);
+            border-radius: 6px;
+            font-size: 12px;
+            color: var(--running);
+        }
+
+        .global-status .spinner {
+            width: 14px;
+            height: 14px;
+            margin-right: 0;
+        }
+
+        .global-status.hidden {
+            display: none;
+        }
+
+        /* Test description styling */
+        .test-description {
+            background: var(--bg-tertiary);
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 16px;
+            border-left: 3px solid var(--accent);
+        }
+
+        .test-description .what {
+            font-size: 14px;
+            margin-bottom: 8px;
+            color: var(--text-primary);
+        }
+
+        .test-description .context {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+
+        .test-description .full-doc {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid var(--border);
+            white-space: pre-wrap;
+            font-family: inherit;
+        }
+
+        /* Test gist styling */
+        .test-gist {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.12), rgba(233, 69, 96, 0.12));
+            border: 1px solid var(--border);
+            border-left: 3px solid var(--accent);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 10px 0 16px;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+
+        .test-gist.passed { border-left-color: var(--success); }
+        .test-gist.failed { border-left-color: var(--error); }
+        .test-gist.running { border-left-color: var(--running); }
+        .test-gist.pending { border-left-color: var(--border); }
+
+        /* Button with spinner */
+        button.running {
+            position: relative;
+            padding-left: 32px;
+        }
+
+        button.running::before {
+            content: '';
+            position: absolute;
+            left: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        /* Test summary table */
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        .summary-table th,
+        .summary-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .summary-table th {
+            background: var(--bg-primary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .summary-table td {
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .summary-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .summary-table .cell-label {
+            color: var(--text-secondary);
+            font-family: inherit;
+            font-size: 11px;
+        }
+
+        .summary-table .match {
+            color: var(--success);
+        }
+
+        .summary-table .mismatch {
+            color: var(--error);
+        }
+
+        .summary-table .pending-value {
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        /* ========== Grouped Review View Styles ========== */
+
+        /* Group cards in sidebar */
+        .group-card {
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            overflow: hidden;
+        }
+
+        .group-card.expanded {
+            border-color: var(--accent);
+        }
+
+        .group-header {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            cursor: pointer;
+            gap: 8px;
+            transition: background 0.15s;
+        }
+
+        .group-header:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        .group-header .toggle {
+            width: 16px;
+            color: var(--text-secondary);
+            font-size: 10px;
+            flex-shrink: 0;
+        }
+
+        .group-header .group-name {
+            flex: 1;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .group-header .group-stats {
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        /* Confidence indicators */
+        .confidence-badge {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .confidence-badge.high {
+            background: rgba(74, 222, 128, 0.2);
+            color: var(--success);
+            border: 1px solid var(--success);
+        }
+
+        .confidence-badge.review {
+            background: rgba(248, 113, 113, 0.2);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .confidence-badge.partial {
+            background: rgba(251, 191, 36, 0.2);
+            color: var(--warning);
+            border: 1px solid var(--warning);
+        }
+
+        .confidence-badge.not-run {
+            background: rgba(160, 160, 160, 0.2);
+            color: var(--text-secondary);
+            border: 1px solid var(--text-secondary);
+        }
+
+        /* Group content when expanded */
+        .group-content {
+            display: none;
+            border-top: 1px solid var(--border);
+            padding: 12px;
+            background: var(--bg-secondary);
+        }
+
+        .group-card.expanded .group-content {
+            display: block;
+        }
+
+        /* Pattern description */
+        .pattern-description {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.1), rgba(233, 69, 96, 0.1));
+            border-left: 3px solid var(--accent);
+            padding: 10px 14px;
+            margin-bottom: 12px;
+            border-radius: 0 6px 6px 0;
+            font-size: 12px;
+            color: var(--text-primary);
+            line-height: 1.4;
+        }
+
+        /* Sample tests section */
+        .sample-tests {
+            margin-bottom: 12px;
+        }
+
+        .sample-tests-header {
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .sample-test-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            cursor: pointer;
+            transition: border-color 0.15s;
+        }
+
+        .sample-test-card:hover {
+            border-color: var(--accent);
+        }
+
+        .sample-test-card.selected {
+            border-color: var(--accent);
+            background: rgba(233, 69, 96, 0.1);
+        }
+
+        .sample-test-card .test-name {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+
+        .sample-test-card .test-gist {
+            font-size: 11px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            color: var(--text-secondary);
+            padding-left: 14px;
+        }
+
+        /* Variations table */
+        .variations-section {
+            margin-top: 8px;
+        }
+
+        .variations-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 10px;
+            text-transform: uppercase;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        .variations-header:hover {
+            color: var(--text-primary);
+        }
+
+        .variations-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+            background: var(--bg-primary);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .variations-table th,
+        .variations-table td {
+            padding: 6px 10px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .variations-table th {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            font-size: 9px;
+            letter-spacing: 0.5px;
+        }
+
+        .variations-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .variations-table tr.clickable {
+            cursor: pointer;
+            position: relative;
+        }
+
+        .variations-table tr.clickable:hover {
+            background: rgba(255, 255, 255, 0.05);
+        }
+
+        /* Enhanced tooltip styling for variation rows */
+        .variations-table tr.clickable[title]:hover::after {
+            content: attr(title);
+            position: absolute;
+            left: 0;
+            bottom: 100%;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            z-index: 1000;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            margin-bottom: 4px;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .variations-table .variation-name {
+            font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .variations-table .sample-marker {
+            color: var(--accent);
+            margin-left: 4px;
+        }
+
+        .variations-table .status-cell {
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .variations-table .status-cell.passed { color: var(--success); }
+        .variations-table .status-cell.failed { color: var(--error); }
+        .variations-table .status-cell.pending { color: var(--text-secondary); }
+
+        /* Run group button */
+        .run-group-btn {
+            padding: 4px 10px;
+            font-size: 10px;
+            background: var(--bg-primary);
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .run-group-btn:hover:not(.running) {
+            opacity: 0.8;
+        }
+        .run-group-btn.running {
+            background: var(--warning);
+            color: var(--bg-primary);
+            cursor: wait;
+            opacity: 0.7;
+        }
+        .run-group-btn:disabled {
+            cursor: not-allowed;
+        }
+
+        /* Grouped view main content panel */
+        .grouped-main-panel {
+            padding: 0;
+        }
+
+        .grouped-main-panel .group-detail-card {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+
+        .grouped-main-panel .group-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .grouped-main-panel .group-meta {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+        }
+
+        /* ========== End Grouped Review View Styles ========== */
+
+        /* ========== Chatbot Sidebar Styles ========== */
+        .chatbot-panel {
+            display: flex;
+            flex-direction: column;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            height: 100%;
+            overflow: hidden;
+        }
+
+        .chatbot-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .chatbot-header h3 {
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .chatbot-header h3 .icon {
+            font-size: 16px;
+        }
+
+        .chatbot-toggle {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 16px;
+        }
+
+        .chatbot-toggle:hover {
+            color: var(--text-primary);
+            background: none;
+        }
+
+        .chatbot-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .chat-message {
+            max-width: 95%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .chat-message.user {
+            align-self: flex-end;
+            background: var(--accent);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .chat-message.assistant {
+            align-self: flex-start;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-message.system {
+            align-self: center;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 11px;
+            text-align: center;
+            padding: 6px;
+        }
+
+        .chat-message.error {
+            background: rgba(248, 113, 113, 0.2);
+            color: var(--error);
+            border: 1px solid var(--error);
+        }
+
+        .chat-message pre {
+            background: var(--bg-primary);
+            padding: 8px 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 11px;
+            margin: 8px 0 0;
+        }
+
+        .chat-message code {
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+        }
+
+        .chat-typing {
+            display: flex;
+            gap: 4px;
+            padding: 10px 14px;
+            align-self: flex-start;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            border-bottom-left-radius: 4px;
+        }
+
+        .chat-typing span {
+            width: 8px;
+            height: 8px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+            animation: typingBounce 1.4s infinite;
+        }
+
+        .chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+        .chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typingBounce {
+            0%, 80%, 100% { transform: translateY(0); }
+            40% { transform: translateY(-6px); }
+        }
+
+        .chatbot-input-area {
+            display: flex;
+            gap: 8px;
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-top: 1px solid var(--border);
+        }
+
+        .chatbot-input {
+            flex: 1;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: var(--text-primary);
+            font-size: 13px;
+            resize: none;
+            min-height: 42px;
+            max-height: 120px;
+            font-family: inherit;
+        }
+
+        .chatbot-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .chatbot-input::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .chatbot-send {
+            background: var(--accent);
+            border: none;
+            color: white;
+            padding: 10px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .chatbot-send:hover {
+            background: #d63d54;
+        }
+
+        .chatbot-send:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Collapsed state */
+        .chatbot-panel.collapsed {
+            width: 48px;
+        }
+
+        .chatbot-panel.collapsed .chatbot-header h3 span,
+        .chatbot-panel.collapsed .chatbot-messages,
+        .chatbot-panel.collapsed .chatbot-input-area {
+            display: none;
+        }
+
+        .chatbot-panel.collapsed .chatbot-header {
+            flex-direction: column;
+            padding: 12px 8px;
+            height: 100%;
+        }
+
+        .chatbot-panel.collapsed .chatbot-header h3 {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            margin-top: 12px;
+        }
+
+        .chatbot-panel.collapsed .chatbot-toggle {
+            transform: rotate(180deg);
+        }
+
+        /* Quick action chips */
+        .chat-quick-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .quick-action-chip {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 4px 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-action-chip:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--accent);
+        }
+
+        /* Tool call indicator */
+        .tool-call-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+            color: var(--text-secondary);
+            margin-top: 6px;
+            padding-top: 6px;
+            border-top: 1px solid var(--border);
+        }
+
+        .tool-call-indicator .tool-icon {
+            font-size: 12px;
+        }
+
+        /* ========== End Chatbot Sidebar Styles ========== */
+    
+        /* Clickable file paths */
+        .file-link {
+            color: var(--accent);
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-style: dotted;
+        }
+
+        .file-link:hover {
+            text-decoration-style: solid;
+            font-weight: 500;
+        }
+
+        /* Code viewer modal */
+        .code-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .code-modal.active {
+            display: flex;
+        }
+
+        .code-modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            width: 90%;
+            height: 90%;
+            max-width: 1400px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .code-modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .code-modal-header h2 {
+            font-size: 14px;
+            font-weight: 600;
+            margin: 0;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .code-modal-body {
+            flex: 1;
+            overflow: auto;
+            padding: 0;
+        }
+
+        .code-viewer {
+            font-family: 'SF Mono', Monaco, Consolas, 'Courier New', monospace;
+            font-size: 13px;
+            line-height: 1.6;
+            padding: 20px;
+            white-space: pre;
+            tab-size: 4;
+        }
+
+        .code-line {
+            display: block;
+        }
+
+        .code-line.highlight {
+            background: rgba(255, 200, 0, 0.15);
+            border-left: 3px solid var(--accent);
+            padding-left: 17px;
+            margin-left: -20px;
+        }
+
+        .code-line-num {
+            display: inline-block;
+            width: 50px;
+            color: var(--text-tertiary);
+            text-align: right;
+            margin-right: 20px;
+            user-select: none;
+        }
+
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>
+                Optimizer Validation Tests
+                <span class="count" id="test-count">Loading...</span>
+            </h1>
+            <div class="header-actions">
+                <div class="global-status hidden" id="global-status">
+                    <div class="spinner"></div>
+                    <span id="global-status-text">Running tests...</span>
+                </div>
+                <a href="coverage_analysis.html" style="text-decoration: none;"><button>Coverage Analysis</button></a>
+                <a href="failed_tests.html" style="text-decoration: none;"><button style="border-color: var(--error);">❌ Failed</button></a>
+                <button onclick="refreshTests()">Refresh</button>
+                <div class="run-controls">
+                    <select id="run-mode-select">
+                        <option value="all">Run All</option>
+                        <option value="failed">Run Failed</option>
+                        <option value="not-run">Run Not Run</option>
+                    </select>
+                    <button class="primary" id="run-all-btn" onclick="runSelectedMode()">Run</button>
+                </div>
+            </div>
+        </header>
+
+        <aside class="sidebar">
+            <input type="text" class="search-box" placeholder="Search tests..." id="search-input" oninput="filterTests()">
+            <div class="view-controls">
+                <label for="tree-view">Tree View</label>
+                <select id="tree-view" onchange="handleViewChange()">
+                    <option value="file">File Tree</option>
+                    <option value="grouped">Grouped Review</option>
+                    <option value="kg_dimension">KG: Dimension -> Value</option>
+                    <option value="kg_intent">KG: Intent</option>
+                    <option value="kg_outcome">KG: Expected Outcome</option>
+                    <option value="kg_pairs">KG: Critical Pairs</option>
+                </select>
+                <div id="dimension-filter" class="view-subcontrol hidden">
+                    <label for="dimension-select">Dimension Focus</label>
+                    <select id="dimension-select" onchange="renderTree()"></select>
+                </div>
+                <div id="pair-filter" class="view-subcontrol hidden">
+                    <label for="pair-select">Critical Pair</label>
+                    <select id="pair-select" onchange="renderTree()"></select>
+                </div>
+            </div>
+            <div id="test-tree">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading tests...
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content" id="main-content">
+            <div class="empty-state">
+                <h2>Select a test</h2>
+                <p>Choose a test from the sidebar to view details</p>
+            </div>
+        </main>
+
+        <!-- Chatbot Sidebar -->
+        <aside class="chatbot-panel" id="chatbot-panel">
+            <div class="chatbot-header">
+                <h3><span class="icon">🤖</span><span>Test Assistant</span></h3>
+                <button class="chatbot-toggle" onclick="toggleChatbot()" title="Toggle chatbot">◀</button>
+            </div>
+            <div class="chat-quick-actions">
+                <span class="quick-action-chip" onclick="sendQuickAction('Show test stats')">📊 Stats</span>
+                <span class="quick-action-chip" onclick="sendQuickAction('Show failed tests')">❌ Failed</span>
+                <span class="quick-action-chip" onclick="sendQuickAction('What coverage gaps exist?')">🔍 Gaps</span>
+                <span class="quick-action-chip" onclick="sendQuickAction('List dimensions')">📋 Dims</span>
+            </div>
+            <div class="chatbot-messages" id="chatbot-messages">
+                <div class="chat-message system">
+                    Ask questions about the test suite, coverage, or specific tests.
+                </div>
+            </div>
+            <div class="chatbot-input-area">
+                <textarea
+                    class="chatbot-input"
+                    id="chatbot-input"
+                    placeholder="Ask about tests..."
+                    rows="1"
+                    onkeydown="handleChatKeydown(event)"
+                ></textarea>
+                <button class="chatbot-send" id="chatbot-send" onclick="sendChatMessage()">➤</button>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        // State
+        let allTests = [];
+        let testTree = {};
+        let selectedTest = null;
+        let testResults = {};
+        let currentJobId = null;
+        let runningTarget = null;  // Track which target is running (test id or category)
+        let expandedNodes = new Set();  // Track which nodes are expanded
+        let graphData = null;
+        let kgById = new Map();
+        let kgByName = new Map();
+        let kgByBaseId = new Map();
+        const urlParams = new URLSearchParams(window.location.search);
+        const initialSearch = urlParams.get('search');
+        const initialTestId = urlParams.get('test');
+
+        // API calls
+        async function fetchTests() {
+            try {
+                const response = await fetch('/api/tests');
+                const data = await response.json();
+                allTests = data.tests;
+                testTree = data.tree;
+                document.getElementById('test-count').textContent = `${data.count} tests`;
+                if (initialSearch) {
+                    document.getElementById('search-input').value = initialSearch;
+                }
+                renderTree();
+                if (initialTestId) {
+                    // Try exact match first
+                    let match = allTests.find(t => t.id === initialTestId || t.name === initialTestId);
+
+                    // If no exact match, try flexible matching for parametrized tests
+                    // knowledge_graph.py may generate IDs with different param formats
+                    if (!match) {
+                        // Extract base ID and parameters from the requested test ID
+                        const bracketMatch = initialTestId.match(/^(.+?)\[(.+)\]$/);
+                        if (bracketMatch) {
+                            const baseId = bracketMatch[1];
+                            const params = bracketMatch[2];
+                            // Extract just the values (ignore keys like "key=value" vs just "value")
+                            const paramValues = params.split(/[-,]/).map(p =>
+                                p.includes('=') ? p.split('=')[1] : p
+                            ).sort();
+
+                            match = allTests.find(t => {
+                                const testBracketMatch = t.id.match(/^(.+?)\[(.+)\]$/);
+                                if (!testBracketMatch) return false;
+
+                                // Check if base IDs match
+                                if (testBracketMatch[1] !== baseId) return false;
+
+                                // Check if param values match (regardless of format)
+                                const testParams = testBracketMatch[2];
+                                const testValues = testParams.split(/[-,]/).map(p =>
+                                    p.includes('=') ? p.split('=')[1] : p
+                                ).sort();
+
+                                return paramValues.length === testValues.length &&
+                                    paramValues.every((v, i) => v === testValues[i]);
+                            });
+                        }
+                    }
+
+                    if (match) {
+                        selectTest(match.id);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch tests:', error);
+                document.getElementById('test-tree').innerHTML =
+                    '<div class="empty-state"><p>Failed to load tests</p></div>';
+            }
+        }
+
+        async function fetchGraphData() {
+            try {
+                const response = await fetch('graph_data.json', { cache: 'no-store' });
+                if (!response.ok) {
+                    throw new Error(`Graph data unavailable (${response.status})`);
+                }
+                graphData = await response.json();
+                indexGraphData();
+                populateKgControls();
+                renderTree();
+            } catch (error) {
+                console.warn('Graph data not loaded:', error);
+                graphData = null;
+                populateKgControls();
+            }
+        }
+
+        function indexGraphData() {
+            kgById = new Map();
+            kgByName = new Map();
+            kgByBaseId = new Map();
+            if (!graphData?.tests) return;
+
+            for (const test of graphData.tests) {
+                if (test.id) {
+                    kgById.set(test.id, test);
+                    const base = normalizeNodeId(test.id);
+                    if (!kgByBaseId.has(base)) kgByBaseId.set(base, []);
+                    kgByBaseId.get(base).push(test);
+                }
+                if (test.name && !kgByName.has(test.name)) {
+                    kgByName.set(test.name, test);
+                }
+            }
+        }
+
+        function populateKgControls() {
+            const dimSelect = document.getElementById('dimension-select');
+            const pairSelect = document.getElementById('pair-select');
+            if (!dimSelect || !pairSelect) return;
+
+            if (!graphData) {
+                dimSelect.innerHTML = '';
+                pairSelect.innerHTML = '';
+                return;
+            }
+
+            const dims = Object.keys(graphData.dimensions || {}).sort();
+            const currentDim = dimSelect.value;
+            dimSelect.innerHTML = dims.map(dim => `<option value="${dim}">${dim}</option>`).join('');
+            if (currentDim && dims.includes(currentDim)) {
+                dimSelect.value = currentDim;
+            } else if (dims.length) {
+                dimSelect.value = dims[0];
+            }
+
+            const pairs = graphData.critical_pairs || [];
+            const currentPair = pairSelect.value;
+            pairSelect.innerHTML = pairs
+                .map(pair => `<option value="${pair[0]}|${pair[1]}">${pair[0]} x ${pair[1]}</option>`)
+                .join('');
+            if (currentPair && pairs.some(pair => `${pair[0]}|${pair[1]}` === currentPair)) {
+                pairSelect.value = currentPair;
+            } else if (pairs.length) {
+                pairSelect.value = `${pairs[0][0]}|${pairs[0][1]}`;
+            }
+        }
+
+        function normalizeNodeId(nodeId) {
+            if (!nodeId) return '';
+            return nodeId.split('[')[0].split('#')[0];
+        }
+
+        function paramsMatch(kgParams, testParams) {
+            if (!kgParams || !testParams) return false;
+            const kgKeys = Object.keys(kgParams);
+            const testKeys = Object.keys(testParams);
+            if (kgKeys.length === 0 || testKeys.length === 0) return false;
+            if (kgKeys.length !== testKeys.length) return false;
+            return kgKeys.every(key => String(kgParams[key]) === String(testParams[key]));
+        }
+
+        function getKgTest(test) {
+            if (!graphData || !test) return null;
+            const direct = kgById.get(test.id);
+            if (direct) return direct;
+
+            const byName = kgByName.get(test.name);
+            if (byName) return byName;
+
+            const base = normalizeNodeId(test.id);
+            const candidates = kgByBaseId.get(base);
+            if (!candidates || candidates.length === 0) return null;
+            if (candidates.length === 1) return candidates[0];
+
+            if (test.params) {
+                const paramMatch = candidates.find(candidate => paramsMatch(candidate.params, test.params));
+                if (paramMatch) return paramMatch;
+            }
+
+            return null;
+        }
+
+        async function fetchResults() {
+            try {
+                const response = await fetch('/api/results');
+                if (response.ok) {
+                    const data = await response.json();
+                    processResults(data);
+                }
+            } catch (error) {
+                console.error('Failed to fetch results:', error);
+            }
+        }
+
+        async function fetchPersistentResults() {
+            // Load stored test results that survive page refresh
+            try {
+                const response = await fetch('/api/persistent-results');
+                if (response.ok) {
+                    const data = await response.json();
+                    // Merge persistent results into testResults
+                    let loadedCount = 0;
+                    for (const [nodeid, result] of Object.entries(data)) {
+                        testResults[nodeid] = result;
+                        loadedCount++;
+                    }
+                    if (loadedCount > 0) {
+                        console.log(`[persistent] Loaded ${loadedCount} stored test results`);
+                        renderTree();
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch persistent results:', error);
+            }
+        }
+
+        function processResults(data) {
+            if (data.tests) {
+                // Merge new results with existing ones (preserves history across runs)
+                let processedCount = 0;
+                for (const test of data.tests) {
+                    testResults[test.nodeid] = {
+                        outcome: test.outcome,
+                        duration: test.call?.duration || test.duration,
+                        longrepr: test.call?.longrepr || test.longrepr,
+                        evidence: test.evidence || null  // Store evidence from logs
+                    };
+                    processedCount++;
+                }
+                console.log(`Processed ${processedCount} test results`);
+
+                // Force rebuild of groups by clearing cache
+                testGroups = [];
+
+                renderTree();
+                if (selectedTest) {
+                    showTestDetails(selectedTest);
+                }
+            }
+        }
+
+        // Track which streaming results we've already processed
+        let lastStreamingCount = 0;
+
+        function processStreamingResults(streaming) {
+            // Process streaming results as tests complete (real-time updates)
+            if (!streaming.tests || streaming.tests.length === 0) return;
+
+            // Only process new tests (avoid re-processing)
+            const newTests = streaming.tests.slice(lastStreamingCount);
+            if (newTests.length === 0) return;
+
+            lastStreamingCount = streaming.tests.length;
+
+            let processedCount = 0;
+            for (const test of newTests) {
+                // Streaming format uses nodeid directly
+                testResults[test.nodeid] = {
+                    outcome: test.outcome,
+                    duration: test.duration,
+                    longrepr: test.longrepr || null,
+                    evidence: null  // Evidence comes in final results
+                };
+                processedCount++;
+            }
+
+            console.log(`[streaming] Processed ${processedCount} new test results (total: ${streaming.completed_count})`);
+        }
+
+        function resetStreamingState() {
+            // Reset streaming tracking when starting a new test run
+            lastStreamingCount = 0;
+        }
+
+        async function runTest(testId) {
+            try {
+                pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
+                runningTarget = testId;  // Track which specific test is running
+                setRunningState(true, `Running: ${testId.split('::').pop()}`);
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: testId })
+                });
+                const data = await response.json();
+                currentJobId = data.job_id;
+                runStartTime = Date.now();
+                pollJobStatus(data.job_id);
+            } catch (error) {
+                console.error('Failed to start test:', error);
+                runningTarget = null;
+                setRunningState(false);
+            }
+        }
+
+        async function runAllTests() {
+            try {
+                pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
+                runningTarget = 'tests/optimizer_validation/';  // Running all tests
+                setRunningState(true, 'Running all tests...');
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: 'tests/optimizer_validation/' })
+                });
+                const data = await response.json();
+                currentJobId = data.job_id;
+                runStartTime = Date.now();
+                pollJobStatus(data.job_id);
+            } catch (error) {
+                console.error('Failed to start tests:', error);
+                runningTarget = null;
+                setRunningState(false);
+            }
+        }
+
+        // Get list of failed test IDs
+        function getFailedTests() {
+            const failed = [];
+            for (const [testId, result] of Object.entries(testResults)) {
+                if (result.outcome === 'failed') {
+                    failed.push(testId);
+                }
+            }
+            return failed;
+        }
+
+        // Get list of tests that haven't been run yet
+        function getNotRunTests() {
+            const notRun = [];
+            const allTestIds = new Set(allTests.map(t => t.id));
+            const ranTestIds = new Set(Object.keys(testResults));
+
+            for (const testId of allTestIds) {
+                if (!ranTestIds.has(testId)) {
+                    notRun.push(testId);
+                }
+            }
+            return notRun;
+        }
+
+        // Run tests based on selected mode
+        async function runSelectedMode() {
+            const mode = document.getElementById('run-mode-select').value;
+
+            if (mode === 'all') {
+                runAllTests();
+                return;
+            }
+
+            let testIds = [];
+            let message = '';
+
+            if (mode === 'failed') {
+                testIds = getFailedTests();
+                message = `Running ${testIds.length} failed tests...`;
+                if (testIds.length === 0) {
+                    alert('No failed tests to run.');
+                    return;
+                }
+            } else if (mode === 'not-run') {
+                testIds = getNotRunTests();
+                message = `Running ${testIds.length} not-run tests...`;
+                if (testIds.length === 0) {
+                    alert('All tests have been run.');
+                    return;
+                }
+            }
+
+            try {
+                pollCount = 0;
+                resetStreamingState();
+                runningTarget = 'tests/optimizer_validation/';  // Running subset
+                setRunningState(true, message);
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tests: testIds })
+                });
+                const data = await response.json();
+                currentJobId = data.job_id;
+                runStartTime = Date.now();
+                pollJobStatus(data.job_id);
+            } catch (error) {
+                console.error('Failed to start tests:', error);
+                runningTarget = null;
+                setRunningState(false);
+            }
+        }
+
+        async function runCategory(categoryPath) {
+            try {
+                pollCount = 0;  // Reset poll count for new job
+                resetStreamingState();  // Reset streaming tracking
+                runningTarget = `tests/optimizer_validation/${categoryPath}/`;  // Running category
+                setRunningState(true, `Running: ${categoryPath}/`);
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target: `tests/optimizer_validation/${categoryPath}/` })
+                });
+                const data = await response.json();
+                currentJobId = data.job_id;
+                runStartTime = Date.now();
+                pollJobStatus(data.job_id);
+            } catch (error) {
+                console.error('Failed to start tests:', error);
+                runningTarget = null;
+                setRunningState(false);
+            }
+        }
+
+        let runStartTime = null;
+
+        function setRunningState(running, message = 'Running tests...') {
+            const globalStatus = document.getElementById('global-status');
+            const globalStatusText = document.getElementById('global-status-text');
+            const runAllBtn = document.getElementById('run-all-btn');
+
+            if (running) {
+                globalStatus.classList.remove('hidden');
+                globalStatusText.textContent = message;
+                runAllBtn.disabled = true;
+                runAllBtn.classList.add('running');
+                runAllBtn.textContent = 'Running...';
+            } else {
+                globalStatus.classList.add('hidden');
+                runAllBtn.disabled = false;
+                runAllBtn.classList.remove('running');
+                runAllBtn.textContent = 'Run All Tests';
+            }
+        }
+
+        let pollCount = 0;
+        const MAX_POLL_COUNT = 600;  // 10 minutes at 1 poll/second
+
+        async function pollJobStatus(jobId) {
+            pollCount++;
+            if (pollCount > MAX_POLL_COUNT) {
+                console.error('[poll] Max poll count reached, stopping');
+                currentJobId = null;
+                runningTarget = null;
+                setRunningState(false);
+                renderTree();
+                if (selectedTest) {
+                    showTestDetails(selectedTest);
+                }
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/run/status/${jobId}`);
+
+                // Handle 404 - job not found (server may have restarted)
+                if (response.status === 404) {
+                    console.warn('Job not found (server may have restarted):', jobId);
+                    currentJobId = null;
+                    runningTarget = null;
+                    setRunningState(false);
+                    renderTree();
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                    return;
+                }
+
+                const data = await response.json();
+
+                // Update elapsed time in status (with streaming progress if available)
+                if (runStartTime && data.status === 'running') {
+                    const elapsed = ((Date.now() - runStartTime) / 1000).toFixed(1);
+                    const statusText = document.getElementById('global-status-text');
+                    if (statusText) {
+                        // Show streaming progress if available
+                        if (data.streaming && data.streaming.completed_count > 0) {
+                            const passed = data.streaming.passed || 0;
+                            const failed = data.streaming.failed || 0;
+                            const total = data.streaming.completed_count || 0;
+                            statusText.textContent = `Running... ${total} done (${passed} ✓, ${failed} ✗) - ${elapsed}s`;
+                        } else {
+                            statusText.textContent = `Running... (${elapsed}s)`;
+                        }
+                    }
+                }
+
+                if (data.status === 'completed') {
+                    try {
+                        if (data.results) {
+                            processResults(data.results);
+                        } else {
+                            // Fallback: fetch results from server if not in response
+                            await fetchResults();
+                        }
+                    } catch (processError) {
+                        console.error('Error processing results:', processError);
+                    }
+                    // Always clear running state, even if processing fails
+                    currentJobId = null;
+                    runningTarget = null;
+                    setRunningState(false);
+                    // Double render to ensure grouped view updates
+                    testGroups = [];
+                    renderTree();
+                    // Refresh main panel to clear "Running..." state
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                } else if (data.status === 'running') {
+                    // Process streaming results if available
+                    if (data.streaming && data.streaming.tests && data.streaming.tests.length > 0) {
+                        processStreamingResults(data.streaming);
+                    }
+                    // Update UI - show test details which handles both running and completed states
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                    renderTree(); // Update tree to show running dots and completed tests
+                    setTimeout(() => pollJobStatus(jobId), 1000);
+                } else if (data.status === 'error' || data.error) {
+                    console.error('Job failed:', data.error);
+                    currentJobId = null;
+                    runningTarget = null;
+                    setRunningState(false);
+                    renderTree();
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                } else if (data.status === 'pending') {
+                    // Job is queued but not started yet
+                    setTimeout(() => pollJobStatus(jobId), 500);
+                } else {
+                    // Unknown status - stop polling to avoid infinite loop
+                    console.warn('Unknown job status:', data.status);
+                    currentJobId = null;
+                    runningTarget = null;
+                    setRunningState(false);
+                    renderTree();
+                    if (selectedTest) {
+                        showTestDetails(selectedTest);
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to poll status:', error);
+                currentJobId = null;
+                runningTarget = null;
+                setRunningState(false);
+                renderTree();
+                if (selectedTest) {
+                    showTestDetails(selectedTest);
+                }
+            }
+        }
+
+        // Rendering
+        function getTreeView() {
+            const select = document.getElementById('tree-view');
+            return select ? select.value : 'file';
+        }
+
+        function applyViewMode() {
+            const view = getTreeView();
+            const dimFilter = document.getElementById('dimension-filter');
+            const pairFilter = document.getElementById('pair-filter');
+            if (dimFilter) dimFilter.classList.toggle('hidden', view !== 'kg_dimension');
+            if (pairFilter) pairFilter.classList.toggle('hidden', view !== 'kg_pairs');
+        }
+
+        function handleViewChange() {
+            applyViewMode();
+            const view = getTreeView();
+            localStorage.setItem('testTreeView', view);
+            renderTree();
+        }
+
+        function getFilteredTests() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+            if (!searchTerm) return allTests.slice();
+            return allTests.filter(t => matchesSearch(t, searchTerm));
+        }
+
+        function renderTree() {
+            const view = getTreeView();
+            applyViewMode();
+            if (view === 'file') {
+                renderFileTree();
+                return;
+            }
+            if (view === 'grouped') {
+                renderGroupedView();
+                return;
+            }
+            if (!graphData) {
+                renderGraphMissing();
+                return;
+            }
+            if (view === 'kg_dimension') {
+                renderKgDimensionTree();
+            } else if (view === 'kg_intent') {
+                renderKgIntentTree();
+            } else if (view === 'kg_outcome') {
+                renderKgOutcomeTree();
+            } else if (view === 'kg_pairs') {
+                renderKgPairTree();
+            } else {
+                renderFileTree();
+            }
+        }
+
+        function renderFileTree() {
+            const container = document.getElementById('test-tree');
+            const searchTerm = document.getElementById('search-input').value.toLowerCase();
+
+            // Note: Auto-expand is now handled in selectTest() to avoid
+            // re-expanding on every render which prevents manual collapse
+
+            let html = '';
+
+            for (const [categoryName, category] of Object.entries(testTree.children || {})) {
+                const categoryTests = getCategoryTests(category);
+                const filteredTests = searchTerm
+                    ? categoryTests.filter(t => matchesSearch(t, searchTerm))
+                    : categoryTests;
+
+                if (filteredTests.length === 0 && searchTerm) continue;
+
+                const stats = getCategoryStats(filteredTests);
+                const catNodeId = `cat:${categoryName}`;
+                const isExpanded = expandedNodes.has(catNodeId);
+                html += `
+                    <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${catNodeId}">
+                        <div class="tree-header" onclick="toggleNodeById('${catNodeId}')">
+                            <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                            <span class="name">${categoryName}</span>
+                            <span class="count">${stats.passed}/${filteredTests.length}</span>
+                            <button onclick="event.stopPropagation(); runCategory('${categoryName}')" style="padding: 2px 8px; font-size: 11px;">Run</button>
+                        </div>
+                        <div class="tree-children">
+                            ${renderSubcategories(category, searchTerm, categoryName)}
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html || '<div class="empty-state"><p>No tests found</p></div>';
+        }
+
+        function renderGraphMissing() {
+            const container = document.getElementById('test-tree');
+            container.innerHTML = `
+                <div class="empty-state">
+                    <h2>Graph data not loaded</h2>
+                    <p>Run: <code>python3 -m tests.optimizer_validation.viewer.knowledge_graph --output tests/optimizer_validation/viewer/graph_data.json</code></p>
+                </div>
+            `;
+        }
+
+        function renderKgDimensionTree() {
+            const container = document.getElementById('test-tree');
+            const tests = getFilteredTests();
+            const dimSelect = document.getElementById('dimension-select');
+            const dim = dimSelect ? dimSelect.value : '';
+
+            if (!dim) {
+                container.innerHTML = '<div class="empty-state"><p>Select a dimension to explore.</p></div>';
+                return;
+            }
+            if (!tests.length) {
+                container.innerHTML = '<div class="empty-state"><p>No tests found</p></div>';
+                return;
+            }
+
+            const grouped = new Map();
+            for (const test of tests) {
+                const kg = getKgTest(test);
+                const value = kg?.dimensions?.[dim] || 'unknown';
+                if (!grouped.has(value)) grouped.set(value, []);
+                grouped.get(value).push(test);
+            }
+
+            const orderedValues = (graphData.dimensions?.[dim]?.values || []).filter(v => grouped.has(v));
+            for (const value of grouped.keys()) {
+                if (!orderedValues.includes(value)) orderedValues.push(value);
+            }
+
+            let html = '';
+            const dimNodeId = `kg:dim:${dim}`;
+            // Note: Auto-expand is handled in selectTest() to allow manual collapse
+            const dimExpanded = expandedNodes.has(dimNodeId);
+            const dimStats = getCategoryStats(tests);
+
+            html += `
+                <div class="tree-node ${dimExpanded ? 'expanded' : ''}" data-node-id="${dimNodeId}">
+                    <div class="tree-header" onclick="toggleNodeById('${dimNodeId}')">
+                        <span class="toggle">${dimExpanded ? '▼' : '▶'}</span>
+                        <span class="name">${dim}</span>
+                        <span class="pill">Dimension</span>
+                        <span class="count">${dimStats.passed}/${tests.length}</span>
+                    </div>
+                    <div class="tree-children">
+            `;
+
+            for (const value of orderedValues) {
+                const valueTests = grouped.get(value) || [];
+                if (!valueTests.length) continue;
+                const stats = getCategoryStats(valueTests);
+                const valueNodeId = `${dimNodeId}:${value}`;
+                const isExpanded = expandedNodes.has(valueNodeId);
+                html += `
+                        <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${valueNodeId}">
+                            <div class="tree-header" onclick="toggleNodeById('${valueNodeId}')">
+                                <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                                <span class="name">${value}</span>
+                                <span class="meta">${dim}=${value}</span>
+                                <span class="count">${stats.passed}/${valueTests.length}</span>
+                            </div>
+                            <div class="tree-children">
+                                ${valueTests.map(test => renderTestItem(test)).join('')}
+                            </div>
+                        </div>
+                `;
+            }
+
+            html += '</div></div>';
+            container.innerHTML = html || '<div class="empty-state"><p>No tests found</p></div>';
+        }
+
+        function renderKgIntentTree() {
+            const container = document.getElementById('test-tree');
+            const tests = getFilteredTests();
+            if (!tests.length) {
+                container.innerHTML = '<div class="empty-state"><p>No tests found</p></div>';
+                return;
+            }
+            const grouped = new Map();
+
+            for (const test of tests) {
+                const kg = getKgTest(test);
+                const intent = kg?.intent || 'unknown';
+                if (!grouped.has(intent)) grouped.set(intent, []);
+                grouped.get(intent).push(test);
+            }
+
+            const intents = Array.from(grouped.keys()).sort();
+            let html = '';
+
+            // Note: Auto-expand is handled in selectTest() to allow manual collapse
+
+            for (const intent of intents) {
+                const intentTests = grouped.get(intent) || [];
+                const stats = getCategoryStats(intentTests);
+                const nodeId = `kg:intent:${intent}`;
+                const isExpanded = expandedNodes.has(nodeId);
+                html += `
+                    <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${nodeId}">
+                        <div class="tree-header" onclick="toggleNodeById('${nodeId}')">
+                            <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                            <span class="name">${intent.replace(/_/g, ' ')}</span>
+                            <span class="pill">Intent</span>
+                            <span class="count">${stats.passed}/${intentTests.length}</span>
+                        </div>
+                        <div class="tree-children">
+                            ${intentTests.map(test => renderTestItem(test)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html || '<div class="empty-state"><p>No tests found</p></div>';
+        }
+
+        function renderKgOutcomeTree() {
+            const container = document.getElementById('test-tree');
+            const tests = getFilteredTests();
+            if (!tests.length) {
+                container.innerHTML = '<div class="empty-state"><p>No tests found</p></div>';
+                return;
+            }
+            const grouped = new Map();
+
+            for (const test of tests) {
+                const kg = getKgTest(test);
+                const outcome = kg?.outcome || 'unknown';
+                if (!grouped.has(outcome)) grouped.set(outcome, []);
+                grouped.get(outcome).push(test);
+            }
+
+            const outcomes = Array.from(grouped.keys()).sort();
+            let html = '';
+
+            // Note: Auto-expand is handled in selectTest() to allow manual collapse
+
+            for (const outcome of outcomes) {
+                const outcomeTests = grouped.get(outcome) || [];
+                const stats = getCategoryStats(outcomeTests);
+                const nodeId = `kg:outcome:${outcome}`;
+                const isExpanded = expandedNodes.has(nodeId);
+                html += `
+                    <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${nodeId}">
+                        <div class="tree-header" onclick="toggleNodeById('${nodeId}')">
+                            <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                            <span class="name">${outcome}</span>
+                            <span class="pill">Outcome</span>
+                            <span class="count">${stats.passed}/${outcomeTests.length}</span>
+                        </div>
+                        <div class="tree-children">
+                            ${outcomeTests.map(test => renderTestItem(test)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html || '<div class="empty-state"><p>No tests found</p></div>';
+        }
+
+        function renderKgPairTree() {
+            const container = document.getElementById('test-tree');
+            const tests = getFilteredTests();
+            const pairSelect = document.getElementById('pair-select');
+            const pairValue = pairSelect ? pairSelect.value : '';
+
+            if (!pairValue) {
+                container.innerHTML = '<div class="empty-state"><p>Select a critical pair to explore.</p></div>';
+                return;
+            }
+            if (!tests.length) {
+                container.innerHTML = '<div class="empty-state"><p>No tests found</p></div>';
+                return;
+            }
+
+            const [dim1, dim2] = pairValue.split('|');
+            const grouped = new Map();
+            const pairScope = [];
+
+            for (const test of tests) {
+                const kg = getKgTest(test);
+                const v1 = kg?.dimensions?.[dim1];
+                const v2 = kg?.dimensions?.[dim2];
+                if (!v1 || !v2) continue;
+                const key = `${v1} x ${v2}`;
+                if (!grouped.has(key)) grouped.set(key, []);
+                grouped.get(key).push(test);
+                pairScope.push(test);
+            }
+
+            const combos = Array.from(grouped.keys()).sort();
+            const pairNodeId = `kg:pair:${dim1}:${dim2}`;
+            if (selectedTest) {
+                const kg = getKgTest(selectedTest);
+                const v1 = kg?.dimensions?.[dim1];
+                const v2 = kg?.dimensions?.[dim2];
+                if (v1 && v2) {
+                    expandedNodes.add(pairNodeId);
+                    expandedNodes.add(`${pairNodeId}:${v1} x ${v2}`);
+                }
+            }
+            const pairExpanded = expandedNodes.has(pairNodeId);
+            const pairStats = getCategoryStats(pairScope);
+            let html = `
+                <div class="tree-node ${pairExpanded ? 'expanded' : ''}" data-node-id="${pairNodeId}">
+                    <div class="tree-header" onclick="toggleNodeById('${pairNodeId}')">
+                        <span class="toggle">${pairExpanded ? '▼' : '▶'}</span>
+                        <span class="name">${dim1} x ${dim2}</span>
+                        <span class="pill">Critical Pair</span>
+                        <span class="count">${pairStats.passed}/${pairScope.length}</span>
+                    </div>
+                    <div class="tree-children">
+            `;
+
+            for (const combo of combos) {
+                const comboTests = grouped.get(combo) || [];
+                if (!comboTests.length) continue;
+                const stats = getCategoryStats(comboTests);
+                const comboNodeId = `${pairNodeId}:${combo}`;
+                const isExpanded = expandedNodes.has(comboNodeId);
+                html += `
+                        <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${comboNodeId}">
+                            <div class="tree-header" onclick="toggleNodeById('${comboNodeId}')">
+                                <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                                <span class="name">${combo}</span>
+                                <span class="meta">${dim1} x ${dim2}</span>
+                                <span class="count">${stats.passed}/${comboTests.length}</span>
+                            </div>
+                            <div class="tree-children">
+                                ${comboTests.map(test => renderTestItem(test)).join('')}
+                            </div>
+                        </div>
+                `;
+            }
+
+            html += '</div></div>';
+            container.innerHTML = html || '<div class="empty-state"><p>No tests found</p></div>';
+        }
+
+        function renderSubcategories(category, searchTerm, categoryName) {
+            let html = '';
+
+            for (const [subName, sub] of Object.entries(category.children || {})) {
+                const tests = sub.tests || [];
+                const filteredTests = searchTerm
+                    ? tests.filter(t => matchesSearch(t, searchTerm))
+                    : tests;
+
+                if (filteredTests.length === 0 && searchTerm) continue;
+
+                const stats = getCategoryStats(filteredTests);
+                const subNodeId = `sub:${categoryName}:${subName}`;
+                const isExpanded = expandedNodes.has(subNodeId);
+                html += `
+                    <div class="tree-node ${isExpanded ? 'expanded' : ''}" data-node-id="${subNodeId}">
+                        <div class="tree-header" onclick="toggleNodeById('${subNodeId}')">
+                            <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                            <span class="name">${subName}</span>
+                            <span class="count">${stats.passed}/${filteredTests.length}</span>
+                        </div>
+                        <div class="tree-children">
+                            ${filteredTests.map(test => renderTestItem(test)).join('')}
+                        </div>
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+
+        // ========== Gist Tooltip Functions ==========
+
+        // Pre-run placeholders for dynamic gist functions
+        // Use em-dash or ellipsis for cleaner pre-run display
+        const GIST_PLACEHOLDERS = {
+            'status': '…',
+            'outcome': '…',
+            'error_type': '…',
+            'trial_count': '…',
+            'best_score': '…',
+            'stop_reason': '…',
+            'duration': '…',
+            'config_space_size': '…',
+            'injection_mode': '…',
+            'algorithm': '…',
+            'expected_outcome': '…',
+            'expected_trials': '…'
+        };
+
+        /**
+         * Get gist data for a test, either from evidence or auto-generated.
+         * Returns object with: template, resolved, values, isResolved
+         */
+        function getGistData(test, result) {
+            const evidence = result?.evidence;
+
+            // Priority 1: Resolved gist from evidence (post-run)
+            if (evidence?.gist?.resolved) {
+                return {
+                    template: evidence.gist.template,
+                    resolved: evidence.gist.resolved,
+                    values: evidence.gist.values || {},
+                    isResolved: true
+                };
+            }
+
+            // Priority 2: Template from evidence (pre-run with template)
+            if (evidence?.scenario?.gist_template) {
+                return {
+                    template: evidence.scenario.gist_template,
+                    resolved: resolveGistPreRun(evidence.scenario.gist_template, test, evidence),
+                    values: {},
+                    isResolved: false
+                };
+            }
+
+            // Priority 3: Template from test metadata
+            if (test.gist_template) {
+                return {
+                    template: test.gist_template,
+                    resolved: resolveGistPreRun(test.gist_template, test, null),
+                    values: {},
+                    isResolved: false
+                };
+            }
+
+            // Priority 4: Auto-generate default gist based on test type
+            const defaultTemplate = generateDefaultGist(test);
+            if (defaultTemplate) {
+                return {
+                    template: defaultTemplate,
+                    resolved: resolveGistPreRun(defaultTemplate, test, evidence),
+                    values: {},
+                    isResolved: false
+                };
+            }
+
+            return null;
+        }
+
+        /**
+         * Generate a sensible default gist template based on test file/name patterns.
+         */
+        function generateDefaultGist(test) {
+            const file = test.file || '';
+            const name = test.name || '';
+
+            // Failure tests - focus on error type
+            if (file.includes('failures/') || name.includes('failure') || name.includes('error')) {
+                return '{status()} | {error_type()}';
+            }
+
+            // Stop condition tests
+            if (file.includes('stop_condition') || name.includes('stop')) {
+                return '{status()} | {stop_reason()} | {trial_count()} trials';
+            }
+
+            // Objective tests
+            if (file.includes('objectives') || name.includes('objective')) {
+                return '{status()} | best={best_score()}';
+            }
+
+            // Config space tests
+            if (file.includes('config_spaces') || name.includes('config')) {
+                return '{status()} | {config_space_size()}';
+            }
+
+            // Injection mode tests
+            if (file.includes('injection') || name.includes('injection')) {
+                return '{status()} | {injection_mode()}';
+            }
+
+            // Algorithm tests
+            if (file.includes('algorithm') || name.includes('algorithm')) {
+                return '{status()} | {algorithm()} | {trial_count()} trials';
+            }
+
+            // Default
+            return '{status()} | {trial_count()} trials';
+        }
+
+        /**
+         * Resolve gist template for pre-run display (with placeholders for dynamic values).
+         */
+        function resolveGistPreRun(template, test, evidence) {
+            if (!template) return '';
+
+            let resolved = template;
+
+            // Static values we can get from test metadata or evidence
+            const staticValues = {};
+
+            // From evidence scenario
+            if (evidence?.scenario) {
+                if (evidence.scenario.injection_mode) {
+                    staticValues['injection_mode'] = evidence.scenario.injection_mode;
+                }
+                if (evidence.scenario.algorithm) {
+                    staticValues['algorithm'] = evidence.scenario.algorithm;
+                }
+                // Config space size from summary
+                if (evidence.scenario.config_space?._summary) {
+                    const summary = evidence.scenario.config_space._summary;
+                    if (summary.has_continuous) {
+                        staticValues['config_space_size'] = 'infinite';
+                    } else if (summary.categorical_combinations) {
+                        staticValues['config_space_size'] = `${summary.categorical_combinations} combos`;
+                    }
+                }
+            }
+
+            // From test params
+            if (test.params) {
+                if (test.params.injection_mode && !staticValues['injection_mode']) {
+                    staticValues['injection_mode'] = test.params.injection_mode;
+                }
+                if (test.params.algorithm && !staticValues['algorithm']) {
+                    staticValues['algorithm'] = test.params.algorithm;
+                }
+            }
+
+            // Apply static values
+            for (const [func, value] of Object.entries(staticValues)) {
+                resolved = resolved.replace(`{${func}()}`, value);
+            }
+
+            // Apply placeholders for remaining dynamic values
+            for (const [func, placeholder] of Object.entries(GIST_PLACEHOLDERS)) {
+                resolved = resolved.replace(`{${func}()}`, placeholder);
+            }
+
+            return resolved;
+        }
+
+        /**
+         * Format gist data as HTML with appropriate styling.
+         */
+        function formatGistHtml(gistData, test, result) {
+            if (!gistData || !gistData.resolved) return '';
+
+            let html = escapeHtml(gistData.resolved);
+
+            if (gistData.isResolved && gistData.values) {
+                // Post-run: style the status value
+                const status = gistData.values.status;
+                if (status === 'PASS') {
+                    html = html.replace('PASS', '<span class="gist-pass">PASS</span>');
+                } else if (status === 'FAIL') {
+                    html = html.replace('FAIL', '<span class="gist-fail">FAIL</span>');
+                }
+                return `<span class="gist-text">${html}</span>`;
+            } else {
+                // Pre-run: show with placeholder styling
+                return `<span class="gist-placeholder">${html}</span>`;
+            }
+        }
+
+        // ========== End Gist Tooltip Functions ==========
+
+        // ========== Grouped Review View Functions ==========
+
+        // State for grouped view
+        let testGroups = [];
+        let expandedGroups = new Set();
+        let selectedGroupId = null;
+
+        /**
+         * Parse test node ID to extract base function name and parameters.
+         * e.g., "tests/.../test_x.py::TestClass::test_func[param1-param2]"
+         * -> { baseName: "test_func", params: ["param1", "param2"], fullBase: "tests/.../TestClass::test_func" }
+         */
+        function parseNodeId(nodeId) {
+            if (!nodeId) return { baseName: '', params: [], fullBase: '' };
+
+            // Extract the test function part (after last ::)
+            const parts = nodeId.split('::');
+            const funcPart = parts[parts.length - 1] || '';
+
+            // Split off parameters in brackets
+            const bracketMatch = funcPart.match(/^([^\[]+)(?:\[(.+)\])?$/);
+            if (!bracketMatch) {
+                return { baseName: funcPart, params: [], fullBase: nodeId };
+            }
+
+            const baseName = bracketMatch[1];
+            const paramStr = bracketMatch[2] || '';
+            const params = paramStr ? paramStr.split('-') : [];
+
+            // Build the full base (everything before the [params])
+            const fullBase = nodeId.replace(/\[.+\]$/, '');
+
+            return { baseName, params, fullBase };
+        }
+
+        /**
+         * Build test groups from the list of tests.
+         * Groups tests by base function name (without parameters).
+         */
+        function buildTestGroups(tests) {
+            const groupMap = new Map();
+
+            for (const test of tests) {
+                const { baseName, params, fullBase } = parseNodeId(test.id);
+                const groupId = fullBase;
+
+                if (!groupMap.has(groupId)) {
+                    groupMap.set(groupId, {
+                        groupId,
+                        baseName,
+                        tests: [],
+                        file: test.file || '',
+                        class: test.class || '',
+                        module: test.module || ''
+                    });
+                }
+
+                groupMap.get(groupId).tests.push({
+                    test,
+                    params,
+                    variationName: params.join('-') || test.name
+                });
+            }
+
+            // Convert map to array and compute group metadata
+            const groups = [];
+            for (const group of groupMap.values()) {
+                // Only show as a group if there are multiple variations or parametrized tests
+                const isParametrized = group.tests.length > 1 || group.tests.some(t => t.params.length > 0);
+
+                groups.push({
+                    ...group,
+                    isParametrized,
+                    displayName: formatGroupName(group.baseName, group.tests.length),
+                    patternDescription: generatePatternDescription(group),
+                    stats: calculateGroupStats(group.tests),
+                    confidence: calculateConfidence(group.tests),
+                    sampleIndices: selectSampleTests(group.tests)
+                });
+            }
+
+            // Sort groups: failed first, then by name
+            groups.sort((a, b) => {
+                // Prioritize groups with failures
+                if (a.confidence.level !== b.confidence.level) {
+                    const order = { 'review': 0, 'partial': 1, 'not-run': 2, 'high': 3 };
+                    return (order[a.confidence.level] || 4) - (order[b.confidence.level] || 4);
+                }
+                return a.baseName.localeCompare(b.baseName);
+            });
+
+            return groups;
+        }
+
+        /**
+         * Format the group display name.
+         */
+        function formatGroupName(baseName, count) {
+            const prettyName = baseName.replace(/_/g, ' ').replace(/^test /, '');
+            if (count > 1) {
+                return `${prettyName} (${count})`;
+            }
+            return prettyName;
+        }
+
+        /**
+         * Generate a pattern description for a group based on its test characteristics.
+         */
+        function generatePatternDescription(group) {
+            const { baseName, tests, file } = group;
+
+            // Extract common pattern indicators
+            const firstTest = tests[0]?.test;
+            const hasParams = tests.some(t => t.params.length > 0);
+            const paramNames = hasParams ? getParamNames(tests) : [];
+
+            // Check for common test patterns
+            if (file.includes('failures/')) {
+                if (baseName.includes('dataset')) {
+                    return `Validates error handling for ${tests.length} dataset edge cases`;
+                }
+                return `Verifies proper error handling across ${tests.length} failure scenarios`;
+            }
+
+            if (file.includes('injection_mode') || baseName.includes('injection')) {
+                return `Tests that each injection mode correctly passes config to the function`;
+            }
+
+            if (file.includes('stop_condition') || baseName.includes('stop')) {
+                return `Validates optimization stops correctly for each condition type`;
+            }
+
+            if (file.includes('config_space') || baseName.includes('config')) {
+                return `Tests configuration space handling for ${tests.length} different structures`;
+            }
+
+            if (file.includes('objective') || baseName.includes('objective')) {
+                return `Validates objective optimization across ${tests.length} configurations`;
+            }
+
+            if (file.includes('parallel') || baseName.includes('parallel')) {
+                return `Tests parallel execution behavior with varying configurations`;
+            }
+
+            // Generic description with parameter info
+            if (hasParams && paramNames.length > 0) {
+                return `Validates behavior across ${tests.length} ${paramNames.join(', ')} values`;
+            }
+
+            if (tests.length > 1) {
+                return `Runs ${tests.length} variations of this test scenario`;
+            }
+
+            return firstTest?.description || 'Single test scenario';
+        }
+
+        /**
+         * Extract parameter names from test variations.
+         */
+        function getParamNames(tests) {
+            const names = new Set();
+            for (const t of tests) {
+                if (t.test.params) {
+                    for (const key of Object.keys(t.test.params)) {
+                        names.add(key);
+                    }
+                }
+            }
+            return Array.from(names);
+        }
+
+        /**
+         * Calculate statistics for a group's tests.
+         */
+        function calculateGroupStats(tests) {
+            let passed = 0, failed = 0, pending = 0;
+
+            for (const { test } of tests) {
+                const result = testResults[test.id];
+                if (result?.outcome === 'passed') passed++;
+                else if (result?.outcome === 'failed') failed++;
+                else pending++;
+            }
+
+            return { passed, failed, pending, total: tests.length };
+        }
+
+        /**
+         * Calculate confidence level for a group.
+         */
+        function calculateConfidence(tests) {
+            const stats = calculateGroupStats(tests);
+
+            if (stats.failed > 0) {
+                return {
+                    level: 'review',
+                    reason: `${stats.failed} of ${stats.total} failed`
+                };
+            }
+
+            if (stats.pending === stats.total) {
+                return {
+                    level: 'not-run',
+                    reason: 'Tests not executed'
+                };
+            }
+
+            if (stats.pending > 0) {
+                return {
+                    level: 'partial',
+                    reason: `${stats.passed} passed, ${stats.pending} pending`
+                };
+            }
+
+            return {
+                level: 'high',
+                reason: `All ${stats.total} pass`
+            };
+        }
+
+        /**
+         * Select 1-2 representative sample tests for detailed display.
+         * Prefers: first passing, first failing (if any).
+         */
+        function selectSampleTests(tests) {
+            const indices = [];
+
+            // Find first passed test
+            const passedIdx = tests.findIndex(t => testResults[t.test.id]?.outcome === 'passed');
+            if (passedIdx >= 0) {
+                indices.push(passedIdx);
+            }
+
+            // Find first failed test (different from passed)
+            const failedIdx = tests.findIndex(t => testResults[t.test.id]?.outcome === 'failed');
+            if (failedIdx >= 0 && failedIdx !== passedIdx) {
+                indices.push(failedIdx);
+            }
+
+            // If no results yet, just pick first test
+            if (indices.length === 0 && tests.length > 0) {
+                indices.push(0);
+            }
+
+            return indices;
+        }
+
+        /**
+         * Decode an encoded group ID.
+         */
+        function decodeGroupId(encodedId) {
+            try {
+                return decodeURIComponent(atob(encodedId));
+            } catch (e) {
+                console.error('Failed to decode group ID:', e);
+                return '';
+            }
+        }
+
+        /**
+         * Toggle expansion of a group card (with encoded ID).
+         */
+        function toggleGroupEncoded(encodedId) {
+            toggleGroup(decodeGroupId(encodedId));
+        }
+
+        /**
+         * Toggle expansion of a group card.
+         */
+        function toggleGroup(groupId) {
+            if (expandedGroups.has(groupId)) {
+                expandedGroups.delete(groupId);
+            } else {
+                expandedGroups.add(groupId);
+            }
+            renderTree();
+        }
+
+        /**
+         * Run all tests in a group (with encoded ID).
+         */
+        function runGroupEncoded(encodedId) {
+            runGroup(decodeGroupId(encodedId));
+        }
+
+        /**
+         * Run all tests in a group.
+         */
+        function runGroup(groupId) {
+            const group = testGroups.find(g => g.groupId === groupId);
+            if (!group) return;
+
+            // For parametrized tests, we need to run the base test ID which pytest will expand
+            // groupId is like "tests/.../test_x.py::TestClass::test_func"
+            // This will run all parameter variations of that test
+            runTest(groupId);
+        }
+
+        /**
+         * Render the grouped view in the sidebar.
+         */
+        function renderGroupedView() {
+            const container = document.getElementById('test-tree');
+            const tests = getFilteredTests();
+
+            if (!tests.length) {
+                container.innerHTML = '<div class="empty-state"><p>No tests found</p></div>';
+                return;
+            }
+
+            testGroups = buildTestGroups(tests);
+
+            let html = '';
+            for (const group of testGroups) {
+                html += renderGroupCard(group);
+            }
+
+            container.innerHTML = html || '<div class="empty-state"><p>No groups found</p></div>';
+        }
+
+        /**
+         * Render a single group card.
+         */
+        function renderGroupCard(group) {
+            const isExpanded = expandedGroups.has(group.groupId);
+            const confidenceClass = group.confidence.level;
+            // Encode groupId for safe use in HTML attributes
+            const encodedGroupId = btoa(encodeURIComponent(group.groupId));
+            // Check if this group is currently running
+            const isRunning = runningTarget && (
+                runningTarget === group.groupId ||
+                group.tests.some(t => t.test.id.startsWith(runningTarget))
+            );
+
+            // Build sample tests HTML
+            let samplesHtml = '';
+            if (group.sampleIndices.length > 0) {
+                samplesHtml = '<div class="sample-tests"><div class="sample-tests-header">Sample Tests</div>';
+                for (const idx of group.sampleIndices) {
+                    const variation = group.tests[idx];
+                    if (variation) {
+                        samplesHtml += renderSampleTestCard(variation, group);
+                    }
+                }
+                samplesHtml += '</div>';
+            }
+
+            // Build variations table HTML
+            const variationsHtml = renderVariationsTable(group);
+
+            return `
+                <div class="group-card ${isExpanded ? 'expanded' : ''}" data-group-id="${encodedGroupId}">
+                    <div class="group-header" onclick="toggleGroupEncoded('${encodedGroupId}')">
+                        <span class="toggle">${isExpanded ? '▼' : '▶'}</span>
+                        <span class="group-name">${escapeHtml(group.displayName)}</span>
+                        <span class="confidence-badge ${confidenceClass}">${confidenceClass === 'not-run' ? 'NOT RUN' : confidenceClass.toUpperCase()}</span>
+                        <span class="group-stats">${group.stats.passed}/${group.stats.total}</span>
+                    </div>
+                    <div class="group-content">
+                        <div class="pattern-description">${escapeHtml(group.patternDescription)}</div>
+                        ${samplesHtml}
+                        ${variationsHtml}
+                        <button class="run-group-btn ${isRunning ? 'running' : ''}" onclick="event.stopPropagation(); runGroupEncoded('${encodedGroupId}')" ${isRunning ? 'disabled' : ''}>
+                            ${isRunning ? 'Running...' : 'Run Group'}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        /**
+         * Render a sample test card (expanded view of one test).
+         */
+        function renderSampleTestCard(variation, group) {
+            const { test, variationName } = variation;
+            const result = testResults[test.id];
+            const status = result?.outcome || 'pending';
+            const isSelected = selectedTest?.id === test.id;
+
+            // Get gist for this test
+            const gistData = getGistData(test, result);
+            let gistHtml = '';
+
+            if (gistData?.resolved) {
+                // Format with status coloring
+                gistHtml = formatGistHtml(gistData, test, result);
+            } else if (status === 'pending') {
+                gistHtml = '<span class="gist-placeholder">Click to run test</span>';
+            }
+
+            return `
+                <div class="sample-test-card ${isSelected ? 'selected' : ''}" onclick="selectTest('${escapeHtml(test.id)}')">
+                    <div class="test-name">
+                        <span class="status-dot ${status}"></span>
+                        <strong>${escapeHtml(variationName)}</strong>
+                    </div>
+                    <div class="test-gist">${gistHtml}</div>
+                </div>
+            `;
+        }
+
+        /**
+         * Generate a tooltip description for a variation based on its parameters.
+         * Prioritizes unique per-variation info (params) over shared test description.
+         */
+        function generateVariationTooltip(variation, group) {
+            const { test, params, variationName } = variation;
+
+            // First priority: Use actual test params (from pytest parametrize)
+            // These give unique info per variation, unlike the shared docstring
+            const testParams = test.params || {};
+            const paramKeys = Object.keys(testParams);
+
+            if (paramKeys.length > 0) {
+                // Build description from actual parameter names and values
+                const paramParts = paramKeys.map(key => {
+                    const value = testParams[key];
+                    const prettyKey = key.replace(/_/g, ' ');
+                    const prettyValue = String(value).replace(/_/g, ' ');
+                    return `${prettyKey}: ${prettyValue}`;
+                });
+
+                // Create contextual description based on file/test context
+                const file = test.file || '';
+                const baseName = group.baseName || '';
+
+                if (file.includes('failure') || baseName.includes('failure')) {
+                    return `Failure handling with ${paramParts.join(', ')}`;
+                }
+                if (file.includes('algorithm') || paramKeys.includes('algorithm')) {
+                    const algo = testParams.algorithm || paramParts[0];
+                    const otherParams = paramParts.filter(p => !p.startsWith('algorithm'));
+                    if (otherParams.length > 0) {
+                        return `${algo} optimizer with ${otherParams.join(', ')}`;
+                    }
+                    return `${algo} optimizer behavior`;
+                }
+                if (file.includes('injection') || paramKeys.includes('injection_mode')) {
+                    return `${testParams.injection_mode || 'injection'} mode: ${paramParts.join(', ')}`;
+                }
+                if (file.includes('execution') || paramKeys.includes('execution_mode')) {
+                    return `${testParams.execution_mode || 'execution'} mode: ${paramParts.join(', ')}`;
+                }
+                if (file.includes('objective') || paramKeys.includes('obj_name')) {
+                    return `Objective config: ${paramParts.join(', ')}`;
+                }
+                if (file.includes('constraint') || paramKeys.includes('constraint_name')) {
+                    return `Constraint config: ${paramParts.join(', ')}`;
+                }
+                if (file.includes('parallel') || paramKeys.includes('parallel_mode')) {
+                    return `Parallel mode: ${paramParts.join(', ')}`;
+                }
+
+                return paramParts.join(', ');
+            }
+
+            // Second priority: Use parsed params from test ID (e.g., [param1-param2])
+            if (params && params.length > 0) {
+                const paramDescriptions = params.map(p => p.replace(/_/g, ' '));
+                return `Variation: ${paramDescriptions.join(', ')}`;
+            }
+
+            // Last resort: Use variation name formatted nicely
+            return variationName.replace(/_/g, ' ').replace(/-/g, ' ');
+        }
+
+        /**
+         * Render the compact variations table for a group.
+         */
+        function renderVariationsTable(group) {
+            if (group.tests.length <= 2) {
+                // For small groups, no need for a table
+                return '';
+            }
+
+            let rows = '';
+            for (let i = 0; i < group.tests.length; i++) {
+                const variation = group.tests[i];
+                const { test, variationName } = variation;
+                const result = testResults[test.id];
+                const status = result?.outcome || 'pending';
+                const isSample = group.sampleIndices.includes(i);
+
+                // Get expected outcome from evidence (top-level expected, not inside scenario)
+                const expected = result?.evidence?.expected?.outcome || '--';
+                const actual = result?.evidence?.actual?.type === 'success' ? 'SUCCESS' :
+                              (result?.evidence?.actual?.type === 'exception' ? 'EXCEPTION' :
+                              (result ? (status === 'passed' ? 'SUCCESS' : 'FAILURE') : '--'));
+
+                const statusIcon = status === 'passed' ? '✓' : (status === 'failed' ? '✗' : '○');
+
+                // Generate tooltip description
+                const tooltip = generateVariationTooltip(variation, group);
+
+                rows += `
+                    <tr class="clickable" onclick="selectTest('${escapeHtml(test.id)}')" title="${escapeHtml(tooltip)}">
+                        <td class="variation-name">
+                            ${escapeHtml(variationName)}
+                            ${isSample ? '<span class="sample-marker">*</span>' : ''}
+                        </td>
+                        <td>${escapeHtml(expected)}</td>
+                        <td>${escapeHtml(actual)}</td>
+                        <td class="status-cell ${status}">${statusIcon}</td>
+                    </tr>
+                `;
+            }
+
+            return `
+                <div class="variations-section">
+                    <div class="variations-header">All Variations</div>
+                    <table class="variations-table">
+                        <thead>
+                            <tr>
+                                <th>Variation</th>
+                                <th>Expected</th>
+                                <th>Actual</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rows}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        // ========== End Grouped Review View Functions ==========
+
+        function renderTestItem(test) {
+            const result = testResults[test.id];
+            // Only show running status if this test is in the running scope AND hasn't completed yet
+            const isInRunningScope = runningTarget && (
+                runningTarget === test.id ||  // Exact match for single test
+                test.id.startsWith(runningTarget)  // Test is in running category
+            );
+            // Show result if we have one, otherwise show running (if in scope) or pending
+            const status = result?.outcome || (isInRunningScope ? 'running' : 'pending');
+            const selected = selectedTest?.id === test.id ? 'selected' : '';
+
+            // Generate gist tooltip
+            const gistData = getGistData(test, result);
+            const gistHtml = gistData ? `
+                <div class="gist-tooltip">
+                    ${formatGistHtml(gistData, test, result)}
+                </div>
+            ` : '';
+
+            return `
+                <div class="test-item ${selected}" onclick="selectTest('${test.id}')">
+                    <span class="status-dot ${status}"></span>
+                    <span class="name">${test.name}</span>
+                    ${gistHtml}
+                </div>
+            `;
+        }
+
+        function matchesSearch(test, searchTerm) {
+            if (!searchTerm) return true;
+            const markers = test.markers ? test.markers.join(' ') : '';
+            const haystack = [
+                test.name,
+                test.id,
+                test.description,
+                test.full_description,
+                test.class,
+                test.module,
+                test.file,
+                markers
+            ].filter(Boolean).join(' ').toLowerCase();
+            return haystack.includes(searchTerm);
+        }
+
+        function getCategoryTests(category) {
+            let tests = [];
+            for (const sub of Object.values(category.children || {})) {
+                tests = tests.concat(sub.tests || []);
+            }
+            return tests;
+        }
+
+        function getCategoryStats(tests) {
+            let passed = 0, failed = 0;
+            for (const test of tests) {
+                const result = testResults[test.id];
+                if (result?.outcome === 'passed') passed++;
+                else if (result?.outcome === 'failed') failed++;
+            }
+            return { passed, failed, total: tests.length };
+        }
+
+        function toggleNodeById(nodeId) {
+            if (expandedNodes.has(nodeId)) {
+                expandedNodes.delete(nodeId);
+            } else {
+                expandedNodes.add(nodeId);
+            }
+            renderTree();
+        }
+
+        function selectTest(testId) {
+            selectedTest = allTests.find(t => t.id === testId);
+
+            // Auto-expand parent nodes to show the selected test
+            if (selectedTest) {
+                const parts = selectedTest.id.split('::');
+                const filePath = parts[0];
+                const pathParts = filePath.replace('tests/optimizer_validation/', '').split('/');
+                if (pathParts.length >= 2) {
+                    const category = pathParts[0];
+                    const subCategory = pathParts[1].replace('test_', '').replace('.py', '');
+                    expandedNodes.add(`cat:${category}`);
+                    expandedNodes.add(`sub:${category}:${subCategory}`);
+                }
+            }
+
+            renderTree();
+            showTestDetails(selectedTest);
+        }
+
+        function showTestDetails(test) {
+            if (!test) return;
+
+            const result = testResults[test.id];
+            const container = document.getElementById('main-content');
+            // Check if this test is in the running scope AND hasn't completed yet
+            const isInRunningScope = runningTarget && (
+                runningTarget === test.id ||
+                test.id.startsWith(runningTarget)
+            );
+            // Only show running state if no result exists yet
+            const isRunning = isInRunningScope && !result;
+
+            // Build result status HTML - prioritize showing results over running state
+            let resultHtml;
+            if (result) {
+                resultHtml = `
+                    <div class="result-status ${result.outcome}">
+                        <span class="icon">${result.outcome === 'passed' ? '✅' : '❌'}</span>
+                        <span class="text">${result.outcome.toUpperCase()}</span>
+                        <span class="duration">${(result.duration || 0).toFixed(3)}s</span>
+                    </div>
+                    ${result.longrepr ? `<div class="error-output">${escapeHtml(result.longrepr)}</div>` : ''}
+                `;
+            } else if (isRunning) {
+                resultHtml = `
+                    <div class="result-status running">
+                        <div class="spinner"></div>
+                        <span class="text">Running...</span>
+                    </div>
+                `;
+            } else {
+                resultHtml = '<p style="color: var(--text-secondary)">Not run yet</p>';
+            }
+
+            const markers = test.markers?.map(m => `<span class="tag">${m}</span>`).join('') || '';
+            const params = test.params && Object.keys(test.params).length > 0
+                ? Object.entries(test.params).map(([k, v]) => `<span class="tag">${k}=${v}</span>`).join('')
+                : '';
+
+            // Build comprehensive test description
+            const descriptionHtml = buildTestDescription(test);
+            const gistHtml = buildTestGist(test, result, isRunning);
+
+            // Build evidence display (replaces simple summary table)
+            const evidenceHtml = buildEvidenceDisplay(test, result);
+
+            container.innerHTML = `
+                <div class="test-details">
+                    <h2>${test.name}</h2>
+
+                    ${gistHtml}
+
+                    <div class="actions-bar">
+                        <button class="primary ${isRunning ? 'running' : ''}" onclick="runTest('${test.id}')" ${isRunning ? 'disabled' : ''}>
+                            ${isRunning ? 'Running...' : 'Run Test'}
+                        </button>
+                        <button onclick="openJaeger('${test.name}')">View Trace in Jaeger</button>
+                    </div>
+
+                    ${descriptionHtml}
+
+                    ${evidenceHtml}
+
+                    <div class="detail-section">
+                        <h3>Last Result</h3>
+                        ${resultHtml}
+                    </div>
+
+                    <div class="detail-section">
+                        <h3>Test Info</h3>
+                        <div class="detail-grid">
+                            <div class="detail-item">
+                                <div class="label">Module</div>
+                                <div class="value">${test.module || '-'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="label">Class</div>
+                                <div class="value">${test.class || '-'}</div>
+                            </div>
+                            <div class="detail-item">
+                                <div class="label">File</div>
+                                <div class="value">${test.file ? makeFilePathClickable(test.file) : '-'}</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    ${markers || params ? `
+                    <div class="detail-section">
+                        <h3>Markers & Parameters</h3>
+                        <div>${markers} ${params}</div>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+        }
+
+        function buildTestDescription(test) {
+            // Get test description (short) and full docstring
+            const shortDesc = test.description || '';
+            const fullDesc = test.full_description || '';
+            const classDesc = test.class_description || '';
+            const params = test.params || {};
+
+            // Build what's being tested
+            let whatTested = shortDesc || 'No description available';
+
+            // Add context from class
+            let context = '';
+            if (classDesc) {
+                context = `<div class="context"><strong>Test Group:</strong> ${escapeHtml(classDesc)}</div>`;
+            }
+
+            // Add parameter info
+            if (Object.keys(params).length > 0) {
+                const paramStr = Object.entries(params)
+                    .map(([k, v]) => `<strong>${k}</strong>=${v}`)
+                    .join(', ');
+                context += `<div class="context"><strong>Parameterized with:</strong> ${paramStr}</div>`;
+            }
+
+            // Show full docstring if different from short description
+            let fullDocHtml = '';
+            if (fullDesc && fullDesc !== shortDesc && fullDesc.includes('\n')) {
+                // Multi-line docstring - show the full thing
+                fullDocHtml = `<div class="full-doc">${escapeHtml(fullDesc)}</div>`;
+            }
+
+            return `
+                <div class="test-description">
+                    <div class="what">${escapeHtml(whatTested)}</div>
+                    ${context}
+                    ${fullDocHtml}
+                </div>
+            `;
+        }
+
+        function extractManualGist(fullDescription) {
+            if (!fullDescription) return '';
+            const lines = fullDescription.split('\n');
+            for (const line of lines) {
+                const trimmed = line.trim();
+                const match = trimmed.match(/^(?:[-*]\s*)?(gist|summary|tldr)\s*:\s*(.+)$/i);
+                if (match && match[2]) {
+                    return match[2].trim();
+                }
+            }
+            return '';
+        }
+
+        function prettifyTestName(name) {
+            return name ? name.replace(/_/g, ' ') : '';
+        }
+
+        function getConfigSummary(configSpace) {
+            if (!configSpace) return null;
+            const params = Object.keys(configSpace).filter(k => k !== '_summary');
+            if (params.length === 0) return null;
+
+            const types = new Set();
+            for (const param of params) {
+                const paramConfig = configSpace[param] || {};
+                if (paramConfig.type) types.add(paramConfig.type);
+            }
+
+            let label = 'config';
+            if (types.size === 1) {
+                const type = Array.from(types)[0];
+                if (type === 'categorical') label = 'categorical-only config';
+                else if (type === 'continuous') label = 'continuous config';
+                else if (type === 'fixed') label = 'fixed config';
+                else label = `${type} config`;
+            } else if (types.size > 1) {
+                label = 'mixed config';
+            }
+
+            const summary = configSpace._summary || {};
+            const combos = summary.categorical_combinations;
+            const hasContinuous = summary.has_continuous;
+            const totalSpace = summary.total_space;
+            const details = [];
+
+            if (params.length > 1) details.push(`${params.length} params`);
+            if (typeof combos === 'number' && combos > 1 && !hasContinuous) {
+                details.push(`${combos} combos`);
+            }
+            if (totalSpace === 'infinite') details.push('infinite space');
+
+            return {
+                label,
+                details,
+                combos,
+                paramsCount: params.length,
+                hasContinuous: Boolean(hasContinuous),
+            };
+        }
+
+        function formatConfigSummary(summary, includeDetails = true) {
+            if (!summary) return '';
+            if (!includeDetails || summary.details.length === 0) return summary.label;
+            return `${summary.label} (${summary.details.join(', ')})`;
+        }
+
+        function formatExpectedOutcome(expected) {
+            if (!expected || !expected.outcome) return '';
+            return String(expected.outcome).toUpperCase();
+        }
+
+        function formatActualOutcome(actual) {
+            if (!actual || !actual.type) return '';
+            if (actual.type === 'exception') {
+                const type = actual.exception_type ? ` (${actual.exception_type})` : '';
+                return `EXCEPTION${type}`;
+            }
+            if (actual.type === 'success') return 'SUCCESS';
+            return String(actual.type).toUpperCase();
+        }
+
+        function formatExpectedTrials(expected, scenario) {
+            if (!expected) return '';
+            const min = expected.min_trials;
+            const max = expected.max_trials;
+            const scenarioMax = scenario?.max_trials;
+
+            if (max == null && scenarioMax != null && (min === 1 || min == null)) {
+                return `max ${scenarioMax} trials`;
+            }
+            if (min != null && max != null) {
+                if (min === max) {
+                    return `${min} trial${min === 1 ? '' : 's'}`;
+                }
+                return `${min}-${max} trials`;
+            }
+            if (max != null) return `<=${max} trials`;
+            if (min != null) return `>=${min} trials`;
+            return '';
+        }
+
+        function formatActualTrials(actual, scenario) {
+            if (!actual || actual.trial_count == null) return '';
+            const max = scenario?.max_trials;
+            if (max != null) return `${actual.trial_count}/${max} trials`;
+            return `${actual.trial_count} trials`;
+        }
+
+        function formatDatasetSummary(dataset, scenario) {
+            const size = dataset?.size ?? scenario?.dataset_size;
+            if (size == null) return '';
+            if (size <= 1) return `${size} example${size === 1 ? '' : 's'}`;
+            if (dataset && dataset.is_auto_generated === false) {
+                return `${size} examples`;
+            }
+            return '';
+        }
+
+        function buildTestGist(test, result, isRunning) {
+            const evidence = result?.evidence || null;
+            const scenario = evidence?.scenario || {};
+            const expected = evidence?.expected || {};
+            const actual = evidence?.actual || {};
+            const dataset = evidence?.dataset || null;
+
+            const manualGist = extractManualGist(test?.full_description);
+            let base = manualGist || scenario.description || test.description || prettifyTestName(test.name) || 'Test summary';
+            base = base.trim();
+
+            const configSummary = getConfigSummary(scenario?.config_space);
+            const baseLower = base.toLowerCase();
+            const useConfigSummaryAsBase = configSummary &&
+                (baseLower.startsWith('config space') || base.length > 80);
+
+            if (useConfigSummaryAsBase) {
+                base = formatConfigSummary(configSummary, true);
+            }
+
+            const extras = [];
+            const datasetSummary = formatDatasetSummary(dataset, scenario);
+            if (datasetSummary) extras.push(datasetSummary);
+
+            if (!useConfigSummaryAsBase && configSummary) {
+                const includeConfig = configSummary.paramsCount > 1 ||
+                    (typeof configSummary.combos === 'number' && configSummary.combos > 1) ||
+                    configSummary.hasContinuous;
+                if (includeConfig && !/(config|parameter|categorical|continuous|mixed)/i.test(base)) {
+                    extras.push(formatConfigSummary(configSummary, true));
+                } else if (typeof configSummary.combos === 'number' && configSummary.combos > 1) {
+                    extras.push(`${configSummary.combos} combos`);
+                } else if (configSummary.paramsCount > 1) {
+                    extras.push(`${configSummary.paramsCount} params`);
+                }
+            }
+
+            if (scenario.max_trials != null && !/trial/i.test(base)) {
+                extras.push(`max ${scenario.max_trials} trials`);
+            }
+
+            if (test?.markers?.includes('asyncio') && !/async/i.test(base)) {
+                extras.push('async');
+            }
+
+            if (scenario.parallel_mode && !/(parallel|sequential)/i.test(base)) {
+                extras.push(scenario.parallel_mode);
+            }
+
+            if (scenario.execution_mode && scenario.execution_mode !== 'edge_analytics' && !base.includes(scenario.execution_mode)) {
+                extras.push(scenario.execution_mode);
+            }
+
+            const trimmedExtras = extras.filter(Boolean).slice(0, 4);
+            let context = base || 'Test summary unavailable';
+            if (trimmedExtras.length > 0) {
+                context = `${context} (${trimmedExtras.join(', ')})`;
+            }
+
+            let gistLine = context;
+
+            if (isRunning) {
+                gistLine += ' -> running...';
+            } else if (evidence) {
+                const expectedParts = [];
+                const expectedOutcome = formatExpectedOutcome(expected);
+                if (expectedOutcome) expectedParts.push(expectedOutcome);
+                const expectedTrials = formatExpectedTrials(expected, scenario);
+                if (expectedTrials) expectedParts.push(expectedTrials);
+                if (expected?.error_type) expectedParts.push(`error ${expected.error_type}`);
+
+                const actualParts = [];
+                const actualOutcome = formatActualOutcome(actual);
+                if (actualOutcome) actualParts.push(actualOutcome);
+                const actualTrials = formatActualTrials(actual, scenario);
+                if (actualTrials) actualParts.push(actualTrials);
+
+                if (expectedParts.length || actualParts.length) {
+                    gistLine += ' -> ';
+                    if (expectedParts.length) {
+                        gistLine += `expect ${expectedParts.join(', ')}`;
+                    }
+                    if (actualParts.length) {
+                        gistLine += expectedParts.length ? '; ' : '';
+                        gistLine += `got ${actualParts.join(', ')}`;
+                    }
+                }
+            } else if (result) {
+                const outcome = result.outcome ? String(result.outcome).toUpperCase() : 'COMPLETED';
+                gistLine += ` -> ${outcome}`;
+            } else {
+                gistLine += ' -> not run yet';
+            }
+
+            const status = isRunning ? 'running' : (result?.outcome || 'pending');
+            return `
+                <div class="test-gist ${status}">
+                    ${escapeHtml(gistLine)}
+                </div>
+            `;
+        }
+
+        // Schema validation for evidence
+        const EVIDENCE_SCHEMA = {
+            required: ['type', 'scenario', 'expected', 'actual', 'validation_checks', 'passed'],
+            scenario: {
+                required: ['name', 'config_space', 'injection_mode', 'max_trials'],
+                recommended: ['description', 'execution_mode', 'objectives', 'timeout', 'dataset_size']
+            },
+            expected: {
+                required: ['outcome'],
+                recommended: ['min_trials', 'max_trials']
+            },
+            actual: {
+                required: ['type'],
+                recommended: ['trial_count', 'stop_reason']
+            }
+        };
+
+        function validateEvidence(evidence) {
+            const issues = [];
+
+            if (!evidence) {
+                issues.push({ severity: 'error', message: 'No evidence captured' });
+                return issues;
+            }
+
+            // Check required top-level fields
+            for (const field of EVIDENCE_SCHEMA.required) {
+                if (!(field in evidence) || evidence[field] === null || evidence[field] === undefined) {
+                    issues.push({ severity: 'error', section: 'root', field, message: `Missing required field: ${field}` });
+                }
+            }
+
+            // Check scenario section
+            const scenario = evidence.scenario || {};
+            for (const field of EVIDENCE_SCHEMA.scenario.required) {
+                if (!(field in scenario) || scenario[field] === null || scenario[field] === undefined) {
+                    issues.push({ severity: 'error', section: 'scenario', field, message: `Missing scenario.${field}` });
+                }
+            }
+            for (const field of EVIDENCE_SCHEMA.scenario.recommended) {
+                if (!(field in scenario) || scenario[field] === null || scenario[field] === undefined) {
+                    issues.push({ severity: 'warning', section: 'scenario', field, message: `Missing scenario.${field}` });
+                }
+            }
+
+            // Check config_space has at least one parameter
+            const configSpace = scenario.config_space || {};
+            const params = Object.keys(configSpace).filter(k => k !== '_summary');
+            if (params.length === 0) {
+                issues.push({ severity: 'error', section: 'scenario', field: 'config_space', message: 'Config space has no parameters' });
+            }
+
+            // Check expected section
+            const expected = evidence.expected || {};
+            for (const field of EVIDENCE_SCHEMA.expected.required) {
+                if (!(field in expected) || expected[field] === null || expected[field] === undefined) {
+                    issues.push({ severity: 'error', section: 'expected', field, message: `Missing expected.${field}` });
+                }
+            }
+
+            // Check actual section
+            const actual = evidence.actual || {};
+            for (const field of EVIDENCE_SCHEMA.actual.required) {
+                if (!(field in actual) || actual[field] === null || actual[field] === undefined) {
+                    issues.push({ severity: 'error', section: 'actual', field, message: `Missing actual.${field}` });
+                }
+            }
+
+            // Check trials array
+            const trials = evidence.trials || [];
+            if (trials.length === 0 && actual.type !== 'exception') {
+                issues.push({ severity: 'warning', section: 'trials', message: 'No trial data available' });
+            }
+
+            // Check validation_checks
+            const checks = evidence.validation_checks || [];
+            if (checks.length === 0) {
+                issues.push({ severity: 'warning', section: 'validation_checks', message: 'No validation checks recorded' });
+            }
+
+            return issues;
+        }
+
+        function buildEvidenceDisplay(test, result) {
+            // If no evidence available, show test metadata from collection
+            if (!result?.evidence) {
+                const params = test.params || {};
+                const hasParams = Object.keys(params).length > 0;
+                const hasResult = result?.outcome;
+
+                // Build a minimal info display from test metadata
+                let metadataHtml = '';
+                if (hasParams) {
+                    const paramRows = Object.entries(params).map(([k, v]) =>
+                        `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`
+                    ).join('');
+                    metadataHtml = `
+                        <div class="detail-section">
+                            <h3>Test Parameters</h3>
+                            <table class="summary-table">
+                                <tr><th>Parameter</th><th>Value</th></tr>
+                                ${paramRows}
+                            </table>
+                        </div>
+                    `;
+                }
+
+                const statusNote = hasResult
+                    ? `<p class="pending-value" style="color: var(--warning);">Detailed evidence not available for this run. Re-run the test to capture full details.</p>`
+                    : `<p class="pending-value">Run test to capture detailed evidence</p>`;
+
+                return `
+                    <div class="detail-section">
+                        <h3>Test Evidence</h3>
+                        ${statusNote}
+                    </div>
+                    ${metadataHtml}
+                `;
+            }
+
+            const { scenario, expected, actual, trials, validation_checks, warnings, dataset } = result.evidence;
+
+            // Validate evidence and show any issues
+            const validationIssues = validateEvidence(result.evidence);
+            const errors = validationIssues.filter(i => i.severity === 'error');
+            const warns = validationIssues.filter(i => i.severity === 'warning');
+
+            let validationBanner = '';
+            if (errors.length > 0) {
+                validationBanner = `
+                    <div style="background: rgba(248, 113, 113, 0.1); border: 1px solid var(--error); border-radius: 6px; padding: 12px; margin-bottom: 16px;">
+                        <div style="color: var(--error); font-weight: 600; margin-bottom: 8px;">⚠️ Evidence Schema Issues (${errors.length} errors)</div>
+                        <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: var(--error);">
+                            ${errors.map(e => `<li>${escapeHtml(e.message)}</li>`).join('')}
+                        </ul>
+                        ${warns.length > 0 ? `<div style="margin-top: 8px; font-size: 11px; color: var(--warning);">+ ${warns.length} warnings</div>` : ''}
+                    </div>
+                `;
+            } else if (warns.length > 0) {
+                validationBanner = `
+                    <div style="background: rgba(251, 191, 36, 0.1); border: 1px solid var(--warning); border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: var(--warning);">
+                        ⚠️ ${warns.length} optional field(s) missing
+                    </div>
+                `;
+            }
+
+            const trialCount = trials?.length || 0;
+
+            return `
+                ${validationBanner}
+                <div class="detail-section">
+                    <h3>Test Scenario</h3>
+                    ${buildScenarioConfig(scenario)}
+                </div>
+                <div class="detail-section">
+                    <h3>Dataset</h3>
+                    ${buildDatasetSection(dataset, scenario)}
+                </div>
+                <div class="detail-section">
+                    <h3>Configuration Space</h3>
+                    ${buildConfigSpaceTable(scenario?.config_space)}
+                </div>
+                <div class="detail-section">
+                    <h3>Trial Results (${trialCount} trial${trialCount !== 1 ? 's' : ''})</h3>
+                    ${buildTrialsTable(trials, actual, test.name)}
+                </div>
+                <div class="detail-section">
+                    <h3>Expected vs Actual</h3>
+                    ${buildExpectedActualTable(expected, actual, scenario)}
+                </div>
+                <div class="detail-section">
+                    <h3>Validation Checks</h3>
+                    ${buildValidationChecksTable(validation_checks)}
+                    ${warnings?.length ? `<div style="margin-top: 12px; color: var(--warning); font-size: 12px;">⚠️ ${warnings.join(', ')}</div>` : ''}
+                </div>
+            `;
+        }
+
+        function buildScenarioConfig(scenario) {
+            if (!scenario) return '<p class="pending-value">No scenario data</p>';
+
+            // Build optional rows only if values are present
+            let optionalRows = '';
+
+            // Algorithm (if specified)
+            if (scenario.algorithm) {
+                optionalRows += `
+                        <tr>
+                            <td class="cell-label">Algorithm</td>
+                            <td><code>${escapeHtml(scenario.algorithm)}</code></td>
+                        </tr>`;
+            }
+
+            // Parallel Mode (if specified)
+            if (scenario.parallel_mode) {
+                optionalRows += `
+                        <tr>
+                            <td class="cell-label">Parallel Mode</td>
+                            <td><code>${escapeHtml(scenario.parallel_mode)}</code></td>
+                        </tr>`;
+            }
+
+            // Constraints (if any)
+            if (scenario.constraints && scenario.constraints.length > 0) {
+                optionalRows += `
+                        <tr>
+                            <td class="cell-label">Constraints</td>
+                            <td>${scenario.constraints.map(c => `<code>${escapeHtml(c)}</code>`).join(', ')}</td>
+                        </tr>`;
+            }
+
+            return `
+                <table class="summary-table">
+                    <tbody>
+                        <tr>
+                            <td class="cell-label" style="width: 30%">Scenario</td>
+                            <td><strong>${escapeHtml(scenario.name || '—')}</strong></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Description</td>
+                            <td>${escapeHtml(scenario.description || '—')}</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Injection Mode</td>
+                            <td><code>${escapeHtml(scenario.injection_mode || '—')}</code></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Execution Mode</td>
+                            <td><code>${escapeHtml(scenario.execution_mode || '—')}</code></td>
+                        </tr>${optionalRows}
+                        <tr>
+                            <td class="cell-label">Max Trials</td>
+                            <td><strong>${scenario.max_trials ?? '—'}</strong></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Timeout</td>
+                            <td>${scenario.timeout ?? '—'}s</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Objectives</td>
+                            <td>${(scenario.objectives || []).join(', ') || '—'}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            `;
+        }
+
+        function buildDatasetSection(dataset, scenario) {
+            if (!dataset) {
+                // Fallback to scenario info if dataset not in evidence
+                const size = scenario?.dataset_size ?? '?';
+                return `
+                    <table class="summary-table">
+                        <tbody>
+                            <tr>
+                                <td class="cell-label" style="width: 30%">Size</td>
+                                <td>${size} examples</td>
+                            </tr>
+                            <tr>
+                                <td class="cell-label">Source</td>
+                                <td class="pending-value">Dataset info not captured</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                `;
+            }
+
+            const size = dataset.size ?? scenario?.dataset_size ?? '?';
+            const isSmall = size < 5;
+            const sizeWarning = isSmall
+                ? `<span style="color: var(--warning); font-size: 11px; margin-left: 8px;">⚠ Small dataset may limit validation</span>`
+                : '';
+
+            // Format path - show relative path if it's in the project
+            let displayPath = dataset.path || '—';
+            if (displayPath.includes('tests/optimizer_validation/')) {
+                displayPath = displayPath.substring(displayPath.indexOf('tests/optimizer_validation/'));
+            }
+
+            const sourceLabel = dataset.is_auto_generated ? 'Auto-generated' : 'Specified';
+
+            let html = `
+                <table class="summary-table">
+                    <tbody>
+                        <tr>
+                            <td class="cell-label" style="width: 30%">Size</td>
+                            <td${isSmall ? ' style="color: var(--warning);"' : ''}><strong>${size}</strong> examples${sizeWarning}</td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Path</td>
+                            <td><code style="font-size: 11px;">${escapeHtml(displayPath)}</code></td>
+                        </tr>
+                        <tr>
+                            <td class="cell-label">Source</td>
+                            <td>${sourceLabel}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            `;
+
+            // Add collapsible samples section if samples are available
+            if (dataset.samples && dataset.samples.length > 0) {
+                html += `
+                    <details style="margin-top: 12px;">
+                        <summary style="cursor: pointer; color: var(--text-secondary); font-size: 12px;">
+                            View Sample Data (${dataset.samples.length} example${dataset.samples.length !== 1 ? 's' : ''})
+                        </summary>
+                        <pre style="margin-top: 8px; padding: 12px; background: var(--bg-tertiary); border-radius: 4px; font-size: 11px; overflow-x: auto; max-height: 200px;">${escapeHtml(JSON.stringify(dataset.samples, null, 2))}</pre>
+                    </details>
+                `;
+            }
+
+            return html;
+        }
+
+        function buildTrialsTable(trials, actual, testName) {
+            if (!trials || trials.length === 0) {
+                return '<p class="pending-value">No trial data available</p>';
+            }
+
+            let html = `
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 8%">#</th>
+                            <th style="width: 42%">Configuration</th>
+                            <th style="width: 15%">Score</th>
+                            <th style="width: 15%">Status</th>
+                            <th style="width: 12%">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const trial of trials) {
+                const configStr = Object.entries(trial.config || {})
+                    .map(([k, v]) => `${k}=${typeof v === 'number' ? v.toFixed(2) : v}`)
+                    .join(', ');
+
+                const scoreClass = trial.is_best ? 'match' : '';
+                const bestMarker = trial.is_best ? ' ⭐' : '';
+                const score = trial.score !== null && trial.score !== undefined
+                    ? trial.score.toFixed(4)
+                    : '—';
+
+                const statusOk = trial.status === 'COMPLETED' || trial.status === 'completed';
+                const statusClass = statusOk ? 'match' : 'mismatch';
+                const duration = trial.duration !== null && trial.duration !== undefined
+                    ? trial.duration.toFixed(3) + 's'
+                    : '—';
+
+                // Build trial index cell - make it clickable if trial_id is available
+                let indexCell;
+                if (trial.trial_id && testName) {
+                    const escapedTestName = escapeHtml(testName).replace(/'/g, "\\'");
+                    const escapedTrialId = escapeHtml(trial.trial_id).replace(/'/g, "\\'");
+                    indexCell = `<a href="#" onclick="openTrialTrace('${escapedTestName}', '${escapedTrialId}', ${trial.index}); return false;"
+                                   style="color: var(--accent); text-decoration: none;"
+                                   title="View trace in Jaeger">${trial.index}</a>`;
+                } else {
+                    indexCell = `${trial.index}`;
+                }
+
+                html += `
+                    <tr>
+                        <td>${indexCell}</td>
+                        <td style="font-size: 11px; font-family: monospace;">${escapeHtml(configStr)}</td>
+                        <td class="${scoreClass}"><strong>${score}</strong>${bestMarker}</td>
+                        <td class="${statusClass}">${escapeHtml(trial.status)}</td>
+                        <td>${duration}</td>
+                    </tr>
+                `;
+
+                // Show error if trial failed
+                if (trial.error) {
+                    html += `
+                        <tr>
+                            <td></td>
+                            <td colspan="4" style="color: var(--error); font-size: 11px; padding-top: 0;">
+                                ${escapeHtml(trial.error)}
+                            </td>
+                        </tr>
+                    `;
+                }
+            }
+            html += '</tbody></table>';
+
+            // Summary: show best trial comparison
+            const bestTrial = trials.find(t => t.is_best);
+            if (bestTrial && trials.length > 1) {
+                const otherScores = trials
+                    .filter(t => !t.is_best && t.score !== null && t.score !== undefined)
+                    .map(t => t.score);
+
+                if (otherScores.length > 0 && bestTrial.score !== null) {
+                    const allLower = otherScores.every(s => s <= bestTrial.score);
+                    const comparison = allLower
+                        ? `Best trial #${bestTrial.index} (${bestTrial.score.toFixed(4)}) > all others`
+                        : `Best trial #${bestTrial.index} selected`;
+                    html += `
+                        <div style="margin-top: 8px; font-size: 11px; color: var(--success);">
+                            ✓ ${comparison}
+                        </div>
+                    `;
+                }
+            }
+
+            return html;
+        }
+
+        function buildConfigSpaceTable(configSpace) {
+            if (!configSpace || Object.keys(configSpace).length === 0) {
+                return '<p class="pending-value">No configuration space defined</p>';
+            }
+
+            // Extract summary if present
+            const summary = configSpace._summary || {};
+
+            let html = `
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 25%">Parameter</th>
+                            <th style="width: 15%">Type</th>
+                            <th>Values</th>
+                            <th style="width: 12%">Options</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const [param, config] of Object.entries(configSpace)) {
+                // Skip the _summary key
+                if (param === '_summary') continue;
+
+                const type = config.type || 'unknown';
+                let values = '';
+                let cardinality = config.cardinality || '?';
+
+                if (type === 'categorical') {
+                    values = (config.values || []).join(', ');
+                } else if (type === 'continuous') {
+                    const range = config.range || [];
+                    values = `[${range[0]}, ${range[1]}]`;
+                } else if (type === 'fixed') {
+                    values = config.value || '—';
+                } else {
+                    values = config.value || JSON.stringify(config);
+                }
+
+                html += `
+                    <tr>
+                        <td><strong>${escapeHtml(param)}</strong></td>
+                        <td class="cell-label">${type}</td>
+                        <td>${escapeHtml(values)}</td>
+                        <td style="text-align: center;">${cardinality}</td>
+                    </tr>
+                `;
+            }
+
+            html += '</tbody></table>';
+
+            // Add search space summary
+            if (summary.total_space !== undefined) {
+                const spaceDesc = summary.total_space === 'infinite'
+                    ? '∞ (contains continuous parameters)'
+                    : `${summary.categorical_combinations} combinations`;
+                html += `
+                    <div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
+                        Search Space: ${spaceDesc}
+                    </div>
+                `;
+            }
+
+            return html;
+        }
+
+        function buildExpectedActualTable(expected, actual, scenario) {
+            if (!expected || !actual) {
+                return '<p class="pending-value">No comparison data available</p>';
+            }
+
+            const rows = [];
+
+            // Outcome
+            const expectedOutcomeRaw = expected.outcome || 'SUCCESS';
+            const expectedOutcome = String(expectedOutcomeRaw).toLowerCase();
+            const actualOutcome = actual.type === 'exception' ? 'failure' : 'success';
+            const outcomeMatch = expectedOutcome === actualOutcome;
+            rows.push({
+                aspect: 'Outcome',
+                expected: String(expectedOutcomeRaw).toUpperCase(),
+                actual: actual.type === 'exception'
+                    ? `EXCEPTION (${actual.exception_type})`
+                    : 'SUCCESS',
+                match: outcomeMatch
+            });
+
+            // Trial Count - show the actual bound from scenario
+            if (expected.min_trials !== undefined || expected.max_trials !== undefined) {
+                const min = expected.min_trials ?? 0;
+                // Use scenario's max_trials if expected.max_trials is not set
+                const scenarioMax = scenario?.max_trials;
+                const max = expected.max_trials ?? scenarioMax ?? '∞';
+                const actualCount = actual.trial_count ?? 'N/A';
+
+                // Check if we hit the max_trials limit
+                const hitMax = scenarioMax !== undefined &&
+                    actual.trial_count !== undefined &&
+                    actual.trial_count === scenarioMax;
+
+                const match = actual.trial_count !== undefined &&
+                    actual.trial_count >= min &&
+                    (max === '∞' || actual.trial_count <= max);
+
+                // Show bound info: if we hit max, indicate it
+                const actualDisplay = hitMax
+                    ? `${actualCount} (hit max=${scenarioMax})`
+                    : String(actualCount);
+
+                rows.push({
+                    aspect: 'Trial Count',
+                    expected: `${min} ≤ n ≤ ${max}`,
+                    actual: actualDisplay,
+                    match: actual.trial_count !== undefined ? match : null
+                });
+            }
+
+            // Stop Reason - add context if max_trials_reached
+            if (expected.expected_stop_reason !== undefined || actual.stop_reason) {
+                const actualStop = actual.stop_reason || 'N/A';
+                const match = expected.expected_stop_reason === null ||
+                    expected.expected_stop_reason === undefined ||
+                    expected.expected_stop_reason === actual.stop_reason;
+
+                // Add explanation for max_trials_reached
+                let stopExplanation = actualStop;
+                if (actualStop === 'max_trials_reached' && scenario?.max_trials !== undefined) {
+                    stopExplanation = `max_trials_reached (max=${scenario.max_trials})`;
+                }
+
+                rows.push({
+                    aspect: 'Stop Reason',
+                    expected: expected.expected_stop_reason || 'any',
+                    actual: stopExplanation,
+                    match: actual.stop_reason !== undefined ? match : null
+                });
+            }
+
+            // Best Score
+            if (expected.best_score_range) {
+                const [minScore, maxScore] = expected.best_score_range;
+                const actualScore = actual.best_score !== undefined
+                    ? actual.best_score.toFixed(4)
+                    : 'N/A';
+                const match = actual.best_score !== undefined &&
+                    actual.best_score >= minScore &&
+                    actual.best_score <= maxScore;
+                rows.push({
+                    aspect: 'Best Score',
+                    expected: `[${minScore}, ${maxScore}]`,
+                    actual: actualScore,
+                    match: actual.best_score !== undefined ? match : null
+                });
+            } else if (actual.best_score !== undefined) {
+                rows.push({
+                    aspect: 'Best Score',
+                    expected: 'any',
+                    actual: actual.best_score.toFixed(4),
+                    match: true
+                });
+            }
+
+            // Duration
+            if (actual.duration !== undefined) {
+                rows.push({
+                    aspect: 'Duration',
+                    expected: '< 30s',
+                    actual: `${actual.duration.toFixed(3)}s`,
+                    match: actual.duration < 30
+                });
+            }
+
+            // Best Config (if success)
+            if (actual.best_config && Object.keys(actual.best_config).length > 0) {
+                const configStr = Object.entries(actual.best_config)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(', ');
+                rows.push({
+                    aspect: 'Best Config',
+                    expected: '—',
+                    actual: configStr,
+                    match: true
+                });
+            }
+
+            // Error Type (for failures)
+            if (expected.error_type) {
+                const actualErrorType = actual.exception_type || 'N/A';
+                const match = actual.exception_type === expected.error_type;
+                rows.push({
+                    aspect: 'Error Type',
+                    expected: expected.error_type,
+                    actual: actualErrorType,
+                    match: actual.type === 'exception' ? match : null
+                });
+            }
+
+            // Build HTML
+            let html = `
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 25%">Aspect</th>
+                            <th style="width: 35%">Expected</th>
+                            <th>Actual</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const row of rows) {
+                const statusClass = row.match === null ? 'pending-value' : (row.match ? 'match' : 'mismatch');
+                const statusIcon = row.match === null ? '' : (row.match ? '✓ ' : '✗ ');
+                html += `
+                    <tr>
+                        <td class="cell-label">${row.aspect}</td>
+                        <td>${escapeHtml(String(row.expected))}</td>
+                        <td class="${statusClass}">${statusIcon}${escapeHtml(String(row.actual))}</td>
+                    </tr>
+                `;
+            }
+
+            html += '</tbody></table>';
+            return html;
+        }
+
+        function buildValidationChecksTable(checks) {
+            if (!checks || checks.length === 0) {
+                return '<p class="pending-value">No validation checks recorded</p>';
+            }
+
+            // Filter to only show relevant checks (those with data)
+            const relevantChecks = checks.filter(c =>
+                !c.passed || c.expected !== undefined || c.actual !== undefined
+            );
+
+            // If all checks passed with no details, show a summary
+            if (relevantChecks.length === 0) {
+                const passedCount = checks.filter(c => c.passed).length;
+                return `<p class="match">All ${passedCount} validation checks passed</p>`;
+            }
+
+            let html = `
+                <table class="summary-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 10%">Status</th>
+                            <th style="width: 25%">Check</th>
+                            <th style="width: 30%">Expected</th>
+                            <th>Actual</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+            `;
+
+            for (const check of checks) {
+                // Skip passed checks without details
+                if (check.passed && !check.expected && !check.actual) {
+                    continue;
+                }
+
+                const statusClass = check.passed ? 'match' : 'mismatch';
+                const statusIcon = check.passed ? '✓' : '✗';
+                const checkNameRaw = check.name || check.check || 'unknown';
+                const checkName = checkNameRaw.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                const expected = check.expected || '—';
+                const actual = check.actual || '—';
+                const message = check.message || '';
+
+                html += `
+                    <tr>
+                        <td class="${statusClass}" style="text-align: center; font-size: 16px;">${statusIcon}</td>
+                        <td><strong>${escapeHtml(checkName)}</strong></td>
+                        <td>${escapeHtml(String(expected))}</td>
+                        <td class="${statusClass}">${escapeHtml(String(actual))}</td>
+                    </tr>
+                `;
+
+                // Add message row if there's an error message
+                if (message && !check.passed) {
+                    html += `
+                        <tr>
+                            <td></td>
+                            <td colspan="3" style="color: var(--error); font-size: 11px; padding-top: 0;">${escapeHtml(message)}</td>
+                        </tr>
+                    `;
+                }
+            }
+
+            html += '</tbody></table>';
+
+            // Add summary of all passed checks
+            const passedChecks = checks.filter(c => c.passed);
+            const failedChecks = checks.filter(c => !c.passed);
+            html += `
+                <div style="margin-top: 8px; font-size: 11px; color: var(--text-secondary);">
+                    Summary: <span class="match">${passedChecks.length} passed</span>
+                    ${failedChecks.length > 0 ? `, <span class="mismatch">${failedChecks.length} failed</span>` : ''}
+                </div>
+            `;
+
+            return html;
+        }
+
+        function showRunningState() {
+            const resultSection = document.querySelector('.result-status');
+            if (resultSection) {
+                resultSection.className = 'result-status running';
+                resultSection.innerHTML = `
+                    <div class="spinner"></div>
+                    <span class="text">Running...</span>
+                `;
+            }
+        }
+
+        function openJaeger(testName) {
+            const encodedName = encodeURIComponent(`optimization: ${testName}`);
+            window.open(`http://localhost:16686/search?service=traigent-optimizer&operation=${encodedName}`, '_blank');
+        }
+
+        function openTrialTrace(testName, trialId, trialIndex) {
+            // Open Jaeger filtered to the specific test and trial
+            // The span name for trials follows the pattern: "trial {N}: config_summary"
+            // We use the parent operation (optimization) and filter by trial.id tag
+            const encodedOperation = encodeURIComponent(`optimization: ${testName}`);
+            const encodedTrialId = encodeURIComponent(`{"trial.id":"${trialId}"}`);
+            window.open(
+                `http://localhost:16686/search?service=traigent-optimizer&operation=${encodedOperation}&tags=${encodedTrialId}`,
+                '_blank'
+            );
+        }
+
+        function filterTests() {
+            renderTree();
+        }
+
+        function refreshTests() {
+            document.getElementById('test-tree').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading tests...
+                </div>
+            `;
+            fetchTests();
+            fetchResults();
+            fetchGraphData();
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ========== Chatbot Functions ==========
+        let chatHistory = [];
+        let isChatSending = false;
+
+        function toggleChatbot() {
+            const panel = document.getElementById('chatbot-panel');
+            const container = document.querySelector('.container');
+            const toggleBtn = panel.querySelector('.chatbot-toggle');
+
+            panel.classList.toggle('collapsed');
+            container.classList.toggle('chatbot-collapsed');
+
+            toggleBtn.textContent = panel.classList.contains('collapsed') ? '▶' : '◀';
+        }
+
+        function handleChatKeydown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendChatMessage();
+            }
+        }
+
+        function sendQuickAction(text) {
+            const input = document.getElementById('chatbot-input');
+            input.value = text;
+            sendChatMessage();
+        }
+
+        function addChatMessage(role, content, toolCalls = null) {
+            const messagesContainer = document.getElementById('chatbot-messages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `chat-message ${role}`;
+
+            // Format content with markdown-like support
+            let formattedContent = formatChatContent(content);
+
+            messageDiv.innerHTML = formattedContent;
+
+            // Add tool call indicators if present
+            if (toolCalls && toolCalls.length > 0) {
+                const toolDiv = document.createElement('div');
+                toolDiv.className = 'tool-call-indicator';
+                toolDiv.innerHTML = `<span class="tool-icon">🔧</span> Used: ${toolCalls.join(', ')}`;
+                messageDiv.appendChild(toolDiv);
+            }
+
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function formatChatContent(content) {
+            // Convert markdown-like syntax to HTML
+            let html = escapeHtml(content);
+
+            // Bold
+            html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+            // Code blocks
+            html = html.replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>');
+
+            // Inline code
+            html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Line breaks
+            html = html.replace(/\n/g, '<br>');
+
+            // Lists (simple)
+            html = html.replace(/^- (.+)$/gm, '• $1');
+
+            return html;
+        }
+
+        function showTypingIndicator() {
+            const messagesContainer = document.getElementById('chatbot-messages');
+            const typingDiv = document.createElement('div');
+            typingDiv.className = 'chat-typing';
+            typingDiv.id = 'typing-indicator';
+            typingDiv.innerHTML = '<span></span><span></span><span></span>';
+            messagesContainer.appendChild(typingDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function hideTypingIndicator() {
+            const indicator = document.getElementById('typing-indicator');
+            if (indicator) indicator.remove();
+        }
+
+        async function sendChatMessage() {
+            if (isChatSending) return;
+
+            const input = document.getElementById('chatbot-input');
+            const sendBtn = document.getElementById('chatbot-send');
+            const message = input.value.trim();
+
+            if (!message) return;
+
+            // Add user message to UI
+            addChatMessage('user', message);
+            input.value = '';
+
+            // Add to history
+            chatHistory.push({ role: 'user', content: message });
+
+            // Disable input while sending
+            isChatSending = true;
+            sendBtn.disabled = true;
+            input.disabled = true;
+
+            showTypingIndicator();
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        history: chatHistory.slice(-10) // Keep last 10 messages for context
+                    })
+                });
+
+                hideTypingIndicator();
+
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.error || `HTTP ${response.status}`);
+                }
+
+                const data = await response.json();
+
+                // Add assistant response
+                addChatMessage('assistant', data.response, data.tools_used);
+
+                // Add to history
+                chatHistory.push({ role: 'assistant', content: data.response });
+
+            } catch (error) {
+                hideTypingIndicator();
+                console.error('Chat error:', error);
+                addChatMessage('error', `Error: ${error.message}`);
+            } finally {
+                isChatSending = false;
+                sendBtn.disabled = false;
+                input.disabled = false;
+                input.focus();
+            }
+        }
+
+        // ========== End Chatbot Functions ==========
+
+        // Initialize
+        const savedView = localStorage.getItem('testTreeView');
+        if (savedView) {
+            const viewSelect = document.getElementById('tree-view');
+            if (viewSelect) viewSelect.value = savedView;
+        }
+        applyViewMode();
+        fetchTests();
+        fetchPersistentResults();  // Load stored results first (survives refresh)
+        fetchResults();  // Then load latest run results
+        fetchGraphData();
+    
+        /**
+         * Open file in editor or viewer
+         */
+        async function openFile(filePath, line = 1) {
+            try {
+                const response = await fetch(`/api/open?file=${encodeURIComponent(filePath)}&line=${line}`);
+                const result = await response.json();
+
+                if (result.editor === 'browser') {
+                    // VS Code not available, show in built-in viewer
+                    await showFileInViewer(filePath, line);
+                } else {
+                    console.log(`Opened in ${result.editor}:`, result.file);
+                }
+            } catch (error) {
+                console.error('Failed to open file:', error);
+                alert(`Failed to open file: ${error.message}`);
+            }
+        }
+
+        /**
+         * Show file in built-in code viewer
+         */
+        async function showFileInViewer(filePath, highlightLine = 1) {
+            try {
+                const response = await fetch(`/api/file/${filePath}`);
+                const data = await response.json();
+
+                if (data.error) {
+                    alert(`Error: ${data.error}`);
+                    return;
+                }
+
+                // Create modal if it doesn't exist
+                let modal = document.querySelector('.code-modal');
+                if (!modal) {
+                    modal = document.createElement('div');
+                    modal.className = 'code-modal';
+                    modal.innerHTML = `
+                        <div class="code-modal-content">
+                            <div class="code-modal-header">
+                                <h2 class="code-modal-title"></h2>
+                                <button onclick="closeCodeViewer()">Close</button>
+                            </div>
+                            <div class="code-modal-body">
+                                <div class="code-viewer"></div>
+                            </div>
+                        </div>
+                    `;
+                    document.body.appendChild(modal);
+
+                    // Close on background click
+                    modal.addEventListener('click', (e) => {
+                        if (e.target === modal) {
+                            closeCodeViewer();
+                        }
+                    });
+                }
+
+                // Update title
+                modal.querySelector('.code-modal-title').textContent = data.file;
+
+                // Render code with line numbers
+                const lines = data.content.split('\n');
+                const codeHtml = lines.map((line, idx) => {
+                    const lineNum = idx + 1;
+                    const isHighlight = lineNum === highlightLine;
+                    const escapedLine = line
+                        .replace(/&/g, '&amp;')
+                        .replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;');
+                    return `<span class="code-line ${isHighlight ? 'highlight' : ''}"><span class="code-line-num">${lineNum}</span>${escapedLine}</span>`;
+                }).join('\n');
+
+                modal.querySelector('.code-viewer').innerHTML = codeHtml;
+
+                // Show modal and scroll to highlighted line
+                modal.classList.add('active');
+
+                // Scroll to highlighted line
+                setTimeout(() => {
+                    const highlightedLine = modal.querySelector('.code-line.highlight');
+                    if (highlightedLine) {
+                        highlightedLine.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                }, 100);
+
+            } catch (error) {
+                console.error('Failed to load file:', error);
+                alert(`Failed to load file: ${error.message}`);
+            }
+        }
+
+        /**
+         * Close code viewer modal
+         */
+        function closeCodeViewer() {
+            const modal = document.querySelector('.code-modal');
+            if (modal) {
+                modal.classList.remove('active');
+            }
+        }
+
+        /**
+         * Make file path clickable
+         */
+        function makeFilePathClickable(filePath) {
+            if (!filePath || filePath === '-') {
+                return filePath;
+            }
+            return `<span class="file-link" onclick="openFile('${filePath}')">${filePath}</span>`;
+        }
+
+</script>
+</body>
+</html>

@@ -245,9 +245,9 @@ Provide a clear, accurate summary that captures the key points and main ideas.""
         ) -> str:
             """Optimized document summarizer."""
             llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Will be overridden by TraiGent
-                temperature=0.3,  # Will be overridden by TraiGent
-                model_kwargs={"max_tokens": 200},  # Will be overridden by TraiGent
+                model="gpt-4o-mini",  # Will be overridden by Traigent
+                temperature=0.3,  # Will be overridden by Traigent
+                model_kwargs={"max_tokens": 200},  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

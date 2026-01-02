@@ -26,7 +26,7 @@ from traigent.config.types import TraigentConfig
 )
 def seamless_qa_agent(question: str) -> str:
     """Q&A agent using seamless injection - Tuned Variables defined in function body."""
-    # These will be overridden by TraiGent during optimization
+    # These will be overridden by Traigent during optimization
     model = "gpt-3.5-turbo"  # Will be replaced with values from config space
     temperature = 0.7  # Will be replaced with values from config space
 
@@ -367,13 +367,13 @@ def main():
         )
         print("\nKey findings:")
         print(
-            "1. Seamless mode: TraiGent intercepts variable assignments in the function"
+            "1. Seamless mode: Traigent intercepts variable assignments in the function"
         )
-        print("2. Parameter mode: TraiGent passes config as explicit parameter")
+        print("2. Parameter mode: Traigent passes config as explicit parameter")
         print(
-            "3. Context mode: TraiGent uses Python's contextvars for config injection"
+            "3. Context mode: Traigent uses Python's contextvars for config injection"
         )
-        print("4. Attribute mode: TraiGent stores config as function attribute")
+        print("4. Attribute mode: Traigent stores config as function attribute")
         print("5. All modes correctly apply the best config after optimization")
         print(
             "6. The _setup_function_wrapper method properly handles all injection strategies"

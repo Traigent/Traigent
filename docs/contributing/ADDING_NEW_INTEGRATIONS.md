@@ -1,12 +1,12 @@
-# Adding New LLM Integrations to TraiGent
+# Adding New LLM Integrations to Traigent
 
-This guide explains how to contribute new LLM provider integrations to TraiGent. Whether you're adding support for a new AI model provider or enhancing an existing integration, this document covers the standards and requirements for high-quality contributions.
+This guide explains how to contribute new LLM provider integrations to Traigent. Whether you're adding support for a new AI model provider or enhancing an existing integration, this document covers the standards and requirements for high-quality contributions.
 
 ## Overview
 
-TraiGent uses a plugin-based architecture for LLM integrations. Each provider (OpenAI, Anthropic, Mistral, etc.) has its own plugin that handles:
+Traigent uses a plugin-based architecture for LLM integrations. Each provider (OpenAI, Anthropic, Mistral, etc.) has its own plugin that handles:
 
-- **Parameter Mapping**: Converting TraiGent's canonical parameter names to provider-specific names
+- **Parameter Mapping**: Converting Traigent's canonical parameter names to provider-specific names
 - **Validation**: Ensuring parameters are within valid ranges for the provider
 - **Model Discovery**: Dynamic discovery of available models from the provider's API
 - **Framework Override**: Intercepting and modifying SDK calls at runtime
@@ -54,7 +54,7 @@ touch traigent/integrations/llms/your_provider_plugin.py
 Follow this template structure:
 
 ```python
-"""Your Provider integration plugin for TraiGent.
+"""Your Provider integration plugin for Traigent.
 
 This module provides the Your Provider-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -377,6 +377,12 @@ class TestYourProviderPluginMetadata:
         assert "your_provider_sdk" in packages
 ```
 
+Run tests in mock mode to avoid real API calls:
+
+```bash
+TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
+```
+
 ## Code Quality Standards
 
 ### Required Elements
@@ -403,7 +409,7 @@ Every plugin must include:
 
 ### Parameter Mapping Best Practices
 
-1. **Canonical Names**: Map to TraiGent's canonical names when possible
+1. **Canonical Names**: Map to Traigent's canonical names when possible
 2. **Aliases**: Support common aliases (e.g., `seed` → `random_seed`)
 3. **Pass-through**: Provider-specific params should pass through unchanged
 4. **Documentation**: Comment each mapping explaining the purpose
@@ -521,4 +527,4 @@ For reference, study these existing implementations:
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same license as the TraiGent project.
+By contributing, you agree that your contributions will be licensed under the same license as the Traigent project.

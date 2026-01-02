@@ -8,13 +8,11 @@ with multiple execution modes (edge analytics, standard/hybrid, cloud/SaaS).
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 
-from traigent.api.types import TrialResult, TrialStatus
-from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.config.types import ExecutionMode
 from traigent.optigen_integration import OptiGenClient
 from traigent.utils.exceptions import OptimizationError
 
@@ -797,7 +795,7 @@ class TestOptimizeSaaS:
         )
 
         # Should use 0.1 as minimum poll interval
-        await mock_client.optimize(
+        result = await mock_client.optimize(
             test_func,
             dataset,
             config_space,
@@ -805,6 +803,7 @@ class TestOptimizeSaaS:
             max_trials=5,
             optimization_config={"poll_interval": -1.0},
         )
+        assert result is not None  # Method returns results
 
 
 class TestOptimizeLocal:

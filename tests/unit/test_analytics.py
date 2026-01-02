@@ -581,7 +581,7 @@ class TestCostOptimizationAI:
         assert "resource_analysis" in analysis
         assert "cost_trends" in analysis
         assert "optimization_opportunities" in analysis
-        assert len(analysis["optimization_opportunities"]) >= 0
+        assert isinstance(analysis["optimization_opportunities"], list)
 
     def test_generate_optimization_recommendations(self):
         """Test generating optimization recommendations."""

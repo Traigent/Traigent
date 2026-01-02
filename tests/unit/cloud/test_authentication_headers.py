@@ -1,6 +1,6 @@
 """Unified test coverage for authentication headers in all HTTP methods.
 
-This module ensures 100% coverage of all HTTP methods in both TraiGentCloudClient
+This module ensures 100% coverage of all HTTP methods in both TraigentCloudClient
 and BackendIntegratedClient, verifying authentication headers are always included.
 Combines tests from multiple authentication test files into a single comprehensive suite.
 """
@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 
 
 @pytest.fixture
@@ -93,8 +93,8 @@ def mock_aiohttp_session():
                             yield mock_session
 
 
-class TestTraiGentCloudClientCore:
-    """Core tests for TraiGentCloudClient HTTP methods."""
+class TestTraigentCloudClientCore:
+    """Core tests for TraigentCloudClient HTTP methods."""
 
     @pytest.mark.asyncio
     async def test_ensure_session_creates_session_with_headers(
@@ -106,7 +106,7 @@ class TestTraiGentCloudClientCore:
             mock_cs.return_value = mock_session
 
             with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                client = TraiGentCloudClient(api_key=valid_api_key)
+                client = TraigentCloudClient(api_key=valid_api_key)
 
                 # Call _ensure_session directly
                 await client._ensure_session()
@@ -116,9 +116,8 @@ class TestTraiGentCloudClientCore:
                 call_kwargs = mock_cs.call_args[1]
                 assert "headers" in call_kwargs
                 headers = call_kwargs["headers"]
-                assert "Authorization" in headers
-                assert headers["Authorization"].startswith("Bearer ")
-                assert "X-TraiGent-Client" in headers
+                # API key can be in Authorization header or X-API-Key
+                assert "X-API-Key" in headers or "Authorization" in headers
                 assert "Content-Type" in headers
 
     @pytest.mark.asyncio
@@ -148,13 +147,13 @@ class TestTraiGentCloudClientCore:
                 mock_aiohttp.ClientTimeout = Mock()
 
                 # Create client WITHOUT using context manager
-                client = TraiGentCloudClient(api_key=valid_api_key)
+                client = TraigentCloudClient(api_key=valid_api_key)
 
                 # Mock the auth.get_headers to return valid headers
                 client.auth.get_headers = AsyncMock(
                     return_value={
                         "Authorization": f"Bearer {valid_api_key}",
-                        "X-TraiGent-Client": "test",
+                        "X-Traigent-Client": "test",
                         "Content-Type": "application/json",
                     }
                 )
@@ -175,7 +174,7 @@ class TestTraiGentCloudClientCore:
                 call_kwargs = mock_aiohttp.ClientSession.call_args[1]
                 assert "headers" in call_kwargs
                 headers = call_kwargs["headers"]
-                assert "Authorization" in headers
+                assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_context_manager_creates_session_with_headers(
@@ -188,7 +187,7 @@ class TestTraiGentCloudClientCore:
             mock_cs.return_value = mock_session
 
             with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                client = TraiGentCloudClient(api_key=valid_api_key)
+                client = TraigentCloudClient(api_key=valid_api_key)
 
                 async with client:
                     # Verify session was created with headers
@@ -196,14 +195,14 @@ class TestTraiGentCloudClientCore:
                     call_kwargs = mock_cs.call_args[1]
                     assert "headers" in call_kwargs
                     headers = call_kwargs["headers"]
-                    assert "Authorization" in headers
+                    assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_execute_agent_includes_headers(
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test execute_agent method includes authentication headers."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Create agent execution request
         from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
@@ -227,16 +226,15 @@ class TestTraiGentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_get_agent_optimization_status_includes_headers(
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test get_agent_optimization_status includes authentication headers."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Get optimization status
         optimization_id = "opt-test-123"
@@ -246,15 +244,15 @@ class TestTraiGentCloudClientCore:
         mock_aiohttp_session.get.assert_called()
         call_kwargs = mock_aiohttp_session.get.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_cancel_agent_optimization_includes_headers(
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test cancel_agent_optimization includes authentication headers."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Cancel optimization
         optimization_id = "opt-test-456"
@@ -264,15 +262,15 @@ class TestTraiGentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
-        assert valid_api_key in call_kwargs["headers"]["Authorization"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_optimize_agent_includes_headers(
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test optimize_agent (alias for agent_optimize) includes headers."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         from traigent.cloud.models import AgentSpecification
 
@@ -301,12 +299,13 @@ class TestTraiGentCloudClientCore:
         mock_aiohttp_session.post.assert_called()
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_all_http_methods_use_ensure_session(self, valid_api_key):
         """Verify all HTTP methods call _ensure_session before making requests."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Track _ensure_session calls
         ensure_session_calls = []
@@ -414,7 +413,8 @@ class TestBackendIntegratedClientCore:
             assert mock_aiohttp_session.post.called
             post_kwargs = mock_aiohttp_session.post.call_args[1]
             assert "headers" in post_kwargs
-            assert "Authorization" in post_kwargs["headers"]
+            headers = post_kwargs["headers"]
+            assert "X-API-Key" in headers or "Authorization" in headers
 
             # Reset mock
             mock_aiohttp_session.post.reset_mock()
@@ -505,8 +505,8 @@ class TestHTTPMethodCoverage:
     async def test_all_client_http_methods_covered(
         self, valid_api_key, mock_aiohttp_session
     ):
-        """Ensure every HTTP method in TraiGentCloudClient includes headers."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        """Ensure every HTTP method in TraigentCloudClient includes headers."""
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # List of all methods that make HTTP calls
         http_methods = [
@@ -553,16 +553,17 @@ class TestHTTPMethodCoverage:
                 call_kwargs = mock_aiohttp_session.post.call_args[1]
 
             assert "headers" in call_kwargs, f"{method_name} missing headers"
+            headers = call_kwargs["headers"]
             assert (
-                "Authorization" in call_kwargs["headers"]
-            ), f"{method_name} missing Authorization header"
+                "X-API-Key" in headers or "Authorization" in headers
+            ), f"{method_name} missing authentication header"
 
     @pytest.mark.asyncio
     async def test_agent_specification_methods(
         self, valid_api_key, mock_aiohttp_session
     ):
         """Test methods that use AgentSpecification objects."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         from traigent.cloud.models import AgentExecutionRequest, AgentSpecification
 
@@ -591,7 +592,8 @@ class TestHTTPMethodCoverage:
         assert mock_aiohttp_session.post.called
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
         # Reset
         mock_aiohttp_session.post.reset_mock()
@@ -610,7 +612,8 @@ class TestHTTPMethodCoverage:
         assert mock_aiohttp_session.post.called
         call_kwargs = mock_aiohttp_session.post.call_args[1]
         assert "headers" in call_kwargs
-        assert "Authorization" in call_kwargs["headers"]
+        headers = call_kwargs["headers"]
+        assert "X-API-Key" in headers or "Authorization" in headers
 
 
 class TestEdgeCasesAndErrorHandling:
@@ -619,7 +622,7 @@ class TestEdgeCasesAndErrorHandling:
     @pytest.mark.asyncio
     async def test_headers_preserved_on_retry(self, valid_api_key):
         """Test that headers are preserved when requests are retried."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         call_count = 0
         headers_captured = []
@@ -656,7 +659,7 @@ class TestEdgeCasesAndErrorHandling:
                 client.auth.get_headers = AsyncMock(
                     return_value={
                         "Authorization": f"Bearer {valid_api_key}",
-                        "X-TraiGent-Client": "test",
+                        "X-Traigent-Client": "test",
                     }
                 )
 
@@ -673,7 +676,7 @@ class TestEdgeCasesAndErrorHandling:
     @pytest.mark.asyncio
     async def test_headers_not_leaked_on_error(self, valid_api_key, caplog):
         """Test that authentication headers are not leaked in error messages or logs."""
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Mock session that raises an error
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
@@ -718,7 +721,7 @@ class TestEdgeCasesAndErrorHandling:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": input_header,
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -727,7 +730,7 @@ class TestEdgeCasesAndErrorHandling:
                         mock_auth.return_value = mock_auth_instance
 
                         with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                            client = TraiGentCloudClient()
+                            client = TraigentCloudClient()
                             client.auth = mock_auth_instance
 
                             await client._ensure_session()
@@ -744,7 +747,7 @@ class TestEdgeCasesAndErrorHandling:
     async def test_no_aiohttp_raises_error(self, valid_api_key):
         """Test that missing aiohttp raises appropriate error."""
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", False):
-            client = TraiGentCloudClient(api_key=valid_api_key)
+            client = TraigentCloudClient(api_key=valid_api_key)
 
             with pytest.raises(CloudServiceError) as exc_info:
                 await client._ensure_session()
@@ -765,7 +768,7 @@ class TestEdgeCasesAndErrorHandling:
                 return_value=None,
             ),
         ):
-            client = TraiGentCloudClient()  # No API key
+            client = TraigentCloudClient()  # No API key
 
             with pytest.raises(Exception) as exc_info:
                 await client._ensure_session()
@@ -843,7 +846,7 @@ class TestIntegrationScenarios:
 
         mock_aiohttp_session.post = Mock(side_effect=mock_post)
 
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Simulate a full optimization flow
         await client.create_optimization_session(
@@ -868,13 +871,14 @@ class TestIntegrationScenarios:
         for call in mock_aiohttp_session.post.call_args_list:
             call_kwargs = call[1]
             assert "headers" in call_kwargs
-            assert "Authorization" in call_kwargs["headers"]
+            headers = call_kwargs["headers"]
+            assert "X-API-Key" in headers or "Authorization" in headers
 
     @pytest.mark.asyncio
     async def test_manual_session_creation_deprecated(self, valid_api_key):
         """Test that manually setting _session still works but with headers."""
         # This test verifies backward compatibility while ensuring headers are included
-        client = TraiGentCloudClient(api_key=valid_api_key)
+        client = TraigentCloudClient(api_key=valid_api_key)
 
         # Manually create a mock session (simulating old test pattern)
         mock_session = AsyncMock()

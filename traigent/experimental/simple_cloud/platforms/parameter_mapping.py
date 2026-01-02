@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-# Universal parameter names and descriptions (TraiGent's unified language)
+# Universal parameter names and descriptions (Traigent's unified language)
 UNIFIED_PARAMS = {
     # Core generation parameters
     "model": "The model identifier",
@@ -136,7 +136,7 @@ class ParameterMapper:
         """Convert unified parameters to platform-specific format.
 
         Args:
-            unified_params: Parameters in TraiGent's unified format
+            unified_params: Parameters in Traigent's unified format
             platform_kwargs: Additional platform-specific parameters
 
         Returns:

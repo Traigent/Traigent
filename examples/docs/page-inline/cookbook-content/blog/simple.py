@@ -57,6 +57,6 @@ if __name__ == "__main__":
         res = await write_intro.optimize(max_trials=10)
         write_intro.set_config(res.best_config)
         print("Best config:", res.best_config)
-        print("Test:", write_intro("TraiGent SDK"))
+        print("Test:", write_intro("Traigent SDK"))
 
     asyncio.run(_main())

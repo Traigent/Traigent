@@ -1,4 +1,4 @@
-# TraiGent SDK Analytics Dependencies
+# Traigent SDK Analytics Dependencies
 # Required for Sprint 8 analytics and intelligence features
 
 -r requirements.txt

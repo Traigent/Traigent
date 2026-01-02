@@ -1,3 +1,6 @@
+# Internal documentation (private feature planning)
+docs/internal/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -188,7 +191,7 @@ cython_debug/
 # Internal design docs (IP/private during implementation)
 resampling_configs.md
 
-# TraiGent specific
+# Traigent specific
 *.jsonl
 # But keep example datasets tracked for users to run examples
 !examples/datasets/**/*.jsonl
@@ -264,6 +267,8 @@ CLAUDE.local.md
 fix_*.py
 cleanup_*.py
 validate_*.py
+# But keep test validation tools
+!tests/optimizer_validation/tools/validate_*.py
 *_REPORT.md
 *_COMPLETE.md
 *_TRACKER.md
@@ -275,7 +280,26 @@ validate_*.py
 !.release_review/
 !.release_review/*.md
 # Ignore agent artifacts (scratch outputs, notes)
-.release_review/artifacts/
+.release_review/**/artifacts/
+.release_review/**/.mypy_cache/
+.release_review/walkthrough_review/
+
+# Post-release fixes workspace
+# Keep core protocol/tracking files versioned for team sharing
+!.post_release_recommendation_fixes/
+!.post_release_recommendation_fixes/*.md
+# Ignore agent artifacts and caches
+.post_release_recommendation_fixes/**/artifacts/
+.post_release_recommendation_fixes/**/.mypy_cache/
+.post_release_recommendation_fixes/**/.tracking.lock
+.post_release_recommendation_fixes/**/tmp/
+# Keep shared templates versioned
+!.post_release_recommendation_fixes/templates/
+!.post_release_recommendation_fixes/templates/**
+
+# Marketing materials viewer (local development only)
+tools/marketing-viewer/
+run_marketing_viewer.sh
 
 # Virtual environments (additional)
 test_env/
@@ -312,7 +336,7 @@ test_concurrent.db
 scripts/secrets/
 .scannerwork/
 
-# TraiGent generated results and caches
+# Traigent generated results and caches
 **/.traigent_results/
 **/.config/mlflow/
 
@@ -337,3 +361,29 @@ reports/
 # Workspace-specific GitHub CLI config
 .gh/
 .envrc
+
+# MCP server configuration (contains API tokens)
+.mcp.json
+
+# Optimizer validation generated artifacts
+tests/optimizer_validation/viewer/graph_data.json
+tests/optimizer_validation/viewer/_results/
+tests/optimizer_validation/viewer/*.html
+!tests/optimizer_validation/viewer/index.html
+!tests/optimizer_validation/viewer/failed_tests.html
+tests/optimizer_validation/viewer/ontology/*.ttl
+!tests/optimizer_validation/viewer/ontology/schema.ttl
+
+# Large test reports
+report.json
+
+# Agent instruction files (development only)
+AGENTS.md
+MAINTENANCE.md
+tests/optimizer_validation/AGENT_*.md
+tests/optimizer_validation/GIST_*.md
+tests/optimizer_validation/GPT_*.md
+tests/optimizer_validation/*_TEMPLATE*.md
+tests/optimizer_validation/TEST_REVIEW_CHECKLIST.md
+metrics/
+.env

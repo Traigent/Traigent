@@ -1,4 +1,4 @@
-"""Function invocation strategies for TraiGent SDK.
+"""Function invocation strategies for Traigent SDK.
 
 This module provides different strategies for invoking functions with configurations,
 separated from the evaluation logic to enable hybrid local/cloud architectures.

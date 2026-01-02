@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Call Graph Generator for TraiGent SDK
+Call Graph Generator for Traigent SDK
 
 Generates function-level call graphs showing which functions call which others.
 Useful for understanding code flow, identifying hot paths, and refactoring analysis.

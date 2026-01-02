@@ -130,3 +130,34 @@ def test_coerce_parallel_config_from_dict() -> None:
     assert cfg.trial_concurrency == 4
     assert cfg.example_concurrency == 3
     assert cfg.thread_workers == 2
+
+
+def test_from_dict_rejects_unknown_keys() -> None:
+    """Test that ParallelConfig.from_dict() rejects unknown keys."""
+    raw = {
+        "mode": "parallel",
+        "trial_concurrency": 4,
+        "parallel_trials": 2,  # Legacy key - should be rejected
+    }
+    with pytest.raises(ValueError) as exc:
+        ParallelConfig.from_dict(raw)
+
+    assert "Unknown parallel_config key(s)" in str(exc.value)
+    assert "parallel_trials" in str(exc.value)
+    assert "trial_concurrency" in str(exc.value)  # Valid keys listed
+
+
+def test_from_dict_rejects_multiple_unknown_keys() -> None:
+    """Test that ParallelConfig.from_dict() lists all unknown keys."""
+    raw = {
+        "parallel_trials": 2,
+        "batch_size": 4,
+        "max_workers": 8,
+    }
+    with pytest.raises(ValueError) as exc:
+        ParallelConfig.from_dict(raw)
+
+    error_msg = str(exc.value)
+    assert "batch_size" in error_msg
+    assert "max_workers" in error_msg
+    assert "parallel_trials" in error_msg

@@ -1,12 +1,12 @@
-# ✨ TraiGent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
+# ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
 
-**Current Version**: 0.8.0 (Beta)
+**Current Version**: 0.9.0 (Beta)
 
 ---
 
 ## Cost Warning
 
-TraiGent optimizes LLM applications by running multiple trials across configurations.
+Traigent optimizes LLM applications by running multiple trials across configurations.
 **This can result in significant API costs.**
 
 | Recommendation      | How                                                         |
@@ -42,7 +42,7 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ## 🚀 Quick Example: See Tuned Variables in Action
 
-> **Want to run this now?** First [install TraiGent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
+> **Want to run this now?** First [install Traigent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
 >
 > ```bash
 > export TRAIGENT_MOCK_MODE=true
@@ -67,24 +67,24 @@ load_dotenv()
     },
     objectives=["accuracy", "cost"],    # What to optimize for
     # Dataset file path (relative to examples/datasets/quickstart/)
-    evaluation=EvaluationOptions(eval_dataset="examples/datasets/quickstart/qa_samples.jsonl"),
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def simple_qa_agent(question: str) -> str:
     """Simple Q&A agent with Tuned Variables"""
 
-    # These values will be automatically optimized by TraiGent!
+    # These values will be automatically optimized by Traigent!
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo",     # 🎯 TraiGent tests: gpt-3.5-turbo, gpt-4o-mini, gpt-4o
-        temperature=0.7            # 🎯 TraiGent tests: 0.1, 0.5, 0.9
+        model="gpt-3.5-turbo",     # 🎯 Traigent tests: gpt-3.5-turbo, gpt-4o-mini, gpt-4o
+        temperature=0.7            # 🎯 Traigent tests: 0.1, 0.5, 0.9
     )
 
-    # Normal LLM invocation - TraiGent intercepts and optimizes
+    # Normal LLM invocation - Traigent intercepts and optimizes
     response = llm.invoke(f"Question: {question}\nAnswer:")
     print(f"🔧 Using: model={llm.model_name}, temp={llm.temperature}")
     return response.content
 
-# That's it! TraiGent will find the best model & temperature for YOUR specific use case
+# That's it! Traigent will find the best model & temperature for YOUR specific use case
 ```
 
 ## 📊 Full Customer Support Example with RAG
@@ -118,7 +118,7 @@ KNOWLEDGE_BASE = [
 def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
 
-    # Your existing code - TraiGent optimizes these automatically!
+    # Your existing code - Traigent optimizes these automatically!
     llm = ChatOpenAI(
         model="gpt-3.5-turbo",     # Current: gpt-3.5-turbo
         temperature=0.7            # Current: 0.7
@@ -156,7 +156,7 @@ print(f"Best score: {results.best_score}")
 
 ### Need custom weights or minimize a different metric?
 
-Lists like `["accuracy", "cost"]` are fine for most runs—TraiGent automatically infers sensible orientations and equal weights. When you want explicit control, provide an `ObjectiveSchema`:
+Lists like `["accuracy", "cost"]` are fine for most runs—Traigent automatically infers sensible orientations and equal weights. When you want explicit control, provide an `ObjectiveSchema`:
 
 ```python
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
@@ -176,7 +176,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         "top_p": (0.1, 1.0),        # Continuous range
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],  # Categorical
     },
-    eval_dataset="qa_samples.jsonl",
+    eval_dataset="data/qa_samples.jsonl",
 )
 def weighted_agent(question: str) -> str:
     ...
@@ -186,16 +186,16 @@ def weighted_agent(question: str) -> str:
 
 ### Injection modes & default values
 
-TraiGent can inject parameters in two ways:
+Traigent can inject parameters in two ways:
 
 - **Seamless (default)**: your original literals remain in place until a trial overrides them. Provide `default_config={"temperature": 0.3}` if you want a different starting point for the first trial or a new value for `reset()`.
-- **Parameter mode** (`injection_mode="parameter"`): TraiGent passes a `TraigentConfig` (built from your `default_config`) into the parameter you nominate (e.g. `config`). Access values with `config.get("foo", fallback)` so missing keys fall back cleanly when the default config is empty or partial.
+- **Parameter mode** (`injection_mode="parameter"`): Traigent passes a `TraigentConfig` (built from your `default_config`) into the parameter you nominate (e.g. `config`). Access values with `config.get("foo", fallback)` so missing keys fall back cleanly when the default config is empty or partial.
 
-**↗️ Try TraiGent now - see the results above in under 5 minutes!**
+**↗️ Try Traigent now - see the results above in under 5 minutes!**
 
 ### TVL Specs: The Foundation Layer
 
-TVL (TraiGent Validation Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
+TVL (Traigent Validation Language) defines the _what_—constraints, objectives, and boundaries—while leaving the _how_ to any compatible optimizer. The power is in the specification, not the implementation.
 
 ```python
 @traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
@@ -207,7 +207,7 @@ TVL sections control the configuration space, objectives, constraints, and budge
 extra arguments required. The CLI also accepts `traigent optimize ... --tvl-spec path`
 and an optional `--tvl-environment staging` flag.
 
-> 💡 **Why specifications matter**: A TVL spec can be validated by any conformant tool—TraiGent today, your internal optimizer tomorrow. The foundation is the contract, not the implementation.
+> 💡 **Why specifications matter**: A TVL spec can be validated by any conformant tool—Traigent today, your internal optimizer tomorrow. The foundation is the contract, not the implementation.
 
 ## 📦 Quick Installation
 
@@ -220,7 +220,7 @@ git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[integrations]"   # Core + LangChain/OpenAI/Anthropic
-python -c "import traigent; print('✅ TraiGent ready')"
+python -c "import traigent; print('✅ Traigent ready')"
 ```
 
 **Faster (uv):**
@@ -230,7 +230,7 @@ git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 uv venv && source .venv/bin/activate
 uv pip install -e ".[integrations]"
-python -c "import traigent; print('✅ TraiGent ready')"
+python -c "import traigent; print('✅ Traigent ready')"
 ```
 
 > Not on PyPI yet—install from source using the commands above.
@@ -248,7 +248,7 @@ export TRAIGENT_MOCK_MODE=true
 **What mock mode does:**
 
 - Returns simulated responses from your decorated functions (no real LLM calls)
-- Skips TraiGent backend/cloud connections
+- Skips Traigent backend/cloud connections
 - Generates realistic mock metrics (accuracy, cost, latency) for testing
 
 **What mock mode does NOT do:**
@@ -306,15 +306,49 @@ def my_agent(query: str) -> str:
     # Use config values...
 ```
 
-<!-- Backend configuration (for TraiGent Cloud users - coming soon)
+<!-- Backend configuration (for Traigent Cloud users - coming soon)
 export TRAIGENT_API_URL=http://localhost:5000/api/v1
 export TRAIGENT_BACKEND_URL=http://localhost:5000
-export TRAIGENT_API_KEY=<api key issued in the TraiGent app>
+export TRAIGENT_API_KEY=<api key issued in the Traigent app>
 -->
+
+### Testing Models from Multiple Providers
+
+When optimizing across models from different providers (OpenAI, Anthropic, Google, Mistral, etc.), we recommend using [LiteLLM](https://github.com/BerriAI/litellm) to provide a unified interface:
+
+```python
+import importlib
+import traigent
+
+@traigent.optimize(
+    configuration_space={
+        # Test models from multiple providers with a single interface
+        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+        "temperature": [0.1, 0.5, 0.9]
+    },
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/qa_samples.jsonl"
+)
+def multi_provider_agent(question: str) -> str:
+    config = traigent.get_config()
+
+    # Litellm is optional; import only when the dependency is installed
+    litellm = importlib.import_module("litellm")
+    completion = getattr(litellm, "completion")
+
+    response = completion(
+        model=config.get("model"),
+        temperature=config.get("temperature"),
+        messages=[{"role": "user", "content": question}]
+    )
+    return response.choices[0].message.content
+```
+
+LiteLLM supports 100+ LLM providers with a consistent API, making it easy to compare models across vendors during optimization.
 
 ### Available Feature Sets
 
-When installing TraiGent, you can choose specific feature sets:
+When installing Traigent, you can choose specific feature sets:
 
 | Feature Set      | Description                   | Use Case                         |
 | ---------------- | ----------------------------- | -------------------------------- |
@@ -375,7 +409,7 @@ pip install -e ".[all]"
 > streamlit run playground/traigent_control_center.py
 > ```
 
-The TraiGent Control Center provides a user-friendly interface to:
+The Traigent Control Center provides a user-friendly interface to:
 
 - Define problems using natural language
 - Test and compare different AI agents
@@ -384,7 +418,7 @@ The TraiGent Control Center provides a user-friendly interface to:
 
 ## 📏 Evaluation
 
-TraiGent evaluates your AI agent's performance by comparing outputs to expected results using semantic similarity, custom evaluators, or mock mode for testing.
+Traigent evaluates your AI agent's performance by comparing outputs to expected results using semantic similarity, custom evaluators, or mock mode for testing.
 
 **Quick Start:**
 
@@ -395,7 +429,7 @@ TraiGent evaluates your AI agent's performance by comparing outputs to expected 
         "temperature": [0.1, 0.5, 0.9],
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"]
     },
-    eval_dataset="qa_samples.jsonl",  # JSONL format
+    eval_dataset="data/qa_samples.jsonl",  # JSONL format
     objectives=["accuracy", "cost"]
 )
 def my_agent(question: str) -> str:
@@ -422,7 +456,7 @@ def my_agent(question: str) -> str:
 
 ## 🎯 Execution Modes
 
-TraiGent supports local execution with cloud modes planned:
+Traigent supports local execution with cloud modes planned:
 
 | Mode                         | Status         | Privacy            | Algorithm            | Best For          |
 | ---------------------------- | -------------- | ------------------ | -------------------- | ----------------- |
@@ -443,7 +477,7 @@ def my_agent(query: str) -> str:
     return process_query(query)
 ```
 
-> **Local Storage**: When using `edge_analytics` mode, TraiGent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
+> **Local Storage**: When using `edge_analytics` mode, Traigent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
 
 **Learn More:** See the [Execution Modes Guide](docs/guides/execution-modes.md) for:
 
@@ -455,11 +489,11 @@ def my_agent(query: str) -> str:
 
 ### ✨ Zero-Code Integration - Keep Your Code Unchanged!
 
-TraiGent works with your existing code through a simple decorator. Here's how the example above works step by step:
+Traigent works with your existing code through a simple decorator. Here's how the example above works step by step:
 
 **🎯 The Magic: Parameter Interception**
 
-- TraiGent automatically detects `ChatOpenAI()` and `similarity_search()` calls
+- Traigent automatically detects `ChatOpenAI()` and `similarity_search()` calls
 - During optimization, it overrides your hardcoded values with test configurations
 - Your original code stays exactly the same - no refactoring needed!
 
@@ -535,13 +569,13 @@ k = 5                        # Retrieval depth vs speed
 format = "json"              # Structured vs natural output
 ```
 
-### 🎯 TraiGent's Two-Mode Strategy: The Best of Both Worlds
+### 🎯 Traigent's Two-Mode Strategy: The Best of Both Worlds
 
-TraiGent offers **two powerful modes** designed specifically for software engineers working with AI agents. Unlike general optimization libraries, TraiGent understands agent patterns and can automatically optimize LLM calls, retrieval parameters, and agent logic.
+Traigent offers **two powerful modes** designed specifically for software engineers working with AI agents. Unlike general optimization libraries, Traigent understands agent patterns and can automatically optimize LLM calls, retrieval parameters, and agent logic.
 
 ## 🎯 Configuration Injection Modes
 
-TraiGent supports two ways to inject optimized parameters into your code:
+Traigent supports two ways to inject optimized parameters into your code:
 
 ### Seamless Mode (Default) - Zero Code Changes
 
@@ -556,7 +590,7 @@ def my_agent(query: str) -> str:
     return llm.invoke(query).content
 ```
 
-TraiGent automatically intercepts framework calls (`ChatOpenAI`, `as_retriever`, etc.) and injects optimized values.
+Traigent automatically intercepts framework calls (`ChatOpenAI`, `as_retriever`, etc.) and injects optimized values.
 
 ### Parameter Mode - Explicit Control
 
@@ -648,10 +682,10 @@ traigent check path/to/module.py --threshold=10
 ## 📊 Real Results from Real Users
 
 ```python
-# Before TraiGent: Guessing at configurations
+# Before Traigent: Guessing at configurations
 llm = ChatOpenAI(model="gpt-4", temperature=0.7)  # Expensive and maybe not optimal
 
-# After TraiGent: Data-driven decisions
+# After Traigent: Data-driven decisions
 llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)  # 95% accuracy at 10x less cost!
 ```
 
@@ -751,7 +785,7 @@ def agent(x: int) -> str:
 
 ### 💰 **Cost Tracking & Optimization**
 
-TraiGent includes professional-grade cost tracking powered by the **tokencost** library:
+Traigent includes professional-grade cost tracking powered by the **tokencost** library:
 
 - **500+ Models Supported**: OpenAI, Anthropic, Google, Cohere, Mistral, and more
 - **Real-Time Pricing**: Always up-to-date pricing information
@@ -866,7 +900,7 @@ support_agent = AgentSpecification(
 
 # Optimize in the cloud
 async def optimize_support_agent():
-    async with TraiGentCloudClient(api_key="your-key") as client:
+    async with TraigentCloudClient(api_key="your-key") as client:
         response = await client.optimize_agent(
             agent_spec=support_agent,
             dataset=support_conversations,
@@ -975,7 +1009,7 @@ def complex_reasoning_task(query: str) -> str:
 
 ## 📚 Pre-built Examples
 
-TraiGent comes with ready-to-use examples in `examples/`:
+Traigent comes with ready-to-use examples in `examples/`:
 
 ### Core Examples
 
@@ -1009,7 +1043,7 @@ export TRAIGENT_MOCK_MODE=true
 python examples/core/simple-prompt/run.py
 ```
 
-## 🤔 Why TraiGent?
+## 🤔 Why Traigent?
 
 ### The Problem with Traditional Optimization
 
@@ -1019,7 +1053,7 @@ python examples/core/simple-prompt/run.py
 ❌ **Integration Pain**: Rewriting code for optimization tools
 ❌ **Vendor Lock-in**: Tied to specific optimization platforms
 
-### TraiGent's Dual-Model Solution
+### Traigent's Dual-Model Solution
 
 ✅ **Privacy First**: Choose local execution with cloud guidance
 ✅ **Full Transparency**: See exactly what's being optimized and why
@@ -1199,16 +1233,16 @@ The `@traigent.optimize` decorator **requires** a `configuration_space` paramete
 
 #### Dataset Paths
 
-Some dataset files have symlinks in the repo root for convenience:
+Common datasets in the repo:
 
-- `qa_samples.jsonl` → `examples/datasets/quickstart/qa_samples.jsonl`
-- `rag_feedback.jsonl` → `examples/quickstart/rag_feedback.jsonl`
+- `data/qa_samples.jsonl`
+- `examples/quickstart/rag_feedback.jsonl`
 
-For other datasets, use the full path or create your own symlink.
+For other datasets, use the full path or create your own local copy.
 
 #### Mock Mode and API Keys
 
-`TRAIGENT_MOCK_MODE=true` prevents TraiGent from making real API calls during optimization, but if your agent code directly instantiates `ChatOpenAI()` or similar, you still need the API key set (even if unused). The quickstart examples avoid this by using mock responses internally.
+`TRAIGENT_MOCK_MODE=true` prevents Traigent from making real API calls during optimization, but if your agent code directly instantiates `ChatOpenAI()` or similar, you still need the API key set (even if unused). The quickstart examples avoid this by using mock responses internally.
 
 ### Common Issues
 
@@ -1254,7 +1288,7 @@ load_dotenv()
 
 ## 🙏 Acknowledgments
 
-- Built with ❤️ by the TraiGent team and community
+- Built with ❤️ by the Traigent team and community
 - Inspired by the needs of LLM developers worldwide
 - Thanks to all our [contributors](https://github.com/Traigent/Traigent/graphs/contributors)
 

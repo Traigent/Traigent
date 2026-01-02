@@ -107,7 +107,7 @@ async def run_cleanup_verification():
 
 def main():
     """Main entry point for test runner."""
-    print("TraiGent MCP Integration Test Suite")
+    print("Traigent MCP Integration Test Suite")
     print("Version: 1.0.0")
     print("=" * 60)
 

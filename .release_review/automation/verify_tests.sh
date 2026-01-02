@@ -32,21 +32,35 @@ export TRAIGENT_MOCK_MODE=true
 
 # Run tests and capture output
 echo "Running tests..."
+COMMAND="pytest \"$TEST_PATH\" -q --tb=no"
+export RR_TEST_COMMAND="$COMMAND"
 TEST_OUTPUT=$(pytest "$TEST_PATH" -q --tb=no 2>&1) || true
 
-# Parse results
-# pytest output format: "X passed, Y failed, Z skipped in Xs"
-# or just "X passed in Xs"
-PASSED=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= passed)' | tail -1 || echo "0")
-FAILED=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= failed)' | tail -1 || echo "0")
-SKIPPED=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= skipped)' | tail -1 || echo "0")
-ERRORS=$(echo "$TEST_OUTPUT" | grep -oP '\d+(?= error)' | tail -1 || echo "0")
+# Parse results with Python for robustness
+PARSED=$(python3 - <<'PY'
+import re
+import sys
 
-# Default to 0 if not found
-PASSED=${PASSED:-0}
-FAILED=${FAILED:-0}
-SKIPPED=${SKIPPED:-0}
-ERRORS=${ERRORS:-0}
+text = sys.stdin.read()
+summary = ""
+for line in text.splitlines()[::-1]:
+    if " passed" in line or " failed" in line or " skipped" in line or " error" in line:
+        summary = line
+        break
+
+def get_count(label):
+    match = re.search(r"(\\d+)\\s+" + label, summary)
+    return int(match.group(1)) if match else 0
+
+passed = get_count("passed")
+failed = get_count("failed")
+skipped = get_count("skipped")
+errors = get_count("error") + get_count("errors")
+
+print(passed, failed, skipped, errors)
+PY
+<<<"$TEST_OUTPUT")
+read -r PASSED FAILED SKIPPED ERRORS <<< "$PARSED"
 
 ACTUAL_TOTAL=$((PASSED + FAILED + SKIPPED + ERRORS))
 
@@ -97,6 +111,14 @@ cat << EOF
     "errors": $ERRORS,
     "total": $ACTUAL_TOTAL
   },
+  "command": $(
+    python3 - <<'PY'
+import json
+import os
+command = os.environ.get("RR_TEST_COMMAND", "")
+print(json.dumps(command))
+PY
+  ),
   "test_path": "$TEST_PATH",
   "timestamp": "$(date -Iseconds)"
 }

@@ -1,4 +1,4 @@
-"""Centralized backend configuration for TraiGent SDK.
+"""Centralized backend configuration for Traigent SDK.
 
 This module provides a single source of truth for backend URL and API key configuration,
 replacing hardcoded URLs scattered throughout the codebase.

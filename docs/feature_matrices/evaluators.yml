@@ -6,7 +6,7 @@
 id: MATRIX-EVALUATORS
 module_type: evaluator
 requirement: REQ-EVAL-005
-last_updated: "2025-12-01"
+last_updated: "2026-01-01"
 description: "Evaluation strategy implementations and their feature coverage"
 
 base_contract:
@@ -77,18 +77,14 @@ capabilities:
           - evaluate
           - evaluate_sample
         missing_methods: []
-        gaps:
-          - type: pattern
-            name: "Not exported in __init__.py"
-            priority: high
-            description: "Class exists but not exported in package __init__.py"
+        gaps: []
         features:
           parallel_evaluation: false
           ragas_integration: false
           custom_metrics: false
           progress_tracking: false
           batch_processing: false
-        notes: "Defined but not exported - may be intentionally internal"
+        notes: "Exported in evaluators/__init__.py; limited by design"
 
 # Summary Statistics
 summary:
@@ -96,7 +92,7 @@ summary:
   complete: 1
   partial: 1
   missing: 0
-  exported: 1  # Only LocalEvaluator is exported
+  exported: 2
   coverage_percentage: 90.0
 
 # Feature Support Matrix
@@ -134,14 +130,6 @@ feature_support:
 
 # Identified Gaps
 identified_gaps:
-  - id: GAP-EVAL-001
-    type: pattern
-    name: "SimpleScoringEvaluator not exported"
-    priority: high
-    description: "SimpleScoringEvaluator defined in base.py but not in __init__.py"
-    location: traigent/evaluators/__init__.py
-    recommendation: "Add to __all__ or mark as private with underscore"
-
   - id: GAP-EVAL-002
     type: capability
     name: "No remote evaluator"

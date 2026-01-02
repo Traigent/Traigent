@@ -42,7 +42,7 @@ async def generate_suite(
     max_concurrent: int,
 ):
     """Generate complete problem suite."""
-    print("🚀 TraiGent Problem Suite Generator")
+    print("🚀 Traigent Problem Suite Generator")
     print("=" * 60)
     print(f"Target: {num_problems} problems with {examples_per_problem} examples each")
     print(f"Total examples: {num_problems * examples_per_problem:,}")

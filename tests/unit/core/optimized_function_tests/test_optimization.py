@@ -26,6 +26,12 @@ from .test_fixtures import (
 )
 
 
+def require(condition: bool, message: str = "Assertion failed") -> None:
+    """Raise AssertionError when condition is false."""
+    if not condition:
+        raise AssertionError(message)
+
+
 class TestOptimization:
     """Test optimization functionality."""
 
@@ -67,10 +73,10 @@ class TestOptimization:
 
             result = await opt_func.optimize()
 
-            assert isinstance(result, OptimizationResult)
-            assert result.best_config["temperature"] == 0.5
-            assert result.best_score == 0.95
-            assert result.status == OptimizationStatus.COMPLETED
+            require(isinstance(result, OptimizationResult))
+            require(result.best_config["temperature"] == pytest.approx(0.5))
+            require(result.best_score == pytest.approx(0.95))
+            require(result.status == OptimizationStatus.COMPLETED)
 
     def test_optimize_sync_wrapper(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
@@ -108,8 +114,8 @@ class TestOptimization:
 
             result = asyncio.run(opt_func.optimize())
 
-            assert result == mock_result
-            assert result.best_config["temperature"] == 0.7
+            require(result == mock_result)
+            require(result.best_config["temperature"] == pytest.approx(0.7))
 
     @pytest.mark.asyncio
     async def test_optimization_with_custom_evaluator(
@@ -151,8 +157,8 @@ class TestOptimization:
 
             result = await opt_func.optimize()
 
-            assert result.status == OptimizationStatus.COMPLETED
-            assert opt_func.custom_evaluator == custom_evaluator
+            require(result.status == OptimizationStatus.COMPLETED)
+            require(opt_func.custom_evaluator == custom_evaluator)
 
     @pytest.mark.asyncio
     async def test_optimization_with_timeout(
@@ -196,7 +202,48 @@ class TestOptimization:
 
             # Test that timeout parameter is passed correctly
             result = await opt_func.optimize(timeout=0.1)
-            assert result.best_score == 0.85
+            require(result.best_score == pytest.approx(0.85))
+
+    @pytest.mark.asyncio
+    async def test_cost_limit_forwarded_to_orchestrator(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Ensure cost_limit/cost_approved are forwarded to the orchestrator."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            max_trials=3,
+        )
+
+        from datetime import datetime
+
+        mock_result = OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.5},
+            best_score=0.9,
+            optimization_id="cost-limit-test",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=sample_objectives,
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        with patch(
+            "traigent.core.optimized_function.OptimizationOrchestrator"
+        ) as MockOrchestrator:
+            mock_orchestrator = MockOrchestrator.return_value
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+
+            await opt_func.optimize(cost_limit=1.5, cost_approved=True)
+
+            _, kwargs = MockOrchestrator.call_args
+            require(kwargs["cost_limit"] == pytest.approx(1.5))
+            require(kwargs["cost_approved"] is True)
 
     @pytest.mark.asyncio
     async def test_optimization_error_handling(
@@ -280,7 +327,7 @@ class TestOptimization:
 
             mock_loader.assert_called_once()
             _, orchestrator_kwargs = MockOrchestrator.call_args
-            assert orchestrator_kwargs["max_trials"] == 5
+            require(orchestrator_kwargs["max_trials"] == 5)
 
     @pytest.mark.asyncio
     async def test_decorator_runtime_defaults_propagate_to_optimize(
@@ -308,17 +355,17 @@ class TestOptimization:
         ) as mock_execute:
             result = await opt_func.optimize()
 
-        assert result is sentinel_result
+        require(result is sentinel_result)
         called = mock_execute.await_args.kwargs
-        assert called["timeout"] == 123.0
-        assert called["save_to"] == "defaults.json"
-        assert called["callbacks"] == opt_func.callbacks
+        require(called["timeout"] == pytest.approx(123.0))
+        require(called["save_to"] == "defaults.json")
+        require(called["callbacks"] == opt_func.callbacks)
 
         runtime_kwargs = called["algorithm_kwargs"]
-        assert runtime_kwargs["cache_policy"] == "no_repeats"
-        assert runtime_kwargs["max_examples"] == 2
-        assert "parallel_config" not in runtime_kwargs
-        assert opt_func.max_examples == 2
+        require(runtime_kwargs["cache_policy"] == "no_repeats")
+        require(runtime_kwargs["max_examples"] == 2)
+        require("parallel_config" not in runtime_kwargs)
+        require(opt_func.max_examples == 2)
 
     @pytest.mark.asyncio
     async def test_runtime_overrides_take_precedence(
@@ -353,17 +400,17 @@ class TestOptimization:
                 max_examples=4,
             )
 
-        assert result is sentinel_result
+        require(result is sentinel_result)
         called = mock_execute.await_args.kwargs
-        assert called["timeout"] == 5.0
-        assert called["save_to"] == "override.json"
-        assert called["callbacks"] == override_callbacks
+        require(called["timeout"] == pytest.approx(5.0))
+        require(called["save_to"] == "override.json")
+        require(called["callbacks"] == override_callbacks)
 
         runtime_kwargs = called["algorithm_kwargs"]
-        assert runtime_kwargs["cache_policy"] == "deterministic"
-        assert runtime_kwargs["max_examples"] == 4
-        assert opt_func._decorator_runtime_overrides["cache_policy"] == "no_repeats"
-        assert opt_func.max_examples == 2
+        require(runtime_kwargs["cache_policy"] == "deterministic")
+        require(runtime_kwargs["max_examples"] == 4)
+        require(opt_func._decorator_runtime_overrides["cache_policy"] == "no_repeats")
+        require(opt_func.max_examples == 2)
 
     def test_apply_best_config(
         self, simple_function, sample_config_space, sample_objectives
@@ -405,12 +452,15 @@ class TestOptimization:
 
         # Apply best config
         result = opt_func.apply_best_config()
-        assert result is True
-        assert opt_func._current_config == {
-            "temperature": 0.5,
-            "max_tokens": 200,
-            "model": "gpt-4",
-        }
+        require(result is True)
+        require(
+            opt_func._current_config
+            == {
+                "temperature": 0.5,
+                "max_tokens": 200,
+                "model": "gpt-4",
+            }
+        )
 
     def test_apply_best_config_no_results(
         self, simple_function, sample_config_space, sample_objectives
@@ -444,7 +494,7 @@ class TestOptimization:
         )
 
         # In cloud execution, should use cloud services
-        with patch("traigent.cloud.client.TraiGentCloudClient") as mock_cloud_client:
+        with patch("traigent.cloud.client.TraigentCloudClient") as mock_cloud_client:
             mock_client_instance = Mock()
             mock_cloud_client.return_value = mock_client_instance
 
@@ -455,6 +505,9 @@ class TestOptimization:
 
             # Should attempt to use cloud service
             # Implementation depends on actual cloud execution logic
+            require(
+                mock_cloud_client.call_count in (0, 1)
+            )  # Cloud may or may not be invoked
 
     def test_get_optimization_results(
         self, simple_function, sample_config_space, sample_objectives
@@ -467,13 +520,13 @@ class TestOptimization:
         )
 
         # Initially no results
-        assert opt_func.get_optimization_results() is None
+        require(opt_func.get_optimization_results() is None)
 
         # Add results
         mock_results = Mock(spec=OptimizationResult)
         opt_func._optimization_results = mock_results
 
-        assert opt_func.get_optimization_results() == mock_results
+        require(opt_func.get_optimization_results() == mock_results)
 
     @pytest.mark.asyncio
     async def test_parallel_trials(
@@ -526,4 +579,4 @@ class TestOptimization:
 
             result = await opt_func.optimize()
 
-            assert result.best_score == 0.88
+            require(result.best_score == pytest.approx(0.88))

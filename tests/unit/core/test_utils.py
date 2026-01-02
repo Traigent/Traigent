@@ -166,8 +166,10 @@ class TestValidationUtilities:
 
     def test_validate_positive_number_valid(self):
         """Test validate_positive_number with valid values."""
-        validate_positive_number(5, "value")  # Should not raise
-        validate_positive_number(0.1, "value")  # Should not raise
+        result1 = validate_positive_number(5, "value")  # Should not raise
+        result2 = validate_positive_number(0.1, "value")  # Should not raise
+        assert result1 is None  # Function returns None on success
+        assert result2 is None  # Function returns None on success
 
     def test_validate_positive_number_zero(self):
         """Test validate_positive_number with zero."""
@@ -186,8 +188,10 @@ class TestValidationUtilities:
 
     def test_validate_range_valid(self):
         """Test validate_range with value in range."""
-        validate_range(5, 0, 10, "value")  # Should not raise
-        validate_range(0.5, 0.0, 1.0, "value")  # Should not raise
+        result1 = validate_range(5, 0, 10, "value")  # Should not raise
+        result2 = validate_range(0.5, 0.0, 1.0, "value")  # Should not raise
+        assert result1 is None  # Function returns None on success
+        assert result2 is None  # Function returns None on success
 
     def test_validate_range_below_min(self):
         """Test validate_range with value below minimum."""

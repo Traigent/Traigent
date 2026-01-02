@@ -5,7 +5,7 @@ import os
 import sys
 from pathlib import Path
 
-# Ensure TraiGent SDK is in path
+# Ensure Traigent SDK is in path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Initialize in mock mode for examples

@@ -18,7 +18,8 @@ class ArtifactManager:
     REQUIRED_SECTIONS = [
         "## Tests Executed",
         "## Issues Found",
-        "## Evidence",
+        "## Evidence (Machine)",
+        "## Evidence (Narrative)",
     ]
 
     REPORT_TEMPLATE = '''# Review Findings: {component}
@@ -42,7 +43,11 @@ class ArtifactManager:
 
 - [ ] (None / List recommendations)
 
-## Evidence
+## Evidence (Machine)
+
+`{"format":"standard","commits":["<sha>"],"tests":{"command":"<command>","status":"PASS","passed":0,"total":0},"models":"<model>","reviewer":"<agent> + <captain>","timestamp":"<ISO-8601>","followups":"None","accepted_risks":"None"}`
+
+## Evidence (Narrative)
 
 - Terminal output hash: sha256:...
 - Git state at review: (commit SHA)

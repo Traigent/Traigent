@@ -6,7 +6,7 @@
 
 ## Overview
 
-Implemented comprehensive documentation improvements for TraiGent SDK, focusing on three key areas:
+Implemented comprehensive documentation improvements for Traigent SDK, focusing on three key areas:
 1. Public API Reference Guide with detailed decorator signatures
 2. Telemetry documentation covering data collection, retention, and opt-out
 3. Thread pool usage examples with proper context propagation
@@ -209,6 +209,6 @@ These documentation improvements provide:
 - All documentation uses absolute file paths as required
 - No emojis used (except in summary markers)
 - All code examples are syntactically correct Python
-- Documentation follows existing TraiGent docs structure and style
+- Documentation follows existing Traigent docs structure and style
 - Cross-references provided to related documentation
 - Environment variable opt-out is already implemented in source code

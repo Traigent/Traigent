@@ -1,4 +1,4 @@
-"""Reproducibility metadata collection for TraiGent optimization runs.
+"""Reproducibility metadata collection for Traigent optimization runs.
 
 This module provides comprehensive metadata collection to ensure
 optimization runs can be reproduced exactly, including environment,
@@ -126,7 +126,7 @@ class ReproducibilityMetadata:
                 # Package not installed
                 pass
 
-        # Add TraiGent version
+        # Add Traigent version
         try:
             import traigent
 
@@ -354,7 +354,7 @@ class ReproducibilityMetadata:
         return git_info
 
     def _collect_traigent_info(self) -> dict[str, Any]:
-        """Collect TraiGent-specific information."""
+        """Collect Traigent-specific information."""
         traigent_info = {
             "version": "unknown",
             "config_path": None,
@@ -368,7 +368,7 @@ class ReproducibilityMetadata:
         except ImportError:
             pass
 
-        # Check for TraiGent config file
+        # Check for Traigent config file
         config_paths = [
             Path.home() / ".traigent" / "config.yaml",
             Path.cwd() / "traigent.yaml",

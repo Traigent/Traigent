@@ -212,7 +212,7 @@ class CTDTestGenerator:
             # Full combinatorial (use with caution!)
             all_combos = []
             for combo in itertools.product(*[parameters[p] for p in param_names]):
-                all_combos.append(dict(zip(param_names, combo)))
+                all_combos.append(dict(zip(param_names, combo, strict=False)))
             return all_combos
 
     def _generate_pairwise(
@@ -301,7 +301,7 @@ class CTDTestGenerator:
 
             # Generate all combinations for this subset
             for combo in itertools.product(*[subset_params[p] for p in param_subset]):
-                test_case = dict(zip(param_subset, combo))
+                test_case = dict(zip(param_subset, combo, strict=False))
 
                 # Fill in other parameters with valid defaults
                 for param in param_names:
@@ -504,7 +504,7 @@ class CTDTestGenerator:
             # Verify overrides were applied
             param_mappings = plugin.get_parameter_mappings()
 
-            # Build reverse mapping to find all TraiGent params that map to each framework param
+            # Build reverse mapping to find all Traigent params that map to each framework param
             framework_to_traigent = {}
             for traigent_param, framework_param in param_mappings.items():
                 if framework_param not in framework_to_traigent:
@@ -527,7 +527,7 @@ class CTDTestGenerator:
                         if value is not None:
                             possible_values.append(value)
 
-                # If any TraiGent params were set for this framework param
+                # If any Traigent params were set for this framework param
                 if possible_values:
                     # Check top-level kwargs first
                     if framework_param in overridden_kwargs:
@@ -552,7 +552,7 @@ class CTDTestGenerator:
                             return False
 
                     # The actual value should be one of the possible values
-                    # (when multiple TraiGent params map to same framework param, last one wins)
+                    # (when multiple Traigent params map to same framework param, last one wins)
                     if actual_value not in possible_values:
                         print(
                             f"  ✗ Parameter {framework_param} has unexpected value: "
@@ -589,6 +589,7 @@ class TestPluginCTD:
     def test_generator(self):
         """Create a CTD test generator."""
         return CTDTestGenerator(k=1, verbose=True)
+        # Function completed successfully (no assertion needed for smoke test)
 
     @pytest.fixture
     def registry(self):

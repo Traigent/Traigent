@@ -1,4 +1,4 @@
-"""Git hooks installer for TraiGent.
+"""Git hooks installer for Traigent.
 
 Installs and manages Git hooks that validate agent configurations
 before pushes.
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 # Pre-push hook script content
 PRE_PUSH_HOOK_SCRIPT = """#!/bin/bash
-# TraiGent pre-push hook - validates agent configurations
+# Traigent pre-push hook - validates agent configurations
 # Installed by: traigent hooks install
 
 set -e
@@ -36,7 +36,7 @@ fi
 
 echo "[traigent-validate] Checking agent configurations..."
 
-# Run TraiGent validation
+# Run Traigent validation
 if ! $TRAIGENT_CMD hooks validate --exit-code; then
     echo ""
     echo "PUSH REJECTED: Agent configuration violates constraints"
@@ -50,13 +50,13 @@ if ! $TRAIGENT_CMD hooks validate --exit-code; then
 fi
 
 echo ""
-echo "All TraiGent hooks passed!"
+echo "All Traigent hooks passed!"
 exit 0
 """
 
 # Pre-commit hook script content (lighter validation)
 PRE_COMMIT_HOOK_SCRIPT = """#!/bin/bash
-# TraiGent pre-commit hook - quick config check
+# Traigent pre-commit hook - quick config check
 # Installed by: traigent hooks install
 
 set -e
@@ -75,12 +75,12 @@ fi
 $TRAIGENT_CMD hooks check --quick
 """
 
-# Hook marker to identify TraiGent-installed hooks
-HOOK_MARKER = "# TraiGent pre-push hook - validates agent configurations"
+# Hook marker to identify Traigent-installed hooks
+HOOK_MARKER = "# Traigent pre-push hook - validates agent configurations"
 
 
 class HooksInstaller:
-    """Installs and manages Git hooks for TraiGent."""
+    """Installs and manages Git hooks for Traigent."""
 
     def __init__(self, repo_path: Path | str | None = None) -> None:
         """Initialize hooks installer.
@@ -118,7 +118,7 @@ class HooksInstaller:
         return self.hooks_dir
 
     def install(self, force: bool = False) -> dict[str, bool]:
-        """Install TraiGent Git hooks.
+        """Install Traigent Git hooks.
 
         Args:
             force: Overwrite existing hooks if present
@@ -154,10 +154,10 @@ class HooksInstaller:
         """
         if hook_path.exists():
             if not force:
-                # Check if it's already a TraiGent hook
+                # Check if it's already a Traigent hook
                 existing_content = hook_path.read_text()
                 if HOOK_MARKER in existing_content:
-                    logger.info(f"TraiGent hook already installed at {hook_path}")
+                    logger.info(f"Traigent hook already installed at {hook_path}")
                     return True
                 else:
                     logger.warning(
@@ -181,7 +181,7 @@ class HooksInstaller:
         return True
 
     def uninstall(self) -> dict[str, bool]:
-        """Uninstall TraiGent Git hooks.
+        """Uninstall Traigent Git hooks.
 
         Returns:
             Dictionary mapping hook names to success status
@@ -207,11 +207,11 @@ class HooksInstaller:
         if not hook_path.exists():
             return True
 
-        # Only remove if it's a TraiGent hook
+        # Only remove if it's a Traigent hook
         content = hook_path.read_text()
         if HOOK_MARKER not in content:
             logger.warning(
-                f"Hook at {hook_path} was not installed by TraiGent - skipping"
+                f"Hook at {hook_path} was not installed by Traigent - skipping"
             )
             return False
 
@@ -227,7 +227,7 @@ class HooksInstaller:
         return True
 
     def status(self) -> dict[str, str]:
-        """Check status of TraiGent hooks.
+        """Check status of Traigent hooks.
 
         Returns:
             Dictionary mapping hook names to status strings
@@ -278,7 +278,7 @@ def find_git_root(start_path: Path | None = None) -> Path | None:
 
 
 def install_hooks(repo_path: Path | str | None = None, force: bool = False) -> bool:
-    """Convenience function to install TraiGent hooks.
+    """Convenience function to install Traigent hooks.
 
     Args:
         repo_path: Path to Git repository (auto-detects if None)
@@ -304,7 +304,7 @@ def install_hooks(repo_path: Path | str | None = None, force: bool = False) -> b
 
 
 def uninstall_hooks(repo_path: Path | str | None = None) -> bool:
-    """Convenience function to uninstall TraiGent hooks.
+    """Convenience function to uninstall Traigent hooks.
 
     Args:
         repo_path: Path to Git repository (auto-detects if None)

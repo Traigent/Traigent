@@ -6,11 +6,19 @@ Imports TODOs from POST_RELEASE_TODO.md into the fix tracking system.
 
 from __future__ import annotations
 
+import json
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import infer_version_from_source, resolve_base_path, resolve_version
 
 
 @dataclass
@@ -35,8 +43,8 @@ class TodoItem:
     def to_markdown_row(self) -> str:
         """Convert to markdown table row."""
         return (
-            f"| {self.id} | {self.title} | {self.priority} | "
-            f"{self.component} | {self.status} | {self.owner} |"
+            f"| {self.id} | {self.title} | {self.component} | "
+            f"{self.status} | {self.owner} | {self.evidence} |"
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,13 +80,16 @@ class TodoImporter:
     # Required sections for validation
     REQUIRED_SECTIONS = ["## High Priority", "## Medium Priority", "## Low Priority"]
 
-    def __init__(self, source: str | Path) -> None:
+    def __init__(self, source: str | Path, version: str | None = None) -> None:
         """Initialize importer.
 
         Args:
             source: Path to POST_RELEASE_TODO.md
+            version: Release version override
         """
         self.source = Path(source)
+        inferred = infer_version_from_source(self.source)
+        self.version = resolve_version(version) or inferred
         self.warnings: list[str] = []
 
     def validate_source_format(self) -> tuple[bool, list[str]]:
@@ -199,6 +210,7 @@ class TodoImporter:
             issue=data.get("issue", ""),
             recommendation=data.get("recommendation", ""),
             effort=data.get("effort", ""),
+            evidence=self._legacy_evidence("Pending"),
         )
 
     def import_to_tracking(self, target: str | Path) -> Path:
@@ -235,11 +247,19 @@ class TodoImporter:
     ) -> str:
         """Generate TRACKING.md content."""
         timestamp = datetime.now().isoformat() + "Z"
+        version = self.version or "UNKNOWN"
+        release_review_tracking = (
+            f".release_review/{version}/PRE_RELEASE_REVIEW_TRACKING.md"
+            if self.version
+            else "UNKNOWN"
+        )
 
         lines = [
             "# Post-Release Recommendation Fixes Tracking",
             "",
+            f"**Release Version**: {version}",
             f"**Source**: `{self.source}`",
+            f"**Release Review Tracking**: `{release_review_tracking}`",
             f"**Imported**: {timestamp}",
             f"**Total Items**: {len(all_items)}",
             "",
@@ -321,13 +341,36 @@ class TodoImporter:
                 item.recommendation if item.recommendation else "(See source file)",
                 "",
                 "**Evidence**:",
-                "(To be filled when complete)",
+                item.evidence,
+                "",
+                "**Notes**:",
+                "(none)",
                 "",
                 "---",
                 "",
             ])
 
         return "\n".join(lines)
+
+    def _legacy_evidence(self, summary: str) -> str:
+        """Generate legacy evidence JSON placeholder."""
+        payload = {
+            "format": "legacy",
+            "commits": [],
+            "tests": {
+                "command": None,
+                "status": "UNKNOWN",
+                "passed": None,
+                "total": None,
+            },
+            "models": "UNKNOWN",
+            "reviewer": "UNKNOWN",
+            "timestamp": "UNKNOWN",
+            "followups": "None",
+            "accepted_risks": "None",
+            "legacy_summary": summary,
+        }
+        return json.dumps(payload, separators=(",", ":"))
 
 
 def main() -> None:
@@ -345,8 +388,16 @@ def main() -> None:
     parser.add_argument(
         "target",
         nargs="?",
-        default=".post_release_recommendation_fixes/TRACKING.md",
-        help="Path to target TRACKING.md (default: .post_release_recommendation_fixes/TRACKING.md)",
+        help="Path to target TRACKING.md (default: versioned path)",
+    )
+    parser.add_argument(
+        "--version",
+        help="Release version override (defaults to RR_VERSION or source path)",
+    )
+    parser.add_argument(
+        "--base-path",
+        default=".post_release_recommendation_fixes",
+        help="Base path for tracking files (default: .post_release_recommendation_fixes)",
     )
     parser.add_argument(
         "-y", "--yes",
@@ -366,7 +417,10 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    importer = TodoImporter(args.source)
+    importer = TodoImporter(args.source, version=args.version)
+    version = importer.version or resolve_version(args.version)
+    base_path = resolve_base_path(args.base_path, version)
+    target_path = Path(args.target) if args.target else base_path / "TRACKING.md"
 
     if not args.quiet:
         print(f"Parsing: {args.source}")
@@ -392,7 +446,7 @@ def main() -> None:
         do_import = True
     else:
         try:
-            confirm = input(f"Import to {args.target}? [y/N]: ").strip().lower()
+            confirm = input(f"Import to {target_path}? [y/N]: ").strip().lower()
             do_import = confirm == "y"
         except EOFError:
             # Non-interactive mode without --yes flag
@@ -400,7 +454,7 @@ def main() -> None:
             sys.exit(1)
 
     if do_import:
-        path = importer.import_to_tracking(args.target)
+        path = importer.import_to_tracking(target_path)
         if not args.quiet:
             print(f"Created: {path}")
     else:

@@ -1,4 +1,4 @@
-# 🔌 TraiGent API Patterns - Common Usage Examples
+# 🔌 Traigent API Patterns - Common Usage Examples
 
 ## Core Patterns
 

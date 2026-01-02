@@ -15,9 +15,7 @@ from traigent.api.functions import (
     get_trial_config,
     get_version_info,
     override_config,
-    set_strategy,
 )
-from traigent.api.types import StrategyConfig
 from traigent.config.types import TraigentConfig
 from traigent.utils.exceptions import ConfigAccessWarning, OptimizationStateError
 
@@ -310,84 +308,6 @@ class TestOverrideConfig:
         assert result == {}
 
 
-class TestSetStrategy:
-    """Test the set_strategy function."""
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_basic(self, mock_get_strategies):
-        """Test basic strategy creation."""
-        mock_get_strategies.return_value = {"bayesian": {}, "grid": {}, "random": {}}
-
-        strategy = set_strategy(algorithm="bayesian")
-
-        assert isinstance(strategy, StrategyConfig)
-        assert strategy.algorithm == "bayesian"
-        assert strategy.algorithm_config == {}
-        assert strategy.parallel_workers == _GLOBAL_CONFIG["parallel_workers"]
-        assert strategy.resource_limits == {}
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_with_config(self, mock_get_strategies):
-        """Test strategy with algorithm config."""
-        mock_get_strategies.return_value = {"bayesian": {}}
-
-        algo_config = {
-            "acquisition_function": "expected_improvement",
-            "initial_random_samples": 10,
-        }
-
-        strategy = set_strategy(algorithm="bayesian", algorithm_config=algo_config)
-
-        assert strategy.algorithm_config == algo_config
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_with_workers(self, mock_get_strategies):
-        """Test strategy with parallel workers."""
-        mock_get_strategies.return_value = {"random": {}}
-
-        strategy = set_strategy(algorithm="random", parallel_workers=8)
-
-        assert strategy.parallel_workers == 8
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_with_limits(self, mock_get_strategies):
-        """Test strategy with resource limits."""
-        mock_get_strategies.return_value = {"grid": {}}
-
-        limits = {"max_memory": "4GB", "max_time": 3600, "max_cpus": 4}
-
-        strategy = set_strategy(algorithm="grid", resource_limits=limits)
-
-        assert strategy.resource_limits == limits
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_invalid_algorithm(self, mock_get_strategies):
-        """Test invalid algorithm."""
-        mock_get_strategies.return_value = {"bayesian": {}, "grid": {}}
-
-        with pytest.raises(ValueError, match="Unknown algorithm 'invalid'"):
-            set_strategy(algorithm="invalid")
-
-    @patch("traigent.api.functions.get_available_strategies")
-    @patch("traigent.api.functions.logger")
-    def test_set_strategy_logging(self, mock_logger, mock_get_strategies):
-        """Test strategy creation logging."""
-        mock_get_strategies.return_value = {"bayesian": {}}
-
-        set_strategy(algorithm="bayesian")
-
-        mock_logger.debug.assert_called_with("Created strategy config: bayesian")
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_set_strategy_validation(self, mock_get_strategies):
-        """Test that strategy validation is called."""
-        mock_get_strategies.return_value = {"bayesian": {}}
-
-        with patch.object(StrategyConfig, "validate") as mock_validate:
-            set_strategy(algorithm="bayesian")
-            mock_validate.assert_called_once()
-
-
 class TestGetAvailableStrategies:
     """Test the get_available_strategies function."""
 
@@ -536,24 +456,6 @@ class TestIntegration:
         assert global_config["parallel_workers"] == 4
         assert global_config["logging_level"] == "INFO"
         assert global_config["cache_policy"] == "disk"
-
-    @patch("traigent.api.functions.get_available_strategies")
-    def test_strategy_configuration_flow(self, mock_get_strategies):
-        """Test complete strategy configuration flow."""
-        mock_get_strategies.return_value = {"random": {}, "grid": {}, "bayesian": {}}
-
-        # Set strategy
-        strategy_config = set_strategy(
-            algorithm="random", algorithm_config={"initial_samples": 10}
-        )
-
-        # Get available strategies
-        strategies = get_available_strategies()
-
-        # Verify strategy configuration
-        assert isinstance(strategy_config, StrategyConfig)
-        assert strategy_config.algorithm == "random"
-        assert len(strategies) > 0
 
 
 class TestGetTrialConfig:

@@ -964,7 +964,7 @@ class TestCostEnforcerConfigLoading:
             assert mock_logger.warning.call_count >= 3
 
 
-class TestCostEnforcerApproval:
+class TestCostEnforcerApprovalToken:
     """Tests for approval logic."""
 
     @pytest.fixture(autouse=True)

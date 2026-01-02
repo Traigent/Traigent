@@ -1,4 +1,4 @@
-"""Base plugin architecture for TraiGent integrations.
+"""Base plugin architecture for Traigent integrations.
 
 This module provides the abstract base class and utilities for creating
 integration plugins that handle parameter mappings and framework overrides.
@@ -101,7 +101,7 @@ class IntegrationPlugin(ABC):
         """Return default parameter mappings.
 
         Returns:
-            Dict mapping TraiGent parameter names to framework-specific names
+            Dict mapping Traigent parameter names to framework-specific names
         """
         raise NotImplementedError
 
@@ -168,7 +168,7 @@ class IntegrationPlugin(ABC):
         """Get the current parameter mappings.
 
         Returns:
-            Dict of TraiGent param -> framework param mappings
+            Dict of Traigent param -> framework param mappings
         """
         return self._parameter_mappings.copy()
 
