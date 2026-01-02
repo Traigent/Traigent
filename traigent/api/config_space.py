@@ -135,36 +135,35 @@ class ConfigSpace:
         """
         tvars: dict[str, ParameterRange] = {}
 
-        # Process configuration_space first
-        if configuration_space:
-            for name, value in configuration_space.items():
-                if isinstance(value, ParameterRange):
-                    tvars[name] = value
-                elif isinstance(value, (list, tuple)):
-                    tvars[name] = cls._sequence_to_range(name, value)
-                elif isinstance(value, dict):
-                    # Assume it's a range spec dict
-                    tvars[name] = cls._dict_to_range(name, value)
-                else:
-                    # Skip non-range values (they might be other decorator args)
-                    pass
-
-        # Process inline params (may override configuration_space)
-        if inline_params:
-            for name, value in inline_params.items():
-                if isinstance(value, ParameterRange):
-                    tvars[name] = value
-                elif isinstance(value, (list, tuple)):
-                    tvars[name] = cls._sequence_to_range(name, value)
-                elif isinstance(value, dict):
-                    tvars[name] = cls._dict_to_range(name, value)
-                # Skip non-range values
+        # Process configuration_space first, then inline params (may override)
+        for params in (configuration_space, inline_params):
+            if params:
+                cls._process_param_dict(params, tvars)
 
         return cls(
             tvars=tvars,
             constraints=constraints or [],
             description=description,
         )
+
+    @classmethod
+    def _process_param_dict(
+        cls, params: dict[str, Any], tvars: dict[str, ParameterRange]
+    ) -> None:
+        """Process a parameter dictionary and add ranges to tvars.
+
+        Args:
+            params: Dictionary of parameter definitions
+            tvars: Target dictionary to populate with ParameterRange instances
+        """
+        for name, value in params.items():
+            if isinstance(value, ParameterRange):
+                tvars[name] = value
+            elif isinstance(value, (list, tuple)):
+                tvars[name] = cls._sequence_to_range(name, value)
+            elif isinstance(value, dict):
+                tvars[name] = cls._dict_to_range(name, value)
+            # Skip non-range values (they might be other decorator args)
 
     @classmethod
     def _sequence_to_range(
@@ -383,56 +382,10 @@ class ConfigSpace:
         Returns:
             Dict in TVL spec format
         """
-        tvars_list = []
-        for name, tvar in self.tvars.items():
-            tvar_dict: dict[str, Any] = {
-                "name": name,
-                "type": self._infer_tvar_type(tvar),
-                "domain": self._tvar_to_domain(tvar),
-            }
-            if hasattr(tvar, "unit") and tvar.unit:
-                tvar_dict["unit"] = tvar.unit
-            if hasattr(tvar, "default") and tvar.default is not None:
-                tvar_dict["default"] = tvar.default
-            tvars_list.append(tvar_dict)
-
-        constraints_list = []
-        for idx, c in enumerate(self.constraints):
-            if c.expr is not None:
-                # Use params.<name> prefix for TVL expression format
-                expr_tvar = c.expr.tvar
-                base_name = self.var_names.get(
-                    id(expr_tvar),
-                    (expr_tvar.name if expr_tvar else None) or "unknown",
-                )
-                var_name = f"params.{base_name}"
-                constraint_dict: dict[str, Any] = {
-                    "expr": c.expr.to_expression(var_name),
-                    "index": idx,
-                }
-                self._add_constraint_metadata(constraint_dict, c)
-                constraints_list.append(constraint_dict)
-            elif c.when is not None and c.then is not None:
-                # Use params.<name> prefix for TVL expression format
-                when_tvar = c.when.tvar
-                then_tvar = c.then.tvar
-                when_base = self.var_names.get(
-                    id(when_tvar),
-                    (when_tvar.name if when_tvar else None) or "unknown",
-                )
-                then_base = self.var_names.get(
-                    id(then_tvar),
-                    (then_tvar.name if then_tvar else None) or "unknown",
-                )
-                when_var = f"params.{when_base}"
-                then_var = f"params.{then_base}"
-                constraint_dict = {
-                    "when": c.when.to_expression(when_var),
-                    "then": c.then.to_expression(then_var),
-                    "index": idx,
-                }
-                self._add_constraint_metadata(constraint_dict, c)
-                constraints_list.append(constraint_dict)
+        tvars_list = [
+            self._tvar_to_spec_dict(name, tvar) for name, tvar in self.tvars.items()
+        ]
+        constraints_list = self._build_constraints_list()
 
         spec: dict[str, Any] = {"tvars": tvars_list}
         if constraints_list:
@@ -441,6 +394,77 @@ class ConfigSpace:
             spec["description"] = self.description
 
         return spec
+
+    def _tvar_to_spec_dict(self, name: str, tvar: ParameterRange) -> dict[str, Any]:
+        """Convert a single tvar to TVL spec dict format."""
+        tvar_dict: dict[str, Any] = {
+            "name": name,
+            "type": self._infer_tvar_type(tvar),
+            "domain": self._tvar_to_domain(tvar),
+        }
+        if hasattr(tvar, "unit") and tvar.unit:
+            tvar_dict["unit"] = tvar.unit
+        if hasattr(tvar, "default") and tvar.default is not None:
+            tvar_dict["default"] = tvar.default
+        return tvar_dict
+
+    def _build_constraints_list(self) -> list[dict[str, Any]]:
+        """Build the constraints list for TVL spec."""
+        constraints_list = []
+        for idx, c in enumerate(self.constraints):
+            constraint_dict = self._constraint_to_spec_dict(c, idx)
+            if constraint_dict:
+                constraints_list.append(constraint_dict)
+        return constraints_list
+
+    def _constraint_to_spec_dict(
+        self, c: Constraint, idx: int
+    ) -> dict[str, Any] | None:
+        """Convert a single constraint to TVL spec dict format."""
+        if c.expr is not None:
+            return self._expr_constraint_to_dict(c, idx)
+        elif c.when is not None and c.then is not None:
+            return self._implication_constraint_to_dict(c, idx)
+        return None
+
+    def _expr_constraint_to_dict(self, c: Constraint, idx: int) -> dict[str, Any]:
+        """Convert an expression constraint to dict."""
+        expr_tvar = c.expr.tvar  # type: ignore[union-attr]
+        base_name = self.var_names.get(
+            id(expr_tvar),
+            (expr_tvar.name if expr_tvar else None) or "unknown",
+        )
+        var_name = f"params.{base_name}"
+        constraint_dict: dict[str, Any] = {
+            "expr": c.expr.to_expression(var_name),  # type: ignore[union-attr]
+            "index": idx,
+        }
+        self._add_constraint_metadata(constraint_dict, c)
+        return constraint_dict
+
+    def _implication_constraint_to_dict(
+        self, c: Constraint, idx: int
+    ) -> dict[str, Any]:
+        """Convert an implication (when/then) constraint to dict."""
+        when_tvar = c.when.tvar  # type: ignore[union-attr]
+        then_tvar = c.then.tvar  # type: ignore[union-attr]
+        when_base = self.var_names.get(
+            id(when_tvar),
+            (when_tvar.name if when_tvar else None) or "unknown",
+        )
+        then_base = self.var_names.get(
+            id(then_tvar),
+            (then_tvar.name if then_tvar else None) or "unknown",
+        )
+        when_var = f"params.{when_base}"
+        then_var = f"params.{then_base}"
+        constraint_dict: dict[str, Any] = {
+            "when": c.when.to_expression(when_var),  # type: ignore[union-attr]
+            "then": c.then.to_expression(then_var),  # type: ignore[union-attr]
+            "index": idx,
+        }
+        self._add_constraint_metadata(constraint_dict, c)
+        return constraint_dict
 
     @staticmethod
     def _add_constraint_metadata(
@@ -502,48 +526,40 @@ class ConfigSpace:
         """
         if isinstance(tvar, Choices):
             return {"kind": "enum", "values": list(tvar.values)}
-        elif isinstance(tvar, IntRange):
-            domain: dict[str, Any] = {
-                "kind": "range",
-                "range": [tvar.low, tvar.high],
-            }
-            if tvar.step is not None:
-                domain["resolution"] = tvar.step
-            if tvar.log:
-                domain["log"] = True
-            return domain
-        elif isinstance(tvar, LogRange):
-            return {
-                "kind": "range",
-                "range": [tvar.low, tvar.high],
-                "log": True,
-            }
-        elif isinstance(tvar, Range):
-            domain = {
-                "kind": "range",
-                "range": [tvar.low, tvar.high],
-            }
-            if tvar.step is not None:
-                domain["resolution"] = tvar.step
-            if tvar.log:
-                domain["log"] = True
-            return domain
-        else:
-            # Fallback for other ParameterRange types
-            config_value = tvar.to_config_value()
-            if isinstance(config_value, list):
-                return {"kind": "enum", "values": config_value}
-            elif isinstance(config_value, tuple) and len(config_value) == 2:
-                return {"kind": "range", "range": list(config_value)}
-            else:
-                return {"kind": "enum", "values": [config_value]}
+
+        if isinstance(tvar, LogRange):
+            return {"kind": "range", "range": [tvar.low, tvar.high], "log": True}
+
+        if isinstance(tvar, (IntRange, Range)):
+            return ConfigSpace._range_to_domain(tvar)
+
+        # Fallback for other ParameterRange types
+        return ConfigSpace._fallback_domain(tvar)
+
+    @staticmethod
+    def _range_to_domain(tvar: IntRange | Range) -> dict[str, Any]:
+        """Convert IntRange or Range to domain dict."""
+        domain: dict[str, Any] = {"kind": "range", "range": [tvar.low, tvar.high]}
+        if tvar.step is not None:
+            domain["resolution"] = tvar.step
+        if tvar.log:
+            domain["log"] = True
+        return domain
+
+    @staticmethod
+    def _fallback_domain(tvar: ParameterRange) -> dict[str, Any]:
+        """Convert unknown ParameterRange types to domain dict."""
+        config_value = tvar.to_config_value()
+        if isinstance(config_value, list):
+            return {"kind": "enum", "values": config_value}
+        if isinstance(config_value, tuple) and len(config_value) == 2:
+            return {"kind": "range", "range": list(config_value)}
+        return {"kind": "enum", "values": [config_value]}
 
     def __repr__(self) -> str:
         """Return string representation."""
         tvar_names = list(self.tvars.keys())
-        return (
-            f"ConfigSpace(tvars={tvar_names}, " f"constraints={len(self.constraints)})"
-        )
+        return f"ConfigSpace(tvars={tvar_names}, constraints={len(self.constraints)})"
 
 
 __all__ = ["ConfigSpace"]

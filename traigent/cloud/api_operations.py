@@ -63,6 +63,9 @@ except ImportError:
 # Track whether we've already warned about backend unavailability (per session)
 _backend_unavailable_warned: bool = False
 
+# Common log message for fallback to local optimization
+_LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
+
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
@@ -344,7 +347,7 @@ class ApiOperations:
             logger.info(
                 "💡 The backend service may be starting up or temporarily unavailable"
             )
-            logger.info("   Traigent will fall back to local optimization")
+            logger.info(_LOCAL_FALLBACK_MSG)
             raise CloudServiceError(
                 "Cloud backend temporarily unavailable (server error) - using local optimization"
             )
@@ -354,7 +357,7 @@ class ApiOperations:
             logger.info(
                 "💡 The backend service is temporarily overloaded or down for maintenance"
             )
-            logger.info("   Traigent will fall back to local optimization")
+            logger.info(_LOCAL_FALLBACK_MSG)
             raise CloudServiceError(
                 "Cloud backend service unavailable - using local optimization"
             )
@@ -362,7 +365,7 @@ class ApiOperations:
         if status_code in {502, 504}:
             logger.warning(f"⚡ Cloud backend gateway error (HTTP {status_code})")
             logger.info("💡 There's a temporary network issue reaching the backend")
-            logger.info("   Traigent will fall back to local optimization")
+            logger.info(_LOCAL_FALLBACK_MSG)
             raise CloudServiceError(
                 "Cloud backend gateway error - using local optimization"
             )

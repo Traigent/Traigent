@@ -724,9 +724,7 @@ def _compile_constraints_unified(
     if isinstance(entries, dict):
         structural = entries.get("structural", [])
         derived_raw = entries.get("derived", [])
-        compiled = _compile_structural_constraints(
-            structural, validate_constraints, path
-        )
+        compiled = _compile_structural_constraints(structural, path)
         derived = _parse_derived_constraints(derived_raw)
         return compiled, derived
 
@@ -773,7 +771,6 @@ def _parse_derived_constraints(entries: list[Any]) -> list[DerivedConstraint] | 
 
 def _compile_structural_constraints(
     entries: list[Any],
-    validate_constraints: bool,
     path: Path,
 ) -> list[CompiledConstraint]:
     """Compile TVL 0.9 structural constraints.
@@ -1006,7 +1003,7 @@ def _resolve_algorithm(optimization_section: Any) -> str | None:
 
 def _compile_constraints(
     entries: list[Any],
-    validate_constraints: bool,
+    _validate_constraints: bool,  # Reserved for future validation logic
     path: Path,
 ) -> list[CompiledConstraint]:
     compiled: list[CompiledConstraint] = []

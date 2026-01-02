@@ -576,6 +576,99 @@ def normalize_tvar_type(raw_type: str) -> TVarType | None:
     return None
 
 
+def _coerce_int_bound(tvar_name: str, value: Any, which: str) -> int:
+    """Coerce a value to an integer for range bounds.
+
+    Args:
+        tvar_name: Name of the TVAR (for error messages).
+        value: The value to coerce.
+        which: Which bound ("min" or "max") for error messages.
+
+    Returns:
+        The coerced integer value.
+
+    Raises:
+        ValueError: If the value cannot be coerced to an integer.
+        TypeError: If the value is not a valid numeric type.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"TVAR '{tvar_name}' int range bounds must be integers, "
+            f"got {which}={value!r}"
+        )
+    if isinstance(value, int):
+        return value
+    if not isinstance(value, float):
+        raise TypeError(
+            f"Expected int or float for {which}, got {type(value).__name__}"
+        )
+    if value.is_integer():
+        return int(value)
+    raise ValueError(
+        f"TVAR '{tvar_name}' int range bounds must be integers "
+        f"(no truncation), got {which}={value!r}"
+    )
+
+
+def _parse_bool_domain(domain_data: Any) -> DomainSpec:
+    """Parse domain for boolean type."""
+    if domain_data is None:
+        return DomainSpec(kind="enum", values=[True, False])
+    if isinstance(domain_data, list):
+        values = [
+            v if isinstance(v, bool) else str(v).lower() == "true" for v in domain_data
+        ]
+        return DomainSpec(kind="enum", values=values)
+    return DomainSpec(kind="enum", values=[True, False])
+
+
+def _parse_range_domain(
+    tvar_name: str, tvar_type: TVarType, domain_data: dict[str, Any]
+) -> DomainSpec:
+    """Parse range domain specification."""
+    range_val = domain_data["range"]
+    if not (isinstance(range_val, list) and len(range_val) == 2):
+        raise ValueError(
+            f"TVAR '{tvar_name}' range must be [min, max], got {range_val}"
+        )
+
+    range_tuple: tuple[int, int] | tuple[float, float]
+    if tvar_type == "int":
+        range_tuple = (
+            _coerce_int_bound(tvar_name, range_val[0], "min"),
+            _coerce_int_bound(tvar_name, range_val[1], "max"),
+        )
+    else:
+        range_tuple = (float(range_val[0]), float(range_val[1]))
+
+    return DomainSpec(
+        kind="range",
+        range=range_tuple,
+        resolution=domain_data.get("resolution"),
+    )
+
+
+def _parse_dict_domain(
+    tvar_name: str, tvar_type: TVarType, domain_data: dict[str, Any]
+) -> DomainSpec | None:
+    """Parse dict-style domain specification.
+
+    Returns None if the dict format is not recognized.
+    """
+    if "range" in domain_data:
+        return _parse_range_domain(tvar_name, tvar_type, domain_data)
+    if "set" in domain_data:
+        return DomainSpec(kind="set", values=domain_data["set"])
+    if "registry" in domain_data:
+        return DomainSpec(
+            kind="registry",
+            registry=domain_data["registry"],
+            filter=domain_data.get("filter"),
+            version=domain_data.get("version"),
+        )
+    return None
+
+
 def parse_domain_spec(
     tvar_name: str,
     tvar_type: TVarType,
@@ -596,15 +689,7 @@ def parse_domain_spec(
     """
     # Boolean type has implicit domain
     if tvar_type == "bool":
-        if domain_data is None:
-            return DomainSpec(kind="enum", values=[True, False])
-        # Allow explicit boolean domain
-        if isinstance(domain_data, list):
-            values = [
-                v if isinstance(v, bool) else str(v).lower() == "true"
-                for v in domain_data
-            ]
-            return DomainSpec(kind="enum", values=values)
+        return _parse_bool_domain(domain_data)
 
     # Handle list/array domains (enum values)
     if isinstance(domain_data, list):
@@ -612,66 +697,9 @@ def parse_domain_spec(
 
     # Handle dict domains
     if isinstance(domain_data, dict):
-        # Range specification
-        if "range" in domain_data:
-            range_val = domain_data["range"]
-            if isinstance(range_val, list) and len(range_val) == 2:
-                range_tuple: tuple[int, int] | tuple[float, float]
-                # Preserve integer type for int TVARs; reject lossy truncation.
-                if tvar_type == "int":
-                    low_raw, high_raw = range_val
-
-                    def _coerce_int_bound(value: Any, which: str) -> int:
-                        if isinstance(value, bool) or not isinstance(
-                            value, (int, float)
-                        ):
-                            raise ValueError(
-                                f"TVAR '{tvar_name}' int range bounds must be integers, "
-                                f"got {which}={value!r}"
-                            )
-                        if isinstance(value, int):
-                            return value
-                        if not isinstance(value, float):
-                            raise TypeError(
-                                f"Expected int or float for {which}, got {type(value).__name__}"
-                            )
-                        if value.is_integer():
-                            return int(value)
-                        raise ValueError(
-                            f"TVAR '{tvar_name}' int range bounds must be integers "
-                            f"(no truncation), got {which}={value!r}"
-                        )
-
-                    range_tuple = (
-                        _coerce_int_bound(low_raw, "min"),
-                        _coerce_int_bound(high_raw, "max"),
-                    )
-                else:
-                    range_tuple = (
-                        float(range_val[0]),
-                        float(range_val[1]),
-                    )
-                return DomainSpec(
-                    kind="range",
-                    range=range_tuple,
-                    resolution=domain_data.get("resolution"),
-                )
-            raise ValueError(
-                f"TVAR '{tvar_name}' range must be [min, max], got {range_val}"
-            )
-
-        # Set specification
-        if "set" in domain_data:
-            return DomainSpec(kind="set", values=domain_data["set"])
-
-        # Registry specification
-        if "registry" in domain_data:
-            return DomainSpec(
-                kind="registry",
-                registry=domain_data["registry"],
-                filter=domain_data.get("filter"),
-                version=domain_data.get("version"),
-            )
+        result = _parse_dict_domain(tvar_name, tvar_type, domain_data)
+        if result is not None:
+            return result
 
     raise ValueError(
         f"TVAR '{tvar_name}' has invalid domain specification: {domain_data}"

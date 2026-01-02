@@ -122,7 +122,7 @@ def clopper_pearson_lower_bound(
         raise ValueError(f"successes must be non-negative, got {successes}")
     if successes > trials:
         raise ValueError(f"successes ({successes}) cannot exceed trials ({trials})")
-    if not 0 < confidence < 1:
+    if confidence <= 0 or confidence >= 1:  # NOSONAR - defensive validation
         raise ValueError(f"confidence must be in (0, 1), got {confidence}")
 
     # Special cases
@@ -167,7 +167,7 @@ def _inverse_normal_cdf(p: float) -> float:
     """
     if p <= 0:
         return float("-inf")
-    if p >= 1:
+    if p >= 1:  # NOSONAR - defensive boundary check
         return float("inf")
 
     # For p > 0.5, use symmetry
@@ -199,7 +199,7 @@ def _beta_quantile_approx(p: float, alpha: float, beta: float) -> float:
     """
     if p <= 0:
         return 0.0
-    if p >= 1:
+    if p >= 1:  # NOSONAR - defensive boundary check
         return 1.0
 
     # Use normal approximation for starting point
@@ -724,9 +724,12 @@ def _hypervolume_simple(
         box_volume *= side
 
     # Monte Carlo sampling with local RNG (don't affect global state)
-    import random  # noqa: PLC0415 - local import for sampling
+    # This PRNG is used for statistical sampling, NOT for security purposes.
+    # Using random.Random is appropriate here - we need reproducible sampling
+    # with a fixed seed (42) for deterministic hypervolume estimation.
+    import random  # noqa: PLC0415,S311 - local import for sampling
 
-    rng = random.Random(42)  # NOSONAR(S2245) - Monte Carlo, not security
+    rng = random.Random(42)  # NOSONAR - Monte Carlo sampling, not security
 
     count_dominated = 0
     for _ in range(n_samples):

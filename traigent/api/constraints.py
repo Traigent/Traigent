@@ -705,27 +705,36 @@ class Constraint:
         missing_names: list[str],
     ) -> None:
         """Recursively collect tvar references from expression tree."""
+        # Collect from main expression or when/then pair
+        expressions_to_collect = (
+            [("expr", self.expr)]
+            if self.expr is not None
+            else [("when", self.when), ("then", self.then)]
+        )
+        for path, expr in expressions_to_collect:
+            if expr is not None:
+                self._collect_from_expr(expr, path, var_names, missing_names)
 
-        def collect_from_expr(expr: BoolExpr, path: str) -> None:
-            """Recursively extract tvar names from a boolean expression tree."""
-            if isinstance(expr, Condition):
-                if expr.tvar.name:
-                    var_names[id(expr.tvar)] = expr.tvar.name
-                else:
-                    missing_names.append(path)
-            elif isinstance(expr, (AndCondition, OrCondition)):
-                for i, sub in enumerate(expr.conditions):
-                    collect_from_expr(sub, f"{path}[{i}]")
-            elif isinstance(expr, NotCondition):
-                collect_from_expr(expr.condition, f"~{path}")
-
-        if self.expr is not None:
-            collect_from_expr(self.expr, "expr")
-        else:
-            if self.when is not None:
-                collect_from_expr(self.when, "when")
-            if self.then is not None:
-                collect_from_expr(self.then, "then")
+    def _collect_from_expr(
+        self,
+        expr: BoolExpr,
+        path: str,
+        var_names: dict[int, str],
+        missing_names: list[str],
+    ) -> None:
+        """Recursively extract tvar names from a boolean expression tree."""
+        if isinstance(expr, Condition):
+            if expr.tvar.name:
+                var_names[id(expr.tvar)] = expr.tvar.name
+            else:
+                missing_names.append(path)
+        elif isinstance(expr, (AndCondition, OrCondition)):
+            for i, sub in enumerate(expr.conditions):
+                self._collect_from_expr(sub, f"{path}[{i}]", var_names, missing_names)
+        elif isinstance(expr, NotCondition):
+            self._collect_from_expr(
+                expr.condition, f"~{path}", var_names, missing_names
+            )
 
 
 # =============================================================================
