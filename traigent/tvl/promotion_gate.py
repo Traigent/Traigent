@@ -351,7 +351,8 @@ class PromotionGate:
         Returns:
             ObjectiveResult for the banded comparison.
         """
-        assert obj.band is not None
+        if obj.band is None:
+            raise ValueError("Banded comparison requires obj.band to be set")
 
         # Perform TOST on both
         inc_tost = tost_equivalence_test(incumbent_samples, obj.band, obj.band_alpha)

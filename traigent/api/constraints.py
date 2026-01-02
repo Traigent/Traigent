@@ -560,7 +560,8 @@ class Constraint:
             return self.expr.to_expression(var_names)
 
         # Implication: not(when) or then
-        assert self.when is not None and self.then is not None
+        if self.when is None or self.then is None:
+            raise ValueError("Implication constraint requires both 'when' and 'then'")
         when_expr = self.when.to_expression(var_names)
         then_expr = self.then.to_expression(var_names)
         return f"not ({when_expr}) or ({then_expr})"

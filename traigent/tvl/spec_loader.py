@@ -476,7 +476,10 @@ def _resolve_registry_domain(
             f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
             "but no registry_resolver was provided."
         )
-    assert domain.registry is not None  # validated by DomainSpec
+    if domain.registry is None:
+        raise TVLValidationError(
+            f"TVAR '{name}' has a registry domain but registry field is None"
+        )
     resolved_values = registry_resolver.resolve(
         domain.registry, filter_expr=domain.filter, version=domain.version
     )
