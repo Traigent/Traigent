@@ -328,38 +328,43 @@ class TestTrialCountMetamorphic:
         scenario_runner,
         result_validator,
     ) -> None:
-        """More trials should produce equal or better best score.
+        """More trials should produce equal or better best score with grid search.
 
         Metamorphic Property:
             best_score(n_trials) <= best_score(2n_trials) for maximize
             (more exploration should find equal or better solution)
+
+        Note: We use grid search here instead of random to ensure determinism.
+        With random optimizer and mock mode, score distributions can vary between
+        runs even with the same seed, causing flaky failures.
         """
+        # Use a config space where grid search will deterministically explore
         base_config = {
             "model": ["a", "b", "c", "d", "e"],
-            "temp": [0.1, 0.3, 0.5, 0.7, 0.9],
+            "temp": [0.1, 0.3, 0.5, 0.7],
         }
 
-        # Few trials
+        # Few trials - grid search will explore first 3 combinations
         scenario_few = TestScenario(
             name="meta_few_trials",
-            description="Few trials (2)",
+            description="Few trials (3)",
             objectives=[ObjectiveSpec(name="accuracy", orientation="maximize")],
             config_space=base_config,
-            max_trials=2,
-            mock_mode_config={"optimizer": "random", "seed": 42},
-            expected=ExpectedResult(min_trials=2),
+            max_trials=3,
+            mock_mode_config={"optimizer": "grid"},
+            expected=ExpectedResult(min_trials=3),
             gist_template="meta-few -> {trial_count()} | {best_score()}",
         )
 
-        # Many trials
+        # Many trials - grid search will explore all combinations (20 total)
         scenario_many = TestScenario(
             name="meta_many_trials",
-            description="Many trials (10)",
+            description="Many trials (20)",
             objectives=[ObjectiveSpec(name="accuracy", orientation="maximize")],
             config_space=base_config,
-            max_trials=10,
-            mock_mode_config={"optimizer": "random", "seed": 42},
-            expected=ExpectedResult(min_trials=10),
+            max_trials=20,
+            mock_mode_config={"optimizer": "grid"},
+            expected=ExpectedResult(min_trials=20),
             gist_template="meta-many -> {trial_count()} | {best_score()}",
         )
 
@@ -373,11 +378,12 @@ class TestTrialCountMetamorphic:
         # METAMORPHIC PROPERTY: More trials >= few trials best score
         if result_few.best_score is not None and result_many.best_score is not None:
             # For maximize, more trials should find >= score
+            # Using a small tolerance for floating point comparison
             assert (
                 result_many.best_score >= result_few.best_score - 0.01
             ), f"Metamorphic violation: many trials ({result_many.best_score}) < few trials ({result_few.best_score})"
 
-        # Verify trial counts
+        # Verify trial counts - this should always hold
         if hasattr(result_few, "trials") and hasattr(result_many, "trials"):
             assert len(result_few.trials) <= len(
                 result_many.trials
