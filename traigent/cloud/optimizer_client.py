@@ -12,6 +12,9 @@ from traigent.cloud._aiohttp_compat import AIOHTTP_AVAILABLE, aiohttp
 
 logger = logging.getLogger(__name__)
 
+# Error message for uninitialized session
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+
 
 class OptimizerDirectClient:
     """Direct client for optimizer metric submission in hybrid mode."""
@@ -139,7 +142,7 @@ class OptimizerDirectClient:
             Next configuration or completion status
         """
         if self.session is None:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
         session_id = session_id.strip()
@@ -172,7 +175,7 @@ class OptimizerDirectClient:
             Session status
         """
         if self.session is None:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
         session_id = session_id.strip()
@@ -278,7 +281,7 @@ class OptimizerDirectClient:
             Submission response
         """
         if self.session is None:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
                 f"{self.endpoint}/{session_id}", json=submission
@@ -317,7 +320,7 @@ class OptimizerDirectClient:
             Batch response
         """
         if self.session is None:
-            raise RuntimeError("Session not initialized")
+            raise RuntimeError(_SESSION_NOT_INITIALIZED)
         try:
             async with self.session.post(
                 f"{self.endpoint}/{session_id}/batch", json={"submissions": submissions}

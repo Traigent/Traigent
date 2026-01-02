@@ -37,6 +37,9 @@ lifecycle_manager = SessionLifecycleManager()
 
 logger = get_logger(__name__)
 
+# Error message for uninitialized backend client
+_BACKEND_CLIENT_NOT_INITIALIZED = "Backend client not initialized"
+
 
 class IntegrationMode(Enum):
     """Integration execution modes."""
@@ -299,7 +302,7 @@ class IntegrationManager:
         if self._mcp_client is None:
             raise RuntimeError("MCP client not initialized")
         if self._backend_client is None:
-            raise RuntimeError("Backend client not initialized")
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
 
         try:
             # Step 1: Generate agent specification from function if needed
@@ -399,7 +402,7 @@ class IntegrationManager:
         if self._mcp_client is None:
             raise RuntimeError("MCP client not initialized")
         if self._backend_client is None:
-            raise RuntimeError("Backend client not initialized")
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
 
         try:
             # Step 1: Generate agent specification if needed
@@ -500,7 +503,7 @@ class IntegrationManager:
             Next trial suggestion
         """
         if self._backend_client is None:
-            raise RuntimeError("Backend client not initialized")
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
 
         try:
             validate_or_raise(
@@ -570,7 +573,7 @@ class IntegrationManager:
             True if submission successful
         """
         if self._backend_client is None:
-            raise RuntimeError("Backend client not initialized")
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
 
         try:
             validate_or_raise(
@@ -619,7 +622,7 @@ class IntegrationManager:
             True if finalization successful
         """
         if self._backend_client is None:
-            raise RuntimeError("Backend client not initialized")
+            raise RuntimeError(_BACKEND_CLIENT_NOT_INITIALIZED)
 
         try:
             validate_or_raise(

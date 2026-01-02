@@ -46,17 +46,19 @@ except ImportError:
         class ClientError(RuntimeError):
             pass
 
+        _AIOHTTP_MISSING_MSG = "aiohttp is not installed"
+
         class ClientTimeout:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
         class TCPConnector:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
         class ClientSession:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
     aiohttp = _AiohttpPlaceholder()
 
@@ -65,6 +67,9 @@ _backend_unavailable_warned: bool = False
 
 # Common log message for fallback to local optimization
 _LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
+
+# Content-Type header for JSON requests
+_JSON_CONTENT_TYPE = "application/json"
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -232,7 +237,7 @@ class ApiOperations:
             )
             connector = self._build_connector()
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
             return await self._post_session_creation(
                 session_payload, headers, connector
@@ -446,7 +451,7 @@ class ApiOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
@@ -553,7 +558,7 @@ class ApiOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
@@ -625,7 +630,7 @@ class ApiOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
             connector = self._build_connector()

@@ -48,6 +48,11 @@ from .subset_selection import SmartSubsetSelector
 
 logger = get_logger(__name__)
 
+# Error messages for session state validation
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+_CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
+_AGENT_SPEC_REQUIRED = "agent_spec is required"
+
 
 def _session_is_closed(session: Any) -> bool:
     """Robustly determine whether an aiohttp session is closed."""
@@ -685,7 +690,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """Submit optimization request to cloud service."""
         await self._ensure_session()
         if self._aio_session is None:
-            raise CloudServiceError("Session not initialized")
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.api_base_url}/optimize"
         session = self._aio_session  # Capture for use in nested function
@@ -797,7 +802,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """Check Traigent Cloud Service status."""
         await self._ensure_session()
         if self._aio_session is None:
-            raise CloudServiceError("Session not initialized")
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.base_url}/health"
         attempts = max(1, self.max_retries)
@@ -918,7 +923,7 @@ class TraigentCloudClient(BaseTraigentClient):
 
         await self._ensure_session()
         if self._aio_session is None:
-            raise CloudServiceError("Session not initialized")
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.api_base_url}/sessions/{session_id}"
         params = {"cascade": "true" if cascade else "false"}
@@ -1002,7 +1007,7 @@ class TraigentCloudClient(BaseTraigentClient):
             )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
@@ -1053,7 +1058,7 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/next-trial"
             request_data = self._serialize_next_trial_request(request)
@@ -1130,7 +1135,7 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/results"
             request_data = self._serialize_trial_result(result)
@@ -1178,7 +1183,7 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/finalize"
             request_data = self._serialize_finalization_request(request)
@@ -1376,7 +1381,7 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudServiceError: If optimization start fails
         """
         if request.agent_spec is None:
-            raise ValueError("agent_spec is required")
+            raise ValueError(_AGENT_SPEC_REQUIRED)
         if request.dataset is None:
             raise ValueError("dataset is required")
         if request.configuration_space is None:
@@ -1443,7 +1448,7 @@ class TraigentCloudClient(BaseTraigentClient):
         )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/optimize"
             payload = self._serialize_agent_optimization_request(request)
@@ -1514,7 +1519,7 @@ class TraigentCloudClient(BaseTraigentClient):
             )
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/execute"
             payload = self._serialize_agent_execution_request(request)
@@ -1557,7 +1562,7 @@ class TraigentCloudClient(BaseTraigentClient):
         """
         await self._ensure_session()
         if self._aio_session is None:
-            raise CloudServiceError("Session not initialized")
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/status"
@@ -1602,7 +1607,7 @@ class TraigentCloudClient(BaseTraigentClient):
         await self._ensure_session()
 
         if self._aio_session is None:
-            raise CloudServiceError("Client session not initialized")
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/cancel"
 
@@ -1637,7 +1642,7 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> dict[str, Any]:
         """Serialize agent optimization request."""
         if request.agent_spec is None:
-            raise ValueError("agent_spec is required")
+            raise ValueError(_AGENT_SPEC_REQUIRED)
         if request.dataset is None:
             raise ValueError("dataset is required")
 
@@ -1658,7 +1663,7 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> dict[str, Any]:
         """Serialize agent execution request."""
         if request.agent_spec is None:
-            raise ValueError("agent_spec is required")
+            raise ValueError(_AGENT_SPEC_REQUIRED)
 
         return {
             "agent_spec": self._serialize_agent_spec(request.agent_spec),
