@@ -13,6 +13,17 @@ Traigent provides four powerful configuration injection modes to seamlessly inte
 | **Parameter** | Function signature | Yes | Type-safe apps, team projects |
 | **Attribute** | None | No | External monitoring, debugging |
 
+## Parallel & Threading Notes
+
+- **Context + Seamless**: Use `contextvars` under the hood. Traigent propagates
+  context in its own evaluators, but if you spawn your own `ThreadPoolExecutor`
+  inside an optimized function, use `traigent.copy_context_to_thread()` (or pass
+  config explicitly) so worker threads can read `get_config()`.
+- **Parameter**: Safe for parallel trials, but treat the injected config object
+  as read-only, especially when `example_concurrency > 1`.
+- **Attribute**: Unsafe for parallel trials; see the warning in the Attribute
+  section below.
+
 ## 1. Context Mode (Default)
 
 Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.

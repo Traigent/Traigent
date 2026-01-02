@@ -270,13 +270,7 @@ class TrialOperations:
             }
             registration_payload = self._sanitize_for_json(registration_data)
 
-            # Create connector without SSL for localhost
             connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -858,13 +852,7 @@ class TrialOperations:
                 },
             }
 
-            # Create connector without SSL for localhost
             connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(

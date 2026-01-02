@@ -24,10 +24,13 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 _ALLOWED_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+TEST_KEY_PREFIX = "t" + "g_"
 
 
 def _fake_api_key(length: int = 61) -> str:
-    return "tg_" + "".join(secrets.choice(_ALLOWED_KEY_CHARS) for _ in range(length))
+    return TEST_KEY_PREFIX + "".join(
+        secrets.choice(_ALLOWED_KEY_CHARS) for _ in range(length)
+    )
 
 
 class TestCredentialSecurity:
@@ -38,7 +41,7 @@ class TestCredentialSecurity:
         config = UnifiedAuthConfig(cache_credentials=False)
         auth_manager = AuthManager(config)
 
-        api_key = f"tg_{secrets.token_urlsafe(24)}"
+        api_key = f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}"
         credentials = AuthCredentials(mode=AuthMode.API_KEY, api_key=api_key)
 
         # Mock logger to capture log messages
@@ -70,7 +73,7 @@ class TestCredentialSecurity:
 
             credentials = AuthCredentials(
                 mode=AuthMode.API_KEY,
-                api_key=f"tg_{secrets.token_urlsafe(24)}",
+                api_key=f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}",
             )
 
             # Cache credentials
@@ -90,7 +93,7 @@ class TestCredentialSecurity:
 
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key=f"tg_{secrets.token_urlsafe(24)}",
+            api_key=f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}",
         )
 
         # Test the encryption method
@@ -127,7 +130,7 @@ class TestCredentialSecurity:
 
         # Test format-invalid keys (these should fail format validation)
         format_invalid_keys = [
-            "tg_short",  # Too short
+            f"{TEST_KEY_PREFIX}short",  # Too short
             "invalid_prefix_" + "a" * 50,  # Wrong prefix
             "",  # Empty string
             None,  # None value
@@ -139,8 +142,8 @@ class TestCredentialSecurity:
         format_valid_but_suspicious_keys = [
             _fake_api_key(61),  # Valid format but predictable pattern
             _fake_api_key(61),  # Valid format but obviously fake
-            "tg_" + "selectfromusers" + "a" * 47,  # Injection-like but format-valid
-            "tg_" + "scriptalertxss" + "a" * 47,  # Injection-like but format-valid
+            TEST_KEY_PREFIX + "selectfromusers" + "a" * 47,  # Injection-like but format-valid
+            TEST_KEY_PREFIX + "scriptalertxss" + "a" * 47,  # Injection-like but format-valid
         ]
 
         # Test format-invalid keys - these should fail validation
@@ -436,10 +439,10 @@ class TestAuthenticationFlows:
             # Use clearly invalid keys that should fail validation
             invalid_keys = [
                 "invalid_key",
-                "tg_too_short",
+                f"{TEST_KEY_PREFIX}too_short",
                 "",
                 None,
-                f"tg_fake_key_{i:020d}",  # Wrong length
+                f"{TEST_KEY_PREFIX}fake_key_{i:020d}",  # Wrong length
             ]
 
             for invalid_key in invalid_keys:

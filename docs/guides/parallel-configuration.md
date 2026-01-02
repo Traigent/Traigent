@@ -75,6 +75,34 @@ result = await answer.optimize(
 - Concurrency values must be `>= 1`.
 - If `mode="parallel"`, `trial_concurrency` must be greater than 1.
 
+## Budget Guards in Parallel
+
+Parallel execution uses shared guardrails to keep cost and sample budgets bounded:
+
+- **Cost permits (shared state)**: Each parallel trial must acquire a cost permit
+  before it runs. Permits reserve estimated cost (EMA) up front; trials that
+  cannot reserve budget are cancelled before execution. After the trial finishes,
+  actual cost is tracked and the reservation is released. Because reservations
+  use estimates, total cost can exceed the limit by the estimate delta, but the
+  stop condition prevents new trials once the limit is reached.
+
+```python
+# High-level flow (see CostEnforcer + ParallelExecutionManager)
+permit = await cost_enforcer.acquire_permit_async()
+if not permit.is_granted:
+    return None  # trial cancelled
+result = await coro
+await cost_enforcer.track_cost_async(cost, permit=permit)
+```
+
+- **Sample ceilings (`max_total_examples`)**: When a global sample budget is
+  configured, the orchestrator divides the remaining budget across the current
+  parallel batch so each trial can consume at most its share. Each trial receives
+  a `SampleBudgetLease`, and evaluation stops as soon as the lease is exhausted.
+
+These guards are enforced during execution; stop conditions are checked between
+parallel batches to decide whether to continue.
+
 ## Injection Mode Compatibility
 
 Not all injection modes are safe for parallel trial execution:

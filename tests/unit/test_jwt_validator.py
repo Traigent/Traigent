@@ -274,7 +274,7 @@ class TestStrictValidation:
             audience="test-audience",
             validation_mode=ValidationMode.PRODUCTION,
         )
-        self.test_token = "test.jwt.token"
+        self.test_token = "test_token_placeholder"
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
     def test_strict_validation_no_jwks_client(self):

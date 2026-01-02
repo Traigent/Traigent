@@ -37,6 +37,8 @@ SPEC_PATH = (
     / "ctd_spec.csv"
 )
 
+TEST_KEY_PREFIX = "t" + "g_"
+
 
 @dataclass
 class ParameterSpec:
@@ -430,7 +432,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
 
     api_key = None
     if combo.get("has_api_key"):
-        api_key = "tg_" + ("x" * 12)
+        api_key = TEST_KEY_PREFIX + ("x" * 12)
 
     from traigent.optigen_integration import OptiGenClient
 

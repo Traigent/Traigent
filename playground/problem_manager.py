@@ -44,6 +44,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from traigent.utils.secure_path import validate_path
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -364,7 +366,13 @@ async def handle_create_mode(args) -> bool:
         )
 
         # Save generated module
-        problem_file = Path(f"examples/langchain_problems/{problem_name}.py")
+        base_dir = Path.cwd()
+        problems_dir = validate_path(Path("examples/langchain_problems"), base_dir)
+        problems_dir.mkdir(parents=True, exist_ok=True)
+        problem_file = validate_path(
+            problems_dir / f"{problem_name}.py",
+            problems_dir,
+        )
         problem_file.write_text(problem_module)
 
         print(f"✅ Successfully created problem: {problem_file}")
@@ -427,7 +435,12 @@ async def handle_add_examples_mode(args) -> bool:
         )
 
         # Save updated module
-        problem_file = Path(f"examples/langchain_problems/{args.problem_name}.py")
+        base_dir = Path.cwd()
+        problems_dir = validate_path(Path("examples/langchain_problems"), base_dir)
+        problem_file = validate_path(
+            problems_dir / f"{args.problem_name}.py",
+            problems_dir,
+        )
         problem_file.write_text(updated_module)
 
         print(

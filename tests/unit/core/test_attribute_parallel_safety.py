@@ -123,6 +123,26 @@ class TestAttributeParallelSafetyGuard:
         assert len(result.trials) > 0
 
     @pytest.mark.asyncio
+    async def test_attribute_mode_trial_concurrency_one_auto_no_error(
+        self, mock_mode_env
+    ):
+        """Attribute mode with trial_concurrency=1 (auto mode) should work."""
+
+        @traigent.optimize(
+            objectives=["accuracy"],
+            configuration_space={"model": ["a"]},
+            eval_dataset=EVAL_DATASET,
+            injection_mode="attribute",
+            parallel_config={"trial_concurrency": 1},
+        )
+        def my_func(question: str) -> str:
+            return "answer"
+
+        result = await my_func.optimize(max_trials=1)
+        assert result is not None
+        assert len(result.trials) == 1
+
+    @pytest.mark.asyncio
     async def test_context_mode_parallel_no_error(self, mock_mode_env):
         """Context mode with parallel execution should work without error."""
 

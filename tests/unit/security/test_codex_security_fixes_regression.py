@@ -147,10 +147,10 @@ class TestFix2SensitivePayloadLogging:
         """API keys must be redacted."""
         from traigent.cloud.trial_operations import TrialOperations
 
-        data = {"api_key": "test_api_key_placeholder"}
+        data = {"api_key": "placeholder_key"}
         redacted = TrialOperations._redact_sensitive_fields(data)
 
-        assert "test_api_key_placeholder" not in str(redacted)
+        assert "placeholder_key" not in str(redacted)
         assert "[REDACTED:" in str(redacted)
 
     def test_redact_sensitive_fields_redacts_prompts(self):
@@ -176,7 +176,7 @@ class TestFix2SensitivePayloadLogging:
         """Nested sensitive data must be redacted."""
         from traigent.cloud.trial_operations import TrialOperations
 
-        data = {"outer": {"inner": {"api_key": "sk-very-secret-key-0000000000000000"}}}
+        data = {"outer": {"inner": {"api_key": "placeholder_key"}}}
         redacted = TrialOperations._redact_sensitive_fields(data)
 
         assert "sk-very-secret" not in str(redacted)

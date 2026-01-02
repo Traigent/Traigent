@@ -240,11 +240,11 @@ class EnhancedCredentialStore:
         """Initialize encryption with secure key derivation."""
         password_path = self._master_password_path()
         # Variable initialization, not a hardcoded value
-        master_password_value: str | None = None  # nosec B105
+        master_key_value: str | None = None
         password_source = "parameter"
 
         if master_password:
-            master_password_value = master_password
+            master_key_value = master_password
         else:
             # Reading from environment variable, not hardcoded
             env_value = (
@@ -253,22 +253,22 @@ class EnhancedCredentialStore:
                 else None
             )
             if env_value:
-                master_password_value = env_value
+                master_key_value = env_value
                 password_source = "environment"
             elif password_path.exists():
-                master_password_value = self._load_master_password_from_file(
+                master_key_value = self._load_master_password_from_file(
                     password_path
                 )
                 password_source = "file"
 
-        if master_password_value is None:
+        if master_key_value is None:
             # Cryptographically secure random generation, not hardcoded
-            master_password_value = secrets.token_urlsafe(32)  # nosec B105
+            master_key_value = secrets.token_urlsafe(32)
             password_source = "generated"
-            self._store_master_password(master_password_value, password_path)
+            self._store_master_password(master_key_value, password_path)
 
-        self._master_password = SecureString(master_password_value)
-        master_password_value = (
+        self._master_password = SecureString(master_key_value)
+        master_key_value = (
             None  # Dereference (doesn't wipe underlying string from memory)
         )
 

@@ -286,11 +286,8 @@ class ApiOperations:
         }
 
     def _build_connector(self) -> Any | None:
-        """Create an aiohttp connector, disabling SSL for localhost usage."""
+        """Create an aiohttp connector when custom transport settings are required."""
 
-        backend_url = self.client.backend_config.backend_base_url
-        if backend_url and ("localhost" in backend_url or "127.0.0.1" in backend_url):
-            return cast(Any, aiohttp).TCPConnector(ssl=False)
         return None
 
     async def _post_session_creation(
@@ -445,13 +442,7 @@ class ApiOperations:
             return False
 
         try:
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -558,13 +549,7 @@ class ApiOperations:
                     execution_time
                 )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -643,13 +628,7 @@ class ApiOperations:
                 {"Content-Type": "application/json"}
             )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
                 api_base = (

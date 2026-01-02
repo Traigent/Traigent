@@ -40,9 +40,9 @@ class TestSecureCredentialStorage:
         storage = SecureCredentialStorage()
 
         credentials = {
-            "api_key": "test_api_key_placeholder",
+            "api_key": "placeholder_key",
             "username": "testuser",
-            "password": "testpass123",
+            "password": "placeholder_password",
         }
 
         # Encrypt credentials
@@ -76,7 +76,7 @@ class TestSecureCredentialStorage:
         storage = SecureCredentialStorage()
 
         complex_credentials = {
-            "api_keys": {"openai": "sk-test123", "anthropic": "ant-test456"},
+            "api_keys": {"openai": "placeholder_key", "anthropic": "placeholder_key"},
             "databases": [
                 {"host": "db1.example.com", "password": "pass1"},
                 {"host": "db2.example.com", "password": "pass2"},
@@ -490,11 +490,11 @@ class TestIntegration:
 
             # Original credentials
             original_credentials = {
-                "api_keys": {"openai": "sk-test123", "anthropic": "ant-test456"},
+                "api_keys": {"openai": "placeholder_key", "anthropic": "placeholder_key"},
                 "database": {
                     "host": "db.example.com",
                     "username": "dbuser",
-                    "password": "dbpass123",
+                    "password": "placeholder_password",
                 },
                 "metadata": {"created": "2024-01-01", "environment": "production"},
             }
@@ -698,7 +698,7 @@ class TestSecurityProperties:
         """Test that sensitive data is not easily extractable"""
         storage = SecureCredentialStorage()
 
-        sensitive_data = {"password": "super_secret_password"}
+        sensitive_data = {"password": "placeholder_password"}
 
         # Encrypt data
         encrypted = storage.encrypt_credentials(sensitive_data)
@@ -708,8 +708,8 @@ class TestSecurityProperties:
         encrypted_repr = repr(encrypted)
 
         # Sensitive data should not appear in string representations
-        assert "super_secret_password" not in encrypted_str
-        assert "super_secret_password" not in encrypted_repr
+        assert "placeholder_password" not in encrypted_str
+        assert "placeholder_password" not in encrypted_repr
 
         # Only base64 encoded data should be present
         assert encrypted["salt"] in encrypted_str
