@@ -525,6 +525,9 @@ class SequentialValidator(BehavioralValidator):
     Sequential execution must:
     - Have monotonically increasing trial timestamps
     - Have no overlapping execution windows
+
+    Note: Skips async scenarios because async I/O naturally allows
+    concurrent execution even without explicit parallelism configured.
     """
 
     name = "sequential_execution"
@@ -533,6 +536,11 @@ class SequentialValidator(BehavioralValidator):
     def applies_to(self, scenario: TestScenario) -> bool:
         if self._is_failure_scenario(scenario):
             return False
+
+        # Skip async scenarios - async I/O naturally has concurrent execution
+        if getattr(scenario, "is_async", False):
+            return False
+
         # Sequential if no parallel config or explicit sequential
         if not scenario.parallel_config:
             return True

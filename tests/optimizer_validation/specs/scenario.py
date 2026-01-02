@@ -214,6 +214,11 @@ class TestScenario:
     function_return_value: Any = None
     custom_function: Callable[..., Any] | None = None
 
+    # Async execution flag - indicates the optimized function is async
+    # When True, sequential validator skips overlap checks since async I/O
+    # naturally allows concurrent execution even in "sequential" mode
+    is_async: bool = False
+
     # Trace expectations (for tracing validation)
     trace_expectations: TraceExpectations | None = None
 

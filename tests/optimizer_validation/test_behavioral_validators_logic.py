@@ -421,6 +421,25 @@ class TestValidatorApplicability:
         assert validator.applies_to(sequential_explicit)
         assert not validator.applies_to(parallel)
 
+    def test_sequential_validator_skips_async_scenarios(self):
+        """SequentialValidator should skip async scenarios.
+
+        Async I/O naturally allows concurrent execution even without
+        explicit parallelism, so the sequential validator should not
+        apply to async scenarios.
+        """
+        validator = SequentialValidator()
+
+        # Create a mock scenario with is_async=True
+        async_scenario = MockTestScenario(parallel_config=None)
+        async_scenario.is_async = True
+
+        sync_scenario = MockTestScenario(parallel_config=None)
+        sync_scenario.is_async = False
+
+        assert not validator.applies_to(async_scenario), "Should skip async scenarios"
+        assert validator.applies_to(sync_scenario), "Should apply to sync scenarios"
+
     def test_parallel_validator_applies_with_concurrency(self):
         """ParallelValidator should apply when concurrency > 1."""
         validator = ParallelValidator()

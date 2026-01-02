@@ -71,6 +71,7 @@ class TestAsyncFunctionOptimization:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
+            is_async=True,
             gist_template="async-basic -> {trial_count()} | {status()}",
         )
 
@@ -117,6 +118,7 @@ class TestAsyncFunctionOptimization:
             max_trials=20,
             timeout=3.0,
             mock_mode_config={"optimizer": "random"},
+            is_async=True,
             gist_template="async-timeout -> {trial_count()} | {status()}",
         )
 
@@ -171,6 +173,7 @@ class TestAsyncFunctionOptimization:
             },
             max_trials=5,
             mock_mode_config={"optimizer": "optuna", "sampler": "tpe"},
+            is_async=True,
             gist_template="async-cont -> {trial_count()} | {status()}",
         )
 
@@ -242,6 +245,7 @@ class TestConcurrentExecution:
             parallel_config={"trial_concurrency": 3},
             timeout=30.0,
             mock_mode_config={"optimizer": "random"},
+            is_async=True,
             gist_template="parallel-async -> {trial_count()} | {status()}",
         )
 
@@ -297,6 +301,7 @@ class TestConcurrentExecution:
             max_trials=6,
             parallel_config={"trial_concurrency": 3},
             mock_mode_config={"optimizer": "random", "random_seed": 42},
+            is_async=True,
             gist_template="async-isolate -> {trial_count()} | {status()}",
         )
 
@@ -371,6 +376,7 @@ class TestBatchProcessing:
             ],
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
+            is_async=True,
             gist_template="batch -> {trial_count()} | {status()}",
         )
 
@@ -419,6 +425,7 @@ class TestBatchProcessing:
             },
             max_trials=2,
             mock_mode_config={"optimizer": "grid"},
+            is_async=True,
             gist_template="consistent -> {trial_count()} | {status()}",
         )
 
@@ -485,6 +492,7 @@ class TestMixedSyncAsync:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "random"},
+            is_async=True,
             gist_template="await -> {trial_count()} | {status()}",
         )
 
@@ -533,6 +541,7 @@ class TestMixedSyncAsync:
             max_trials=4,
             # No parallel_config = sequential execution
             mock_mode_config={"optimizer": "grid"},
+            is_async=True,
             gist_template="seq-async -> {trial_count()} | {status()}",
         )
 
@@ -598,6 +607,7 @@ class TestAsyncWithAllAlgorithms:
             },
             max_trials=4,
             mock_mode_config=mock_config,
+            is_async=True,
             gist_template=f"async-{optimizer} -> {{trial_count()}} | {{status()}}",
         )
 
@@ -649,6 +659,7 @@ class TestAsyncWithAllAlgorithms:
             },
             max_trials=5,
             mock_mode_config={"optimizer": "optuna", "sampler": "cmaes"},
+            is_async=True,
             gist_template="async-cmaes -> {trial_count()} | {status()}",
         )
 
