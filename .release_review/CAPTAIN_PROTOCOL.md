@@ -484,7 +484,7 @@ Use these templates when invoking sub-agents.
 
 **Constraints**:
 - Do NOT edit `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` (captain will update).
-- If you create any files (notes, reports, scratch outputs), put them under `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...`.
+- If you create any files (notes, reports, scratch outputs), put them under `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...`.
 - Keep changes minimal; no broad refactors unless required to fix a real issue.
 - If you find a large issue, propose a ticket + smallest safe mitigation for release.
 
@@ -531,7 +531,7 @@ Model policy for all work:
 
 2) Create/checkout the integration branch: `release-review/v0.8.0` (or `release-review/<version>`). This branch is the shared source of truth for tracking progress.
 
-3) Any agent-generated notes/reports must go under `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...` (git-ignored).
+3) Any agent-generated notes/reports must go under `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...` (git-ignored).
 
 4) Use `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` priority order and run up to **3 concurrent threads** at a time. Each thread must be a distinct component scope to avoid conflicts.
 
@@ -831,7 +831,7 @@ Captain randomly selects **20% of component reviews** and:
 
 For tamper-evident results:
 ```bash
-pytest --json-report --json-report-file=.release_review/artifacts/<component>/test_results.json
+pytest --json-report --json-report-file=.release_review/<version>/artifacts/<component>/test_results.json
 ```
 
 Captain validates JSON structure matches agent claims.
@@ -891,7 +891,7 @@ If agent exceeds 2x expected time, captain intervenes to check for scope creep o
 Agents should save progress every 10-15 minutes:
 
 ```
-.release_review/artifacts/<component>/<model>/.checkpoint_<timestamp>.json
+.release_review/<version>/artifacts/<component>/<model>/.checkpoint_<timestamp>.json
 ```
 
 Checkpoint format:
