@@ -836,10 +836,11 @@ def scenario_runner(
 
 @pytest.fixture
 def result_validator() -> Callable[..., ValidationResult]:
-    """Factory for creating result validators.
+    """Factory for creating result validators with behavioral validation.
 
     Returns a function that validates an optimization result
-    against a scenario specification.
+    against a scenario specification, including automatic behavioral
+    validation based on scenario dimensions.
 
     Automatically emits structured evidence JSON for the test viewer,
     enabling full visibility into expected vs actual values and
@@ -851,15 +852,41 @@ def result_validator() -> Callable[..., ValidationResult]:
 
         # With dataset path for evidence display:
         validation = result_validator(scenario, result, dataset_path="/path/to/data.jsonl")
+
+        # Skip specific behavioral validators:
+        validation = result_validator(scenario, result, skip_behavioral=["grid_search"])
     """
 
     def validate(
         scenario: TestScenario,
         result: OptimizationResult | Exception,
         dataset_path: str | None = None,
+        skip_behavioral: list[str] | None = None,
     ) -> ValidationResult:
         validator = ResultValidator(scenario, result)
         validation_result = validator.validate()
+
+        # Apply behavioral validators (only for non-exception results)
+        if not isinstance(result, Exception):
+            from .specs.behavioral_validators import apply_behavioral_validators
+
+            behavioral_results = apply_behavioral_validators(
+                scenario, result, skip_validators=skip_behavioral
+            )
+
+            # Merge behavioral errors into main validation result
+            for bv_result in behavioral_results:
+                for error in bv_result.errors:
+                    validation_result.add_error(
+                        category=f"behavioral:{bv_result.validator_name}:{error.category}",
+                        message=error.message,
+                        expected=error.expected,
+                        actual=error.actual,
+                    )
+                for warning in bv_result.warnings:
+                    validation_result.add_warning(
+                        f"[{bv_result.validator_name}] {warning}"
+                    )
 
         # Emit evidence for the test viewer
         emit_test_evidence(

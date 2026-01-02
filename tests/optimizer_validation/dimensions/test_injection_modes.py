@@ -134,7 +134,7 @@ class TestInjectionModeMatrix:
 
         Dimensions: InjectionMode={injection_mode}, ConfigSpaceType=mixed
         """
-        default_config = {"model": "gpt-3.5-turbo", "temperature": 0.5}
+        default_config = {"model": "gpt-3.5-turbo", "temperature": 0.3}
 
         scenario = basic_scenario(
             name=f"default_config_{injection_mode}",

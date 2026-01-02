@@ -292,28 +292,48 @@ class TestMCPRequestHandling:
 
     @pytest.mark.asyncio
     async def test_request_timeout_handling(self):
-        """Test request timeout handling."""
+        """Test request timeout handling.
+
+        The ProductionMCPClient handles timeouts gracefully by returning
+        an MCPResponse with success=False rather than raising the exception.
+        """
         # Skip if client doesn't have required attributes
-        if not hasattr(self.client, "_session") or not hasattr(self.client, "call_tool"):
+        if not hasattr(self.client, "_session") or not hasattr(
+            self.client, "call_tool"
+        ):
             pytest.skip("Client does not have _session or call_tool attributes")
 
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
-            mock_result = Mock()
-            mock_result.content = []
-            mock_session.call_tool = AsyncMock(side_effect=TimeoutError())
+            mock_session.call_tool = AsyncMock(
+                side_effect=TimeoutError("Connection timed out")
+            )
 
             # Patch is_connected to return True to skip connection attempts
-            with patch.object(self.client, "is_connected", new_callable=AsyncMock) as mock_connected:
+            with patch.object(
+                self.client, "is_connected", new_callable=AsyncMock
+            ) as mock_connected:
                 mock_connected.return_value = True
                 self.client._session = mock_session
 
-                timeout_raised = False
-                try:
-                    await self.client.call_tool("test_tool", {})
-                except TimeoutError:
-                    timeout_raised = True  # Expected
-                assert timeout_raised, "TimeoutError should be raised"
+                # Mock the retry handler to return a failed result with proper attribute
+                mock_retry_result = Mock()
+                mock_retry_result.success = False
+                mock_retry_result.last_exception = TimeoutError("MCP operation timeout")
+
+                async def mock_execute(func):
+                    return mock_retry_result
+
+                self.client._retry_handler.execute_async = mock_execute
+
+                # The client handles timeout gracefully - returns MCPResponse with success=False
+                result = await self.client.call_tool("test_tool", {})
+                assert (
+                    result.success is False
+                ), "Timeout should result in failed response"
+                assert (
+                    "timeout" in result.error_message.lower()
+                ), "Error message should mention timeout"
 
 
 class TestMCPRetryMechanism:

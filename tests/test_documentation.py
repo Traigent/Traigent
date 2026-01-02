@@ -65,7 +65,6 @@ class TestDocumentationConsistency(unittest.TestCase):
                 ):
                     continue
                 self.fail(f"Syntax error in README code example {i+1}: {e}")
-                # Function completed successfully (no assertion needed for smoke test)
 
     def test_version_consistency(self):
         """Test that version numbers are consistent across files."""

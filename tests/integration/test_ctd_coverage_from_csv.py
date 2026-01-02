@@ -434,7 +434,6 @@ def test_generator(csv_path):
     generator = CTDTestGenerator(csv_path)
     generator.load_specifications()
     return generator
-    assert True  # Verify test completed without error
 
 
 @pytest.fixture
@@ -739,7 +738,10 @@ def test_coverage_report(test_generator):
         print(f"  {integration}: {count}")
 
     print("=" * 60)
-    # Function completed successfully (no assertion needed for smoke test)
+
+    # Verify coverage report was generated successfully
+    assert len(test_suite) > 0, "Test suite should have test cases"
+    assert len(coverage_stats) > 0, "Coverage stats should be calculated"
 
 
 if __name__ == "__main__":
