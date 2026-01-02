@@ -186,6 +186,64 @@ class CloudOptimizationResult:
     subset_size: int | None = None
 
 
+class _DirectResponseContext:
+    """Wrapper for direct response objects to support async context manager protocol."""
+
+    def __init__(self, response: Any) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> Any:
+        return self._response
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
+
+
+def _get_status_code(response: Any) -> int:
+    """Extract status code from response object."""
+    raw_status = getattr(response, "status", 200)
+    if isinstance(raw_status, (int, float)):
+        return int(raw_status)
+    return 200
+
+
+async def _get_json_response(response: Any) -> dict[str, Any] | None:
+    """Extract JSON from response if available."""
+    json_method = getattr(response, "json", None)
+    if callable(json_method):
+        result = json_method()
+        return cast(
+            dict[str, Any],
+            await result if asyncio.iscoroutine(result) else result,
+        )
+    return None
+
+
+async def _get_error_text(response: Any) -> str:
+    """Extract error text from response."""
+    text_method = getattr(response, "text", None)
+    if callable(text_method):
+        result = text_method()
+        if asyncio.iscoroutine(result):
+            return await result
+        return str(result)
+    return ""
+
+
+def _get_retry_delay(response: Any) -> float:
+    """Get retry delay from Retry-After header."""
+    headers = getattr(response, "headers", {}) or {}
+    if not isinstance(headers, dict):
+        return 0.0
+    retry_after = headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return float(retry_after)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
+
+
 class TraigentCloudClient(BaseTraigentClient):
     """Client for Traigent Cloud Service - enables commercial optimization features."""
 
@@ -747,74 +805,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
         for attempt in range(1, attempts + 1):
             try:
-                request = self._aio_session.get(url, headers=await self._get_headers())
-
-                class _DirectResponseContext:
-                    def __init__(self, response) -> None:
-                        self._response = response
-
-                    async def __aenter__(self):
-                        return self._response
-
-                    async def __aexit__(self, exc_type, exc, tb):
-                        return False
-
-                response_candidate = (
-                    await request if asyncio.iscoroutine(request) else request
+                result = await self._check_service_status_attempt(
+                    url, attempt, attempts
                 )
-
-                if hasattr(response_candidate, "__aenter__"):
-                    manager = response_candidate
-                else:
-                    manager = _DirectResponseContext(response_candidate)
-
-                async with manager as response:
-                    raw_status = getattr(response, "status", 200)
-                    if isinstance(raw_status, (int, float)):
-                        status_code = int(raw_status)
-                    else:
-                        status_code = 200
-
-                    if status_code == 200:
-                        json_method = getattr(response, "json", None)
-                        if callable(json_method):
-                            result = json_method()
-                            return cast(
-                                dict[str, Any],
-                                await result if asyncio.iscoroutine(result) else result,
-                            )
-                        return {"status": "ok"}
-
-                    error_text = ""
-                    text_method = getattr(response, "text", None)
-                    if callable(text_method):
-                        result = text_method()
-                        if asyncio.iscoroutine(result):
-                            error_text = await result
-                        else:
-                            error_text = str(result)
-
-                    if status_code in {429, 503} and attempt < attempts:
-                        retry_after = None
-                        headers = getattr(response, "headers", {}) or {}
-                        if isinstance(headers, dict):
-                            retry_after = headers.get("Retry-After")
-
-                        delay = 0.0
-                        if retry_after is not None:
-                            try:
-                                delay = float(retry_after)
-                            except (TypeError, ValueError):
-                                delay = 0.0
-
-                        if delay > 0:
-                            await asyncio.sleep(min(delay, 1.0))
-                        continue
-
-                    raise CloudServiceError(
-                        f"Service status check failed: HTTP {status_code} {error_text}"
-                    )
-
+                if result is not None:
+                    return result
+                # result is None means retry (continue loop)
             except CloudServiceError as exc:
                 last_error = exc
                 if attempt == attempts:
@@ -828,6 +824,41 @@ class TraigentCloudClient(BaseTraigentClient):
             "status": "unavailable",
             "error": str(last_error) if last_error else "Unknown error",
         }
+
+    async def _check_service_status_attempt(
+        self, url: str, attempt: int, attempts: int
+    ) -> dict[str, Any] | None:
+        """Execute a single service status check attempt.
+
+        Returns:
+            dict with status on success/final failure, or None to signal retry.
+        """
+        request = self._aio_session.get(url, headers=await self._get_headers())  # type: ignore[union-attr]
+        response_candidate = await request if asyncio.iscoroutine(request) else request
+
+        if hasattr(response_candidate, "__aenter__"):
+            manager = response_candidate
+        else:
+            manager = _DirectResponseContext(response_candidate)
+
+        async with manager as response:
+            status_code = _get_status_code(response)
+
+            if status_code == 200:
+                json_result = await _get_json_response(response)
+                return json_result if json_result is not None else {"status": "ok"}
+
+            error_text = await _get_error_text(response)
+
+            if status_code in {429, 503} and attempt < attempts:
+                delay = _get_retry_delay(response)
+                if delay > 0:
+                    await asyncio.sleep(min(delay, 1.0))
+                return None  # Signal retry
+
+            raise CloudServiceError(
+                f"Service status check failed: HTTP {status_code} {error_text}"
+            )
 
     # Standard interface implementation (BaseTraigentClient)
     # Note: The existing methods already provide the interface functionality

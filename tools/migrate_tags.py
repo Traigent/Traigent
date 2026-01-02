@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
 
 @dataclass
 class MigrationRule:
@@ -214,7 +215,10 @@ def find_matching_files(base_path: Path, patterns: list[str]) -> list[Path]:
 
 
 def apply_rule(
-    file_path: Path, rule: MigrationRule, dry_run: bool = True
+    file_path: Path,
+    rule: MigrationRule,
+    base_dir: Path,
+    dry_run: bool = True,
 ) -> tuple[bool, str]:
     """Apply a migration rule to a file.
 
@@ -222,8 +226,9 @@ def apply_rule(
         (changed, message) tuple
     """
     try:
-        content = file_path.read_text(encoding="utf-8")
-    except Exception as e:
+        safe_path = validate_path(file_path, base_dir, must_exist=True)
+        content = safe_path.read_text(encoding="utf-8")
+    except (PathTraversalError, FileNotFoundError, OSError) as e:
         return False, f"Error reading {file_path}: {e}"
 
     # Check if pattern matches
@@ -248,10 +253,10 @@ def apply_rule(
     new_line = new_trace_match.group(0) if new_trace_match else "UNKNOWN"
 
     if dry_run:
-        return True, f"[DRY-RUN] {file_path}\n  OLD: {old_line}\n  NEW: {new_line}"
+        return True, f"[DRY-RUN] {safe_path}\n  OLD: {old_line}\n  NEW: {new_line}"
     else:
-        file_path.write_text(new_content, encoding="utf-8")
-        return True, f"[APPLIED] {file_path}\n  OLD: {old_line}\n  NEW: {new_line}"
+        safe_path.write_text(new_content, encoding="utf-8")
+        return True, f"[APPLIED] {safe_path}\n  OLD: {old_line}\n  NEW: {new_line}"
 
 
 def run_migrations(base_paths: list[Path], dry_run: bool = True) -> dict:
@@ -269,7 +274,7 @@ def run_migrations(base_paths: list[Path], dry_run: bool = True) -> dict:
         for base_path in base_paths:
             files = find_matching_files(base_path, rule.file_patterns)
             for file_path in files:
-                changed, message = apply_rule(file_path, rule, dry_run)
+                changed, message = apply_rule(file_path, rule, base_path, dry_run)
                 if message:
                     if "ERROR" in message:
                         results["errors"].append(message)
@@ -297,8 +302,9 @@ def verify_state(base_paths: list[Path]) -> dict:
             if "__pycache__" in str(file_path):
                 continue
             try:
-                content = file_path.read_text(encoding="utf-8")
-            except:
+                safe_path = validate_path(file_path, base_path, must_exist=True)
+                content = safe_path.read_text(encoding="utf-8")
+            except (PathTraversalError, FileNotFoundError, OSError):
                 continue
 
             trace_match = re.search(r"# Traceability:(.+)", content)
@@ -308,17 +314,17 @@ def verify_state(base_paths: list[Path]) -> dict:
             line = trace_match.group(1)
 
             if "CONC-Layer-CrossCutting" in line:
-                issues["deprecated_crosscutting"].append(str(file_path))
+                issues["deprecated_crosscutting"].append(str(safe_path))
             if "CONC-Layer-Experimental" in line:
-                issues["deprecated_experimental"].append(str(file_path))
+                issues["deprecated_experimental"].append(str(safe_path))
 
             quality_tags = re.findall(r"CONC-Quality-\w+", line)
             if len(quality_tags) > 2:
-                issues["too_many_quality"].append((str(file_path), quality_tags))
+                issues["too_many_quality"].append((str(safe_path), quality_tags))
 
             layer_tags = re.findall(r"CONC-Layer-\w+", line)
             if len(layer_tags) != 1:
-                issues["missing_layer"].append((str(file_path), layer_tags))
+                issues["missing_layer"].append((str(safe_path), layer_tags))
 
     return issues
 
@@ -334,6 +340,11 @@ def main():
     args = parser.parse_args()
 
     base = Path(args.base)
+    try:
+        base = validate_path(base, Path.cwd(), must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}")
+        sys.exit(1)
     base_paths = [base / "traigent", base / "src"]
     base_paths = [p for p in base_paths if p.exists()]
 

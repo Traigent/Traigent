@@ -58,6 +58,8 @@ class TestCredentialSecurity:
 
     def test_credential_cache_file_permissions(self):
         """Test that credential cache files have secure permissions."""
+        import asyncio
+
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_file = Path(temp_dir) / "test_credentials.json"
 
@@ -66,14 +68,12 @@ class TestCredentialSecurity:
             )
             auth_manager = AuthManager(config)
 
-        credentials = AuthCredentials(
-            mode=AuthMode.API_KEY,
-            api_key=f"tg_{secrets.token_urlsafe(24)}",
-        )
+            credentials = AuthCredentials(
+                mode=AuthMode.API_KEY,
+                api_key=f"tg_{secrets.token_urlsafe(24)}",
+            )
 
             # Cache credentials
-            import asyncio
-
             asyncio.run(auth_manager._cache_credentials(credentials))
 
             # Check file permissions (should be 0o600)

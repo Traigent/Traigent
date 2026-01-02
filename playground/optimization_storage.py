@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from traigent.utils.secure_path import validate_path
 
 class OptimizationStorage:
     """Handles file-based storage of optimization results."""
@@ -34,7 +35,8 @@ class OptimizationStorage:
         """
         if base_path is None:
             base_path = Path(__file__).parent / self.RESULTS_DIR
-        self.base_path = Path(base_path)
+        self._base_dir = Path.cwd()
+        self.base_path = validate_path(base_path, self._base_dir)
         self.ensure_storage_directories()
 
     def ensure_storage_directories(self):
@@ -56,7 +58,7 @@ class OptimizationStorage:
             c for c in problem_name if c.isalnum() or c in (" ", "-", "_")
         ).rstrip()
         safe_name = safe_name.replace(" ", "_").lower()
-        return self.base_path / safe_name
+        return validate_path(self.base_path / safe_name, self.base_path)
 
     def generate_run_id(self, problem_name: str, strategy: str) -> str:
         """
@@ -86,7 +88,7 @@ class OptimizationStorage:
             Path object for the result file
         """
         problem_dir = self.get_problem_directory(problem_name)
-        return problem_dir / f"{run_id}.json"
+        return validate_path(problem_dir / f"{run_id}.json", self.base_path)
 
     def save_optimization_result(self, result: Dict[str, Any]) -> str:
         """
