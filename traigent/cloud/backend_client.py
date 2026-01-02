@@ -1,4 +1,4 @@
-"""Enhanced TraiGent Cloud Client with OptiGen Backend Integration (Refactored).
+"""Enhanced Traigent Cloud Client with OptiGen Backend Integration (Refactored).
 
 This is the refactored version of backend_client.py using modular sub-components
 for better maintainability and adherence to software engineering principles.
@@ -148,7 +148,7 @@ class BackendIntegratedClient:
         """Initialize backend integrated client.
 
         Args:
-            api_key: TraiGent Cloud API key
+            api_key: Traigent Cloud API key
             base_url: Cloud service base URL
             backend_config: Backend integration configuration
             enable_fallback: Fall back to local optimization if cloud fails
@@ -431,7 +431,7 @@ class BackendIntegratedClient:
                 logger.warning("Could not get auth headers: %s", exc)
                 headers = {
                     "Content-Type": "application/json",
-                    "User-Agent": "TraiGent-SDK/1.0",
+                    "User-Agent": "Traigent-SDK/1.0",
                 }
             else:
                 headers.setdefault("Content-Type", "application/json")
@@ -687,7 +687,7 @@ class BackendIntegratedClient:
         error_message: str | None = None,
         execution_mode: str | None = None,
     ) -> bool:
-        """Submit trial results via the TraiGent session endpoint.
+        """Submit trial results via the Traigent session endpoint.
         Delegates to trial_operations module."""
         return await self._trial_ops.submit_trial_result_via_session(
             session_id, trial_id, config, metrics, status, error_message, execution_mode
@@ -749,7 +749,7 @@ class BackendIntegratedClient:
 
     # API Operations
     def _map_to_backend_status(self, status: str) -> str:
-        """Map TraiGent status values to backend-expected values.
+        """Map Traigent status values to backend-expected values.
         Delegates to api_operations module."""
         return self._api_ops.map_to_backend_status(status)
 
@@ -780,7 +780,7 @@ class BackendIntegratedClient:
     async def _create_traigent_session_via_api(
         self, session_request: SessionCreationRequest
     ) -> tuple[str, str, str]:
-        """Create a TraiGent optimization session using the new session endpoints.
+        """Create a Traigent optimization session using the new session endpoints.
         Delegates to api_operations module."""
         return await self._api_ops.create_traigent_session_via_api(session_request)
 

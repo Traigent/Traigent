@@ -1,0 +1,21 @@
+# Custom Scenario Overrides
+#
+# This file allows quick parameter tweaks without modifying Python code.
+# Define scenario overrides by name with the parameters to override.
+#
+# Example:
+#
+# my_scenario:
+#   max_trials: 10
+#   timeout: 60.0
+#   config_space:
+#     model:
+#       - gpt-3.5-turbo
+#       - gpt-4
+#       - gpt-4o
+#
+# The scenario must first be defined in Python code. Only the overridden
+# parameters will be applied.
+
+# Placeholder for user customizations
+scenarios: {}

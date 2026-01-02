@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Service."""
+"""Tests for Traigent Cloud Service."""
 
 import time
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -8,7 +8,7 @@ import pytest
 from traigent.cloud.service import (
     OptimizationRequest,
     OptimizationResponse,
-    TraiGentCloudService,
+    TraigentCloudService,
 )
 from traigent.evaluators.base import Dataset, EvaluationExample
 
@@ -68,7 +68,7 @@ def optimization_request(sample_dataset):
 @pytest.fixture
 def cloud_service():
     """Create cloud service instance for testing."""
-    return TraiGentCloudService()
+    return TraigentCloudService()
 
 
 class TestOptimizationRequest:
@@ -154,8 +154,8 @@ class TestOptimizationResponse:
         assert response.status == "completed"
 
 
-class TestTraiGentCloudService:
-    """Test TraiGent Cloud Service functionality."""
+class TestTraigentCloudService:
+    """Test Traigent Cloud Service functionality."""
 
     def test_service_initialization(self, cloud_service):
         """Test service initialization."""

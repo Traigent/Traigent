@@ -1,10 +1,7 @@
 """Tests for response wrapper utilities."""
 
 from dataclasses import dataclass
-from typing import Any
 from unittest.mock import MagicMock
-
-import pytest
 
 from traigent.integrations.utils.response_wrapper import (
     LLMResponse,

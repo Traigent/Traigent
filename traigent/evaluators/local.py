@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import inspect
 import math
+import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -98,6 +99,11 @@ class LocalEvaluator(BaseEvaluator):
         self._mock_mode_warning_shown = (
             False  # Track if we've shown the mock mode warning
         )
+
+        # Create seeded random instance for mock mode reproducibility
+        self._mock_random = random.Random()
+        if self.mock_mode_config.get("random_seed") is not None:
+            self._mock_random.seed(self.mock_mode_config["random_seed"])
 
     def _extract_prompt_info(
         self,
@@ -1021,7 +1027,6 @@ class LocalEvaluator(BaseEvaluator):
             Dictionary of metric names to values for this example
         """
         import os
-        import random
 
         metrics = {}
 
@@ -1078,14 +1083,14 @@ class LocalEvaluator(BaseEvaluator):
                             for word in ["positive", "negative", "neutral"]
                         ):
                             base_accuracy += 0.03  # Sentiment-like outputs
-                    # Add random variance
+                    # Add random variance (using seeded random for reproducibility)
                     half_variance = variance_config / 2
                     metrics["accuracy"] = min(
                         1.0,
                         max(
                             0.0,
                             base_accuracy
-                            + random.uniform(-half_variance, half_variance),
+                            + self._mock_random.uniform(-half_variance, half_variance),
                         ),
                     )
                 else:

@@ -26,7 +26,7 @@ class TestTOTPAuthProviderInit:
             pytest.skip("pyotp not available")
 
         provider = TOTPAuthProvider()
-        assert provider.issuer_name == "TraiGent"
+        assert provider.issuer_name == "Traigent"
         assert provider.secret_length == 32
         assert provider._used_codes == {}
         assert provider._code_expiry == {}

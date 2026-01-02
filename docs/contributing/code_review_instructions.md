@@ -134,7 +134,7 @@ Got it—you want a **comprehensive, per-module code-review playbook** (not diff
 
 * [ ] Unit tests for public API and edge cases; e2e smoke for happy path.
 * [ ] **Golden tests** for prompts/schemas; update protocol documented.
-* [ ] Offline stubs/record-replay for LLM calls; CI avoids paid API by default.
+* [ ] Offline stubs/record-replay for LLM calls; use `TRAIGENT_MOCK_MODE=true` in CI and local tests.
 * [ ] Coverage trend non-decreasing for this module.
 
 **Deliverable:** Missing test list (by function/branch) + fixtures to add.
@@ -145,7 +145,7 @@ Got it—you want a **comprehensive, per-module code-review playbook** (not diff
 
 **Goal:** Readable, idiomatic, and consistent.
 
-* [ ] `ruff`/`black`/`mypy --strict` clean or justified ignores.
+* [ ] `ruff`/`black`/`isort`/`mypy` clean or justified ignores.
 * [ ] Names are meaningful; modules small; cyclomatic complexity acceptable.
 * [ ] Comments explain **why**, not **what**; TODOs are ticket-linked with scope.
 

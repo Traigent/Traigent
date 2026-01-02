@@ -1,4 +1,4 @@
-# TraiGent SDK Development Dependencies
+# Traigent SDK Development Dependencies
 # Required for development and testing
 
 -r requirements.txt

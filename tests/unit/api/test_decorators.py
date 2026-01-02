@@ -158,6 +158,58 @@ class TestOptimizeDecorator:
         assert "model" in tvl_wrapped.configuration_space
         assert tvl_wrapped.configuration_space["max_tokens"] == [256, 384, 512]
 
+    def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
+        """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
+        spec_path = tmp_path / "evalset.tvl.yml"
+        spec_path.write_text(
+            """tvl:
+  module: test.evalset
+tvl_version: "0.9"
+evaluation_set:
+  dataset: test.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        )
+
+        @optimize(tvl_spec=spec_path)
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.eval_dataset == "test.jsonl"
+
+    def test_decorator_does_not_override_explicit_eval_dataset(self, tmp_path):
+        """Explicit eval_dataset beats evaluation_set in a TVL spec."""
+        spec_path = tmp_path / "evalset_override.tvl.yml"
+        spec_path.write_text(
+            """tvl:
+  module: test.evalset.override
+tvl_version: "0.9"
+evaluation_set:
+  dataset: spec.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        )
+
+        @optimize(tvl_spec=spec_path, eval_dataset="user.jsonl")
+        def tvl_wrapped(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_wrapped, OptimizedFunction)
+        assert tvl_wrapped.eval_dataset == "user.jsonl"
+
 
 class TestOptimizedFunctionIntegration:
     """Integration tests for OptimizedFunction wrapper."""
@@ -238,7 +290,6 @@ class TestOptimizedFunctionIntegration:
             execution_mode="cloud",
             auto_override_frameworks=False,
             framework_targets=["openai.OpenAI"],
-            custom_param="test_value",
         )
         def full_function(query: str, llm_config: dict = None) -> str:
             return f"Processing: {query}"
@@ -387,3 +438,148 @@ class TestOptimizedFunctionIntegration:
         # Test the standalone function
         assert isinstance(static_func, OptimizedFunction)
         assert static_func(5) == 15
+
+
+class TestConstraintNormalization:
+    """Tests for constraint normalization in the decorator."""
+
+    def test_decorator_with_boolexpr_constraints(self):
+        """Test decorator with BoolExpr constraint objects (not just callables)."""
+        from traigent.api.parameter_ranges import Choices, Range
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        # BoolExpr objects should be normalized to callables
+        @optimize(
+            configuration_space={"temperature": temp, "model": model},
+            constraints=[
+                temp.lte(0.7),  # BoolExpr
+                model.equals("gpt-4"),  # BoolExpr
+            ],
+        )
+        def constrained_func(temperature: float, model: str) -> str:
+            return f"{model} at {temperature}"
+
+        assert isinstance(constrained_func, OptimizedFunction)
+
+    def test_decorator_with_constraint_objects(self):
+        """Test decorator with Constraint objects using implies()."""
+        from traigent.api.constraints import implies
+        from traigent.api.parameter_ranges import Choices, Range
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        # Constraint objects should be normalized
+        @optimize(
+            configuration_space={"temperature": temp, "model": model},
+            constraints=[
+                implies(model.equals("gpt-4"), temp.lte(0.7)),
+            ],
+        )
+        def constrained_func(temperature: float, model: str) -> str:
+            return f"{model} at {temperature}"
+
+        assert isinstance(constrained_func, OptimizedFunction)
+
+    def test_decorator_with_mixed_constraints(self):
+        """Test decorator with mixed constraint types."""
+        from traigent.api.constraints import implies
+        from traigent.api.parameter_ranges import Choices, Range
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        # Mix of Constraint, BoolExpr, and callable
+        @optimize(
+            configuration_space={"temperature": temp, "model": model},
+            constraints=[
+                implies(model.equals("gpt-4"), temp.lte(0.7)),  # Constraint
+                temp.gte(0.1),  # BoolExpr
+                lambda cfg: cfg.get("temperature", 0) < 1.5,  # callable
+            ],
+        )
+        def constrained_func(temperature: float, model: str) -> str:
+            return f"{model} at {temperature}"
+
+        assert isinstance(constrained_func, OptimizedFunction)
+
+    def test_decorator_with_configspace_constraints(self):
+        """Test decorator with ConfigSpace that has constraints."""
+        from traigent.api.config_space import ConfigSpace
+        from traigent.api.constraints import implies
+        from traigent.api.parameter_ranges import Choices, Range
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        config_space = ConfigSpace(
+            tvars={"temperature": temp, "model": model},
+            constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        )
+
+        @optimize(configuration_space=config_space)
+        def constrained_func(temperature: float, model: str) -> str:
+            return f"{model} at {temperature}"
+
+        assert isinstance(constrained_func, OptimizedFunction)
+
+    def test_decorator_rejects_conflicting_constraints(self):
+        """Test that decorator raises error for conflicting constraints."""
+        from traigent.api.config_space import ConfigSpace
+        from traigent.api.constraints import implies
+        from traigent.api.parameter_ranges import Choices, Range
+
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        config_space = ConfigSpace(
+            tvars={"temperature": temp, "model": model},
+            constraints=[implies(model.equals("gpt-4"), temp.lte(0.7))],
+        )
+
+        # Both ConfigSpace constraints and explicit constraints should raise error
+        with pytest.raises(TypeError, match="Cannot provide both"):
+
+            @optimize(
+                configuration_space=config_space,
+                constraints=[temp.gte(0.1)],  # Explicit constraint
+            )
+            def constrained_func(temperature: float, model: str) -> str:
+                return f"{model} at {temperature}"
+
+    def test_decorator_with_custom_evaluator_class(self):
+        """Test decorator with custom evaluator class instance."""
+
+        class CustomEvaluator:
+            def __call__(self, func, config, example):
+                return {"score": 1.0}
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            custom_evaluator=CustomEvaluator(),
+        )
+        def func_with_evaluator(x: int) -> int:
+            return x * 2
+
+        assert isinstance(func_with_evaluator, OptimizedFunction)
+
+    def test_decorator_validates_custom_evaluator_signature(self):
+        """Test that custom evaluator signature is validated."""
+        from traigent.utils.exceptions import ValidationError
+
+        # Wrong signature - has metric evaluator params instead of (func, config, example)
+        def wrong_evaluator(prediction, expected, input_data):
+            return 1.0
+
+        with pytest.raises(
+            ValidationError, match="custom_evaluator signature mismatch"
+        ):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                custom_evaluator=wrong_evaluator,
+            )
+            def func_with_bad_evaluator(x: int) -> int:
+                return x * 2

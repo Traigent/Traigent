@@ -4,7 +4,7 @@ Tests for enterprise deployment features
 
 import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock, patch
 
 from traigent.security.enterprise import (
@@ -256,7 +256,7 @@ class TestSLAMonitor:
         monitor = SLAMonitor(sla_config, metrics_collector)
 
         # Add some history data
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         for i in range(5):
             metrics = SystemMetrics(
                 requests_per_second=5000 + i * 100,
@@ -513,8 +513,9 @@ class TestEnterpriseDeploymentManager:
             "details": {"metric": "response_time", "value": 1500},
         }
 
-        # Should not raise exception
-        manager._default_alert_handler("response_time_alert", alert_data)
+        # Should not raise exception - verify completion
+        result = manager._default_alert_handler("response_time_alert", alert_data)
+        assert result is None  # Handler returns None
 
     @patch("traigent.security.enterprise.psutil")
     def test_monitoring_with_different_intervals(self, mock_psutil):

@@ -101,7 +101,6 @@ def _build_prompt(text: str, fewshots: list[dict]) -> str:
     injection_mode="parameter",
     config_param="config",
     execution_mode="edge_analytics",
-    algorithm="grid",
 )
 def classify_sentiment(text: str, config: dict | None = None) -> str:
     # Mock mode: simple keyword-based classifier
@@ -141,7 +140,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 8 if not MOCK else 4
-        r = await classify_sentiment.optimize(max_trials=trials)
+        r = await classify_sentiment.optimize(algorithm="grid", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
 
     asyncio.run(main())

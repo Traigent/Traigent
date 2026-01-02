@@ -303,7 +303,6 @@ class TestObjectiveSchemaIntegration:
             configuration_space={"model": ["test_model"], "temperature": [0.5]},
             execution_mode="edge_analytics",
             local_storage_path=str(tmp_path),
-            max_trials=1,
         )
         def test_function(question: str, config: dict = None) -> str:
             # Simple function that returns different results based on config

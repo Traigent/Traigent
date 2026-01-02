@@ -2,9 +2,11 @@
 
 > **Status note**: This document describes the historical paper-experiments pipeline. Verify paths/dependencies against current `paper_experiments/` before running; regenerate configs if they changed.
 
+Current repo status: only `paper_experiments/case_study_fever/` is checked in. The other case study sections below are retained for historical reference and may not match the current tree.
+
 ## Executive Summary
 
-This document describes a comprehensive overhaul of the TraiGent paper experiments pipeline, standardizing evaluation across seven academic case studies (FEVER, KILT, HotpotQA, SQuAD, Summarization, TriviaQA, Spider). The refactoring introduces:
+This document describes a comprehensive overhaul of the Traigent paper experiments pipeline, standardizing evaluation across seven academic case studies (FEVER, KILT, HotpotQA, SQuAD, Summarization, TriviaQA, Spider). Only FEVER remains in this repo; the rest are historical references. The refactoring introduces:
 
 - **Mandatory mock mode** for automated testing to prevent accidental API costs
 - **Unified evaluation pipeline** using `LocalEvaluator` + `metric_functions`
@@ -44,7 +46,7 @@ This document describes a comprehensive overhaul of the TraiGent paper experimen
 | **TRAIGENT_MOCK_MODE** now mandatory | Automated tests will make real API calls without this flag | Set `export TRAIGENT_MOCK_MODE=true` in all CI/test environments | 🔴 **CRITICAL** |
 | **Custom evaluators deprecated** | Scenario-specific evaluators no longer function | Migrate to `metric_functions` interface | 🔴 **HIGH** |
 | **Telemetry format changes** | New trial histories include additional fields | Update analysis scripts to handle new schema | 🟡 **MEDIUM** |
-| **SDK version requirements** | Requires `openai>=1.12`, `anthropic>=0.18` | Update `requirements.txt` or `pyproject.toml` | 🟡 **MEDIUM** |
+| **SDK version requirements** | Requires `openai>=1.0.0`, `anthropic>=0.18.0` | Update `requirements.txt` or `pyproject.toml` | 🟡 **MEDIUM** |
 
 ### Required Environment Configuration
 
@@ -65,7 +67,7 @@ export ANTHROPIC_API_KEY="sk-ant-..."  # For Claude models
 
 ### What Are Paper Experiments?
 
-The `paper_experiments/` directory contains seven academic case studies used to benchmark LLM optimization strategies in controlled research settings:
+The `paper_experiments/` directory contains one active case study in this repo (FEVER). The other case studies listed below are historical references that may not exist in this tree:
 
 | Case Study | Domain | Task Type | Primary Metrics |
 |------------|--------|-----------|-----------------|
@@ -257,6 +259,8 @@ def build_scenario_metric_functions(
 ## Implementation Details
 
 ### Detailed Impact by Case Study
+
+Note: Only `case_study_fever/` is present in this repo. The other sections are historical and may not match current code.
 
 #### 1. FEVER (`paper_experiments/case_study_fever/`)
 
@@ -1077,10 +1081,13 @@ llm_metrics = {
 
     # Performance metrics
     "response_time_ms": float,  # End-to-end latency in milliseconds
+    "tokens_per_second": float, # Derived throughput if response_time_ms is available
 
     # Model metadata
     "model": str,               # Model identifier (e.g., "gpt-4o")
-    "provider": str,            # Provider name (e.g., "openai")
+
+    # Internal metrics object
+    "_full_metrics": Any,       # ExampleMetrics object from extract_llm_metrics
 }
 ```
 
@@ -1089,16 +1096,13 @@ llm_metrics = {
 Telemetry is captured via `capture_langchain_response` wrapper:
 
 ```python
-from traigent.integrations.telemetry import capture_langchain_response
+from traigent.utils.langchain_interceptor import capture_langchain_response
 
-# Automatic capture during LLM call
-response, telemetry = capture_langchain_response(
-    llm=llm_instance,
-    prompt=prompt,
-    config=config
-)
+# Capture immediately after an LLM call
+response = llm_instance.invoke(prompt)
+capture_langchain_response(response)
 
-# telemetry now contains all fields from schema above
+# Metrics are later extracted via extract_llm_metrics in the evaluators
 ```
 
 ### Mock-Mode Simulator API
@@ -1160,7 +1164,7 @@ class SimulationResult:
 
 ## Summary
 
-This pipeline overhaul represents a significant improvement in the TraiGent paper experiments infrastructure:
+This pipeline overhaul represents a significant improvement in the Traigent paper experiments infrastructure:
 
 ✅ **Safety**: Mandatory mock mode prevents accidental API costs
 ✅ **Consistency**: Unified evaluation pipeline across all scenarios
@@ -1178,7 +1182,7 @@ This pipeline overhaul represents a significant improvement in the TraiGent pape
 
 **Questions or Issues?**
 
-- 📧 Contact the TraiGent team via team channels
+- 📧 Contact the Traigent team via team channels
 - 🐛 Report bugs with `[Pipeline Overhaul]` tag
 - 📚 See [CLAUDE.md](../CLAUDE.md) for additional SDK documentation
 

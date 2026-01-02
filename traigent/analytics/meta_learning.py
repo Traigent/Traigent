@@ -1,4 +1,4 @@
-"""Meta-learning engine for TraiGent optimization history analysis."""
+"""Meta-learning engine for Traigent optimization history analysis."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Performance FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
 

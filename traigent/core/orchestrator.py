@@ -3,6 +3,7 @@
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
 import asyncio
+import copy
 import inspect
 import math
 import time
@@ -14,6 +15,7 @@ from typing import Any, cast
 from traigent.api.types import (
     OptimizationResult,
     OptimizationStatus,
+    StopReason,
     TrialResult,
     TrialStatus,
 )
@@ -73,6 +75,11 @@ from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
 
+from .tracing import (
+    optimization_session_span,
+    record_optimization_complete,
+)
+
 logger = get_logger(__name__)
 
 # Orchestrator constants
@@ -103,7 +110,12 @@ class OptimizationOrchestrator:
         file_version: str = "2",
         **kwargs: Any,
     ) -> None:
-        """Initialize optimization orchestrator."""
+        """Initialize optimization orchestrator.
+
+        Keyword Args:
+            default_config: Optional baseline configuration evaluated once before
+                optimizer-driven suggestions. Counts toward max_trials.
+        """
 
         self._initialized = False
         validate_constructor_arguments(
@@ -135,6 +147,7 @@ class OptimizationOrchestrator:
         )
 
         raw_constraints = kwargs.pop("constraints", None)
+        default_config = kwargs.pop("default_config", None)
         self._constraints_pre_eval: list[Callable[..., bool]] = []
         self._constraints_post_eval: list[Callable[..., bool]] = []
         if raw_constraints:
@@ -147,6 +160,16 @@ class OptimizationOrchestrator:
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
         )
+
+        self._default_config: dict[str, Any] | None = None
+        self._default_config_used = False
+        if isinstance(default_config, dict) and default_config:
+            self._default_config = copy.deepcopy(default_config)
+        elif default_config is not None:
+            logger.debug(
+                "Ignoring default_config with unexpected type: %s",
+                type(default_config).__name__,
+            )
 
         self.use_versioned_logger = use_versioned_logger
         self.file_version = file_version
@@ -338,7 +361,7 @@ class OptimizationOrchestrator:
         self._start_time: float | None = None
         self._status = OptimizationStatus.PENDING
         self._optimization_id = str(uuid.uuid4())
-        self._stop_reason: str | None = None
+        self._stop_reason: StopReason | None = None
         self._logger: OptimizationLogger | None = None
         self._logger_v2: Any | None = None
         self._logger_facade = LoggerFacade()
@@ -352,6 +375,26 @@ class OptimizationOrchestrator:
         self._consumed_examples = 0
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
+
+    def _consume_default_config(self) -> dict[str, Any] | None:
+        """Return the default config once to seed a baseline trial."""
+        if self._default_config_used:
+            return None
+
+        self._default_config_used = True
+        if not self._default_config:
+            return None
+
+        # Keep optimizer trial counts aligned with max_trials when applicable.
+        # Some optimizers (random/optuna) track an internal _trial_count and can
+        # stop early if it isn't incremented for the baseline trial.
+        if hasattr(self.optimizer, "_trial_count"):
+            try:
+                self.optimizer._trial_count += 1  # type: ignore[attr-defined]
+            except Exception:
+                logger.debug("Unable to increment optimizer trial count for baseline.")
+
+        return copy.deepcopy(self._default_config)
 
     @property
     def status(self) -> OptimizationStatus:
@@ -429,7 +472,7 @@ class OptimizationOrchestrator:
 
     def _remaining_sample_budget(self) -> float:
         if self._sample_budget_manager is not None:
-            return self._sample_budget_manager.remaining()
+            return float(self._sample_budget_manager.remaining())
         if self._max_total_examples is None:
             return float("inf")
         return max(self._max_total_examples - self._consumed_examples, 0)
@@ -612,7 +655,7 @@ class OptimizationOrchestrator:
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
-        if self.backend_client and session_id and trial_result.is_successful:
+        if self.backend_client and session_id:
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
@@ -661,6 +704,46 @@ class OptimizationOrchestrator:
         )
         return caps.remaining_cap, caps.target_batch_size, caps.infinite_budget
 
+    async def _try_hybrid_batch_generation(
+        self, dataset: Dataset, remaining: int
+    ) -> list[dict[str, Any]]:
+        """Try to generate configs via hybrid/async batch generation."""
+        try:
+            remote_context = {
+                "privacy_enabled": getattr(
+                    self.traigent_config, "privacy_enabled", False
+                ),
+                "parallel_trials": remaining,
+                "mode": "hybrid",
+                "dataset_size": len(dataset),
+            }
+            return (
+                await self.optimizer.generate_candidates_async(
+                    remaining, remote_context=remote_context
+                )
+                or []
+            )
+        except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
+            logger.warning(
+                "Async batch suggestion unavailable, falling back to sequential: %s", e
+            )
+            return []
+
+    def _generate_sequential_configs(self, count: int) -> list[dict[str, Any]]:
+        """Generate configs sequentially from the optimizer."""
+        configs: list[dict[str, Any]] = []
+        for _ in range(count):
+            try:
+                configs.append(self.optimizer.suggest_next_trial(self._trials))
+            except OptimizationError:
+                break
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                logger.exception(
+                    "Optimizer failed to suggest trial during batch generation: %s", e
+                )
+                break
+        return configs
+
     async def _generate_parallel_configs(
         self,
         dataset: Dataset,
@@ -672,42 +755,26 @@ class OptimizationOrchestrator:
             Tuple of (configs, used_async_batch)
         """
         configs: list[dict[str, Any]] = []
+        remaining = target_batch_size
+
+        baseline_config = self._consume_default_config()
+        if baseline_config is not None:
+            configs.append(baseline_config)
+            remaining -= 1
+            if remaining <= 0:
+                return configs, False
+
+        # Try hybrid/async generation if applicable
         used_async_batch = False
+        if self.traigent_config.execution_mode_enum is ExecutionMode.HYBRID:
+            async_configs = await self._try_hybrid_batch_generation(dataset, remaining)
+            if async_configs:
+                configs.extend(async_configs)
+                used_async_batch = True
 
-        mode_enum = self.traigent_config.execution_mode_enum
-        if mode_enum is ExecutionMode.HYBRID:
-            try:
-                remote_context = {
-                    "privacy_enabled": getattr(
-                        self.traigent_config, "privacy_enabled", False
-                    ),
-                    "parallel_trials": target_batch_size,
-                    "mode": "hybrid",
-                    "dataset_size": len(dataset),
-                }
-                configs = await self.optimizer.generate_candidates_async(
-                    target_batch_size, remote_context=remote_context
-                )
-                used_async_batch = len(configs) > 0
-            except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
-                logger.warning(
-                    "Async batch suggestion unavailable, falling back to sequential: %s",
-                    e,
-                )
-
+        # Fall back to sequential generation
         if not used_async_batch:
-            for _ in range(target_batch_size):
-                try:
-                    cfg = self.optimizer.suggest_next_trial(self._trials)
-                    configs.append(cfg)
-                except OptimizationError:
-                    break
-                except (ValueError, TypeError, KeyError, AttributeError) as e:
-                    logger.exception(
-                        "Optimizer failed to suggest trial during batch generation: %s",
-                        e,
-                    )
-                    break
+            configs.extend(self._generate_sequential_configs(remaining))
 
         return configs, used_async_batch
 
@@ -748,7 +815,7 @@ class OptimizationOrchestrator:
                         description=getattr(
                             dataset,
                             "description",
-                            "TraiGent evaluation dataset",
+                            "Traigent evaluation dataset",
                         ),
                     )
                 except Exception as exc:
@@ -767,14 +834,26 @@ class OptimizationOrchestrator:
             tuple[dict[str, Any], dict[str, Any] | Any, Dataset, int | None]
         ],
     ) -> list[int | None]:
-        """Allocate sample ceilings for parallel trials."""
+        """Allocate sample ceilings for parallel trials.
+
+        This is a safety mechanism to ensure that when spinning up N parallel
+        trials with X remaining budget, each trial gets at most X/N samples.
+        This prevents any single trial from consuming more than its fair share
+        when running in parallel.
+
+        Args:
+            trial_descriptors: List of trial descriptor tuples
+
+        Returns:
+            List of sample ceilings for each trial
+        """
         if self._sample_budget_manager is None:
             return [len(desc[2].examples) for desc in trial_descriptors]
 
         remaining_float = self._sample_budget_manager.remaining()
         if math.isfinite(remaining_float):
             dataset_sizes = [len(desc[2].examples) for desc in trial_descriptors]
-            return allocate_parallel_ceilings(dataset_sizes, int(remaining_float))
+            return list(allocate_parallel_ceilings(dataset_sizes, int(remaining_float)))
         return cast(
             list[int | None], [len(desc[2].examples) for desc in trial_descriptors]
         )
@@ -811,6 +890,7 @@ class OptimizationOrchestrator:
                 self._abandon_optuna_trial(
                     optuna_id,
                     reason="trial_skipped_zero_sample_ceiling",
+                    config=cfg,
                     status=TrialStatus.CANCELLED,
                     pruned_step=0,
                 )
@@ -986,6 +1066,7 @@ class OptimizationOrchestrator:
                 self._abandon_optuna_trial(
                     optuna_id,
                     reason="trial_prevented_by_cap",
+                    config=cfg,
                     status=TrialStatus.PRUNED,
                     pruned_step=0,
                 )
@@ -994,11 +1075,14 @@ class OptimizationOrchestrator:
         cache_policy = self.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            before_ids = {
-                cfg.get("_optuna_trial_id")
+            # Build a map from optuna_trial_id to config before filtering
+            id_to_config: dict[int, dict[str, Any]] = {
+                cast(int, cfg.get("_optuna_trial_id")): cfg
                 for cfg in configs
-                if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
+                if isinstance(cfg, dict)
+                and isinstance(cfg.get("_optuna_trial_id"), int)
             }
+            before_ids = set(id_to_config.keys())
             configs = self.cache_policy_handler.apply_policy(
                 configs, cache_policy, function_name or "unknown_function", dataset_name
             )
@@ -1016,6 +1100,7 @@ class OptimizationOrchestrator:
                     self._abandon_optuna_trial(
                         optuna_id,
                         reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        config=id_to_config.get(optuna_id),
                         status=TrialStatus.PRUNED,
                         pruned_step=0,
                     )
@@ -1252,70 +1337,95 @@ class OptimizationOrchestrator:
             else function_name
         )
 
-        # Pre-optimization cost approval check
-        # Skip if mock mode or already approved
-        if not self.cost_enforcer.is_mock_mode:
-            estimated_cost = self._estimate_optimization_cost(dataset)
-            if not self.cost_enforcer.check_and_approve(estimated_cost):
-                from traigent.core.cost_enforcement import OptimizationAborted
+        # Start tracing span for the optimization session
+        with optimization_session_span(
+            function_name=function_identifier or func.__name__,
+            max_trials=self.max_trials,
+            timeout=self.timeout,
+            algorithm=getattr(self.optimizer, "name", None),
+            objectives=self.objectives,
+            config_space=getattr(self.optimizer, "config_space", None),
+        ) as session_span:
+            return await self._run_optimization_with_tracing(
+                func=func,
+                dataset=dataset,
+                session_id=session_id,
+                function_identifier=function_identifier,
+                session_span=session_span,
+            )
 
-                raise OptimizationAborted(
-                    f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
-                    f"limit: ${self.cost_enforcer.config.limit:.2f}. "
-                    f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+    def _check_cost_approval(self, dataset: Dataset) -> None:
+        """Check cost approval before optimization."""
+        if self.cost_enforcer.is_mock_mode:
+            return
+        estimated_cost = self._estimate_optimization_cost(dataset)
+        if not self.cost_enforcer.check_and_approve(estimated_cost):
+            from traigent.core.cost_enforcement import OptimizationAborted
+
+            raise OptimizationAborted(
+                f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
+                f"limit: ${self.cost_enforcer.config.limit:.2f}. "
+                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+            )
+
+    def _check_budget_limits(
+        self, trial_count: int
+    ) -> tuple[float, float, StopReason | None]:
+        """Check trial and sample budget limits.
+
+        Returns:
+            Tuple of (remaining_trials, remaining_samples, stop_reason_if_any)
+        """
+        remaining = (
+            float("inf") if self.max_trials is None else self.max_trials - trial_count
+        )
+
+        if remaining <= 0:
+            logger.info(f"Trial limit reached: {self.max_trials}")
+            return remaining, 0, "max_trials_reached"
+
+        remaining_samples = self._remaining_sample_budget()
+        if remaining_samples <= 0:
+            logger.info(
+                "Sample limit reached: max_total_examples=%s", self._max_total_examples
+            )
+            return remaining, remaining_samples, "max_samples_reached"
+
+        return remaining, remaining_samples, None
+
+    async def _run_optimization_loop(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+    ) -> int:
+        """Run the main optimization loop. Returns final trial count."""
+        trial_count = 0
+
+        while True:
+            remaining, remaining_samples, budget_stop = self._check_budget_limits(
+                trial_count
+            )
+            if budget_stop:
+                if not self._stop_reason:
+                    self._stop_reason = budget_stop
+                break
+
+            if self._should_stop(trial_count):
+                break
+
+            if self.parallel_trials > 1:
+                trial_count, action = await self._run_parallel_batch(
+                    func=func,
+                    dataset=dataset,
+                    session_id=session_id,
+                    function_name=function_identifier,
+                    trial_count=trial_count,
+                    remaining=remaining,
+                    remaining_samples=remaining_samples,
                 )
-
-        try:
-            # Check for immediate timeout
-            if self.timeout is not None and self.timeout == 0:
-                self._stop_reason = "timeout"
-                self._status = OptimizationStatus.CANCELLED
-                return self._create_optimization_result()
-
-            # Main optimization loop
-            trial_count = 0
-
-            while True:
-                # Calculate remaining trial budget for cap enforcement
-                if self.max_trials is None:
-                    remaining = float("inf")
-                else:
-                    remaining = self.max_trials - trial_count
-
-                if remaining <= 0:
-                    logger.info(f"Trial limit reached: {self.max_trials}")
-                    self._stop_reason = "max_trials_reached"
-                    break
-
-                remaining_samples = self._remaining_sample_budget()
-                if remaining_samples <= 0:
-                    logger.info(
-                        "Sample limit reached: max_total_examples=%s",
-                        self._max_total_examples,
-                    )
-                    if not self._stop_reason:
-                        self._stop_reason = "max_samples_reached"
-                    break
-
-                # Check stopping conditions
-                if self._should_stop(trial_count):
-                    break
-
-                if self.parallel_trials > 1:
-                    trial_count, action = await self._run_parallel_batch(
-                        func=func,
-                        dataset=dataset,
-                        session_id=session_id,
-                        function_name=function_identifier,
-                        trial_count=trial_count,
-                        remaining=remaining,
-                        remaining_samples=remaining_samples,
-                    )
-                    if action == "continue":
-                        continue
-                    if action == "break":
-                        break
-
+            else:
                 trial_count, action = await self._trial_lifecycle.run_sequential_trial(
                     func=func,
                     dataset=dataset,
@@ -1324,49 +1434,78 @@ class OptimizationOrchestrator:
                     trial_count=trial_count,
                 )
 
-                if action == "continue":
-                    continue
-                if action == "break":
-                    break
+            if action == "break":
+                break
 
-            # Set final status before creating result
-            if self._stop_reason == "timeout":
+        return trial_count
+
+    async def _finalize_optimization(
+        self,
+        result: OptimizationResult,
+        session_id: str | None,
+        session_span: Any,
+    ) -> None:
+        """Finalize optimization: record metrics, update backend, notify callbacks."""
+        record_optimization_complete(
+            session_span,
+            trial_count=len(self._trials),
+            best_score=result.best_score,
+            best_config=result.best_config,
+            stop_reason=self._stop_reason,
+        )
+
+        merge_run_metrics_into_session_summary(result)
+        await self.backend_session_manager.update_weighted_scores(result, session_id)
+        self.backend_session_manager.submit_session_aggregation(result, session_id)
+
+        session_summary = self.backend_session_manager.finalize_session(
+            session_id, self._status
+        )
+        self.backend_session_manager.attach_session_metadata(
+            result, session_id, session_summary
+        )
+
+        self._submit_usage_analytics()
+        self.callback_manager.on_optimization_complete(result)
+
+        cost_status = self.cost_enforcer.get_status()
+        logger.info(
+            f"Optimization {self._optimization_id} completed: "
+            f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
+            f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
+        )
+
+    async def _run_optimization_with_tracing(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+        session_span: Any,
+    ) -> OptimizationResult:
+        """Run optimization with tracing enabled."""
+        self._check_cost_approval(dataset)
+
+        try:
+            # Check for immediate timeout
+            if self.timeout is not None and self.timeout == 0:
+                self._stop_reason = "timeout"
                 self._status = OptimizationStatus.CANCELLED
-            else:
-                self._status = OptimizationStatus.COMPLETED
+                return self._create_optimization_result()
 
-            # Create final result
+            await self._run_optimization_loop(
+                func, dataset, session_id, function_identifier
+            )
+
+            # Set final status
+            self._status = (
+                OptimizationStatus.CANCELLED
+                if self._stop_reason == "timeout"
+                else OptimizationStatus.COMPLETED
+            )
+
             result = self._create_optimization_result()
-
-            merge_run_metrics_into_session_summary(result)
-
-            await self.backend_session_manager.update_weighted_scores(
-                result, session_id
-            )
-
-            self.backend_session_manager.submit_session_aggregation(result, session_id)
-
-            session_summary = self.backend_session_manager.finalize_session(
-                session_id, self._status
-            )
-
-            self.backend_session_manager.attach_session_metadata(
-                result, session_id, session_summary
-            )
-
-            self._submit_usage_analytics()
-
-            # Notify callbacks of optimization completion
-            self.callback_manager.on_optimization_complete(result)
-
-            # Log final cost status
-            cost_status = self.cost_enforcer.get_status()
-            logger.info(
-                f"Optimization {self._optimization_id} completed: "
-                f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
-                f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
-            )
-
+            await self._finalize_optimization(result, session_id, session_span)
             return result
 
         except Exception as e:
@@ -1381,10 +1520,24 @@ class OptimizationOrchestrator:
         optuna_trial_id: int | None,
         *,
         reason: str,
+        config: dict[str, Any] | None = None,
         status: TrialStatus = TrialStatus.PRUNED,
         pruned_step: int = 0,
     ) -> None:
-        """Finalize an asked Optuna trial that will never be executed."""
+        """Finalize an asked Optuna trial that will never be executed.
+
+        Creates a TrialResult for the abandoned trial and:
+        1. Appends it to self._trials so it appears in OptimizationResult
+        2. Logs the trial via the logger facade
+        3. Notifies the optimizer so it can update its internal state
+
+        Args:
+            optuna_trial_id: The Optuna trial ID to abandon.
+            reason: Human-readable reason for abandonment.
+            config: The configuration that was to be evaluated (if available).
+            status: Trial status (default PRUNED).
+            pruned_step: Step at which pruning occurred.
+        """
 
         if optuna_trial_id is None:
             return
@@ -1396,14 +1549,23 @@ class OptimizationOrchestrator:
 
         trial_result = TrialResult(
             trial_id=f"optuna_{optuna_trial_id}",
-            config={},
+            config=config or {},
             metrics={},
             status=status,
             duration=0.0,
             timestamp=datetime.now(UTC),
             error_message=reason,
-            metadata={"pruned_step": pruned_step, "stop_reason": reason},
+            metadata={
+                "pruned_step": pruned_step,
+                "stop_reason": reason,
+                "abandoned": True,
+            },
         )
+
+        # Record the abandoned trial in the trials list and log it
+        self._trials.append(trial_result)
+        self._log_trial(trial_result)
+
         self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
     def _notify_optimizer_of_result(
@@ -1503,10 +1665,16 @@ class OptimizationOrchestrator:
         stop_triggered, reason = self._stop_condition_manager.should_stop(self._trials)
         if stop_triggered:
             if not self._stop_reason:
-                if reason == "max_samples":
-                    self._stop_reason = "max_samples_reached"
-                else:
-                    self._stop_reason = reason or "condition"
+                # Map stop condition reasons to StopReason literals
+                reason_mapping: dict[str | None, StopReason] = {
+                    "max_samples": "max_samples_reached",
+                    "max_trials": "max_trials_reached",
+                    "plateau": "plateau",
+                    "cost_limit": "cost_limit",
+                    "timeout": "timeout",
+                    "budget": "cost_limit",
+                }
+                self._stop_reason = reason_mapping.get(reason, "condition")
             logger.info("Stopping: %s condition triggered", self._stop_reason)
             return True
 
@@ -1763,6 +1931,7 @@ class OptimizationOrchestrator:
             total_tokens=total_tokens if total_tokens > 0 else None,
             metrics=processed_metrics,
             metadata=self._build_result_metadata(session_summary, safeguards_telemetry),
+            stop_reason=self._stop_reason,
         )
 
         # Log optimization completion

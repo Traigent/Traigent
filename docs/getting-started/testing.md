@@ -1,8 +1,8 @@
 # Testing Guide
 
-This guide covers running tests in the TraiGent SDK project.
+This guide covers running tests in the Traigent SDK project.
 
-## 🧪 Quick Start
+## Quick Start
 
 ### Install Test Dependencies
 
@@ -20,23 +20,23 @@ uv pip install -e ".[dev]"
 ### Run Tests
 
 ```bash
-# Run all tests
-pytest
+# Run all tests (mock mode to avoid API costs)
+TRAIGENT_MOCK_MODE=true pytest
 
 # Run with coverage
-pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_MODE=true pytest --cov=traigent --cov-report=html
 
 # Run specific test file
-pytest tests/unit/core/test_orchestrator.py
+TRAIGENT_MOCK_MODE=true pytest tests/unit/core/test_orchestrator.py
 
 # Run specific test
-pytest tests/unit/core/test_orchestrator.py::test_orchestrator_initialization -v
+TRAIGENT_MOCK_MODE=true pytest tests/unit/core/test_orchestrator.py::test_orchestrator_initialization -v
 
 # Run tests matching a pattern
-pytest -k "test_optimization" -v
+TRAIGENT_MOCK_MODE=true pytest -k "test_optimization" -v
 ```
 
-## 📦 Test Dependencies
+## Test Dependencies
 
 The `[test]` extra includes:
 
@@ -48,7 +48,7 @@ The `[test]` extra includes:
 - **ragas>=0.3.6** - RAG evaluation metrics
 - **rapidfuzz>=3.14.0** - Fuzzy string matching
 
-## 🎯 Test Categories
+## Test Categories
 
 ### Unit Tests
 
@@ -85,7 +85,7 @@ Located in `tests/security/`, these validate security features:
 pytest tests/security/ -v
 ```
 
-## 🔍 Coverage Reports
+## Coverage Reports
 
 ### Generate Coverage Report
 
@@ -101,15 +101,13 @@ pytest --cov=traigent --cov-report=term-missing
 pytest --cov=traigent --cov-report=xml
 ```
 
-### Current Coverage Status
+### Coverage Targets
 
-- **Target**: 80%+ overall coverage
-- **Current**: ~65% (see `coverage.xml`)
-- **Critical paths**: >80% coverage required
+Use the generated report (`coverage.xml` or `htmlcov/`) to track current coverage. Follow any active sprint or team-specific targets in the repository tracking docs.
 
-## 🚀 Mock Mode Testing
+## Mock Mode Testing
 
-TraiGent includes a mock mode for testing without real API calls:
+Traigent includes a mock mode for testing without real API calls:
 
 ```bash
 # Enable mock mode
@@ -124,17 +122,17 @@ TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py
 
 **Mock Mode Features:**
 - No API keys required
-- Realistic accuracy scores (0.75 ± 0.25)
+- Realistic accuracy scores (0.75 +/- 0.25)
 - Fast execution
-- Deterministic results (with seed)
+- Deterministic results when you set `mock={"random_seed": 123}`
 
-## 🛠️ Development Testing Workflow
+## Development Testing Workflow
 
 ### 1. Setup Development Environment
 
 ```bash
 # Clone repository
-git clone https://github.com/Traigent/Traigent.git
+git clone https://github.com/traigent/traigent-sdk.git
 cd Traigent
 
 # Create virtual environment with uv
@@ -150,10 +148,10 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Run all tests
-pytest
+TRAIGENT_MOCK_MODE=true pytest
 
 # Run with coverage
-pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_MODE=true pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/
@@ -171,7 +169,7 @@ pre-commit install
 pre-commit run --all-files
 ```
 
-## 📊 Testing Best Practices
+## Testing Best Practices
 
 ### Writing Tests
 
@@ -208,7 +206,7 @@ async def test_optimization_basic():
     assert results.best_config["x"] in [1, 2, 3]
 ```
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Import Errors
 

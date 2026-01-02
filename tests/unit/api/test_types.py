@@ -692,7 +692,8 @@ class TestParetoFront:
         )
 
         # Method is not implemented, just check it exists and doesn't raise
-        pareto.plot_trade_offs("accuracy", "cost")
+        result = pareto.plot_trade_offs("accuracy", "cost")
+        assert result is None  # Method returns None
 
 
 class TestStrategyConfig:
@@ -726,7 +727,8 @@ class TestStrategyConfig:
         config = StrategyConfig(algorithm="grid", parallel_workers=2)
 
         # Should not raise
-        config.validate()
+        result = config.validate()
+        assert result is None  # Method returns None on success
 
     def test_validate_invalid_workers(self):
         """Test validate with invalid parallel_workers."""

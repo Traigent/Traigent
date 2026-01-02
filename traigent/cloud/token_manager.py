@@ -1,4 +1,4 @@
-"""Token management module for TraiGent authentication.
+"""Token management module for Traigent authentication.
 
 This module handles secure token storage, refresh scheduling, and lifecycle management.
 Extracted from AuthManager to follow Single Responsibility Principle.

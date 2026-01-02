@@ -1,0 +1,44 @@
+{
+  "name": "Traigent Development",
+  "build": {
+    "dockerfile": "../Dockerfile",
+    "target": "development"
+  },
+  "features": {
+    "ghcr.io/devcontainers/features/git:1": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter",
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+        "GitHub.copilot"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.formatting.provider": "black",
+        "editor.formatOnSave": true,
+        "python.linting.enabled": true,
+        "python.linting.ruffEnabled": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        }
+      }
+    }
+  },
+  "containerEnv": {
+    "TRAIGENT_MOCK_MODE": "true",
+    "TRAIGENT_LOG_LEVEL": "DEBUG"
+  },
+  "postCreateCommand": "pip install -e '.[dev,integrations,analytics,security,test]'",
+  "remoteUser": "root"
+}

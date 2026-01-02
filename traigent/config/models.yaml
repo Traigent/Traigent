@@ -1,4 +1,4 @@
-# Model Configuration for TraiGent
+# Model Configuration for Traigent
 #
 # This file defines known models and validation patterns for each provider.
 # The model discovery system uses this as a fallback when SDK discovery

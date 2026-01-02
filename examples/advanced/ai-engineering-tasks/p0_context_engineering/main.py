@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-P0-2: Context Engineering & RAG Optimization with TraiGent
+P0-2: Context Engineering & RAG Optimization with Traigent
 ========================================================
 
-This example demonstrates how TraiGent systematically optimizes retrieval-augmented
+This example demonstrates how Traigent systematically optimizes retrieval-augmented
 generation (RAG) systems to improve answer quality by 15-25% while reducing costs by 30-50%.
 
 **IMPORTANT**: This example demonstrates TWO patterns:
 1. TRAIGENT FEATURE: Using custom evaluator with @traigent.optimize
-2. CUSTOM LOGIC: Token budget allocation (NOT a TraiGent feature - implemented in this example)
+2. CUSTOM LOGIC: Token budget allocation (NOT a Traigent feature - implemented in this example)
 
 The optimization explores retrieval strategies, chunk sizes, reranking approaches,
 and smart token budget allocation to find the optimal context composition.
@@ -77,20 +77,20 @@ def print_header() -> None:
     console.print(
         Panel.fit(
             "[bold blue]P0-2: Context Engineering & RAG Optimization[/bold blue]\n"
-            "[dim]Optimize retrieval strategies and context composition with TraiGent[/dim]",
+            "[dim]Optimize retrieval strategies and context composition with Traigent[/dim]",
             border_style="blue",
         )
     )
 
 
 def create_evaluation_function(dataset: RAGDataset) -> Callable:
-    """Create the evaluation function for TraiGent optimization."""
+    """Create the evaluation function for Traigent optimization."""
 
     def evaluate_rag_configuration(**config_params) -> dict[str, float]:
         """
         Evaluate RAG configuration on the dataset.
 
-        This function is called by TraiGent for each configuration trial.
+        This function is called by Traigent for each configuration trial.
         It tests the RAG system with different retrieval and chunking strategies.
         """
 
@@ -259,19 +259,19 @@ def optimize_context_engineering(
     **kwargs,
 ) -> None:
     """
-    TraiGent-optimized function for context engineering and RAG.
+    Traigent-optimized function for context engineering and RAG.
 
     **PATTERN NOTE**: This example uses a pattern where the function body is just 'pass'.
     This is valid when using a custom_evaluator in .optimize(), but not yet officially
     documented as "schema-based injection". The function signature defines the parameters
     to optimize, while the actual evaluation logic is in create_evaluation_function().
 
-    This function will be called by TraiGent with different parameter combinations
+    This function will be called by Traigent with different parameter combinations
     to find the optimal RAG configuration.
     """
 
     # This is a placeholder - the actual evaluation happens in the evaluation function
-    # TraiGent will inject the optimal parameters and track results
+    # Traigent will inject the optimal parameters and track results
     pass
 
 
@@ -357,7 +357,7 @@ def display_results(
         status = "🚀 Optimized"
 
         table.add_row(
-            "TraiGent Optimized",
+            "Traigent Optimized",
             f"{best_metrics.get('answer_quality', 0):.3f}",
             f"${best_metrics.get('cost_per_query', 0):.5f}",
             f"{best_metrics.get('retrieval_f1', 0):.3f}",
@@ -535,10 +535,10 @@ async def main() -> None:
     # Run baseline comparisons
     baseline_results = run_baseline_comparison(dataset)
 
-    # Set up TraiGent evaluation
+    # Set up Traigent evaluation
     evaluation_function = create_evaluation_function(dataset)
 
-    # Configure TraiGent optimization
+    # Configure Traigent optimization
     # traigent.configure(
     #     evaluator=evaluation_function,
     #     execution_mode="edge_analytics",  # Run in Edge Analytics mode for demo
@@ -546,7 +546,7 @@ async def main() -> None:
     # )
     # Note: evaluator, execution_mode, and verbose parameters don't exist in traigent.configure() API
 
-    console.print("\n[yellow]Starting TraiGent optimization...[/yellow]")
+    console.print("\n[yellow]Starting Traigent optimization...[/yellow]")
     console.print("[dim]This will systematically explore RAG configurations...[/dim]\n")
 
     # Run the optimization
@@ -633,7 +633,7 @@ if __name__ == "__main__":
         )
 
         # Show configuration space
-        console.print("[bold]TraiGent Configuration Space:[/bold]")
+        console.print("[bold]Traigent Configuration Space:[/bold]")
         for key, values in CONTEXT_ENGINEERING_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 

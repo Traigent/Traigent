@@ -1,4 +1,4 @@
-"""Trial State Tracking for TraiGent SDK.
+"""Trial State Tracking for Traigent SDK.
 
 Focused component responsible for tracking trial states and lifecycle,
 extracted from the SessionLifecycleManager to follow Single Responsibility Principle.

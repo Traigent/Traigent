@@ -329,7 +329,7 @@ def build_html(entries: list[dict[str, Any]]) -> str:
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>TraiGent Examples Gallery</title>
+            <title>Traigent Examples Gallery</title>
             <link rel="stylesheet" href="sections/shared-styles.css">
             <script defer src="sections/theme.js"></script>
             <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-vsc-dark-plus.min.css" rel="stylesheet" />
@@ -385,7 +385,7 @@ def build_html(entries: list[dict[str, Any]]) -> str:
         <body>
             <main class="page-container">
                 <section class="hero">
-                    <h1>TraiGent Examples Gallery</h1>
+                    <h1>Traigent Examples Gallery</h1>
                     <p>Explore runnable examples, advanced playbooks, and integration guides. Every entry links directly to the source and includes the CLI command to get started.</p>
                     <nav class="category-nav" aria-label="Example categories">
                         {nav_html}

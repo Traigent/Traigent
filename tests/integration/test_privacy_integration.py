@@ -502,7 +502,7 @@ async def test_privacy_with_real_client_simulation(privacy_dataset):
     dummy_server = DummyPrivacyServer()
 
     class SimulatedRealClient:
-        """Simulates the actual TraiGentCloudClient behavior."""
+        """Simulates the actual TraigentCloudClient behavior."""
 
         def __init__(self, server):
             self.server = server

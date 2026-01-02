@@ -1,6 +1,6 @@
 """Configuration mapper for agent specifications.
 
-This module provides utilities to map TraiGent configuration space
+This module provides utilities to map Traigent configuration space
 to platform-specific agent parameters and merge them with agent
 specifications during optimization.
 """
@@ -25,7 +25,7 @@ logger = get_logger(__name__)
 class ParameterMapping:
     """Mapping configuration for a single parameter."""
 
-    source_key: str  # Key in TraiGent config space
+    source_key: str  # Key in Traigent config space
     target_key: str  # Key in agent specification
     target_section: str = "model_parameters"  # Section to place parameter
     transform: Callable[..., Any] | None = None  # Optional transformation function
@@ -52,7 +52,7 @@ class PlatformMapping:
 
 
 class ConfigurationMapper:
-    """Maps TraiGent configurations to agent specifications."""
+    """Maps Traigent configurations to agent specifications."""
 
     def __init__(self) -> None:
         """Initialize configuration mapper."""
@@ -74,11 +74,11 @@ class ConfigurationMapper:
         config: dict[str, Any],
         preserve_original: bool = True,
     ) -> AgentSpecification:
-        """Apply TraiGent configuration to agent specification.
+        """Apply Traigent configuration to agent specification.
 
         Args:
             agent_spec: Original agent specification
-            config: TraiGent configuration to apply
+            config: Traigent configuration to apply
             preserve_original: Whether to preserve the original spec
 
         Returns:
@@ -147,7 +147,7 @@ class ConfigurationMapper:
 
         Args:
             agent_spec: Agent specification
-            config_space: TraiGent configuration space
+            config_space: Traigent configuration space
 
         Returns:
             Validation results
@@ -606,11 +606,11 @@ def apply_config_to_agent(
     config: dict[str, Any],
     preserve_original: bool = True,
 ) -> AgentSpecification:
-    """Apply TraiGent configuration to agent specification.
+    """Apply Traigent configuration to agent specification.
 
     Args:
         agent_spec: Original agent specification
-        config: TraiGent configuration to apply
+        config: Traigent configuration to apply
         preserve_original: Whether to preserve the original spec
 
     Returns:
@@ -626,7 +626,7 @@ def validate_config_compatibility(
 
     Args:
         agent_spec: Agent specification
-        config_space: TraiGent configuration space
+        config_space: Traigent configuration space
 
     Returns:
         Validation results

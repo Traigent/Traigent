@@ -40,7 +40,7 @@ async def main() -> None:
     """Run the evaluation datasets example."""
     results_file = "results.json"
 
-    print("Running TraiGent Evaluation Datasets Example")
+    print("Running Traigent Evaluation Datasets Example")
     print("=" * 50)
 
     # Demonstrate dataset formats
@@ -57,7 +57,7 @@ async def main() -> None:
     # Create results for display
     results_data = {
         "concept": "Evaluation Datasets",
-        "description": "Providing test data for TraiGent optimization",
+        "description": "Providing test data for Traigent optimization",
         "dataset_formats": {
             "jsonl_file": {
                 "example": "eval_dataset='data.jsonl'",

@@ -1,6 +1,6 @@
 # Hello World (RAG Optimization)
 
-> **Note:** If you are new to TraiGent, start with the [Simple Prompt Optimization](../simple-prompt/) example first.
+> **Note:** If you are new to Traigent, start with the [Simple Prompt Optimization](../simple-prompt/) example first.
 
 Optimize a RAG-enabled Q&A function to find the best model, temperature, and RAG settings.
 

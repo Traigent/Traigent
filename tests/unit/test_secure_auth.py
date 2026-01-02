@@ -190,12 +190,12 @@ class TestSecureAuthManager:
 
     def test_log_auth_event(self):
         """Test security audit logging."""
-        # Should not raise any errors
-        log_auth_event("login", True, {"user": "test@example.com"})
-        log_auth_event("refresh", False, {"reason": "expired"})
+        # Should not raise any errors - verify completion
+        result1 = log_auth_event("login", True, {"user": "test@example.com"})
+        result2 = log_auth_event("refresh", False, {"reason": "expired"})
 
         # Should sanitize sensitive data
-        log_auth_event(
+        result3 = log_auth_event(
             "login",
             True,
             {
@@ -204,6 +204,10 @@ class TestSecureAuthManager:
                 "token": "should_not_appear",
             },
         )
+        # Function completed successfully
+        assert result1 is None  # Function returns None
+        assert result2 is None
+        assert result3 is None
 
 
 class TestResilientClient:

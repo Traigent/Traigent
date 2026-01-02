@@ -1,30 +1,30 @@
 # Traigent SDK Demo Video Guide
 
-This guide explains how to create terminal demo videos showcasing Traigent's LLM agent optimization capabilities. These animated recordings are ideal for GitHub READMEs and documentation.
+This guide explains how to create terminal demo videos showcasing Traigent's LLM agent optimization capabilities. These animated recordings are ideal for GitHub READMEs and documentation. The core demo assets live in `docs/demos/`; TVL-specific scripts live in `demos/scripts/`.
 
 ## Overview
 
-Create **two demo videos**:
+Create **three demo videos**:
 
 1. **Core Optimization** - Tuning LLM agents with Traigent: defining tuned variables, objectives, and running evaluation-driven optimization
 2. **Hooks & Callbacks** - Progress tracking, custom callbacks, and optimization lifecycle events
+3. **GitHub Hooks** - Agent configuration validation and guardrails in CI
 
 ## Directory Structure
 
 ```
-demos/
-├── .gitignore           # Exclude .venv/, node_modules/
-├── README.md            # Documentation
-├── record-demos.sh      # Master generation script
-├── mock-cli/
-│   └── traigent         # Mock traigent CLI
+docs/demos/
+├── README.md               # Demo overview
+├── record-demos.sh         # Master generation script
 ├── scripts/
-│   ├── generate-cast.py # Python cast file generator
-│   ├── demo-optimize.sh # Video 1: Core optimization
-│   └── demo-hooks.sh    # Video 2: Hooks & callbacks
-└── output/
-    ├── *.cast           # asciinema format
-    └── *.svg            # Animated SVGs for GitHub
+│   ├── generate-cast.py    # Python cast file generator
+│   ├── demo-optimize.sh    # Video 1: Core optimization
+│   ├── demo-hooks.sh       # Video 2: Hooks and callbacks
+│   └── demo-github-hooks.sh # Video 3: GitHub hooks and validation
+├── output/
+│   ├── *.cast              # asciinema format
+│   └── *.svg               # Animated SVGs for GitHub
+└── test_agents/            # Sample agents + traigent.yml for hooks demo
 ```
 
 ---
@@ -40,7 +40,7 @@ demos/
 - **Evaluation dataset**: JSONL test cases
 - Running optimization and viewing results
 
-### Demo Script: `demos/scripts/demo-optimize.sh`
+### Demo Script: `docs/demos/scripts/demo-optimize.sh`
 
 ```bash
 #!/bin/bash
@@ -74,7 +74,7 @@ from langchain_openai import ChatOpenAI
     objectives=["accuracy", "cost"],
 
     # Evaluation dataset for testing
-    eval_dataset="qa_samples.jsonl"
+    eval_dataset="data/qa_samples.jsonl"
 )
 def qa_agent(question: str) -> str:
     """Q&A agent with tunable parameters"""
@@ -87,7 +87,7 @@ PYTHON
 sleep 3
 
 echo ""
-echo "# Step 2: Prepare evaluation dataset (qa_samples.jsonl)"
+echo "# Step 2: Prepare evaluation dataset (data/qa_samples.jsonl)"
 echo ""
 sleep 0.5
 
@@ -177,7 +177,7 @@ sleep 2
 - Lifecycle hooks: `on_optimization_start`, `on_trial_start`, `on_trial_complete`, `on_optimization_complete`
 - Custom callback implementation
 
-### Demo Script: `demos/scripts/demo-hooks.sh`
+### Demo Script: `docs/demos/scripts/demo-hooks.sh`
 
 ```bash
 #!/bin/bash
@@ -326,183 +326,45 @@ sleep 2
 
 ---
 
+## Video 3: GitHub Hooks Demo
+
+**Purpose**: Show Traigent's Git hooks for validating agent configs before push.
+
+**Key concepts to demonstrate**:
+- `traigent hooks install`
+- `traigent.yml` constraints (cost, performance, model allowlist)
+- `traigent-validate` and `traigent-performance` hooks
+- Sample agents in `docs/demos/test_agents/`
+
+### Demo Script: `docs/demos/scripts/demo-github-hooks.sh`
+
+---
+
 ## Implementation Steps
 
-### Step 1: Create Directory Structure
+### Step 1: Update the demo scripts
 
-```bash
-mkdir -p demos/{mock-cli,scripts,output}
-```
+Scripts live in `docs/demos/scripts/`:
+- `demo-optimize.sh`
+- `demo-hooks.sh`
+- `demo-github-hooks.sh`
 
-### Step 2: Create the Python Generator
+### Step 2: Update the cast generator list
 
-Save as `demos/scripts/generate-cast.py`:
+Edit `docs/demos/scripts/generate-cast.py` to add or remove demos in the `demos` list.
 
-```python
-#!/usr/bin/env python3
-"""Generate asciinema cast files from demo scripts."""
+### Step 3: Regenerate casts and SVGs
 
-import json
-import subprocess
-import time
-import os
-
-def generate_cast(script_path: str, output_path: str, title: str):
-    """Generate an asciinema cast file from a script."""
-
-    env = os.environ.copy()
-    env['TERM'] = 'xterm-256color'
-    script_dir = os.path.dirname(os.path.dirname(os.path.abspath(script_path)))
-
-    result = subprocess.run(
-        ['bash', script_path],
-        capture_output=True,
-        text=True,
-        env=env,
-        cwd=script_dir
-    )
-
-    output = result.stdout + result.stderr
-
-    header = {
-        "version": 2,
-        "width": 100,
-        "height": 30,
-        "timestamp": int(time.time()),
-        "env": {"SHELL": "/bin/bash", "TERM": "xterm-256color"},
-        "title": title
-    }
-
-    with open(output_path, 'w') as f:
-        f.write(json.dumps(header) + '\n')
-
-        current_time = 0.0
-        lines = output.split('\n')
-
-        for line in lines:
-            if line.startswith('$') or line.startswith('#'):
-                # Type character by character for commands/comments
-                for char in line:
-                    f.write(json.dumps([current_time, "o", char]) + '\n')
-                    current_time += 0.03
-                current_time += 0.3
-                f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
-                current_time += 0.5
-            else:
-                # Output lines appear instantly
-                if line:
-                    f.write(json.dumps([current_time, "o", line + "\r\n"]) + '\n')
-                    current_time += 0.05
-                else:
-                    f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
-                    current_time += 0.02
-
-        f.write(json.dumps([current_time + 1.0, "o", ""]) + '\n')
-
-    print(f"  Generated {output_path}")
-
-def main():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    demos_dir = os.path.dirname(script_dir)
-    output_dir = os.path.join(demos_dir, 'output')
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    demos = [
-        ('demo-optimize.sh', 'optimize.cast', 'Traigent LLM Optimization'),
-        ('demo-hooks.sh', 'hooks.cast', 'Traigent Hooks & Callbacks'),
-    ]
-
-    print("Generating asciinema cast files...")
-    print()
-
-    for script, output, title in demos:
-        script_path = os.path.join(script_dir, script)
-        output_path = os.path.join(output_dir, output)
-
-        if os.path.exists(script_path):
-            print(f"-> {title}")
-            try:
-                generate_cast(script_path, output_path, title)
-            except Exception as e:
-                print(f"   Error: {e}")
-        else:
-            print(f"-> {title} (skipped - {script} not found)")
-
-    print()
-    print("Done!")
-
-if __name__ == '__main__':
-    main()
-```
-
-### Step 3: Create Master Script
-
-Save as `demos/record-demos.sh`:
-
-```bash
-#!/bin/bash
-set -e
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
-
-export TERM="${TERM:-xterm-256color}"
-
-mkdir -p output
-
-echo "=================================="
-echo "  Traigent Demo Generator"
-echo "=================================="
-echo ""
-
-chmod +x scripts/*.sh 2>/dev/null || true
-
-# Step 1: Generate cast files
-echo "Step 1: Generating cast files..."
-python3 scripts/generate-cast.py
-
-# Step 2: Convert to SVG (if svg-term available)
-if command -v svg-term &> /dev/null; then
-    echo ""
-    echo "Step 2: Converting to SVG..."
-    for f in output/*.cast; do
-        name=$(basename "$f" .cast)
-        svg-term --in "$f" --out "output/${name}.svg" --window --width 100 --height 30
-        echo "  output/${name}.svg"
-    done
-else
-    echo ""
-    echo "Note: svg-term not found. Install with: npm install -g svg-term-cli"
-fi
-
-echo ""
-echo "Done! Files in output/"
-ls -la output/
-```
-
-### Step 4: Create .gitignore
-
-```bash
-# demos/.gitignore
-.venv/
-venv/
-node_modules/
-*.tmp
-*.log
-```
+Run `docs/demos/record-demos.sh`. Cast files go to `docs/demos/output/`. SVG output is optional and requires `svg-term`.
 
 ---
 
 ## Generate the Demos
 
 ```bash
-cd demos
+cd docs/demos
 
-# One-time setup
-python3 -m venv .venv
-source .venv/bin/activate
-pip install asciinema
+# Optional (for SVG output)
 npm install -g svg-term-cli  # Requires Node.js
 
 # Generate demos
@@ -518,10 +380,13 @@ chmod +x record-demos.sh scripts/*.sh
 ## See Traigent in Action
 
 ### LLM Agent Optimization
-![Traigent Optimization](demos/output/optimize.svg)
+![Traigent Optimization](docs/demos/output/optimize.svg)
 
 ### Hooks & Callbacks
-![Traigent Hooks](demos/output/hooks.svg)
+![Traigent Hooks](docs/demos/output/hooks.svg)
+
+### GitHub Hooks & Validation
+![Traigent GitHub Hooks](docs/demos/output/github-hooks.svg)
 ```
 
 ---
@@ -541,8 +406,14 @@ chmod +x record-demos.sh scripts/*.sh
 - **Custom callbacks** for notifications, logging, dashboards
 - **Statistics** for parameter importance analysis
 
+### Video 3 (GitHub Hooks)
+- **Pre-push validation** for agent configs
+- **Cost and performance guardrails** in CI
+- **Model allowlist/blocklist** enforcement
+- **Clear failure messages** to fix before pushing
+
 ---
 
 ## Reference
 
-See `TraigentPaper/tvl/demos/` for the technical implementation pattern used to generate these demos.
+See `docs/demos/README.md` for the demo index and `demos/scripts/TVL_VIDEO_SCRIPTS.md` for the TVL-specific videos.

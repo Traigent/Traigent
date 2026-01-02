@@ -1,4 +1,4 @@
-# TraiGent SDK Bayesian Optimization Dependencies
+# Traigent SDK Bayesian Optimization Dependencies
 # Required for Sprint 4 Bayesian optimization features
 
 -r requirements.txt

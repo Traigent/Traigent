@@ -224,7 +224,8 @@ class TestLocalInvoker:
             return value
 
         # Should not raise
-        invoker.validate_function(func_with_config)
+        result = invoker.validate_function(func_with_config)
+        assert result is None  # Method returns None on success
 
     def test_validate_config_invalid(self):
         """Test config validation with invalid config."""

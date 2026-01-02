@@ -12,7 +12,7 @@ mappings. These are primarily used for:
 
 from __future__ import annotations
 
-# Parameter mappings from TraiGent canonical names to framework-specific parameter names.
+# Parameter mappings from Traigent canonical names to framework-specific parameter names.
 # Keys are fully-qualified class names, values are dicts mapping traigent_param -> framework_param
 PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
     # OpenAI SDK mappings

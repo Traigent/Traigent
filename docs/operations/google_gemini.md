@@ -1,14 +1,11 @@
-#+ Google Gemini Operations Guide (Experiments)
+# Google Gemini Operations Guide (Experiments)
 
 Run paper experiments against Google AI Studio (Gemini) via a small adapter with mock mode.
 
 ## Environment
 ```bash
-# Provider switch
-export TRAIGENT_LLM_PROVIDER=google
-
 # Required for real runs
-export GOOGLE_API_KEY="<key>"
+export GOOGLE_API_KEY="<key>"   # or GEMINI_API_KEY
 
 # Mock mode (dry-run, no SDK needed)
 # export GEMINI_MOCK=true
@@ -34,3 +31,5 @@ python paper_experiments/case_study_spider/run_case_study.py \
   --mock-mode off --provider google \
   --trials 1 --parallel-trials 1
 ```
+
+Note: use `--provider google` in the experiment scripts above.

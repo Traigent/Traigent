@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-TraiGent Quickstart Example 3: Custom Objectives
+Traigent Quickstart Example 3: Custom Objectives
 
 This example shows how to define custom objective weights and orientations.
 Based on the README.md custom objectives example.
@@ -27,9 +27,7 @@ from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 # Path to dataset
-DATASET_PATH = (
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
-)
+DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "qa_samples.jsonl"
 
 # Define custom objectives with explicit weights and orientations
 custom_objectives = ObjectiveSchema.from_objectives(
@@ -71,7 +69,7 @@ def weighted_agent(question: str) -> str:
 
 async def main():
     print("=" * 60)
-    print("TraiGent Quickstart: Custom Objectives Example")
+    print("Traigent Quickstart: Custom Objectives Example")
     print("=" * 60)
     print()
 

@@ -22,8 +22,8 @@ def reset_flags(monkeypatch):
     flag_registry.reset()
 
 
-def test_optuna_flag_defaults_to_false():
-    assert is_optuna_enabled() is False
+def test_optuna_flag_defaults_to_true():
+    assert is_optuna_enabled() is True
 
 
 def test_environment_override(monkeypatch):
@@ -44,12 +44,12 @@ def test_config_override(monkeypatch):
 
 
 def test_manual_override_context():
-    assert is_optuna_enabled() is False
+    assert is_optuna_enabled() is True
 
-    with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, True):
-        assert is_optuna_enabled() is True
+    with flag_registry.override(FlagNames.OPTUNA_ROLLOUT, False):
+        assert is_optuna_enabled() is False
 
-    assert is_optuna_enabled() is False
+    assert is_optuna_enabled() is True
 
 
 def test_registering_duplicate_flag_raises():
@@ -61,7 +61,7 @@ def test_registering_duplicate_flag_raises():
 def test_snapshot_includes_registered_flags():
     snapshot = flag_registry.snapshot()
     assert FlagNames.OPTUNA_ROLLOUT in snapshot
-    assert snapshot[FlagNames.OPTUNA_ROLLOUT] is False
+    assert snapshot[FlagNames.OPTUNA_ROLLOUT] is True
 
 
 def test_configure_applies_feature_flags(monkeypatch):

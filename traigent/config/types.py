@@ -1,4 +1,4 @@
-"""Configuration types for TraiGent SDK."""
+"""Configuration types for Traigent SDK."""
 
 # Traceability: CONC-ConfigInjection CONC-CloudService FUNC-API-ENTRY FUNC-CLOUD-HYBRID REQ-API-001 REQ-INJ-002 REQ-CLOUD-009 SYNC-CloudHybrid CONC-Layer-Core
 
@@ -14,7 +14,7 @@ from traigent.utils.validation import Validators, validate_or_raise
 
 
 class ExecutionMode(str, Enum):
-    """Execution modes for TraiGent optimization.
+    """Execution modes for Traigent optimization.
 
     Each mode provides different trade-offs between privacy, performance, and features:
 
@@ -60,7 +60,7 @@ def resolve_execution_mode(
 
 
 class InjectionMode(str, Enum):
-    """Configuration injection modes for TraiGent optimization.
+    """Configuration injection modes for Traigent optimization.
 
     Each mode provides a different way to inject configuration into optimized functions:
 
@@ -78,7 +78,7 @@ class InjectionMode(str, Enum):
 
 @dataclass
 class TraigentConfig:
-    """Type-safe configuration container for TraiGent optimization.
+    """Type-safe configuration container for Traigent optimization.
 
     This class provides structured access to configuration parameters
     with type hints and validation.

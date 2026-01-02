@@ -1,4 +1,4 @@
-site_name: TraiGent SDK Documentation
+site_name: Traigent SDK Documentation
 site_description: Enterprise-grade LLM optimization platform with advanced analytics and AI-powered insights
 site_url: https://docs.traigent.ai
 repo_url: https://github.com/Traigent/Traigent
@@ -142,4 +142,4 @@ extra_javascript:
   - javascripts/mathjax.js
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
-copyright: Copyright &copy; 2024 TraiGent Team - Apache License 2.0
+copyright: Copyright &copy; 2024 Traigent Team - Apache License 2.0

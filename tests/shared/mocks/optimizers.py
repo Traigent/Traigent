@@ -171,7 +171,7 @@ class MockGridOptimizer(MockOptimizer):
         # Generate cartesian product
         grid_configs = []
         for combination in itertools.product(*values):
-            config = dict(zip(params, combination))
+            config = dict(zip(params, combination, strict=False))
             grid_configs.append(config)
 
         return grid_configs

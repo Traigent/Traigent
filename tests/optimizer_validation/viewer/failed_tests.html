@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Failed Tests - Optimizer Validation</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #eaeaea;
+            --text-secondary: #a0a0a0;
+            --accent: #e94560;
+            --success: #4ade80;
+            --error: #f87171;
+            --warning: #fbbf24;
+            --running: #60a5fa;
+            --border: #334155;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 16px 24px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        header h1 {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .back-link {
+            color: var(--text-secondary);
+            text-decoration: none;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .back-link:hover {
+            color: var(--accent);
+        }
+
+        .count-badge {
+            background: var(--error);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 16px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 10px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        button:hover {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        button.success {
+            background: var(--success);
+            border-color: var(--success);
+            color: var(--bg-primary);
+        }
+
+        .stats-row {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+
+        .stat-card {
+            background: var(--bg-secondary);
+            padding: 16px 24px;
+            border-radius: 8px;
+            min-width: 150px;
+        }
+
+        .stat-card .label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .stat-card.failed .value {
+            color: var(--error);
+        }
+
+        .stat-card.passed .value {
+            color: var(--success);
+        }
+
+        .filters {
+            background: var(--bg-secondary);
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filters label {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        .filters input[type="text"] {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            font-size: 13px;
+            width: 300px;
+        }
+
+        .filters input[type="text"]::placeholder {
+            color: var(--text-secondary);
+        }
+
+        .filters select {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .test-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .test-item {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border-left: 4px solid var(--error);
+            overflow: hidden;
+        }
+
+        .test-item.expanded {
+            border-color: var(--accent);
+        }
+
+        .test-header {
+            padding: 16px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            cursor: pointer;
+        }
+
+        .test-header:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .test-expand-icon {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 4px;
+            transition: transform 0.2s;
+        }
+
+        .test-item.expanded .test-expand-icon {
+            transform: rotate(90deg);
+        }
+
+        .test-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .test-name {
+            font-size: 14px;
+            font-weight: 500;
+            margin-bottom: 4px;
+            word-break: break-all;
+        }
+
+        .test-path {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-family: 'Monaco', 'Menlo', monospace;
+            word-break: break-all;
+        }
+
+        .test-actions {
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .test-actions button {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+
+        .test-details {
+            display: none;
+            padding: 0 16px 16px 44px;
+            border-top: 1px solid var(--border);
+        }
+
+        .test-item.expanded .test-details {
+            display: block;
+        }
+
+        .error-section {
+            margin-top: 12px;
+        }
+
+        .error-section h4 {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .error-output {
+            background: var(--bg-primary);
+            padding: 12px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+            color: var(--error);
+            line-height: 1.5;
+        }
+
+        .copy-cmd {
+            background: var(--bg-primary);
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 12px;
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+        }
+
+        .copy-cmd code {
+            flex: 1;
+            word-break: break-all;
+            color: var(--running);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: var(--success);
+            color: var(--bg-primary);
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            opacity: 0;
+            transform: translateY(20px);
+            transition: all 0.3s;
+            z-index: 1000;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .empty-state h2 {
+            font-size: 20px;
+            margin-bottom: 8px;
+            color: var(--success);
+        }
+
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 60px;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 12px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .source-selector {
+            display: flex;
+            gap: 8px;
+        }
+
+        .source-btn {
+            padding: 8px 16px;
+            font-size: 12px;
+            border-radius: 6px;
+            background: var(--bg-primary);
+        }
+
+        .source-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .duration {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-left: auto;
+        }
+
+        .category-badge {
+            background: var(--bg-tertiary);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+
+        .select-all-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+
+        .select-all-row input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .test-checkbox {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <a href="index.html" class="back-link">← Back to Test Viewer</a>
+                <h1>
+                    Failed Tests
+                    <span class="count-badge" id="failedCount">0</span>
+                </h1>
+            </div>
+            <div class="header-actions">
+                <div class="source-selector">
+                    <button class="source-btn active" data-source="persistent" onclick="setSource('persistent')">
+                        Persistent Results
+                    </button>
+                    <button class="source-btn" data-source="report" onclick="setSource('report')">
+                        Last Report
+                    </button>
+                </div>
+                <button onclick="refreshData()">
+                    🔄 Refresh
+                </button>
+                <button class="primary" onclick="copySelectedTests()">
+                    📋 Copy Selected
+                </button>
+                <button class="primary" onclick="copyAllFailed()">
+                    📋 Copy All Failed
+                </button>
+            </div>
+        </header>
+
+        <div class="stats-row">
+            <div class="stat-card failed">
+                <div class="label">Failed</div>
+                <div class="value" id="statFailed">0</div>
+            </div>
+            <div class="stat-card passed">
+                <div class="label">Passed</div>
+                <div class="value" id="statPassed">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Total</div>
+                <div class="value" id="statTotal">0</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">Last Updated</div>
+                <div class="value" id="statUpdated" style="font-size: 14px;">-</div>
+            </div>
+        </div>
+
+        <div class="filters">
+            <label>Filter:</label>
+            <input type="text" id="searchFilter" placeholder="Search test names or error messages..." oninput="filterTests()">
+            <label>Category:</label>
+            <select id="categoryFilter" onchange="filterTests()">
+                <option value="">All Categories</option>
+                <option value="dimensions">Dimensions</option>
+                <option value="failures">Failures</option>
+                <option value="interactions">Interactions</option>
+            </select>
+        </div>
+
+        <div class="select-all-row">
+            <input type="checkbox" id="selectAll" onchange="toggleSelectAll()">
+            <label for="selectAll">Select all visible tests</label>
+            <span id="selectedCount" style="color: var(--text-secondary); font-size: 13px;">0 selected</span>
+        </div>
+
+        <div id="content">
+            <div class="loading">
+                <div class="spinner"></div>
+                Loading failed tests...
+            </div>
+        </div>
+    </div>
+
+    <div class="toast" id="toast">Copied to clipboard!</div>
+
+    <script>
+        // State
+        let allTests = [];
+        let failedTests = [];
+        let selectedTests = new Set();
+        let currentSource = 'persistent';
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            loadData();
+        });
+
+        function setSource(source) {
+            currentSource = source;
+            document.querySelectorAll('.source-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.source === source);
+            });
+            loadData();
+        }
+
+        async function loadData() {
+            showLoading();
+
+            try {
+                if (currentSource === 'persistent') {
+                    await loadPersistentResults();
+                } else {
+                    await loadReportResults();
+                }
+            } catch (error) {
+                console.error('Error loading data:', error);
+                showError('Failed to load test results');
+            }
+        }
+
+        async function loadPersistentResults() {
+            const response = await fetch('/api/persistent-results');
+            if (!response.ok) throw new Error('Failed to fetch persistent results');
+
+            const data = await response.json();
+
+            allTests = Object.entries(data).map(([nodeid, result]) => ({
+                nodeid,
+                outcome: result.outcome,
+                duration: result.duration,
+                longrepr: result.longrepr,
+                evidence: result.evidence
+            }));
+
+            processTests();
+        }
+
+        async function loadReportResults() {
+            // Try to load from project root report.json
+            try {
+                const response = await fetch('/api/file/report.json');
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.content) {
+                        const report = JSON.parse(data.content);
+                        if (report.tests) {
+                            allTests = report.tests.map(test => ({
+                                nodeid: test.nodeid,
+                                outcome: test.outcome,
+                                duration: test.call?.duration || test.duration,
+                                longrepr: test.call?.longrepr || test.longrepr
+                            }));
+                            processTests();
+                            return;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not load report.json:', e);
+            }
+
+            // Fallback to latest results API
+            const response = await fetch('/api/results');
+            if (!response.ok) throw new Error('Failed to fetch results');
+
+            const data = await response.json();
+            allTests = (data.tests || []).map(test => ({
+                nodeid: test.nodeid,
+                outcome: test.outcome,
+                duration: test.call?.duration || test.duration,
+                longrepr: test.call?.longrepr || test.longrepr
+            }));
+
+            processTests();
+        }
+
+        function processTests() {
+            failedTests = allTests.filter(t => t.outcome === 'failed');
+
+            // Update stats
+            const passed = allTests.filter(t => t.outcome === 'passed').length;
+            const failed = failedTests.length;
+
+            document.getElementById('statFailed').textContent = failed;
+            document.getElementById('statPassed').textContent = passed;
+            document.getElementById('statTotal').textContent = allTests.length;
+            document.getElementById('failedCount').textContent = failed;
+            document.getElementById('statUpdated').textContent = new Date().toLocaleTimeString();
+
+            renderTests();
+        }
+
+        function renderTests() {
+            const content = document.getElementById('content');
+            const searchTerm = document.getElementById('searchFilter').value.toLowerCase();
+            const category = document.getElementById('categoryFilter').value;
+
+            let filtered = failedTests;
+
+            if (searchTerm) {
+                filtered = filtered.filter(t =>
+                    t.nodeid.toLowerCase().includes(searchTerm) ||
+                    (t.longrepr && t.longrepr.toLowerCase().includes(searchTerm))
+                );
+            }
+
+            if (category) {
+                filtered = filtered.filter(t => t.nodeid.includes(`/${category}/`));
+            }
+
+            if (filtered.length === 0) {
+                content.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">✨</div>
+                        <h2>${failedTests.length === 0 ? 'All Tests Passing!' : 'No matches found'}</h2>
+                        <p>${failedTests.length === 0
+                            ? 'No failed tests in the current results.'
+                            : 'Try adjusting your filters.'}</p>
+                    </div>
+                `;
+                return;
+            }
+
+            const html = `
+                <div class="test-list">
+                    ${filtered.map(test => renderTestItem(test)).join('')}
+                </div>
+            `;
+
+            content.innerHTML = html;
+            updateSelectedCount();
+        }
+
+        function renderTestItem(test) {
+            const name = test.nodeid.split('::').pop();
+            const category = extractCategory(test.nodeid);
+            const isSelected = selectedTests.has(test.nodeid);
+
+            return `
+                <div class="test-item" id="test-${escapeId(test.nodeid)}">
+                    <div class="test-header" onclick="toggleExpand(this.parentElement)">
+                        <input type="checkbox" class="test-checkbox"
+                               ${isSelected ? 'checked' : ''}
+                               onclick="event.stopPropagation(); toggleSelect('${escapeAttr(test.nodeid)}', this.checked)">
+                        <span class="test-expand-icon">▶</span>
+                        <div class="test-info">
+                            <div class="test-name">${escapeHtml(name)}</div>
+                            <div class="test-path">${escapeHtml(test.nodeid)}</div>
+                        </div>
+                        <span class="category-badge">${category}</span>
+                        ${test.duration ? `<span class="duration">${test.duration.toFixed(2)}s</span>` : ''}
+                        <div class="test-actions" onclick="event.stopPropagation()">
+                            <button onclick="copyTest('${escapeAttr(test.nodeid)}')">📋 Copy</button>
+                            <button onclick="runTest('${escapeAttr(test.nodeid)}')">▶ Run</button>
+                        </div>
+                    </div>
+                    <div class="test-details">
+                        <div class="copy-cmd">
+                            <code>pytest "${test.nodeid}" -v</code>
+                            <button onclick="copyTest('${escapeAttr(test.nodeid)}')">Copy</button>
+                        </div>
+                        ${test.longrepr ? `
+                            <div class="error-section">
+                                <h4>Error Output</h4>
+                                <div class="error-output">${escapeHtml(test.longrepr)}</div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }
+
+        function extractCategory(nodeid) {
+            const match = nodeid.match(/tests\/optimizer_validation\/(\w+)\//);
+            return match ? match[1] : 'other';
+        }
+
+        function toggleExpand(element) {
+            element.classList.toggle('expanded');
+        }
+
+        function toggleSelect(nodeid, checked) {
+            if (checked) {
+                selectedTests.add(nodeid);
+            } else {
+                selectedTests.delete(nodeid);
+            }
+            updateSelectedCount();
+        }
+
+        function toggleSelectAll() {
+            const selectAll = document.getElementById('selectAll').checked;
+            const checkboxes = document.querySelectorAll('.test-checkbox');
+
+            if (selectAll) {
+                // Get currently visible tests
+                const searchTerm = document.getElementById('searchFilter').value.toLowerCase();
+                const category = document.getElementById('categoryFilter').value;
+
+                failedTests.forEach(test => {
+                    let matches = true;
+                    if (searchTerm) {
+                        matches = test.nodeid.toLowerCase().includes(searchTerm) ||
+                                  (test.longrepr && test.longrepr.toLowerCase().includes(searchTerm));
+                    }
+                    if (category && matches) {
+                        matches = test.nodeid.includes(`/${category}/`);
+                    }
+                    if (matches) {
+                        selectedTests.add(test.nodeid);
+                    }
+                });
+            } else {
+                selectedTests.clear();
+            }
+
+            checkboxes.forEach(cb => cb.checked = selectAll);
+            updateSelectedCount();
+        }
+
+        function updateSelectedCount() {
+            document.getElementById('selectedCount').textContent = `${selectedTests.size} selected`;
+        }
+
+        function filterTests() {
+            selectedTests.clear();
+            document.getElementById('selectAll').checked = false;
+            renderTests();
+        }
+
+        function copyTest(nodeid) {
+            const cmd = `pytest "${nodeid}" -v`;
+            navigator.clipboard.writeText(cmd).then(() => {
+                showToast('Copied pytest command!');
+            });
+        }
+
+        function copySelectedTests() {
+            if (selectedTests.size === 0) {
+                showToast('No tests selected');
+                return;
+            }
+
+            const tests = Array.from(selectedTests);
+            const cmd = `pytest ${tests.map(t => `"${t}"`).join(' ')} -v`;
+            navigator.clipboard.writeText(cmd).then(() => {
+                showToast(`Copied ${tests.length} test(s)!`);
+            });
+        }
+
+        function copyAllFailed() {
+            if (failedTests.length === 0) {
+                showToast('No failed tests to copy');
+                return;
+            }
+
+            const tests = failedTests.map(t => t.nodeid);
+            const cmd = `pytest ${tests.map(t => `"${t}"`).join(' ')} -v`;
+            navigator.clipboard.writeText(cmd).then(() => {
+                showToast(`Copied ${tests.length} failed test(s)!`);
+            });
+        }
+
+        async function runTest(nodeid) {
+            showToast('Starting test run...');
+            try {
+                const response = await fetch('/api/run', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tests: [nodeid] })
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    showToast(`Test started: ${data.job_id}`);
+                    // Redirect to main viewer with job
+                    window.location.href = `index.html?job=${data.job_id}`;
+                } else {
+                    showToast('Failed to start test');
+                }
+            } catch (error) {
+                showToast('Error starting test');
+            }
+        }
+
+        function refreshData() {
+            loadData();
+        }
+
+        function showLoading() {
+            document.getElementById('content').innerHTML = `
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Loading failed tests...
+                </div>
+            `;
+        }
+
+        function showError(message) {
+            document.getElementById('content').innerHTML = `
+                <div class="empty-state">
+                    <div class="icon">⚠️</div>
+                    <h2>Error</h2>
+                    <p>${escapeHtml(message)}</p>
+                </div>
+            `;
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function escapeAttr(text) {
+            return text.replace(/'/g, "\\'").replace(/"/g, '\\"');
+        }
+
+        function escapeId(text) {
+            return text.replace(/[^a-zA-Z0-9]/g, '_');
+        }
+    </script>
+</body>
+</html>

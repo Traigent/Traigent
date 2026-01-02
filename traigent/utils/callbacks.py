@@ -1,4 +1,4 @@
-"""Progress tracking and callback system for TraiGent optimization."""
+"""Progress tracking and callback system for Traigent optimization."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Observability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
@@ -142,10 +142,20 @@ class ProgressBarCallback(OptimizationCallback):
         """Called when optimization completes."""
         # Using print for final progress display output
         print("\n")
-        print("✅ Optimization complete!")
+        if result.stop_reason == "timeout" or result.status == "cancelled":
+            timeout_value = None
+            if isinstance(result.metadata, dict):
+                timeout_value = result.metadata.get("timeout")
+            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
+            print(f"⚠️ Optimization stopped early: timeout reached{timeout_hint}.")
+        else:
+            print("✅ Optimization complete!")
         print(f"🏆 Best score: {result.best_score:.3f}")
         print(f"⏱️  Total time: {result.duration:.1f}s")
         print(f"📈 Success rate: {result.success_rate:.1%}")
+
+        if result.stop_reason and result.stop_reason != "timeout":
+            print(f"🛑 Stop reason: {result.stop_reason}")
 
 
 class LoggingCallback(OptimizationCallback):
@@ -533,17 +543,13 @@ class DetailedProgressCallback(OptimizationCallback):
         print("🔧 Configuration Space:")
 
         for param, values in config_space.items():
-            if isinstance(values, list):
-                print(f"   • {param}: {values}")
-            else:
-                print(f"   • {param}: {values}")
+            print(f"   • {param}: {values}")
 
         if self.total_trials > 0:
             print(f"\n📈 Total configurations to test: {self.total_trials}")
         else:
             print(
-                "\n📈 Total configurations to test: unknown "
-                "(will infer from observed trials)"
+                "\n📈 Total configurations to test: unknown (will infer from observed trials)"
             )
         print("-" * 60 + "\n")
 
@@ -613,28 +619,47 @@ class DetailedProgressCallback(OptimizationCallback):
         print(f"   Progress: [{bar}] {percent:.0f}%")
         print()
 
+    def _print_header(self, result: OptimizationResult) -> None:
+        """Print the completion header."""
+        print("\n" + "=" * 60)
+        is_early_stop = result.stop_reason == "timeout" or result.status == "cancelled"
+        if is_early_stop:
+            timeout_value = (
+                result.metadata.get("timeout")
+                if isinstance(result.metadata, dict)
+                else None
+            )
+            timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
+            print(f"⚠️ OPTIMIZATION STOPPED EARLY: TIMEOUT REACHED{timeout_hint}")
+        else:
+            print("✨ OPTIMIZATION COMPLETE!")
+        print("=" * 60)
+
+    def _print_config(self, config: dict[str, Any]) -> None:
+        """Print the best configuration."""
+        print("⚙️  Best Configuration:")
+        for key, value in config.items():
+            formatted = f"{value:.2f}" if isinstance(value, float) else str(value)
+            print(f"   • {key}: {formatted}")
+
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Called when optimization completes."""
-        print("\n" + "=" * 60)
-        print("✨ OPTIMIZATION COMPLETE!")
-        print("=" * 60)
+        self._print_header(result)
 
         if result.best_score is not None:
             print(f"🏆 Best Score: {result.best_score:.3f}")
 
         if result.best_config:
-            print("⚙️  Best Configuration:")
-            for key, value in result.best_config.items():
-                if isinstance(value, float):
-                    print(f"   • {key}: {value:.2f}")
-                else:
-                    print(f"   • {key}: {value}")
+            self._print_config(result.best_config)
 
         if result.duration:
             print(f"⏱️  Total Time: {result.duration:.1f} seconds")
 
         if result.success_rate:
             print(f"📊 Success Rate: {result.success_rate:.1%}")
+
+        if result.stop_reason and result.stop_reason != "timeout":
+            print(f"🛑 Stop reason: {result.stop_reason}")
 
         print("=" * 60 + "\n")
 

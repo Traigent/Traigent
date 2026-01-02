@@ -17,19 +17,31 @@ credentials without baking cloud SDK logic into the `traigent` package.
 
 ## Prerequisites
 
-- AWS Secrets Manager secret containing a JSON object
-  (default: `traigent/dev/env`).
+- A secrets manager entry containing a JSON object
+  (example: `traigent/dev/env` in AWS Secrets Manager).
 - AWS CLI configured locally (`aws configure sso|profile`).
-- `scripts/secrets/pull_secret.sh` and `scripts/secrets/push_secret.sh`
-  from this repo (already tracked under `scripts/secrets/`).
+- A local `.env.local` file (gitignored by default).
 
 ## Local Development Workflow
 
 1. **Pull secrets into a gitignored file**
+   Example using AWS Secrets Manager (adjust to your vault/CLI):
    ```bash
-   scripts/secrets/pull_secret.sh .env.local
+   aws secretsmanager get-secret-value \
+     --secret-id "${TRAIGENT_ENV_SECRET_ID:-traigent/dev/env}" \
+     --query SecretString \
+     --output text | \
+     python3 - <<'PY' > .env.local
+import json
+import shlex
+import sys
+
+data = json.loads(sys.stdin.read() or "{}")
+for key, value in data.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
    ```
-   This writes key/value pairs with quoting/escaping handled for you.
+   This writes key/value pairs with basic quoting/escaping handled for you.
 
 2. **Load them into your shell**
    ```bash
@@ -40,46 +52,52 @@ credentials without baking cloud SDK logic into the `traigent` package.
    Tools like `direnv` can automate this step.
 
 3. **Edit safely when needed**
-   - Modify `.env.local` (never commit it).
-   - Push the change back to AWS:
-     ```bash
-     scripts/secrets/push_secret.sh .env.local
-     ```
+   - Modify `.env.local` locally (never commit it).
+   - Update the canonical secret in your vault using your org's tooling
+     (AWS Secrets Manager, Vault, Azure Key Vault, etc.).
 
 4. **Regenerate anytime**
    - Delete `.env.local` if compromised and re-run the pull script.
 
 ## CI / Automation Workflow
 
-Each GitHub Actions job (or other CI runner) should:
+Each GitHub Actions job (or other CI runner) should choose one of the following:
 
-1. Export AWS credentials via encrypted repo secrets:
+**Option A: Use CI-native secrets**
+1. Store secrets in your CI system (for GitHub Actions, use repo/environment secrets).
+2. Inject them as environment variables in the job.
+3. The SDK reads `os.environ` at runtime.
+
+**Option B: Pull from a secrets manager**
+1. Export vault credentials via encrypted repo secrets:
    - `CI_AWS_ACCESS_KEY_ID`
    - `CI_AWS_SECRET_ACCESS_KEY`
    - `CI_AWS_REGION`
    - (Optional) `CI_AWS_SESSION_TOKEN`
    - `TRAIGENT_ENV_SECRET_ID` (e.g., `traigent/dev/env`)
-
-2. Run the helper script and hydrate the job environment:
+2. Fetch the JSON blob and hydrate the job environment:
    ```bash
-   scripts/secrets/pull_secret.sh ci.env
-   while IFS= read -r line; do
-     [[ -z "$line" || "$line" == \#* ]] && continue
-     echo "$line" >> "$GITHUB_ENV"
-   done < ci.env
+   aws secretsmanager get-secret-value \
+     --secret-id "${TRAIGENT_ENV_SECRET_ID:-traigent/dev/env}" \
+     --query SecretString \
+     --output text | \
+     python3 - <<'PY' >> "$GITHUB_ENV"
+import json
+import shlex
+import sys
+
+data = json.loads(sys.stdin.read() or "{}")
+for key, value in data.items():
+    print(f"{key}={shlex.quote(str(value))}")
+PY
    ```
-
-3. Subsequent steps automatically inherit the exported variables
-   without checking secrets into the repo or Action logs.
-
-4. Jobs that do not require secrets can skip the step; the script is a
-   no-op if the AWS credentials are absent.
+3. Subsequent steps inherit the exported variables without checking secrets into logs.
 
 ## Rotation Checklist
 
 - Rotate upstream provider keys (OpenAI/Anthropic/etc.).
-- Update `.env.local` with new values.
-- `scripts/secrets/push_secret.sh .env.local`
+- Update the canonical secret in your secrets manager.
+- Re-pull to refresh `.env.local` as needed.
 - Trigger CI to ensure new values are picked up.
 - Remove local shells or runners that may still have old variables
   exported.

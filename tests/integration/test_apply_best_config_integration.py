@@ -173,7 +173,7 @@ class TestApplyBestConfigIntegration:
         mock_cloud_client.__aexit__ = Mock(return_value=None)
 
         with patch(
-            "traigent.cloud.client.TraiGentCloudClient", return_value=mock_cloud_client
+            "traigent.cloud.client.TraigentCloudClient", return_value=mock_cloud_client
         ):
             # Create optimized function in standard mode
             opt_func = OptimizedFunction(
@@ -530,7 +530,7 @@ class TestModeSpecificBehavior:
         mock_client.__aexit__ = Mock(return_value=None)
 
         with patch(
-            "traigent.cloud.client.TraiGentCloudClient", return_value=mock_client
+            "traigent.cloud.client.TraigentCloudClient", return_value=mock_client
         ):
             opt_func = OptimizedFunction(
                 func=cloud_optimized_function,

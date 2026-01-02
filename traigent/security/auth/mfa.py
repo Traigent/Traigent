@@ -23,7 +23,7 @@ class MultiFactorAuth:
         self.totp_provider: TOTPAuthProvider | None = None
         self.sms_provider: SMSAuthProvider | None = None
 
-    def enable_totp(self, issuer_name: str = "TraiGent") -> None:
+    def enable_totp(self, issuer_name: str = "Traigent") -> None:
         """Enable TOTP authentication."""
         self.totp_provider = TOTPAuthProvider(issuer_name)
 

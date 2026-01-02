@@ -5,9 +5,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
+
+from traigent.tvl.models import RegistryResolver
 
 
 class TVLOptions(BaseModel):
@@ -18,6 +20,8 @@ class TVLOptions(BaseModel):
     spec_path: str
     environment: str | None = None
     validate_constraints: bool = True
+    registry_resolver: RegistryResolver | None = None
+    apply_evaluation_set: bool = True
     apply_configuration_space: bool = True
     apply_objectives: bool = True
     apply_constraints: bool = True
@@ -39,11 +43,12 @@ class TVLOptions(BaseModel):
             )
         return self
 
-    def to_kwargs(self) -> dict[str, str | bool | None]:
+    def to_kwargs(self) -> dict[str, Any]:
         """Return loader kwargs for convenience."""
 
         return {
             "spec_path": self.spec_path,
             "environment": self.environment,
             "validate_constraints": self.validate_constraints,
+            "registry_resolver": self.registry_resolver,
         }

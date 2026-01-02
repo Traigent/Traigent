@@ -14,7 +14,7 @@ For **private repositories**:
 ## Our Optimization Strategy
 
 ### 1. Keep Repository Public ✅
-As long as TraiGent remains public, we have **unlimited free GitHub Actions minutes**.
+As long as Traigent remains public, we have **unlimited free GitHub Actions minutes**.
 
 ### 2. Optimized Workflows
 

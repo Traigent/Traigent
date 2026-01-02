@@ -1,7 +1,8 @@
 """Objective definitions and validation for multi-objective optimization.
 
 This module provides data structures and validation for objectives with
-explicit orientation (maximize/minimize) and weight normalization.
+explicit orientation (maximize/minimize), weight normalization, and
+banded objectives (TVL 0.9 support).
 
 Concept: CONC-TVLSpec
 Implements: FUNC-TVLSPEC
@@ -15,7 +16,10 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from traigent.tvl.models import BandTarget
 
 
 class AggregationMode(Enum):
@@ -36,21 +40,33 @@ class AggregationMode(Enum):
 class ObjectiveDefinition:
     """Definition of a single optimization objective.
 
+    Supports both standard objectives (maximize/minimize) and banded objectives
+    (TVL 0.9) where the goal is to fall within a target band.
+
     Attributes:
         name: Name of the objective (e.g., "accuracy", "cost")
-        orientation: Whether to maximize or minimize this objective
+        orientation: Whether to maximize or minimize this objective.
+            For banded objectives, this is set to "band".
         weight: Non-negative weight for this objective
         normalization: Normalization strategy (default: "min_max")
         bounds: Optional bounds for the objective values
         unit: Optional unit of measurement (e.g., "USD", "percentage")
+        band: Optional band target for banded objectives (TVL 0.9).
+            When set, orientation should be "band".
+        band_test: Statistical test for banded objectives ("TOST").
+        band_alpha: Significance level for banded objective test.
     """
 
     name: str
-    orientation: Literal["maximize", "minimize"]
+    orientation: Literal["maximize", "minimize", "band"]
     weight: float
     normalization: str = "min_max"
     bounds: tuple[float, float] | None = None
     unit: str | None = None
+    # Banded objective fields (TVL 0.9)
+    band: BandTarget | None = None
+    band_test: Literal["TOST"] = "TOST"
+    band_alpha: float = 0.05
 
     def __post_init__(self) -> None:
         """Validate objective definition after initialization."""
@@ -61,11 +77,21 @@ class ObjectiveDefinition:
             )
 
         # Validate orientation
-        if self.orientation not in ["maximize", "minimize"]:
+        if self.orientation not in ["maximize", "minimize", "band"]:
             raise ValueError(
-                f"Orientation must be 'maximize' or 'minimize', "
+                f"Orientation must be 'maximize', 'minimize', or 'band', "
                 f"got '{self.orientation}' for objective '{self.name}'"
             )
+
+        # Validate banded objective configuration
+        if self.orientation == "band":
+            if self.band is None:
+                raise ValueError(
+                    f"Banded objective '{self.name}' requires a band target"
+                )
+        elif self.band is not None:
+            # If band is provided but orientation is not "band", auto-set it
+            object.__setattr__(self, "orientation", "band")
 
         # Validate bounds if provided
         if self.bounds is not None:
@@ -86,9 +112,18 @@ class ObjectiveDefinition:
                 f"got '{self.normalization}' for objective '{self.name}'"
             )
 
+        # Validate band_alpha
+        if not 0 < self.band_alpha < 1:
+            raise ValueError(f"band_alpha must be in (0, 1), got {self.band_alpha}")
+
+    @property
+    def is_banded(self) -> bool:
+        """Check if this is a banded objective."""
+        return self.band is not None
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
-        return {
+        result: dict[str, Any] = {
             "name": self.name,
             "orientation": self.orientation,
             "weight": self.weight,
@@ -97,17 +132,55 @@ class ObjectiveDefinition:
             "unit": self.unit,
         }
 
+        # Add banded objective fields if present
+        if self.band is not None:
+            band_dict: dict[str, Any] = {}
+            if self.band.low is not None and self.band.high is not None:
+                band_dict["target"] = [self.band.low, self.band.high]
+            if self.band.center is not None and self.band.tol is not None:
+                band_dict["center"] = self.band.center
+                band_dict["tol"] = self.band.tol
+            band_dict["test"] = self.band_test
+            band_dict["alpha"] = self.band_alpha
+            result["band"] = band_dict
+
+        return result
+
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ObjectiveDefinition:
         """Create from dictionary representation."""
         bounds = tuple(data["bounds"]) if data.get("bounds") else None
+
+        # Handle banded objective
+        band = None
+        band_test: Literal["TOST"] = "TOST"
+        band_alpha = 0.05
+
+        if "band" in data:
+            # Import here to avoid circular imports
+            from traigent.tvl.models import BandTarget
+
+            band_data = data["band"]
+            if isinstance(band_data, dict):
+                band = BandTarget.from_dict(band_data.get("target", band_data))
+                band_test = band_data.get("test", "TOST")
+                band_alpha = float(band_data.get("alpha", 0.05))
+
+        # Determine orientation
+        orientation = data.get("orientation", "maximize")
+        if band is not None and orientation not in ["band"]:
+            orientation = "band"
+
         return cls(
             name=data["name"],
-            orientation=data["orientation"],
-            weight=data["weight"],
+            orientation=orientation,
+            weight=data.get("weight", 1.0),
             normalization=data.get("normalization", "min_max"),
             bounds=bounds,
             unit=data.get("unit"),
+            band=band,
+            band_test=band_test,
+            band_alpha=band_alpha,
         )
 
 

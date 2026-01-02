@@ -104,6 +104,8 @@ async def test_privacy_mode():
         print(
             "   Backend server is not running. To test this functionality, start the backend server."
         )
+        # Skip test when backend is unavailable
+        pytest.skip(f"Backend server not available: {e}")
 
 
 @pytest.mark.asyncio
@@ -168,6 +170,8 @@ async def test_cloud_mode():
         print(
             "   Backend server is not running. To test this functionality, start the backend server."
         )
+        # Skip test when backend is unavailable
+        pytest.skip(f"Backend server not available: {e}")
 
 
 async def main():

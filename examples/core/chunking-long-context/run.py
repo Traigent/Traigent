@@ -272,7 +272,6 @@ def _build_retriever(chunk_size: int, overlap: int) -> _RetrieverProtocol:
         "top_k": TOP_K_CHOICES,
     },
     execution_mode="edge_analytics",
-    algorithm="grid",
 )
 def rag_qa(question: str) -> str:
     if MOCK:
@@ -317,7 +316,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 12 if not MOCK else 4
-        r = await rag_qa.optimize(max_trials=trials)
+        r = await rag_qa.optimize(algorithm="grid", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

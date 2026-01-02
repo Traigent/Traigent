@@ -337,7 +337,8 @@ class TestJWTValidationIntegration(unittest.TestCase):
     def test_end_to_end_validation_flow(self):
         """Test complete validation flow."""
         # This would test against a real JWKS endpoint in integration testing
-        pass
+        # Skip assertion since this is a placeholder for integration testing
+        pytest.skip("Requires real JWKS endpoint for integration testing")
 
     @pytest.mark.integration
     def test_performance_under_load(self):

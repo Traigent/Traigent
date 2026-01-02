@@ -65,7 +65,7 @@ def run_tests_without_coverage():
 
 def main():
     """Main entry point."""
-    print("Running TraiGent SDK Scripts Test Suite")
+    print("Running Traigent SDK Scripts Test Suite")
     print("=" * 70)
 
     success = run_tests_with_coverage()

@@ -90,11 +90,14 @@ def mock_dataset():
 @pytest.fixture
 def mock_trial_result():
     """Create mock trial result."""
+    from traigent.api.types import TrialStatus
+
     trial = Mock(spec=TrialResult)
     trial.trial_id = "trial-123"
     trial.config = {"param1": 1}
     trial.metrics = {"accuracy": 0.9, "cost": 0.5, "total_cost": 0.5}
     trial.is_successful = True
+    trial.status = TrialStatus.COMPLETED
     trial.duration = 1.5
     trial.error_message = None
     trial.metadata = {}  # Add metadata attribute
@@ -232,6 +235,37 @@ class TestBackendSessionManagerTrialSubmission:
         )
 
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_submit_pruned_trial_with_correct_status(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Test that pruned trials are submitted with PRUNED status."""
+        from traigent.api.types import TrialStatus
+
+        # Create a pruned trial result
+        pruned_trial = Mock(spec=TrialResult)
+        pruned_trial.trial_id = "trial-pruned-456"
+        pruned_trial.config = {"param1": 1}
+        pruned_trial.metrics = {"accuracy": 0.7, "cost": 0.3}
+        pruned_trial.is_successful = False
+        pruned_trial.status = TrialStatus.PRUNED
+        pruned_trial.duration = 0.5
+        pruned_trial.error_message = "Early stopping triggered"
+        pruned_trial.metadata = {"pruned": True}
+        pruned_trial.get_metric = Mock(
+            side_effect=lambda key, default=None: pruned_trial.metrics.get(key, default)
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=pruned_trial,
+            session_id="test-session-id",
+        )
+
+        # Verify _submit_trial_result_via_session was called with PRUNED status
+        mock_backend_client._submit_trial_result_via_session.assert_called_once()
+        call_kwargs = mock_backend_client._submit_trial_result_via_session.call_args
+        assert call_kwargs.kwargs["status"] == "PRUNED"
 
 
 class TestBackendSessionManagerWeightedScores:

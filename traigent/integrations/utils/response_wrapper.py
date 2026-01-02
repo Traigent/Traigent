@@ -4,7 +4,7 @@ Provides utilities to extract metadata from SDK responses WITHOUT
 modifying the return type. Plugins intercept SDK methods and must
 return SDK-compatible response objects for downstream compatibility.
 
-CRITICAL: These wrappers are for internal TraiGent analytics/logging only.
+CRITICAL: These wrappers are for internal Traigent analytics/logging only.
 They do NOT replace SDK return types - the actual SDK response object
 must always be returned from intercepted methods.
 """
@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class LLMResponse:
-    """Internal TraiGent response wrapper for analytics/logging.
+    """Internal Traigent response wrapper for analytics/logging.
 
-    This dataclass captures response metadata for TraiGent's internal
+    This dataclass captures response metadata for Traigent's internal
     tracking and analytics. It does NOT replace SDK return types.
 
     When intercepting SDK methods like openai.chat.completions.create,
@@ -55,7 +55,7 @@ def extract_response_metadata(
     """Extract metadata from SDK response without modifying return type.
 
     This function extracts useful information from various SDK response
-    types for internal TraiGent tracking. The original sdk_response
+    types for internal Traigent tracking. The original sdk_response
     should still be returned to the caller.
 
     Args:

@@ -35,9 +35,16 @@ class StopCondition(ABC):
 
 
 class MaxTrialsStopCondition(StopCondition):
-    """Stop once a maximum number of trials has been reached."""
+    """Stop once a maximum number of executed trials has been reached.
+
+    Counts all trials except those explicitly marked as abandoned in metadata.
+    This keeps cache/cap-abandoned trials from reducing the execution budget,
+    while still counting pruned trials produced during execution.
+    """
 
     reason = "max_trials"
+
+    _ABANDONED_METADATA_KEY = "abandoned"
 
     def __init__(self, max_trials: int | None) -> None:
         if max_trials is None:
@@ -56,10 +63,11 @@ class MaxTrialsStopCondition(StopCondition):
         if self._max_trials is None:
             return False
 
-        if isinstance(trials, Sequence):
-            count = len(trials)
-        else:
-            count = sum(1 for _ in trials)
+        def is_abandoned(trial: TrialResult) -> bool:
+            metadata = getattr(trial, "metadata", None) or {}
+            return bool(metadata.get(self._ABANDONED_METADATA_KEY, False))
+
+        count = sum(1 for trial in trials if not is_abandoned(trial))
         return count >= self._max_trials
 
 

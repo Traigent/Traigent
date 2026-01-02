@@ -145,11 +145,14 @@ class SyntheticCostEvaluator(BaseEvaluator):
 @pytest.mark.asyncio
 async def test_optuna_bayesian_pruning_and_early_stop(monkeypatch):
     config_space = {"model": ["good", "meh", "bad"]}
+    # Use ThresholdPruner to trigger pruning when cost exceeds threshold.
+    # The "bad" model accumulates cost > 1.0 which should trigger pruning.
     optimizer = OptunaTPEOptimizer(
         config_space,
         ["cost"],
         max_trials=10,
         sampler=optuna.samplers.TPESampler(seed=0),
+        pruner=optuna.pruners.ThresholdPruner(upper=1.0),
     )
 
     # Ensure deterministic order: good -> meh -> bad

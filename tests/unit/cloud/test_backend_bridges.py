@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Backend Bridges."""
+"""Tests for Traigent Cloud Backend Bridges."""
 
 from datetime import datetime
 

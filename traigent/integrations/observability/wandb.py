@@ -1,4 +1,4 @@
-"""Weights & Biases (wandb) integration for TraiGent experiment tracking."""
+"""Weights & Biases (wandb) integration for Traigent experiment tracking."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Observability CONC-Quality-Compatibility FUNC-INTEGRATIONS FUNC-ANALYTICS REQ-INT-008 REQ-ANLY-011 SYNC-Observability
 
@@ -44,7 +44,7 @@ logger = get_logger(__name__)
 
 
 class TraigentWandBTracker:
-    """Weights & Biases experiment tracker for TraiGent optimizations."""
+    """Weights & Biases experiment tracker for Traigent optimizations."""
 
     def __init__(
         self,
@@ -429,7 +429,7 @@ class TraigentWandBTracker:
         if not WANDB_AVAILABLE:
             raise ImportError("wandb not available for sweep")
 
-        # Add TraiGent metadata to sweep config
+        # Add Traigent metadata to sweep config
         sweep_config.setdefault("metadata", {})
         sweep_config["metadata"]["traigent_function"] = function_name
         sweep_config["metadata"]["framework"] = "traigent"
@@ -494,7 +494,7 @@ def create_wandb_tracker(
     notes: str | None = None,
     auto_log: bool = True,
 ) -> TraigentWandBTracker:
-    """Create W&B tracker for TraiGent.
+    """Create W&B tracker for Traigent.
 
     Args:
         project: W&B project name
@@ -513,7 +513,7 @@ def enable_wandb_autolog(
     tags: list[str] | None = None,
     notes: str | None = None,
 ) -> WandBOptimizationCallback:
-    """Enable automatic W&B logging for TraiGent optimizations.
+    """Enable automatic W&B logging for Traigent optimizations.
 
     Args:
         project: W&B project name
@@ -539,7 +539,7 @@ def log_traigent_optimization(
     tags: list[str] | None = None,
     notes: str | None = None,
 ) -> str:
-    """Log TraiGent optimization result to W&B.
+    """Log Traigent optimization result to W&B.
 
     Args:
         result: Optimization result
@@ -581,18 +581,18 @@ def create_wandb_sweep_config(
     objectives: list[str],
     method: str = "bayes",
 ) -> dict[str, Any]:
-    """Create W&B sweep configuration from TraiGent config space.
+    """Create W&B sweep configuration from Traigent config space.
 
     Args:
         function_name: Name of function to optimize
-        configuration_space: TraiGent configuration space
+        configuration_space: Traigent configuration space
         objectives: Optimization objectives
         method: Sweep method ('bayes', 'grid', 'random')
 
     Returns:
         W&B sweep configuration
     """
-    # Convert TraiGent config space to W&B format
+    # Convert Traigent config space to W&B format
     wandb_parameters: dict[str, dict[str, Any]] = {}
 
     for param_name, param_range in configuration_space.items():
@@ -619,7 +619,7 @@ def create_wandb_sweep_config(
             "goal": "maximize",  # Assume maximize by default
         },
         "name": f"{function_name}_sweep",
-        "description": f"TraiGent optimization sweep for {function_name}",
+        "description": f"Traigent optimization sweep for {function_name}",
     }
 
     return sweep_config

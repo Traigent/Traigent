@@ -211,10 +211,8 @@ GLOBAL_PARALLEL_CONFIG = ParallelConfig(
     thread_workers=DEFAULT_WORKERS,
 )
 
-# Configure TraiGent
-traigent.configure(
-    parallel_config=GLOBAL_PARALLEL_CONFIG, parallel_workers=DEFAULT_WORKERS
-)
+# Configure Traigent
+traigent.configure(parallel_config=GLOBAL_PARALLEL_CONFIG)
 
 
 # ==============================================================================

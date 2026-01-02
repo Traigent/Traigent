@@ -255,7 +255,7 @@ def math_solver(problem: str) -> str:
 def demonstrate_dataset_formats() -> None:
     """Show different dataset formats and structures."""
 
-    print("TraiGent Evaluation Dataset Formats")
+    print("Traigent Evaluation Dataset Formats")
     print("=" * 50)
 
     # JSONL format
@@ -328,7 +328,7 @@ def analyze_dataset_characteristics() -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TraiGent Core Concepts: Evaluation Datasets")
+    print("Traigent Core Concepts: Evaluation Datasets")
     print("=" * 60)
 
     # Demonstrate dataset formats

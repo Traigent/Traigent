@@ -113,6 +113,8 @@ async def test_backend_submission():
         print(
             "   Backend server is not running. To test this functionality, start the backend server."
         )
+        # Skip test when backend is unavailable
+        pytest.skip(f"Backend server not available: {e}")
 
 
 if __name__ == "__main__":

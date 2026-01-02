@@ -1,1 +1,1 @@
-"""Unit tests for TraiGent SDK."""
+"""Unit tests for Traigent SDK."""

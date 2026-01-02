@@ -75,6 +75,6 @@ if __name__ == "__main__":
         res = await generate_headline.optimize(max_trials=10)
         print("Best config:", res.best_config)
         generate_headline.set_config(res.best_config)
-        print("Test:", generate_headline("TraiGent SDK for LLM optimization"))
+        print("Test:", generate_headline("Traigent SDK for LLM optimization"))
 
     asyncio.run(_main())

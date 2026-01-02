@@ -54,10 +54,11 @@ traigent auth login
 # Login with email
 traigent auth login --email user@example.com
 
-# Non-interactive (for CI/CD)
-export TRAIGENT_PASSWORD=your_password
+# Non-interactive mode (fails without prompts)
 traigent auth login --email user@example.com --non-interactive
 ```
+
+> **Note:** Non-interactive mode does not prompt for a password. For CI/CD, use `TRAIGENT_API_KEY` instead of `traigent auth login`.
 
 ### Check Status
 
@@ -119,11 +120,11 @@ traigent auth whoami tg_your_api_key_here
 Unified authentication leverages the shared `CredentialManager` to look for credentials in a secure order. When the CLI stores an API key or refresh token, the SDK reuses it automatically during runtime. This removes the need to duplicate configuration across environments while keeping sensitive material out of source code.
 
 The discovery order is:
-- System environment variables (`TRAIGENT_API_KEY`, legacy `OPTIGEN_API_KEY`, `TRAIGENT_JWT_TOKEN`, etc.)
+- System environment variables (`TRAIGENT_API_KEY`, legacy `OPTIGEN_API_KEY`)
 - CLI-managed credentials saved via `traigent auth login` (keyring or encrypted file)
 - Development defaults only when explicit test flags are enabled
 
-If nothing is found, authentication gracefully falls back to interactive prompts or explicit configuration.
+If nothing is found, the CLI will prompt you during `traigent auth login`; the SDK expects explicit configuration or environment variables.
 
 ## Credential Storage
 
@@ -135,10 +136,10 @@ Credentials are stored securely using multiple layers:
 - Windows: Credential Manager
 - Linux: Secret Service/KWallet
 
-### 2. Encrypted File (Fallback)
+### 2. Local File (Fallback)
 - Location: `~/.traigent/credentials.json`
 - Permissions: 0600 (user read/write only)
-- Contents are JSON-encoded
+- Contents are JSON-encoded (no additional encryption)
 
 ### 3. Environment Variables
 - `TRAIGENT_API_KEY` (or legacy `OPTIGEN_API_KEY`)
@@ -177,6 +178,7 @@ The SDK checks for credentials in this order:
 Once authenticated, the SDK automatically uses your credentials:
 
 ```python
+import asyncio
 import traigent
 
 # The SDK automatically finds credentials from:
@@ -185,7 +187,7 @@ import traigent
 # 3. Development defaults
 
 @traigent.optimize(
-    eval_dataset="data.jsonl",
+    evaluation={"eval_dataset": "data.jsonl"},
     configuration_space={"model": ["gpt-4", "gpt-3.5-turbo"]}
 )
 def my_function(input_text: str, **config):
@@ -198,7 +200,7 @@ results = asyncio.run(my_function.optimize())
 
 ## Backend Integration
 
-The authentication system works with the OptiGen backend:
+The authentication system works with the managed Traigent backend:
 
 ### Supported Authentication Methods
 
@@ -214,11 +216,7 @@ The authentication system works with the OptiGen backend:
 
 ### API Endpoints
 
-The SDK interacts with these backend endpoints:
-- `POST /api/v1/auth/login` - Initial authentication
-- `POST /api/v1/auth/refresh` - Token refresh
-- `POST /api/v1/api-keys` - Generate API keys
-- `GET /api/v1/api-keys` - List API keys
+Backend endpoints are managed and may vary by deployment. Use the CLI and SDK APIs rather than hardcoding URLs.
 
 ## Troubleshooting
 
@@ -249,7 +247,7 @@ If you see "Rate limit exceeded":
 
 ### Token Expired
 
-JWT tokens expire after 1 hour:
+JWT tokens are short-lived:
 ```bash
 traigent auth refresh
 ```
@@ -361,7 +359,7 @@ traigent auth whoami KEY   # Validate API key
 
 # Options
 --email EMAIL             # Specify email
---non-interactive         # No prompts (CI/CD)
+--non-interactive         # No prompts; use API keys for CI/CD
 --help                   # Show help
 ```
 
@@ -391,19 +389,5 @@ The new system is backward compatible - existing environment variables continue 
 For authentication issues:
 
 1. Check the [Troubleshooting](#troubleshooting) section
-2. Run diagnostics:
-   ```bash
-   python examples/test_auth_cli.py
-   ```
-3. Contact support at support@optigen.ai
-
-## Security Disclosure
-
-To report security vulnerabilities in the authentication system:
-- Email: security@optigen.ai
-- Use our bug bounty program
-- Do not disclose publicly until patched
-
----
-
-*Last updated: January 2025*
+2. Open a GitHub issue with the CLI output and backend URL
+3. For security reports, follow the guidance in `docs/contributing/SECURITY.md`

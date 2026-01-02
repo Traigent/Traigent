@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
@@ -33,12 +34,15 @@ from traigent.core.trial_result_factory import (
 )
 from traigent.core.types import TrialResult, TrialStatus
 from traigent.evaluators.base import Dataset
+from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
     OptimizationError,
     TrialPrunedError,
     TVLConstraintError,
 )
 from traigent.utils.logging import get_logger
+
+from .tracing import record_trial_result, trial_span
 
 if TYPE_CHECKING:
     from traigent.core.orchestrator import OptimizationOrchestrator
@@ -104,13 +108,15 @@ class TrialLifecycle:
             orchestrator._stop_reason = "max_trials_reached"
             return trial_count, "break"
 
-        try:
-            config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
-        except OptimizationError:
-            raise
-        except (ValueError, TypeError, KeyError, AttributeError) as e:
-            logger.exception("Optimizer failed to suggest the next trial: %s", e)
-            return trial_count, "break"
+        config = orchestrator._consume_default_config()
+        if config is None:
+            try:
+                config = orchestrator.optimizer.suggest_next_trial(orchestrator._trials)
+            except OptimizationError:
+                raise
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                logger.exception("Optimizer failed to suggest the next trial: %s", e)
+                return trial_count, "break"
 
         optuna_trial_id = (
             config.get("_optuna_trial_id") if isinstance(config, dict) else None
@@ -131,6 +137,7 @@ class TrialLifecycle:
                     orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                         optuna_trial_id,
                         reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        config=config,
                         status=TrialStatus.PRUNED,
                         pruned_step=0,
                     )
@@ -142,12 +149,36 @@ class TrialLifecycle:
 
         config_for_run = prepare_evaluation_config(config)
 
-        enforce_constraints(
-            config_for_run,
-            None,
-            orchestrator._constraints_pre_eval,
-            stage="pre",
-        )
+        # Phase 2: Enforce pre-evaluation constraints
+        try:
+            enforce_constraints(
+                config_for_run,
+                None,
+                orchestrator._constraints_pre_eval,
+                stage="pre",
+            )
+        except TVLConstraintError as e:
+            # Constraint failed - create a failed trial without running evaluation
+            logger.info("Pre-constraint failed for config %s: %s", config_for_run, e)
+            failed_trial = TrialResult(
+                trial_id=str(trial_count),
+                config=config_for_run,
+                metrics={},
+                status=TrialStatus.FAILED,
+                duration=0.0,
+                timestamp=datetime.now(tz=UTC),
+                error_message=str(e),
+                metadata={"constraint_failure": True},
+            )
+            trial_count = await orchestrator._handle_trial_result(
+                trial_result=failed_trial,
+                optimizer_config=config,
+                current_trial_index=trial_count,
+                session_id=session_id,
+                optuna_trial_id=optuna_trial_id,
+                log_on_success=False,
+            )
+            return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
         # This ensures sequential trials respect cost limits proactively
@@ -159,11 +190,12 @@ class TrialLifecycle:
                     "Sequential trial cancelled due to cost limit reached (config=%s)",
                     config_for_run,
                 )
-                orchestrator._stop_reason = "cost_limit_reached"
+                orchestrator._stop_reason = "cost_limit"
                 if hasattr(orchestrator, "_abandon_optuna_trial"):
                     orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                         optuna_trial_id,
                         reason="trial_cancelled_by_cost_limit",
+                        config=config_for_run,
                         status=TrialStatus.CANCELLED,
                         pruned_step=0,
                     )
@@ -241,8 +273,6 @@ class TrialLifecycle:
         Returns:
             TrialResult with evaluation results
         """
-        orchestrator = self._orchestrator
-
         # Phase 1: Setup trial context
         optuna_trial_id = extract_optuna_trial_id(config, optuna_trial_id)
         trial_id = self._generate_trial_id(
@@ -258,6 +288,37 @@ class TrialLifecycle:
             optuna_trial_id, dataset, trial_id
         )
         lease = self._setup_trial_budget_lease(dataset, trial_id, sample_ceiling)
+
+        # Wrap trial execution in tracing span
+        with trial_span(trial_id, trial_number, evaluation_config) as span:
+            return await self._execute_trial_with_tracing(
+                func=func,
+                dataset=dataset,
+                trial_id=trial_id,
+                evaluation_config=evaluation_config,
+                start_time=start_time,
+                optuna_trial_id=optuna_trial_id,
+                progress_callback=progress_callback,
+                progress_state=progress_state,
+                lease=lease,
+                span=span,
+            )
+
+    async def _execute_trial_with_tracing(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        trial_id: str,
+        evaluation_config: dict[str, Any],
+        start_time: float,
+        optuna_trial_id: int | None,
+        progress_callback: Any,
+        progress_state: Any,
+        lease: SampleBudgetLease | None,
+        span: Any,
+    ) -> TrialResult:
+        """Execute trial with tracing span active."""
+        orchestrator = self._orchestrator
         closure: LeaseClosure | None = None
 
         try:
@@ -314,10 +375,17 @@ class TrialLifecycle:
                 optuna_trial_id=optuna_trial_id,
             )
             self._apply_budget_metadata(result, closure, budget_exhausted)
+
+            # Record success in tracing span
+            record_trial_result(
+                span,
+                status="completed",
+                metrics=result.metrics,
+            )
             return result
 
         except TrialPrunedError as prune_error:
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -327,9 +395,11 @@ class TrialLifecycle:
                 prune_error,
                 is_pruned=True,
             )
+            record_trial_result(span, status="pruned", error=str(prune_error))
+            return result
 
         except TVLConstraintError as constraint_error:
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -338,10 +408,17 @@ class TrialLifecycle:
                 optuna_trial_id,
                 constraint_error,
             )
+            record_trial_result(span, status="failed", error=str(constraint_error))
+            return result
+
+        except APIKeyError:
+            # Fail fast on API key errors - don't continue running trials
+            # Re-raise to stop the entire optimization loop
+            raise
 
         except Exception as exc:
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
-            return self._build_trial_error_result(
+            result = self._build_trial_error_result(
                 trial_id,
                 evaluation_config,
                 start_time,
@@ -350,6 +427,8 @@ class TrialLifecycle:
                 optuna_trial_id,
                 exc,
             )
+            record_trial_result(span, status="failed", error=str(exc))
+            return result
 
         finally:
             if lease is not None and closure is None:

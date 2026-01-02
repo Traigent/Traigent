@@ -232,7 +232,7 @@ def quality_constrained_bot(query: str) -> str:
 def demonstrate_objective_types() -> None:
     """Show different types of objectives and metrics."""
 
-    print("TraiGent Objective Types:")
+    print("Traigent Objective Types:")
     print("-" * 40)
 
     # Built-in objectives
@@ -251,7 +251,7 @@ def demonstrate_objective_types() -> None:
     print("\n3. Multi-Objective Optimization:")
     print("   - Balance multiple objectives with weights")
     print("   - Example: 30% cost, 50% quality, 20% speed")
-    print("   - TraiGent finds Pareto-optimal solutions")
+    print("   - Traigent finds Pareto-optimal solutions")
 
     # Constraints
     print("\n4. Constraints:")
@@ -288,7 +288,7 @@ def analyze_tradeoffs() -> None:
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("TraiGent Core Concepts: Objectives & Metrics")
+    print("Traigent Core Concepts: Objectives & Metrics")
     print("=" * 60)
 
     # Demonstrate objective types
@@ -305,4 +305,4 @@ if __name__ == "__main__":
     print("2. Balanced support bot (multi-objective)")
     print("3. Quality-constrained bot (custom metrics + constraints)")
 
-    print("\nThese examples show how TraiGent optimizes for different goals.")
+    print("\nThese examples show how Traigent optimizes for different goals.")

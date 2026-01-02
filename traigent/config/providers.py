@@ -388,7 +388,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
         ...     configuration_space={"model": ["gpt-3.5", "gpt-4"]}
         ... )
         ... def my_function():
-        ...     model = "gpt-3.5"  # TraiGent will override this
+        ...     model = "gpt-3.5"  # Traigent will override this
         ...     return f"Using {model}"
 
     Security Improvements:
@@ -442,7 +442,7 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
         @wraps(func)
         def seamless_wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Get current TraiGent configuration
+            # Get current Traigent configuration
             current_config = get_config()
 
             # Start with the passed config (this is the primary config we want to use)

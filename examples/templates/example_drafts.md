@@ -95,7 +95,7 @@
 - Files: `evaluation_set.jsonl` (expr + numeric truth), `prompt.txt`
 - Eval: Exact numeric accuracy
 - Batch/Parallel: `parallel_config.trial_concurrency = 2`
-- Notes: Demonstrates `strategy = traigent.set_strategy(algorithm="random", parallel_workers=2)` and passing to `.optimize(strategy=strategy)`.
+- Notes: Demonstrates runtime `algorithm="random"` with `parallel_config` (trial_concurrency + thread_workers).
 
 ---
 
@@ -113,7 +113,7 @@
 - Files: `evaluation_set.jsonl` (briefs + expected style markers), `prompt.txt`, optional `example_set.jsonl`
 - Eval: Style compliance accuracy (detect bullets or paragraph continuity and tone keywords)
 - Batch/Parallel: sequential
-- Notes: Highlights seamless override and how TraiGent manipulates parameters without changing code.
+- Notes: Highlights seamless override and how Traigent manipulates parameters without changing code.
 
 ---
 
@@ -178,4 +178,4 @@
 - Multi-Objective: 03 ✅
 - Custom Measure: 05, 09 ✅
 - Search Strategies: grid (02,05,08,10), random (04,06,09), bayesian (03,07) ✅
-- Optimize API Surface: decorator kwargs (algorithm, execution_mode, parallel_config), StrategyConfig via set_strategy (06) ✅
+- Optimize API Surface: decorator kwargs (algorithm, execution_mode, parallel_config) and runtime overrides ✅

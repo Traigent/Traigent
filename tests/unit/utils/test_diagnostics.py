@@ -1,6 +1,6 @@
 """Unit tests for traigent.utils.diagnostics.
 
-Tests for TraiGent diagnostic utilities including system checks,
+Tests for Traigent diagnostic utilities including system checks,
 package validation, and environment configuration detection.
 """
 
@@ -11,16 +11,15 @@ package validation, and environment configuration detection.
 from __future__ import annotations
 
 import os
-import socket
 import sys
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, mock_open, patch
+from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
 from traigent.utils.diagnostics import (
     DiagnosticReport,
-    TraiGentDiagnostics,
+    TraigentDiagnostics,
     diagnose,
     main,
 )
@@ -123,7 +122,7 @@ class TestDiagnosticReport:
         report.print_report()
         captured = capsys.readouterr()
 
-        assert "TraiGent Diagnostic Report" in captured.out
+        assert "Traigent Diagnostic Report" in captured.out
         assert "System Info:" in captured.out
         assert "Successes (1):" in captured.out
         assert "All good" in captured.out
@@ -161,32 +160,32 @@ class TestDiagnosticReport:
         assert "💡 Fix:" not in captured.out
 
 
-class TestTraiGentDiagnostics:
-    """Tests for TraiGentDiagnostics class."""
+class TestTraigentDiagnostics:
+    """Tests for TraigentDiagnostics class."""
 
     def test_required_packages_list(self) -> None:
         """Test required packages list is defined."""
-        assert len(TraiGentDiagnostics.REQUIRED_PACKAGES) > 0
+        assert len(TraigentDiagnostics.REQUIRED_PACKAGES) > 0
         assert (
             "traigent",
-            "TraiGent SDK",
+            "Traigent SDK",
             None,
-        ) in TraiGentDiagnostics.REQUIRED_PACKAGES
+        ) in TraigentDiagnostics.REQUIRED_PACKAGES
 
     def test_optional_packages_list(self) -> None:
         """Test optional packages list is defined."""
-        assert isinstance(TraiGentDiagnostics.OPTIONAL_PACKAGES, list)
+        assert isinstance(TraigentDiagnostics.OPTIONAL_PACKAGES, list)
         # May be empty, so just check type
 
     def test_environment_variables_list(self) -> None:
         """Test environment variables list is defined."""
-        assert len(TraiGentDiagnostics.ENVIRONMENT_VARIABLES) > 0
+        assert len(TraigentDiagnostics.ENVIRONMENT_VARIABLES) > 0
         # Check structure
         for (
             var_name,
             description,
             required,
-        ) in TraiGentDiagnostics.ENVIRONMENT_VARIABLES:
+        ) in TraigentDiagnostics.ENVIRONMENT_VARIABLES:
             assert isinstance(var_name, str)
             assert isinstance(description, str)
             assert isinstance(required, bool)
@@ -195,7 +194,7 @@ class TestTraiGentDiagnostics:
     def test_check_python_version_supported(self) -> None:
         """Test Python version check for supported version."""
         report = DiagnosticReport()
-        TraiGentDiagnostics._check_python_version(report)
+        TraigentDiagnostics._check_python_version(report)
 
         assert len(report.successes) == 1
         assert report.successes[0]["category"] == "Python"
@@ -206,7 +205,7 @@ class TestTraiGentDiagnostics:
     def test_check_python_version_newer_supported(self) -> None:
         """Test Python version check for newer supported version."""
         report = DiagnosticReport()
-        TraiGentDiagnostics._check_python_version(report)
+        TraigentDiagnostics._check_python_version(report)
 
         assert len(report.successes) == 1
         assert len(report.issues) == 0
@@ -215,7 +214,7 @@ class TestTraiGentDiagnostics:
     def test_check_python_version_unsupported(self) -> None:
         """Test Python version check for unsupported version."""
         report = DiagnosticReport()
-        TraiGentDiagnostics._check_python_version(report)
+        TraigentDiagnostics._check_python_version(report)
 
         assert len(report.issues) == 1
         assert report.issues[0]["category"] == "Python"
@@ -226,7 +225,7 @@ class TestTraiGentDiagnostics:
     def test_check_python_version_python2(self) -> None:
         """Test Python version check for Python 2."""
         report = DiagnosticReport()
-        TraiGentDiagnostics._check_python_version(report)
+        TraigentDiagnostics._check_python_version(report)
 
         assert len(report.issues) == 1
         assert "2.7" in report.issues[0]["message"]
@@ -239,7 +238,7 @@ class TestTraiGentDiagnostics:
             patch.object(sys, "base_prefix", "/usr"),
             patch.object(sys, "prefix", "/usr/local/venv"),
         ):
-            TraiGentDiagnostics._check_virtual_env(report)
+            TraigentDiagnostics._check_virtual_env(report)
 
         assert len(report.successes) == 1
         assert "virtual environment" in report.successes[0]["message"]
@@ -257,7 +256,7 @@ class TestTraiGentDiagnostics:
             if hasattr(sys, "real_prefix"):
                 delattr(sys, "real_prefix")
 
-            TraiGentDiagnostics._check_virtual_env(report)
+            TraigentDiagnostics._check_virtual_env(report)
 
         assert len(report.warnings) == 1
         assert "Not running in virtual environment" in report.warnings[0]["message"]
@@ -272,7 +271,7 @@ class TestTraiGentDiagnostics:
             # Add real_prefix attribute temporarily
             sys.real_prefix = "/usr"  # type: ignore[attr-defined]
             try:
-                TraiGentDiagnostics._check_virtual_env(report)
+                TraigentDiagnostics._check_virtual_env(report)
             finally:
                 # Clean up
                 if hasattr(sys, "real_prefix"):
@@ -287,7 +286,7 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
         packages = [("test_package", "Test Package", "test-pkg")]
 
-        TraiGentDiagnostics._check_packages(report, packages, required=True)
+        TraigentDiagnostics._check_packages(report, packages, required=True)
 
         assert len(report.successes) == 1
         assert "Test Package is installed" in report.successes[0]["message"]
@@ -301,7 +300,7 @@ class TestTraiGentDiagnostics:
         packages = [("missing_package", "Missing Package", "missing-pkg")]
         mock_import.side_effect = ImportError("Module not found")
 
-        TraiGentDiagnostics._check_packages(report, packages, required=True)
+        TraigentDiagnostics._check_packages(report, packages, required=True)
 
         assert len(report.issues) == 1
         assert "Missing Package is not installed" in report.issues[0]["message"]
@@ -315,7 +314,7 @@ class TestTraiGentDiagnostics:
         packages = [("optional_package", "Optional Package", "optional-pkg")]
         mock_import.side_effect = ImportError("Module not found")
 
-        TraiGentDiagnostics._check_packages(report, packages, required=False)
+        TraigentDiagnostics._check_packages(report, packages, required=False)
 
         assert len(report.warnings) == 1
         msg = report.warnings[0]["message"]
@@ -331,7 +330,7 @@ class TestTraiGentDiagnostics:
         packages = [("package", "Package", None)]
         mock_import.side_effect = ImportError("Module not found")
 
-        TraiGentDiagnostics._check_packages(report, packages, required=True)
+        TraigentDiagnostics._check_packages(report, packages, required=True)
 
         assert "pip install package" in report.issues[0]["fix"]
 
@@ -347,8 +346,8 @@ class TestTraiGentDiagnostics:
             ("TEST_URL", "Test URL", False),
         ]
 
-        with patch.object(TraiGentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
-            TraiGentDiagnostics._check_environment(report)
+        with patch.object(TraigentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
+            TraigentDiagnostics._check_environment(report)
 
         assert len(report.successes) == 2
         # KEY should be masked
@@ -364,8 +363,8 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
         env_vars = [("REQUIRED_VAR", "Required variable", True)]
 
-        with patch.object(TraiGentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
-            TraiGentDiagnostics._check_environment(report)
+        with patch.object(TraigentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
+            TraigentDiagnostics._check_environment(report)
 
         assert len(report.issues) == 1
         assert "REQUIRED_VAR not set" in report.issues[0]["message"]
@@ -378,8 +377,8 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
         env_vars = [("OPTIONAL_VAR", "Optional variable", False)]
 
-        with patch.object(TraiGentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
-            TraiGentDiagnostics._check_environment(report)
+        with patch.object(TraigentDiagnostics, "ENVIRONMENT_VARIABLES", env_vars):
+            TraigentDiagnostics._check_environment(report)
 
         assert len(report.warnings) == 1
         msg = report.warnings[0]["message"]
@@ -388,10 +387,10 @@ class TestTraiGentDiagnostics:
     @patch("traigent.initialize")
     @patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}, clear=True)
     def test_check_traigent_config_success(self, mock_initialize: MagicMock) -> None:
-        """Test TraiGent configuration check when successful."""
+        """Test Traigent configuration check when successful."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._check_traigent_config(report)
+        TraigentDiagnostics._check_traigent_config(report)
 
         assert len(report.successes) >= 1
         assert any(
@@ -404,10 +403,10 @@ class TestTraiGentDiagnostics:
     def test_check_traigent_config_with_mock_mode(
         self, mock_initialize: MagicMock
     ) -> None:
-        """Test TraiGent config check with mock mode enabled."""
+        """Test Traigent config check with mock mode enabled."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._check_traigent_config(report)
+        TraigentDiagnostics._check_traigent_config(report)
 
         assert len(report.successes) >= 2
         assert any("Mock mode is enabled" in s["message"] for s in report.successes)
@@ -415,11 +414,11 @@ class TestTraiGentDiagnostics:
     @patch("traigent.initialize")
     @patch.dict(os.environ, {}, clear=True)
     def test_check_traigent_config_failure(self, mock_initialize: MagicMock) -> None:
-        """Test TraiGent config check when initialization fails."""
+        """Test Traigent config check when initialization fails."""
         report = DiagnosticReport()
         mock_initialize.side_effect = Exception("Init failed")
 
-        TraiGentDiagnostics._check_traigent_config(report)
+        TraigentDiagnostics._check_traigent_config(report)
 
         assert len(report.issues) == 1
         assert "Failed to initialize" in report.issues[0]["message"]
@@ -437,7 +436,7 @@ class TestTraiGentDiagnostics:
         """Test file permissions check when successful."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._check_permissions(report)
+        TraigentDiagnostics._check_permissions(report)
 
         # Should succeed for all test paths
         assert len(report.successes) >= 1
@@ -449,7 +448,7 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
         mock_mkdir.side_effect = OSError("Permission denied")
 
-        TraiGentDiagnostics._check_permissions(report)
+        TraigentDiagnostics._check_permissions(report)
 
         assert len(report.warnings) >= 1
         assert any("Cannot write to" in w["message"] for w in report.warnings)
@@ -459,7 +458,7 @@ class TestTraiGentDiagnostics:
         """Test network connectivity check when successful."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._check_network(report)
+        TraigentDiagnostics._check_network(report)
 
         assert len(report.successes) >= 1
         assert any("Can connect to" in s["message"] for s in report.successes)
@@ -468,9 +467,9 @@ class TestTraiGentDiagnostics:
     def test_check_network_failure(self, mock_socket: MagicMock) -> None:
         """Test network connectivity check when connection fails."""
         report = DiagnosticReport()
-        mock_socket.side_effect = socket.timeout("Connection timeout")
+        mock_socket.side_effect = TimeoutError("Connection timeout")
 
-        TraiGentDiagnostics._check_network(report)
+        TraigentDiagnostics._check_network(report)
 
         assert len(report.warnings) >= 1
         assert any("Cannot connect to" in w["message"] for w in report.warnings)
@@ -481,7 +480,7 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
         report.add_issue("Test", "Test issue", "Fix it")
 
-        TraiGentDiagnostics._add_recommendations(report)
+        TraigentDiagnostics._add_recommendations(report)
 
         assert any("Fix critical issues" in r for r in report.recommendations)
 
@@ -490,7 +489,7 @@ class TestTraiGentDiagnostics:
         """Test recommendations when mock mode is not enabled."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._add_recommendations(report)
+        TraigentDiagnostics._add_recommendations(report)
 
         assert any("Enable mock mode" in r for r in report.recommendations)
 
@@ -499,7 +498,7 @@ class TestTraiGentDiagnostics:
         """Test recommendations when mock mode is enabled."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._add_recommendations(report)
+        TraigentDiagnostics._add_recommendations(report)
 
         # Should not recommend mock mode if already enabled
         assert not any("Enable mock mode" in r for r in report.recommendations)
@@ -510,11 +509,11 @@ class TestTraiGentDiagnostics:
         report = DiagnosticReport()
 
         with patch.object(
-            TraiGentDiagnostics,
+            TraigentDiagnostics,
             "ENVIRONMENT_VARIABLES",
             [("TEST_API_KEY", "Test API", False)],
         ):
-            TraiGentDiagnostics._add_recommendations(report)
+            TraigentDiagnostics._add_recommendations(report)
 
         assert any("Add API keys to .env file" in r for r in report.recommendations)
 
@@ -522,18 +521,18 @@ class TestTraiGentDiagnostics:
         """Test recommendations always include quickstart script."""
         report = DiagnosticReport()
 
-        TraiGentDiagnostics._add_recommendations(report)
+        TraigentDiagnostics._add_recommendations(report)
 
         assert any("quickstart" in r for r in report.recommendations)
 
-    @patch.object(TraiGentDiagnostics, "_check_python_version")
-    @patch.object(TraiGentDiagnostics, "_check_virtual_env")
-    @patch.object(TraiGentDiagnostics, "_check_packages")
-    @patch.object(TraiGentDiagnostics, "_check_environment")
-    @patch.object(TraiGentDiagnostics, "_check_traigent_config")
-    @patch.object(TraiGentDiagnostics, "_check_permissions")
-    @patch.object(TraiGentDiagnostics, "_check_network")
-    @patch.object(TraiGentDiagnostics, "_add_recommendations")
+    @patch.object(TraigentDiagnostics, "_check_python_version")
+    @patch.object(TraigentDiagnostics, "_check_virtual_env")
+    @patch.object(TraigentDiagnostics, "_check_packages")
+    @patch.object(TraigentDiagnostics, "_check_environment")
+    @patch.object(TraigentDiagnostics, "_check_traigent_config")
+    @patch.object(TraigentDiagnostics, "_check_permissions")
+    @patch.object(TraigentDiagnostics, "_check_network")
+    @patch.object(TraigentDiagnostics, "_add_recommendations")
     def test_run_diagnostics(
         self,
         mock_rec: MagicMock,
@@ -546,7 +545,7 @@ class TestTraiGentDiagnostics:
         mock_py: MagicMock,
     ) -> None:
         """Test run_diagnostics calls all check methods."""
-        report = TraiGentDiagnostics.run_diagnostics()
+        report = TraigentDiagnostics.run_diagnostics()
 
         assert isinstance(report, DiagnosticReport)
         mock_py.assert_called_once()
@@ -563,7 +562,7 @@ class TestTraiGentDiagnostics:
 class TestDiagnoseFunctions:
     """Tests for module-level functions."""
 
-    @patch.object(TraiGentDiagnostics, "run_diagnostics")
+    @patch.object(TraigentDiagnostics, "run_diagnostics")
     def test_diagnose(self, mock_run: MagicMock) -> None:
         """Test diagnose function calls run_diagnostics."""
         mock_report = MagicMock(spec=DiagnosticReport)
@@ -574,7 +573,7 @@ class TestDiagnoseFunctions:
         assert result is mock_report
         mock_run.assert_called_once()
 
-    @patch.object(TraiGentDiagnostics, "run_diagnostics")
+    @patch.object(TraigentDiagnostics, "run_diagnostics")
     @patch("builtins.open", new_callable=mock_open)
     @patch("pathlib.Path.write_text")
     def test_main_success(
@@ -593,10 +592,10 @@ class TestDiagnoseFunctions:
 
         assert exit_code == 0
         captured = capsys.readouterr()
-        assert "Running TraiGent diagnostics" in captured.out
+        assert "Running Traigent diagnostics" in captured.out
         assert "Full report saved to" in captured.out
 
-    @patch.object(TraiGentDiagnostics, "run_diagnostics")
+    @patch.object(TraigentDiagnostics, "run_diagnostics")
     @patch("builtins.open", new_callable=mock_open)
     def test_main_with_issues(
         self, mock_file: MagicMock, mock_run: MagicMock, capsys
@@ -610,9 +609,9 @@ class TestDiagnoseFunctions:
 
         assert exit_code == 1
         captured = capsys.readouterr()
-        assert "Running TraiGent diagnostics" in captured.out
+        assert "Running Traigent diagnostics" in captured.out
 
-    @patch.object(TraiGentDiagnostics, "run_diagnostics")
+    @patch.object(TraigentDiagnostics, "run_diagnostics")
     @patch("builtins.open", new_callable=mock_open)
     def test_main_saves_report_to_file(
         self,

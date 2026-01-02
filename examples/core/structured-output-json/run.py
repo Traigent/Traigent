@@ -182,7 +182,6 @@ def json_score_metric(output: str, expected: dict, _llm_metrics: dict | None) ->
     metric_functions={"json_score": json_score_metric},
     execution_mode="edge_analytics",
     injection_mode="seamless",
-    algorithm="grid",
 )
 def extract_fields(
     text: str,
@@ -227,7 +226,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 9 if not MOCK else 4
-        r = await extract_fields.optimize(max_trials=trials)
+        r = await extract_fields.optimize(algorithm="grid", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

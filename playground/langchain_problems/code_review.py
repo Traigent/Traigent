@@ -474,9 +474,9 @@ Provide a thorough code review with specific, actionable feedback.""",
         def code_reviewer_optimized(code: str, language: str, context: str) -> str:
             """Optimized code reviewer."""
             llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Will be overridden by TraiGent
-                temperature=0.1,  # Will be overridden by TraiGent
-                model_kwargs={"max_tokens": 500},  # Will be overridden by TraiGent
+                model="gpt-4o-mini",  # Will be overridden by Traigent
+                temperature=0.1,  # Will be overridden by Traigent
+                model_kwargs={"max_tokens": 500},  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

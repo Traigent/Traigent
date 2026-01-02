@@ -809,10 +809,11 @@ class TestEdgeAnalyticsCommands:
 
         try:
             with patch.dict(os.environ, self.env_vars):
-                self.runner.invoke(list_sessions)
+                result = self.runner.invoke(list_sessions)
 
             # Should handle permission errors gracefully
             # Result depends on specific error handling in storage layer
+            assert result is not None, "Command should return a result"
         finally:
             # Restore permissions for cleanup
             os.chmod(self.storage_path, 0o755)

@@ -1,16 +1,16 @@
 # Creative Stress Testing Prompt
 
-You are a senior AI engineer exploring TraiGent's capabilities. The README quickstarts have been validated - your job is to **push the boundaries** by creating your own experiments.
+You are a senior AI engineer exploring Traigent's capabilities. The README quickstarts have been validated - your job is to **push the boundaries** by creating your own experiments.
 
-**Your mission**: Design creative experiments that stress-test TraiGent's flexibility, error handling, and edge cases. Everything runs in mock mode.
+**Your mission**: Design creative experiments that stress-test Traigent's flexibility, error handling, and edge cases. Everything runs in mock mode.
 
 ---
 
 ## Setup
 
 ```bash
-# Ensure you're in the TraiGent directory with the SDK installed
-cd /path/to/Traigent
+# Ensure you're in the Traigent directory with the SDK installed
+cd /path/to/traigent-sdk
 export TRAIGENT_MOCK_MODE=true
 export TRAIGENT_LOG_LEVEL=INFO
 ```
@@ -19,7 +19,7 @@ export TRAIGENT_LOG_LEVEL=INFO
 
 ## SCENARIO 1: Domain-Specific Agents
 
-Create agents for specific domains and observe how TraiGent handles them.
+Create agents for specific domains and observe how Traigent handles them.
 
 ### 1.1 Code Review Agent
 
@@ -50,7 +50,7 @@ with open("code_review_data.jsonl", "w") as f:
 )
 def code_review_agent(code: str) -> str:
     """Review code based on configuration."""
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     depth = config.get("review_depth", "standard")
     focus = config.get("focus_area", "all")
     strictness = config.get("strictness", 5)
@@ -95,7 +95,7 @@ if __name__ == "__main__":
 ```
 
 **Questions to answer:**
-- [ ] Does TraiGent handle string-based categorical values correctly?
+- [ ] Does Traigent handle string-based categorical values correctly?
 - [ ] Can it optimize for security-sensitive outputs?
 - [ ] What happens with integer parameters like `strictness`?
 
@@ -126,7 +126,7 @@ with open("translation_data.jsonl", "w") as f:
 )
 def translate(text: str, target_lang: str) -> str:
     """Translate text to target language."""
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     temp = config.get("temperature", 0.3)
     model = config.get("model", "gpt-3.5-turbo")
 
@@ -156,7 +156,7 @@ if __name__ == "__main__":
 ```
 
 **Questions to answer:**
-- [ ] Does TraiGent handle functions with MULTIPLE input parameters?
+- [ ] Does Traigent handle functions with MULTIPLE input parameters?
 - [ ] Grid search with 3x3x3 = 27 configurations - does it run all?
 - [ ] Unicode in expected outputs - handled correctly?
 
@@ -198,7 +198,7 @@ def single_config(q: str) -> str:
     eval_dataset="minimal.jsonl",
 )
 def many_params(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     # 2^6 = 64 possible configs
     return "answer"
 
@@ -213,7 +213,7 @@ def many_params(q: str) -> str:
     eval_dataset="minimal.jsonl",
 )
 def boolean_params(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     return "answer"
 
 # Test 4: Numeric-only space
@@ -226,7 +226,7 @@ def boolean_params(q: str) -> str:
     eval_dataset="minimal.jsonl",
 )
 def numeric_only(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     threshold = config.get("threshold", 0.5)
     return "answer" if threshold > 0.4 else "wrong"
 
@@ -386,7 +386,7 @@ def create_optimizable_func(name: str):
         eval_dataset="algo_test.jsonl",
     )
     def agent(x: str) -> str:
-        config = traigent.get_trial_config()
+        config = traigent.get_config()
         quality = config.get("quality", 5)
         mode = config.get("mode", "balanced")
 
@@ -469,7 +469,7 @@ with open("lifecycle.jsonl", "w") as f:
     eval_dataset="lifecycle.jsonl",
 )
 def lifecycle_agent(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     version = config.get("version", "v1")
     speed = config.get("speed", 1)
 
@@ -635,7 +635,7 @@ with open("errors.jsonl", "w") as f:
     eval_dataset="errors.jsonl",
 )
 def sometimes_fails(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     mode = config.get("mode", "safe")
 
     if mode == "risky" and "trigger_error" in q:
@@ -650,7 +650,7 @@ def sometimes_fails(q: str) -> str:
 )
 def slow_agent(q: str) -> str:
     import time
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     delay = config.get("delay", 0.1)
     time.sleep(delay)
     return "ok"
@@ -678,10 +678,10 @@ async def main():
     except Exception as e:
         print(f"  ❌ Optimization failed entirely: {e}")
 
-    # Test 2: get_trial_config outside optimization
-    print("\n▶ Test: get_trial_config() outside optimization")
+    # Test 2: get_config outside optimization
+    print("\n▶ Test: get_config() outside optimization")
     try:
-        config = traigent.get_trial_config()
+        config = traigent.get_config()
         print(f"  ⚠️ No error raised, got: {config}")
     except Exception as e:
         print(f"  ✅ Correctly raised {type(e).__name__}: {e}")
@@ -786,7 +786,7 @@ with open("persist.jsonl", "w") as f:
     eval_dataset="persist.jsonl",
 )
 def persist_agent(q: str) -> str:
-    config = traigent.get_trial_config()
+    config = traigent.get_config()
     return "answer" if config.get("tier") == "gold" else "wrong"
 
 async def main():
@@ -938,7 +938,7 @@ For each scenario, report:
 
 After running all scenarios, answer:
 
-1. **Configuration flexibility**: Can TraiGent handle diverse config types (strings, ints, floats, booleans)?
+1. **Configuration flexibility**: Can Traigent handle diverse config types (strings, ints, floats, booleans)?
 2. **Multi-parameter functions**: Do functions with multiple inputs work correctly?
 3. **Algorithm comparison**: Do different algorithms produce reasonable results?
 4. **Error handling**: Are errors reported clearly? Does optimization continue after partial failures?

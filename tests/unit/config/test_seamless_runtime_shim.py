@@ -254,15 +254,13 @@ async def test_seamless_invalid_configuration_marks_trial_failed() -> None:
         eval_dataset=dataset,
         configuration_space={"model": ["invalid-model-slug"]},
         injection_mode="seamless",
-        algorithm="grid",
-        max_trials=1,
     )
     def target_fn(question: str, model: str = "baseline") -> str:
         if model == "invalid-model-slug":
             raise RuntimeError("model_not_found: invalid-model-slug")
         return "baseline"
 
-    result = await target_fn.optimize(max_trials=1)
+    result = await target_fn.optimize(algorithm="grid", max_trials=1)
 
     assert result.trials, "Expected at least one trial"
     trial = result.trials[0]

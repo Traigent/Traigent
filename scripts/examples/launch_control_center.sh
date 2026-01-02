@@ -1,7 +1,7 @@
 #!/bin/bash
-# Launch script for TraiGent Playground
+# Launch script for Traigent Playground
 
-echo "🎯 Launching TraiGent Playground..."
+echo "🎯 Launching Traigent Playground..."
 echo "=================================="
 
 # Check if streamlit is installed

@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-# Debug mode to see exactly what TraiGent is doing
+# Debug mode to see exactly what Traigent is doing
 
 
 @traigent.optimize(
@@ -48,10 +48,10 @@ def debug_example(prompt: str) -> str:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
 
     # Debug output will show:
-    # [TraiGent] Intercepted ChatOpenAI constructor
-    # [TraiGent] Original: model=gpt-3.5-turbo, temperature=0.7
-    # [TraiGent] Optimized: model=gpt-4o-mini, temperature=0.1
-    # [TraiGent] Injecting optimized parameters
+    # [Traigent] Intercepted ChatOpenAI constructor
+    # [Traigent] Original: model=gpt-3.5-turbo, temperature=0.7
+    # [Traigent] Optimized: model=gpt-4o-mini, temperature=0.1
+    # [Traigent] Injecting optimized parameters
 
     response = llm.invoke(prompt)
     return getattr(response, "content", str(response))

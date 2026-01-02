@@ -1,4 +1,4 @@
-"""Storage and persistence for TraiGent SDK."""
+"""Storage and persistence for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-STORAGE REQ-STOR-007 SYNC-StorageLogging
 

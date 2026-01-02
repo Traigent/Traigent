@@ -1,7 +1,7 @@
-# TraiGent SDK Copilot Instructions
+# Traigent SDK Copilot Instructions
 
 ## 🧠 Project Context
-TraiGent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
+Traigent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
 
 **Key Technologies**: Python 3.11+, Optuna, LangChain, FastAPI, asyncio, Pydantic, MyPy
 

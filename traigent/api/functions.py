@@ -1,4 +1,4 @@
-"""Standalone API functions for TraiGent SDK."""
+"""Standalone API functions for Traigent SDK."""
 
 # Traceability: CONC-Layer-API CONC-Quality-Usability CONC-Quality-Maintainability FUNC-API-ENTRY REQ-API-001 SYNC-OptimizationFlow
 
@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
@@ -55,7 +55,7 @@ def configure(
     parallel_config: ParallelConfig | dict[str, Any] | None = None,
     objectives: ObjectiveSchema | Sequence[str] | None = None,
 ) -> bool:
-    """Configure global TraiGent SDK settings.
+    """Configure global Traigent SDK settings.
 
     Args:
         default_storage_backend: Default storage ("edge_analytics", "s3", "gcs")
@@ -113,41 +113,54 @@ def configure(
         validate_or_raise(result)
         flag_registry.apply_config(feature_flags)
 
-    if parallel_config is not None:
-        coerced = coerce_parallel_config(parallel_config)
-        if coerced is None:
-            logger.debug(
-                "parallel_config explicitly set to None; leaving existing value unchanged"
-            )
-        else:
-            existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
-            merged_config, _ = merge_parallel_configs(
-                [
-                    (existing_config, "global-default"),
-                    (coerced, "configure"),
-                ]
-            )
-            _GLOBAL_CONFIG["parallel_config"] = merged_config
-            if coerced.thread_workers is not None and parallel_workers is None:
-                # Keep legacy parallel_workers in sync for components still reading it
-                result = Validators.validate_positive_int(
-                    coerced.thread_workers, "parallel_config.thread_workers"
-                )
-                validate_or_raise(result)
-                _GLOBAL_CONFIG["parallel_workers"] = coerced.thread_workers
-
-    if objectives is not None:
-        from traigent.core.objectives import (
-            normalize_objectives,
-            schema_to_objective_names,
-        )
-
-        schema = normalize_objectives(objectives)
-        _GLOBAL_CONFIG["objective_schema"] = schema
-        _GLOBAL_CONFIG["objectives"] = schema_to_objective_names(schema)
+    _apply_parallel_config(parallel_config, parallel_workers=parallel_workers)
+    _apply_objectives(objectives)
 
     logger.info("Updated global configuration")
     return True
+
+
+def _apply_parallel_config(
+    parallel_config: ParallelConfig | dict[str, Any] | None,
+    *,
+    parallel_workers: int | None,
+) -> None:
+    if parallel_config is None:
+        return
+
+    coerced = coerce_parallel_config(parallel_config)
+    if coerced is None:
+        logger.debug(
+            "parallel_config explicitly set to None; leaving existing value unchanged"
+        )
+        return
+
+    existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
+    merged_config, _ = merge_parallel_configs(
+        [
+            (existing_config, "global-default"),
+            (coerced, "configure"),
+        ]
+    )
+    _GLOBAL_CONFIG["parallel_config"] = merged_config
+    if coerced.thread_workers is not None and parallel_workers is None:
+        # Keep legacy parallel_workers in sync for components still reading it
+        result = Validators.validate_positive_int(
+            coerced.thread_workers, "parallel_config.thread_workers"
+        )
+        validate_or_raise(result)
+        _GLOBAL_CONFIG["parallel_workers"] = coerced.thread_workers
+
+
+def _apply_objectives(objectives: ObjectiveSchema | Sequence[str] | None) -> None:
+    if objectives is None:
+        return
+
+    from traigent.core.objectives import normalize_objectives, schema_to_objective_names
+
+    schema = normalize_objectives(objectives)
+    _GLOBAL_CONFIG["objective_schema"] = schema
+    _GLOBAL_CONFIG["objectives"] = schema_to_objective_names(schema)
 
 
 def initialize(  # noqa: C901
@@ -156,7 +169,7 @@ def initialize(  # noqa: C901
     config: TraigentConfig | None = None,
     **kwargs: Any,
 ) -> bool:
-    """Initialize TraiGent SDK for local or cloud operation.
+    """Initialize Traigent SDK for local or cloud operation.
 
     This function configures the SDK for integration with the Traigent backend,
     enabling seamless optimization with experiment tracking and storage.
@@ -199,7 +212,7 @@ def initialize(  # noqa: C901
     _apply_additional_overrides(kwargs)
     _configure_logging_settings(config)
 
-    logger.info("TraiGent SDK initialized successfully")
+    logger.info("Traigent SDK initialized successfully")
     return True
 
 
@@ -256,7 +269,7 @@ def _apply_config_settings(config: TraigentConfig) -> None:
         "edge_analytics" if config.is_edge_analytics_mode() else "cloud"
     )
 
-    logger.info(f"TraiGent configured for {config.execution_mode} mode")
+    logger.info(f"Traigent configured for {config.execution_mode} mode")
 
 
 def _apply_additional_overrides(overrides: dict[str, Any]) -> None:
@@ -294,11 +307,11 @@ def get_api_key(provider: str) -> str | None:
     Returns:
         The API key if found, None otherwise
     """
-    return _API_KEY_MANAGER.get_api_key(provider)
+    return cast(str | None, _API_KEY_MANAGER.get_api_key(provider))
 
 
 def _coerce_config_dict(
-    config: Any,
+    config: object,
     *,
     source: str,
     current_state: str,
@@ -357,7 +370,7 @@ def get_config() -> dict[str, Any]:
         )
 
     # Fall back to context config (set by ConfigurationContext in wrappers)
-    context_config = _get_context_config()
+    context_config = cast(object, _get_context_config())
     if isinstance(context_config, dict) and context_config:
         return _coerce_config_dict(
             context_config,
@@ -420,8 +433,7 @@ def get_trial_config() -> dict[str, Any]:
     # Validate trial context has required fields
     if not isinstance(trial_ctx, dict):
         raise OptimizationStateError(
-            "Trial context is corrupted - expected dict but got "
-            f"{type(trial_ctx).__name__}.",
+            f"Trial context is corrupted - expected dict but got {type(trial_ctx).__name__}.",
             current_state="INVALID_TRIAL_CONTEXT",
             expected_states=["OPTIMIZING"],
         )
@@ -435,7 +447,7 @@ def get_trial_config() -> dict[str, Any]:
         )
 
     # Get the actual config from context
-    config = _get_context_config()
+    config = cast(object, _get_context_config())
     return _coerce_config_dict(
         config,
         source="Trial",
@@ -691,14 +703,14 @@ def _check_integration(module_path: str) -> bool:
 
 
 def get_version_info() -> dict[str, Any]:
-    """Get TraiGent SDK version and capability information.
+    """Get Traigent SDK version and capability information.
 
     Returns:
         Dict with version, supported features, and system info
 
     Example:
         >>> info = traigent.get_version_info()
-        >>> print(f"TraiGent SDK v{info['version']}")
+        >>> print(f"Traigent SDK v{info['version']}")
         >>> print(f"Available algorithms: {info['algorithms']}")
     """
     import platform
@@ -706,11 +718,21 @@ def get_version_info() -> dict[str, Any]:
 
     from traigent import __version__
 
+    algorithms = list_optimizers()
+    if not algorithms:
+        try:
+            from traigent.optimizers.registry import _register_builtin_optimizers
+
+            _register_builtin_optimizers()
+            algorithms = list_optimizers()
+        except Exception:
+            algorithms = []
+
     return {
         "version": __version__,
         "python_version": sys.version,
         "platform": platform.platform(),
-        "algorithms": list_optimizers(),
+        "algorithms": algorithms,
         "features": {
             "grid_search": True,
             "random_search": True,
@@ -755,7 +777,7 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         >>> for i, config in enumerate(insights['top_configurations'][:3]):
         ...     print(f"{i+1}. {config['config']} → {config['score']:.2%} accuracy, ${config.get('cost_analysis', {}).get('cost_per_query', 0):.3f}/1K queries")
     """
-    return _get_optimization_insights(results)
+    return cast(dict[str, Any], _get_optimization_insights(results))
 
 
 def get_global_parallel_config() -> ParallelConfig:

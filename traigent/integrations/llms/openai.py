@@ -1,4 +1,4 @@
-"""OpenAI SDK Integration for TraiGent.
+"""OpenAI SDK Integration for Traigent.
 
 This module provides seamless integration with the OpenAI Python SDK,
 enabling zero-code-change optimization of OpenAI applications through
@@ -32,7 +32,7 @@ logger = get_logger(__name__)
 
 
 class OpenAIIntegration:
-    """Enhanced OpenAI SDK integration with TraiGent optimization."""
+    """Enhanced OpenAI SDK integration with Traigent optimization."""
 
     def __init__(self) -> None:
         """Initialize OpenAI SDK integration."""
@@ -115,7 +115,7 @@ _openai_integration = OpenAIIntegration()
 
 
 def enable_openai_optimization(client_types: list[str] | None = None) -> None:
-    """Enable TraiGent optimization for OpenAI SDK applications.
+    """Enable Traigent optimization for OpenAI SDK applications.
 
     This function enables automatic parameter override for OpenAI SDK clients,
     allowing seamless optimization without code changes.
@@ -143,7 +143,7 @@ def enable_openai_optimization(client_types: list[str] | None = None) -> None:
             )
             return response.choices[0].message.content
 
-        # TraiGent will automatically test different models/parameters
+        # Traigent will automatically test different models/parameters
         result = my_openai_app()
         ```
     """
@@ -245,7 +245,7 @@ def auto_detect_openai() -> None:
 def enable_streaming_optimization() -> None:
     """Enable optimization specifically for streaming completions.
 
-    This helper automatically sets stream=True in the TraiGent configuration
+    This helper automatically sets stream=True in the Traigent configuration
     when optimizing OpenAI streaming calls.
     """
     from ..config.context import set_config

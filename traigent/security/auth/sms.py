@@ -113,7 +113,7 @@ class SMSAuthProvider:
             self._rate_limit[user_id].append(now)
 
             message = self.client.messages.create(
-                body=f"Your TraiGent verification code is: {code}\n\nThis code expires in {self.code_expiry_minutes} minutes.",
+                body=f"Your Traigent verification code is: {code}\n\nThis code expires in {self.code_expiry_minutes} minutes.",
                 from_=self.from_number,
                 to=phone_number,
             )

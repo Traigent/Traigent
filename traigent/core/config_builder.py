@@ -1,4 +1,4 @@
-"""Configuration builder for TraiGent optimization system.
+"""Configuration builder for Traigent optimization system.
 
 This module provides builder patterns and utilities for constructing and
 validating configuration objects for the optimization system.

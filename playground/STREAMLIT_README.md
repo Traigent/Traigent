@@ -1,6 +1,6 @@
-# TraiGent Playground - Streamlit UI
+# Traigent Playground - Streamlit UI
 
-A comprehensive web interface for managing LangChain optimization problems and running TraiGent optimizations with visual feedback.
+A comprehensive web interface for managing LangChain optimization problems and running Traigent optimizations with visual feedback.
 
 ## 🚀 Quick Start
 
@@ -166,7 +166,7 @@ This was a known issue that has been fixed. The system now generates context-spe
 
 ## 🧪 Testing
 
-The TraiGent Playground includes comprehensive testing:
+The Traigent Playground includes comprehensive testing:
 
 ```bash
 # Run tests for the Playground components
@@ -195,4 +195,4 @@ To add new features:
 
 ## 📝 License
 
-Part of the TraiGent SDK - MIT License
+Part of the Traigent SDK - MIT License

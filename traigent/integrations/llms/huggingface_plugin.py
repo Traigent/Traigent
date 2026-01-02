@@ -1,4 +1,4 @@
-"""HuggingFace integration plugin for TraiGent.
+"""HuggingFace integration plugin for Traigent.
 
 This module provides the HuggingFace-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -49,7 +49,7 @@ class HuggingFacePlugin(LLMPlugin):
             supported_packages=["huggingface_hub", "transformers"],
             priority=IntegrationPriority.NORMAL,
             description="HuggingFace integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["huggingface_hub>=0.20.0"],
             supports_versions={"huggingface_hub": "0."},
         )

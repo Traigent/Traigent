@@ -7,7 +7,7 @@ and measuring the cost-performance tradeoffs of different budget configurations.
 
 # CUSTOM LOGIC - NOT PART OF TRAIGENT:
 # This example implements custom budget allocation logic.
-# Token budget management is not a built-in TraiGent feature.
+# Token budget management is not a built-in Traigent feature.
 
 from __future__ import annotations
 

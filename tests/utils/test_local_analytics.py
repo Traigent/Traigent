@@ -387,14 +387,16 @@ class TestConvenienceFunctions:
         )
 
         # Should not raise any errors
-        collect_and_submit_analytics(config)
+        result = collect_and_submit_analytics(config)
+        assert result is None  # Function returns None
 
     def test_collect_and_submit_analytics_non_local(self):
         """Test convenience function in non-Edge Analytics mode."""
         config = TraigentConfig(execution_mode="cloud", enable_usage_analytics=True)
 
         # Should not raise any errors
-        collect_and_submit_analytics(config)
+        result = collect_and_submit_analytics(config)
+        assert result is None  # Function returns None
 
     @patch("threading.Thread")
     def test_collect_and_submit_analytics_success(self, mock_thread_class):

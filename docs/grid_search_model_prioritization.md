@@ -4,6 +4,8 @@
 
 Changed the GridSearchOptimizer to place the `model` parameter **last** in the iteration order instead of first, enabling faster model comparison with limited trial budgets.
 
+**Note:** Spider case-study references below are historical; only `paper_experiments/case_study_fever/` exists in this repo today.
+
 ## Motivation
 
 Previously, when running grid search with a limited number of trials (e.g., 30 trials out of 729 total combinations), all trials would use the same model because `model` was placed first in the parameter order. This meant users couldn't compare different models without running the complete grid.
@@ -54,7 +56,7 @@ if "model" in sorted_names:
 
 Updated `test_model_prioritized_when_no_order` to expect model last instead of first.
 
-**Spider Custom Optimizer:** `paper_experiments/case_study_spider/pipeline.py`
+**Spider Custom Optimizer:** `paper_experiments/case_study_spider/pipeline.py` (no longer in this repo)
 
 **Completely removed** the `_OrderedGridSearchOptimizer` class and its global registration. This custom optimizer was:
 1. **Registered globally** at module import time, overriding the standard grid optimizer for ALL case studies (not just Spider)
@@ -124,7 +126,7 @@ def my_function(input):
     return result
 ```
 
-With `--trials 30`, you'll now see all 3 models tested instead of just one.
+With `max_trials=30`, you'll now see all 3 models tested instead of just one.
 
 ## Date
 

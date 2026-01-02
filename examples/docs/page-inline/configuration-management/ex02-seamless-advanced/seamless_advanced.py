@@ -1,6 +1,6 @@
 """Seamless Injection (Advanced) example module.
 
-Multiple LLM instances; TraiGent will optimize parameters for each.
+Multiple LLM instances; Traigent will optimize parameters for each.
 """
 
 from __future__ import annotations

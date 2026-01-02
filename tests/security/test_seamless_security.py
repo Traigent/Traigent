@@ -25,20 +25,28 @@ class TestASTTransformerSecurity:
         tree = ast.parse(source)
 
         # Check for exec calls
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "exec":
-                    pytest.fail("Found exec() call in SeamlessParameterProvider")
+        exec_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "exec"
+        ]
+        assert len(exec_calls) == 0, "Found exec() call in SeamlessParameterProvider"
 
     def test_no_eval_usage(self):
         """Verify that SeamlessParameterProvider doesn't use eval()."""
         source = inspect.getsource(SeamlessParameterProvider)
         tree = ast.parse(source)
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Name) and node.func.id == "eval":
-                    pytest.fail("Found eval() call in SeamlessParameterProvider")
+        eval_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "eval"
+        ]
+        assert len(eval_calls) == 0, "Found eval() call in SeamlessParameterProvider"
 
     def test_import_injection_blocked(self):
         """Test that import statements cannot be injected."""

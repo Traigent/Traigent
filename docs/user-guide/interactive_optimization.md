@@ -1,12 +1,12 @@
 # Interactive Optimization Guide
 
-This guide explains how to use TraiGent's interactive optimization model for client-side execution with remote guidance.
+This guide explains how to use Traigent's interactive optimization model for client-side execution with remote guidance.
 
 ## Overview
 
 The interactive optimization model enables a hybrid approach where:
 
-- **Configuration suggestions** come from the TraiGent Cloud Service
+- **Configuration suggestions** come from the Traigent Cloud Service
 - **Function execution** happens on your local machine
 - **Results** are reported back to guide the next suggestion
 
@@ -74,11 +74,11 @@ The service provides configurations based on:
 ### Step 1: Setup
 
 ```python
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
 # Initialize cloud client
-client = TraiGentCloudClient(api_key="your-api-key")
+client = TraigentCloudClient(api_key="your-api-key")
 
 # Create interactive optimizer
 optimizer = InteractiveOptimizer(
@@ -355,7 +355,7 @@ except SessionError as e:
 
 ```python
 # Configure retry behavior
-client = TraiGentCloudClient(
+client = TraigentCloudClient(
     api_key="your-key",
     max_retries=5,
     timeout=60.0
@@ -372,9 +372,9 @@ await asyncio.sleep(1.0)  # Add delay between trials if needed
 
 ## Next Steps
 
-1. Check out the [complete example](../../examples/interactive_optimization.py)
+1. Explore the [examples catalog](../../examples/docs/START_HERE.md)
 2. Learn about [agent-based optimization](./agent_optimization.md)
-3. Read the [API reference](../api/interactive_optimizer.md)
+3. Read the [API reference](../api-reference/interactive_optimizer.md)
 4. Join our [community forum](https://community.traigent.ai) for support
 
 ---

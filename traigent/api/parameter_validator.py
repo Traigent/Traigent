@@ -188,25 +188,145 @@ class ParameterValidator:
         if not isinstance(config_space, dict):
             raise ValidationError("configuration_space must be a dictionary")
 
+        # Reject empty configuration space
+        if len(config_space) == 0:
+            raise ValidationError(
+                "configuration_space cannot be empty. "
+                "You must define at least one parameter to optimize. "
+                "Example: {'model': ['gpt-3.5-turbo', 'gpt-4'], 'temperature': [0.3, 0.7]}"
+            )
+
         for key, value in config_space.items():
             if not isinstance(key, str):
                 raise ValidationError(
                     f"Configuration space keys must be strings, got {type(key)}"
                 )
 
-            # Validate value format
-            if not self._is_valid_config_value(value):
-                raise ValidationError(
-                    f"Invalid configuration space value for '{key}': {value}. "
-                    f"Must be list (discrete), tuple (range), or dict (nested)"
+            # Validate value format with specific error messages
+            error_msg = self._get_config_value_error(key, value)
+            if error_msg:
+                raise ValidationError(error_msg)
+
+    def _validate_list_value(self, key: str, value: list[Any]) -> str | None:
+        """Validate a list configuration value."""
+        if len(value) == 0:
+            return (
+                f"Parameter '{key}' has an empty list. "
+                f"Provide at least one value to try. "
+                f"Example: ['{key}_value1', '{key}_value2']"
+            )
+        return None
+
+    def _validate_tuple_value(self, key: str, value: tuple[Any, ...]) -> str | None:
+        """Validate a tuple (range) configuration value."""
+        if len(value) != 2:
+            return (
+                f"Parameter '{key}' has an invalid range tuple with {len(value)} elements. "
+                f"Continuous ranges must have exactly 2 elements: (min, max). "
+                f"Example: (0.0, 1.0)"
+            )
+        if not all(isinstance(v, (int, float)) for v in value):
+            return (
+                f"Parameter '{key}' has non-numeric range values: {value}. "
+                f"Range tuples must contain numbers. "
+                f"For string options, use a list instead: ['{value[0]}', '{value[1]}']"
+            )
+        low, high = value
+        if low > high:
+            return (
+                f"Parameter '{key}' has invalid range ({low}, {high}) where min > max. "
+                f"The first value must be less than the second. "
+                f"Did you mean ({high}, {low})?"
+            )
+        if low == high:
+            return (
+                f"Parameter '{key}' has a point range ({low}, {high}) where min equals max. "
+                f"A range with equal bounds has no values to search. "
+                f"Use a single-element list [{low}] for a fixed value, "
+                f"or provide a proper range like ({low}, {high + 0.5})"
+            )
+        return None
+
+    def _validate_typed_dict_bounds(
+        self, key: str, value: dict[str, Any], param_type: str
+    ) -> str | None:
+        """Validate bounds for typed numeric parameter definitions."""
+        if "low" not in value or "high" not in value:
+            return (
+                f"Parameter '{key}' with type '{param_type}' must have "
+                f"'low' and 'high' bounds."
+            )
+        low, high = value["low"], value["high"]
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            return (
+                f"Parameter '{key}' has non-numeric bounds: low={low!r}, high={high!r}"
+            )
+        if low >= high:
+            return (
+                f"Parameter '{key}' has invalid bounds: "
+                f"low ({low}) must be less than high ({high})"
+            )
+        return None
+
+    def _validate_dict_value(self, key: str, value: dict[str, Any]) -> str | None:
+        """Validate a dict configuration value (nested config or typed param)."""
+        if len(value) == 0:
+            return (
+                f"Parameter '{key}' has an empty nested configuration. "
+                f"Provide at least one sub-parameter."
+            )
+        # Accept typed parameter definitions (from Range/IntRange/LogRange)
+        # Format: {"type": "float"|"int", "low": x, "high": y, ...}
+        if "type" in value:
+            param_type = value.get("type")
+            valid_types = ("float", "int", "integer", "categorical", "fixed")
+            if param_type not in valid_types:
+                return (
+                    f"Parameter '{key}' has unknown type: {param_type!r}. "
+                    f"Valid types are: {', '.join(valid_types)}"
                 )
+            # Validate bounds for numeric types
+            if param_type in ("float", "int", "integer"):
+                return self._validate_typed_dict_bounds(key, value, param_type)
+        return None
+
+    def _get_config_value_error(self, key: str, value: Any) -> str | None:
+        """Get specific error message for invalid config value, or None if valid."""
+        if isinstance(value, list):
+            return self._validate_list_value(key, value)
+
+        if isinstance(value, tuple):
+            return self._validate_tuple_value(key, value)
+
+        if isinstance(value, dict):
+            return self._validate_dict_value(key, value)
+
+        # Not a valid type
+        return (
+            f"Parameter '{key}' has invalid type {type(value).__name__}: {value!r}. "
+            f"Configuration values must be: "
+            f"list (discrete values), tuple (continuous range), or dict (nested config). "
+            f"Example: ['value1', 'value2'] or (0.0, 1.0)"
+        )
 
     def _is_valid_config_value(self, value: Any) -> bool:
-        """Check if a configuration space value is valid."""
+        """Check if a configuration space value is valid.
+
+        Returns True if valid, or a string error message if invalid.
+        For backward compatibility, also returns False for invalid values.
+        """
         if isinstance(value, list):
             return len(value) > 0
         elif isinstance(value, tuple):
-            return len(value) == 2 and all(isinstance(v, (int, float)) for v in value)
+            if len(value) != 2:
+                return False
+            if not all(isinstance(v, (int, float)) for v in value):
+                return False
+            # Check that min < max (not min == max or min > max)
+            low, high = value
+            if low >= high:
+                return False
+            return True
         elif isinstance(value, dict):
             return len(value) > 0
         else:

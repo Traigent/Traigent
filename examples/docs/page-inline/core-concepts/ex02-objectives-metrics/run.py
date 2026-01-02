@@ -20,7 +20,7 @@ async def main() -> None:
     """Run the objectives and metrics example."""
     results_file = "results.json"
 
-    print("Running TraiGent Objectives & Metrics Example")
+    print("Running Traigent Objectives & Metrics Example")
     print("=" * 50)
 
     # Demonstrate objective types
@@ -80,7 +80,7 @@ async def main() -> None:
             },
         },
         "pareto_optimization": {
-            "description": "TraiGent finds Pareto-optimal solutions",
+            "description": "Traigent finds Pareto-optimal solutions",
             "explanation": "Solutions where improving one objective would worsen another",
             "benefit": "Get the best possible tradeoffs for your use case",
         },

@@ -1,11 +1,11 @@
-"""Edge case tests for TraiGent cloud client."""
+"""Edge case tests for Traigent cloud client."""
 
 import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentOptimizationRequest,
@@ -51,7 +51,7 @@ class TestCloudClientEdgeCases:
             )
             mock_auth_manager.return_value = mock_auth_instance
 
-            client = TraiGentCloudClient(api_key="test-key")
+            client = TraigentCloudClient(api_key="test-key")
             # Create a mock session that behaves like aiohttp.ClientSession
             client._session = Mock()
             client._session.post = AsyncMock()

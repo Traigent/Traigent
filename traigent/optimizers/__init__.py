@@ -1,4 +1,4 @@
-"""Optimization algorithms for TraiGent SDK."""
+"""Optimization algorithms for Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Maintainability CONC-Quality-Performance FUNC-OPT-ALGORITHMS REQ-OPT-ALG-004 SYNC-OptimizationFlow
 

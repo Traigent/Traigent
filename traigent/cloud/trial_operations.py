@@ -1,4 +1,4 @@
-"""Trial management operations for TraiGent Cloud Client.
+"""Trial management operations for Traigent Cloud Client.
 
 This module handles trial registration, result submission, and metrics tracking
 for optimization experiments.
@@ -545,7 +545,7 @@ class TrialOperations:
         error_message: str | None = None,
         execution_mode: str | None = None,
     ) -> bool:
-        """Submit trial results via the TraiGent session endpoint.
+        """Submit trial results via the Traigent session endpoint.
 
         Args:
             session_id: Session ID

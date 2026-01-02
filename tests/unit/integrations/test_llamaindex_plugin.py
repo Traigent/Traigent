@@ -94,7 +94,7 @@ class TestLlamaIndexPlugin:
         assert "aretrieve" in retriever_methods
 
     def test_parameter_mappings(self):
-        """Test parameter mappings from TraiGent to LlamaIndex."""
+        """Test parameter mappings from Traigent to LlamaIndex."""
         mappings = self.plugin.get_parameter_mappings()
 
         # Core LLM parameters

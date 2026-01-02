@@ -1,4 +1,4 @@
-"""Multi-objective optimization utilities for TraiGent."""
+"""Multi-objective optimization utilities for Traigent."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Maintainability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 

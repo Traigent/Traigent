@@ -290,19 +290,20 @@ class TestConvenienceFunctions:
 
     def test_enable_disable_framework_overrides(self):
         """Test enable/disable framework overrides functions."""
-        # Test enable
-        enable_framework_overrides(["openai.OpenAI"])
-        # Should not raise any errors
+        # Test enable - returns FrameworkOverrideManager
+        result1 = enable_framework_overrides(["openai.OpenAI"])
+        assert isinstance(result1, FrameworkOverrideManager)
 
-        # Test disable
-        disable_framework_overrides()
-        # Should not raise any errors
+        # Test disable - returns None
+        result2 = disable_framework_overrides()
+        assert result2 is None
 
     def test_override_all_platforms(self):
         """Test override_all_platforms function."""
-        # Should not raise any errors
-        override_all_platforms()
-        disable_framework_overrides()
+        result1 = override_all_platforms()
+        result2 = disable_framework_overrides()
+        assert result1 is None  # Function returns None
+        assert result2 is None  # Function returns None
 
     def test_register_framework_mapping(self):
         """Test register_framework_mapping function."""

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Results & Analysis - Viewing Results (Sentiment Classification).
 
-Simple classifier optimized with TraiGent; demonstrates results table.
+Simple classifier optimized with Traigent; demonstrates results table.
 """
 import json
 import os

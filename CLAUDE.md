@@ -1,7 +1,7 @@
-# TraiGent SDK Claude Instructions
+# Traigent SDK Claude Instructions
 
 ## 🧠 Project Context
-TraiGent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
+Traigent is a Python SDK for zero-code LLM optimization using decorators (`@traigent.optimize`). It intercepts calls, injects parameters, and optimizes against objectives (accuracy, cost, latency).
 
 ## 🏗️ Architecture & Patterns
 - **Entry Point**: `traigent/api/decorators.py` (`@optimize`) wraps user functions in `OptimizedFunction` (`traigent/core/optimized_function.py`).
@@ -63,8 +63,102 @@ The CI workflow uses different flags than local development:
 4. **Secrets**: NEVER hardcode secrets. Use `traigent.utils.env_config` or `os.environ`.
 5. **Type Hints**: Required for all public APIs. Run `make lint` to verify.
 6. **Dependencies**: Add new deps to `pyproject.toml` under the appropriate optional group (e.g., `integrations`).
+7. **SonarQube Compliance**: Avoid patterns that trigger SonarQube S2583 (see below).
+
+## ⚠️ SonarQube S2583: Conditions Always True/False
+
+SonarQube uses interprocedural analysis and flags conditions it determines are always true/false. **This is a CI blocker.**
+
+### Patterns to AVOID
+
+```python
+# BAD - Combined condition with ternary re-checking same condition
+if p <= 0 or p >= 1:
+    return 0.0 if p <= 0 else 1.0  # S2583: "p <= 0" always true here
+
+# BAD - Even separate ifs can be flagged if SonarQube determines callers never hit them
+if p <= 0:
+    return 0.0
+if p >= 1:  # S2583: If all callers pass p in (0,1), this is "always false"
+    return 1.0
+```
+
+### Correct Approach
+
+For **internal helper functions** where all callers guarantee valid input:
+
+```python
+def _internal_func(p: float) -> float:
+    """Args: p: Value strictly in (0, 1). Callers must validate."""
+    # No boundary checks - documented precondition, callers guarantee validity
+    ...
+```
+
+For **public API functions** that accept untrusted input, keep validation but use explicit ValueError:
+
+```python
+def public_func(p: float) -> float:
+    """Args: p: Probability in [0, 1]."""
+    if not 0 <= p <= 1:
+        raise ValueError(f"p must be in [0, 1], got {p}")
+    ...
+```
 
 ## 🧩 Common Tasks
 - **New Integration**: Create adapter in `traigent/integrations/`, register in `traigent/integrations/registry.py`.
 - **New Metric**: Implement `BaseMetric` in `traigent/metrics/`, register in `metric_registry.py`.
 - **Debug**: Set `TRAIGENT_LOG_LEVEL=DEBUG`.
+
+## 🧪 Test Quality Guidelines (CRITICAL)
+
+When writing tests, avoid these anti-patterns identified in our meta-analysis:
+
+### Anti-Patterns to Avoid
+
+1. **IT-VRO (Validator Reliance Only)**: Never rely solely on a validator abstraction without explicit assertions.
+
+   ```python
+   # BAD - relies only on validator
+   validation = result_validator(scenario, result)
+   assert validation.passed
+
+   # GOOD - explicit assertions THEN validator
+   assert len(result.trials) >= 1, "Should have trials"
+   for trial in result.trials:
+       assert trial.config, "Trial should have config"
+   validation = result_validator(scenario, result)
+   assert validation.passed
+   ```
+
+2. **IT-VTA (Vacuous Truth Assertions)**: Avoid assertions that are always true.
+
+   ```python
+   # BAD - always true
+   assert len(result.trials) >= 0
+   assert not isinstance(result, Exception)
+
+   # GOOD - meaningful bounds
+   assert len(result.trials) >= expected_min
+   assert result.stop_reason == "max_trials"
+   ```
+
+3. **IT-CBM (Condition-Behavior Mismatch)**: Ensure test setup actually triggers the behavior under test.
+
+   ```python
+   # BAD - config space (2 items) smaller than max_trials (10)
+   # max_trials never triggers; config_exhaustion triggers first
+   scenario = TestScenario(max_trials=10, config_space={"model": ["a", "b"]})
+
+   # GOOD - config space larger than max_trials
+   scenario = TestScenario(max_trials=3, config_space={"model": ["a", "b", "c", "d", "e"]})
+   ```
+
+### Test Structure Best Practices
+
+1. **Explicit over Implicit**: Always add explicit assertions for the specific behavior under test.
+2. **Specific Values**: Assert exact expected values, not just types.
+3. **Document Validator Contract**: Know what validators check and don't check.
+4. **Unit Tests**: Prefer direct function calls with specific assertions over complex scenario runners.
+
+### Reference
+See `tests/optimizer_validation/META_ANALYSIS_REPORT.md` and `tests/optimizer_validation/INDEPENDENT_META_ANALYSIS.md` for detailed analysis of test quality issues.

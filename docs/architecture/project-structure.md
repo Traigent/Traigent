@@ -1,6 +1,6 @@
-# TraiGent SDK Project Structure
+# Traigent SDK Project Structure
 
-This document outlines the current structure of the TraiGent SDK project.
+This document outlines the current structure of the Traigent SDK project.
 
 ## Root Directory (current)
 
@@ -9,18 +9,21 @@ Traigent/
 ├── README.md                  # Main project documentation
 ├── LICENSE                    # MIT license
 ├── pyproject.toml             # Build and packaging config
+├── uv.lock                    # Lockfile (uv)
 ├── pytest.ini                 # Test configuration
 ├── requirements/              # Dependency sets and guides
 ├── traigent/                  # Core SDK source code
 ├── tests/                     # Test suite
 ├── examples/                  # Examples and demo runners
+├── use-cases/                 # End-to-end agent use cases
+├── demos/                     # TVL demo scripts
 ├── scripts/                   # Utility scripts
 ├── docs/                      # Documentation (this folder)
-├── reports/                   # Project reports and audits
 ├── baselines/                 # Baseline artifacts
-├── data/, results*/           # Local datasets and run outputs
-├── docs/tvl/                  # TVL website source and assets
-└── integrations_* / tools/…   # Integration plans, tooling, inventories
+├── data/, local_results/, results-ci/ # Local datasets and run outputs
+├── paper_experiments/         # Research case study pipeline (historical)
+├── tools/                     # Automation and traceability utilities
+└── marketing/, runtime/, stress_tests/ # Support tooling and experiments
 ```
 
 ## Key Directories Explained
@@ -53,8 +56,11 @@ Documentation content:
 ### `/examples/`
 Usage examples and the Examples Navigator (`examples/index.html`).
 
-### `/reports/`
-Project audits, quality reviews, and status reports.
+### `/demos/`
+Terminal demo scripts (TVL) for marketing and docs.
+
+### `/tools/`
+Automation and traceability utilities.
 
 ### `/scripts/`
 Helper scripts (e.g., launchers, verification, utilities).
@@ -63,7 +69,7 @@ Helper scripts (e.g., launchers, verification, utilities).
 
 1. **Clean Root**: Only essential project files in root directory
 2. **Grouped Dependencies**: All requirements files in dedicated directory
-3. **Archived Reports**: Temporary analysis files moved to docs/archive
+3. **Analysis Outputs**: Generated artifacts live in `local_results/`, `results-ci/`, `mlruns/`, or `htmlcov/`
 4. **Logical Grouping**: Related functionality grouped together
 5. **Clear Naming**: Descriptive directory and file names
 

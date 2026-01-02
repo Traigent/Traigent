@@ -53,7 +53,7 @@ Introduce a first-class **`max_total_examples`** limit that:
 ## Risks & Mitigations
 
 - **Incomplete metrics:** if `examples_attempted` is missing from evaluators, the stop condition should fall back to metadata and raise a clear error if still unavailable.
-- **Parallel overshoot:** reduce scheduled trial batches when remaining sample budget is smaller than `parallel_trials`.
+- **Parallel overshoot:** reduce scheduled trial batches when remaining sample budget is smaller than `parallel_config.trial_concurrency`.
 - **Backwards compatibility:** default behaviour remains unchanged when the new option is omitted. Document the distinction between per-trial `max_examples` and global `max_total_examples`.
 - **Sampler consistency:** guarantee sampler instances are isolated per worker/batch so parallel trials do not share mutable state, and surface factory hooks for custom implementations.
 

@@ -1,4 +1,4 @@
-"""CLI commands for TraiGent hooks management.
+"""CLI commands for Traigent hooks management.
 
 Provides commands to install, validate, and manage Git hooks
 for agent configuration validation.
@@ -19,9 +19,9 @@ console = Console()
 
 @click.group()
 def hooks() -> None:
-    """Manage TraiGent Git hooks for agent validation.
+    """Manage Traigent Git hooks for agent validation.
 
-    TraiGent hooks validate agent configurations against constraints
+    Traigent hooks validate agent configurations against constraints
     defined in traigent.yml before allowing Git pushes.
 
     Examples:
@@ -37,7 +37,7 @@ def hooks() -> None:
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing hooks")
 @click.option("--path", "-p", type=click.Path(exists=True), help="Git repository path")
 def install(force: bool, path: str | None) -> None:
-    """Install TraiGent Git hooks.
+    """Install Traigent Git hooks.
 
     Installs pre-push and pre-commit hooks that validate agent
     configurations against traigent.yml constraints.
@@ -51,7 +51,7 @@ def install(force: bool, path: str | None) -> None:
         console.print("Run this command from within a Git repository")
         raise SystemExit(1)
 
-    console.print("\n[bold blue]Installing TraiGent Git hooks[/bold blue]")
+    console.print("\n[bold blue]Installing Traigent Git hooks[/bold blue]")
     console.print(f"Repository: {repo_path}\n")
 
     installer = HooksInstaller(repo_path)
@@ -81,9 +81,9 @@ def install(force: bool, path: str | None) -> None:
 @hooks.command()
 @click.option("--path", "-p", type=click.Path(exists=True), help="Git repository path")
 def uninstall(path: str | None) -> None:
-    """Uninstall TraiGent Git hooks.
+    """Uninstall Traigent Git hooks.
 
-    Removes TraiGent-installed hooks and restores any backed-up hooks.
+    Removes Traigent-installed hooks and restores any backed-up hooks.
     """
     from traigent.hooks.installer import HooksInstaller, find_git_root
 
@@ -93,7 +93,7 @@ def uninstall(path: str | None) -> None:
         console.print("[red]Error: Not in a Git repository[/red]")
         raise SystemExit(1)
 
-    console.print("\n[bold blue]Uninstalling TraiGent Git hooks[/bold blue]")
+    console.print("\n[bold blue]Uninstalling Traigent Git hooks[/bold blue]")
 
     installer = HooksInstaller(repo_path)
 
@@ -105,7 +105,7 @@ def uninstall(path: str | None) -> None:
                 console.print(f"  [green]Removed[/green]: .git/hooks/{hook_name}")
             else:
                 console.print(
-                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (not a TraiGent hook)"
+                    f"  [yellow]Skipped[/yellow]: .git/hooks/{hook_name} (not a Traigent hook)"
                 )
 
         console.print("\n[green]Hooks uninstalled![/green]")
@@ -118,13 +118,13 @@ def uninstall(path: str | None) -> None:
 @hooks.command()
 @click.option("--path", "-p", type=click.Path(exists=True), help="Git repository path")
 def status(path: str | None) -> None:
-    """Show status of TraiGent Git hooks."""
+    """Show status of Traigent Git hooks."""
     from traigent.hooks.config import find_config_file
     from traigent.hooks.installer import HooksInstaller, find_git_root
 
     repo_path = Path(path) if path else find_git_root()
 
-    console.print("\n[bold blue]TraiGent Hooks Status[/bold blue]\n")
+    console.print("\n[bold blue]Traigent Hooks Status[/bold blue]\n")
 
     # Git repository status
     if repo_path is None:
@@ -152,7 +152,7 @@ def status(path: str | None) -> None:
 
     for hook_name, status_str in hook_status.items():
         if status_str == "installed (traigent)":
-            status_display = "[green]Installed (TraiGent)[/green]"
+            status_display = "[green]Installed (Traigent)[/green]"
         elif status_str == "installed (other)":
             status_display = "[yellow]Installed (Other)[/yellow]"
         else:
@@ -186,7 +186,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
 
     target_path = Path(target)
 
-    console.print("\n[bold blue]TraiGent Agent Validation[/bold blue]")
+    console.print("\n[bold blue]Traigent Agent Validation[/bold blue]")
     console.print(f"Target: {target_path}\n")
 
     # Load configuration
@@ -204,7 +204,7 @@ def validate(target: str, config: str | None, exit_code: bool, verbose: bool) ->
 
     # Check if validation is enabled
     if not hooks_config.enabled:
-        console.print("[yellow]TraiGent hooks are disabled in configuration[/yellow]")
+        console.print("[yellow]Traigent hooks are disabled in configuration[/yellow]")
         return
 
     # Run validation

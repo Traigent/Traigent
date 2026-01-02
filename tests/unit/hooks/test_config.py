@@ -1,6 +1,6 @@
 """Unit tests for traigent.hooks.config.
 
-Tests for configuration loading and validation for TraiGent hooks,
+Tests for configuration loading and validation for Traigent hooks,
 including YAML parsing, config file discovery, and constraint definitions.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -685,7 +685,7 @@ class TestCreateDefaultConfig:
             with open(config_path) as f:
                 content = f.read()
             assert "old content" not in content
-            assert "TraiGent Agent Configuration" in content
+            assert "Traigent Agent Configuration" in content
 
     def test_create_default_config_loadable(self) -> None:
         """Test create_default_config produces loadable configuration."""

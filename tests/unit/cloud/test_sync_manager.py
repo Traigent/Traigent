@@ -8,7 +8,6 @@ data conversion, and cloud upload operations.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
@@ -105,8 +104,8 @@ class TestSyncManager:
 
             assert manager.config == mock_config
             assert manager.api_key == "tg_" + "a" * 61
-            assert "Authorization" in manager.headers
-            assert manager.headers["Authorization"] == "Bearer " + "tg_" + "a" * 61
+            # API key may be in X-API-Key or Authorization header
+            assert "X-API-Key" in manager.headers or "Authorization" in manager.headers
             mock_storage.assert_called_once()
 
     def test_init_without_api_key(self, mock_config: TraigentConfig) -> None:

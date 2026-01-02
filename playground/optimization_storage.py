@@ -2,7 +2,7 @@
 Optimization Results Storage Module
 ===================================
 
-This module provides file-based storage functionality for TraiGent optimization results.
+This module provides file-based storage functionality for Traigent optimization results.
 It handles saving, loading, and managing optimization runs across different problems.
 
 Features:

@@ -180,7 +180,6 @@ def style_accuracy_metric(
     metric_functions={"style_accuracy": style_accuracy_metric},
     execution_mode="edge_analytics",
     injection_mode="seamless",
-    algorithm="bayesian",
 )
 def draft_email(brief: str) -> str:
     if MOCK:
@@ -221,7 +220,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 9 if not MOCK else 4
-        r = await draft_email.optimize(max_trials=trials)
+        r = await draft_email.optimize(algorithm="bayesian", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

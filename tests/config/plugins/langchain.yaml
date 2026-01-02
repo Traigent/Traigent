@@ -3,7 +3,7 @@
 
 metadata:
   description: "LangChain framework integration with custom settings"
-  author: "TraiGent Team"
+  author: "Traigent Team"
 
 # Parameter mappings for LangChain
 mappings:

@@ -1,4 +1,4 @@
-"""Security headers middleware for TraiGent API endpoints.
+"""Security headers middleware for Traigent API endpoints.
 
 Provides comprehensive security headers following OWASP best practices
 to protect against common web vulnerabilities.

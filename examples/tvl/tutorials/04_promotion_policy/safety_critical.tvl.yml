@@ -1,0 +1,147 @@
+# TVL 0.9 Tutorial: Promotion Policy for Safety-Critical Systems
+#
+# In production LLM systems, we need statistical rigor when deciding
+# whether to promote a new configuration. This tutorial covers:
+#
+# - Epsilon-Pareto dominance: Require meaningful improvements
+# - Chance constraints: Probabilistic safety guarantees
+# - Benjamini-Hochberg correction: Control false discovery rate
+# - Tie-breakers: Resolve equivalent candidates
+
+spec:
+  id: safety-critical-llm
+  version: "1.0"
+
+metadata:
+  owner: tutorials@traigent.ai
+  description: Production LLM with strict promotion policy
+  tags:
+    - tutorial
+    - promotion-policy
+    - safety-critical
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini"]
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 0.8]  # Lower max for safety
+      resolution: 0.1
+    default: 0.3
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 1024]
+    default: 512
+
+  - name: safety_prompt
+    type: bool
+    default: true
+
+objectives:
+  - name: task_accuracy
+    direction: maximize
+    weight: 1.0
+
+  - name: response_latency
+    direction: minimize
+    unit: ms
+    weight: 0.7
+
+  - name: safety_score
+    direction: maximize
+    weight: 1.5  # Higher weight for safety
+
+  - name: cost_per_request
+    direction: minimize
+    unit: USD
+    weight: 0.5
+
+constraints:
+  structural:
+    # Safety-critical: always use safety prompt
+    - expr: "params.safety_prompt == true"
+
+    # Keep temperature low for predictability
+    - expr: "params.temperature <= 0.5"
+
+# Comprehensive promotion policy
+promotion_policy:
+  # Epsilon-Pareto: candidate must be better by at least epsilon
+  # on some objectives and not worse by epsilon on others
+  dominance: epsilon_pareto
+
+  # Significance level for statistical tests
+  # Lower alpha = more stringent = fewer false positives
+  alpha: 0.01  # 1% significance (stricter than default 5%)
+
+  # Minimum meaningful improvement per objective
+  # These are the "epsilon" values in epsilon-Pareto
+  min_effect:
+    task_accuracy: 0.02      # 2% accuracy improvement required
+    response_latency: 25.0   # 25ms latency reduction required
+    safety_score: 0.005      # 0.5% safety improvement required
+    cost_per_request: 0.0001 # $0.0001 cost reduction required
+
+  # Multiple testing correction: Benjamini-Hochberg
+  # Controls False Discovery Rate when testing multiple objectives
+  adjust: BH
+
+  # Chance constraints: probabilistic safety guarantees
+  # Format: P(metric >= threshold) >= confidence
+  chance_constraints:
+    # Safety score must be >= 0.95 with 99.9% confidence
+    - name: safety_score
+      threshold: 0.95
+      confidence: 0.999
+
+    # Accuracy must be >= 0.85 with 95% confidence
+    - name: task_accuracy
+      threshold: 0.85
+      confidence: 0.95
+
+    # Latency must be <= 2000ms with 99% confidence (expressed as minimum)
+    # (Note: for "less than" constraints, model as negative threshold)
+
+  # Tie-breakers when candidates are statistically equivalent
+  # Use min_abs_deviation: prefer configs closest to current production
+  tie_breakers:
+    cost_per_request: min_abs_deviation
+
+# Conservative exploration for safety-critical system
+exploration:
+  strategy:
+    type: nsga2
+    initial_sampling: sobol
+  parallelism:
+    max_parallel_trials: 2  # Fewer parallel to monitor closely
+  budgets:
+    max_trials: 50  # Smaller budget for safety
+    max_spend_usd: 10.0
+    max_wallclock_s: 1800
+
+# Environment overlays for different stages
+environments:
+  staging:
+    overrides:
+      promotion_policy:
+        alpha: 0.05  # More lenient in staging
+        chance_constraints:
+          - name: safety_score
+            threshold: 0.90  # Lower threshold in staging
+            confidence: 0.95
+
+  production:
+    extends: staging
+    overrides:
+      promotion_policy:
+        alpha: 0.01  # Stricter in production
+        chance_constraints:
+          - name: safety_score
+            threshold: 0.98  # Higher threshold in production
+            confidence: 0.999

@@ -45,7 +45,7 @@ class TestCloudIntegration:
 
         # When cloud service fails, it should fall back to local
         # Mock the cloud service to fail during context manager entry
-        with patch("traigent.cloud.client.TraiGentCloudClient") as MockClient:
+        with patch("traigent.cloud.client.TraigentCloudClient") as MockClient:
             mock_instance = Mock()
             mock_instance.__aenter__ = AsyncMock(
                 side_effect=Exception("Cloud service unavailable")
@@ -166,7 +166,7 @@ class TestCloudIntegration:
         )
 
         # Mock cloud service to raise authentication error during initialization
-        with patch("traigent.cloud.client.TraiGentCloudClient") as MockClient:
+        with patch("traigent.cloud.client.TraigentCloudClient") as MockClient:
             # Make the class initialization raise the error
             mock_instance = Mock()
             mock_instance.__aenter__ = AsyncMock(

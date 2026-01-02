@@ -1,4 +1,4 @@
-"""OptiGen Integration for TraiGent SDK with execution mode support."""
+"""OptiGen Integration for Traigent SDK with execution mode support."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-CLOUD-HYBRID FUNC-INVOKERS REQ-CLOUD-009 REQ-INV-006 SYNC-CloudHybrid
 

@@ -1,0 +1,456 @@
+{
+  "agent": "source_quality",
+  "commit_sha": "c88a1fd5bbc34c044bc95509af19c9c059d085da",
+  "timestamp": "2026-01-02T12:52:33.851577+00:00",
+  "metrics": {
+    "total_python_files": 279,
+    "total_lines": 121549,
+    "lint_errors": 0,
+    "lint_warnings": 66,
+    "type_coverage_pct": 96.69,
+    "todo_count": 0,
+    "fixme_count": 0,
+    "deprecated_count": 16,
+    "files_over_500_lines": [
+      {
+        "file": "traigent/evaluators/base.py",
+        "lines": 2578
+      },
+      {
+        "file": "traigent/core/optimized_function.py",
+        "lines": 2144
+      },
+      {
+        "file": "traigent/core/orchestrator.py",
+        "lines": 1918
+      },
+      {
+        "file": "traigent/analytics/intelligence.py",
+        "lines": 1898
+      },
+      {
+        "file": "traigent/cloud/client.py",
+        "lines": 1698
+      },
+      {
+        "file": "traigent/cloud/auth.py",
+        "lines": 1634
+      },
+      {
+        "file": "traigent/analytics/predictive.py",
+        "lines": 1542
+      },
+      {
+        "file": "traigent/cloud/billing.py",
+        "lines": 1298
+      },
+      {
+        "file": "traigent/tvl/spec_loader.py",
+        "lines": 1267
+      },
+      {
+        "file": "traigent/security/encryption.py",
+        "lines": 1263
+      },
+      {
+        "file": "traigent/api/types.py",
+        "lines": 1256
+      },
+      {
+        "file": "traigent/analytics/cost_optimization.py",
+        "lines": 1240
+      },
+      {
+        "file": "traigent/cloud/sessions.py",
+        "lines": 1229
+      },
+      {
+        "file": "traigent/evaluators/metrics_tracker.py",
+        "lines": 1207
+      },
+      {
+        "file": "traigent/analytics/anomaly.py",
+        "lines": 1167
+      },
+      {
+        "file": "traigent/evaluators/local.py",
+        "lines": 1153
+      },
+      {
+        "file": "traigent/api/decorators.py",
+        "lines": 1145
+      },
+      {
+        "file": "traigent/optimizers/remote_services.py",
+        "lines": 1139
+      },
+      {
+        "file": "traigent/cli/main.py",
+        "lines": 1134
+      },
+      {
+        "file": "traigent/api/constraints.py",
+        "lines": 1108
+      },
+      {
+        "file": "traigent/utils/validation.py",
+        "lines": 1044
+      },
+      {
+        "file": "traigent/core/cost_enforcement.py",
+        "lines": 1041
+      },
+      {
+        "file": "traigent/config/providers.py",
+        "lines": 1024
+      },
+      {
+        "file": "traigent/cloud/trial_operations.py",
+        "lines": 975
+      },
+      {
+        "file": "traigent/security/credentials.py",
+        "lines": 963
+      },
+      {
+        "file": "traigent/security/audit.py",
+        "lines": 958
+      },
+      {
+        "file": "traigent/cloud/backend_client.py",
+        "lines": 931
+      },
+      {
+        "file": "traigent/integrations/framework_override.py",
+        "lines": 924
+      },
+      {
+        "file": "traigent/optimizers/service_registry.py",
+        "lines": 890
+      },
+      {
+        "file": "traigent/cloud/production_mcp_client.py",
+        "lines": 884
+      },
+      {
+        "file": "traigent/cloud/session_operations.py",
+        "lines": 876
+      },
+      {
+        "file": "traigent/security/tenant.py",
+        "lines": 869
+      },
+      {
+        "file": "traigent/agents/specification_generator.py",
+        "lines": 856
+      },
+      {
+        "file": "traigent/agents/platforms.py",
+        "lines": 854
+      },
+      {
+        "file": "traigent/security/enterprise.py",
+        "lines": 839
+      },
+      {
+        "file": "traigent/cloud/api_operations.py",
+        "lines": 819
+      },
+      {
+        "file": "traigent/analytics/meta_learning.py",
+        "lines": 814
+      },
+      {
+        "file": "traigent/cloud/backend_bridges.py",
+        "lines": 805
+      },
+      {
+        "file": "traigent/cloud/dataset_converter.py",
+        "lines": 803
+      },
+      {
+        "file": "traigent/api/functions.py",
+        "lines": 797
+      },
+      {
+        "file": "traigent/optimizers/batch_optimizers.py",
+        "lines": 791
+      },
+      {
+        "file": "traigent/cloud/integration_manager.py",
+        "lines": 788
+      },
+      {
+        "file": "traigent/utils/optimization_analyzer.py",
+        "lines": 780
+      },
+      {
+        "file": "traigent/core/objectives.py",
+        "lines": 779
+      },
+      {
+        "file": "traigent/storage/local_storage.py",
+        "lines": 758
+      },
+      {
+        "file": "traigent/utils/optimization_logger.py",
+        "lines": 756
+      },
+      {
+        "file": "traigent/tvl/statistics.py",
+        "lines": 744
+      },
+      {
+        "file": "traigent/tvl/models.py",
+        "lines": 738
+      },
+      {
+        "file": "traigent/cloud/backend_synchronizer.py",
+        "lines": 736
+      },
+      {
+        "file": "traigent/core/backend_session_manager.py",
+        "lines": 731
+      },
+      {
+        "file": "traigent/integrations/utils/discovery.py",
+        "lines": 712
+      },
+      {
+        "file": "traigent/security/jwt_validator.py",
+        "lines": 706
+      },
+      {
+        "file": "traigent/optimizers/optuna_optimizer.py",
+        "lines": 691
+      },
+      {
+        "file": "traigent/integrations/observability/wandb.py",
+        "lines": 691
+      },
+      {
+        "file": "traigent/cli/auth_commands.py",
+        "lines": 688
+      },
+      {
+        "file": "traigent/core/trial_lifecycle.py",
+        "lines": 686
+      },
+      {
+        "file": "traigent/api/parameter_ranges.py",
+        "lines": 683
+      },
+      {
+        "file": "traigent/optimizers/cloud_optimizer.py",
+        "lines": 680
+      },
+      {
+        "file": "traigent/utils/callbacks.py",
+        "lines": 671
+      },
+      {
+        "file": "traigent/core/utils.py",
+        "lines": 668
+      },
+      {
+        "file": "traigent/agents/config_mapper.py",
+        "lines": 652
+      },
+      {
+        "file": "traigent/cli/local_commands.py",
+        "lines": 643
+      },
+      {
+        "file": "traigent/visualization/plots.py",
+        "lines": 636
+      },
+      {
+        "file": "traigent/security/rate_limiter.py",
+        "lines": 625
+      },
+      {
+        "file": "traigent/optigen_integration.py",
+        "lines": 622
+      },
+      {
+        "file": "traigent/analytics/scheduling.py",
+        "lines": 620
+      },
+      {
+        "file": "traigent/cloud/subset_selection.py",
+        "lines": 612
+      },
+      {
+        "file": "traigent/integrations/utils/parameter_normalizer.py",
+        "lines": 611
+      },
+      {
+        "file": "traigent/utils/retry.py",
+        "lines": 600
+      },
+      {
+        "file": "traigent/integrations/bedrock_client.py",
+        "lines": 598
+      },
+      {
+        "file": "traigent/cloud/sync_manager.py",
+        "lines": 598
+      },
+      {
+        "file": "traigent/integrations/observability/mlflow.py",
+        "lines": 595
+      },
+      {
+        "file": "traigent/plugins/registry.py",
+        "lines": 587
+      },
+      {
+        "file": "traigent/utils/reproducibility.py",
+        "lines": 586
+      },
+      {
+        "file": "traigent/optimizers/optuna_coordinator.py",
+        "lines": 580
+      },
+      {
+        "file": "traigent/optimizers/bayesian.py",
+        "lines": 579
+      },
+      {
+        "file": "traigent/core/config_builder.py",
+        "lines": 571
+      },
+      {
+        "file": "traigent/core/tracing.py",
+        "lines": 570
+      },
+      {
+        "file": "traigent/utils/batch_processing.py",
+        "lines": 565
+      },
+      {
+        "file": "traigent/utils/file_versioning.py",
+        "lines": 556
+      },
+      {
+        "file": "traigent/cloud/event_manager.py",
+        "lines": 551
+      },
+      {
+        "file": "traigent/utils/constraints.py",
+        "lines": 549
+      },
+      {
+        "file": "traigent/utils/cost_calculator.py",
+        "lines": 548
+      },
+      {
+        "file": "traigent/utils/persistence.py",
+        "lines": 547
+      },
+      {
+        "file": "traigent/api/config_space.py",
+        "lines": 542
+      },
+      {
+        "file": "traigent/utils/local_analytics.py",
+        "lines": 540
+      },
+      {
+        "file": "traigent/core/evaluator_wrapper.py",
+        "lines": 539
+      },
+      {
+        "file": "traigent/cloud/token_manager.py",
+        "lines": 538
+      },
+      {
+        "file": "traigent/config/types.py",
+        "lines": 521
+      },
+      {
+        "file": "traigent/security/crypto_utils.py",
+        "lines": 520
+      },
+      {
+        "file": "traigent/config/ast_transformer.py",
+        "lines": 519
+      },
+      {
+        "file": "traigent/utils/importance.py",
+        "lines": 514
+      },
+      {
+        "file": "traigent/tvl/promotion_gate.py",
+        "lines": 511
+      },
+      {
+        "file": "traigent/utils/multi_objective.py",
+        "lines": 507
+      },
+      {
+        "file": "traigent/security/session_manager.py",
+        "lines": 504
+      }
+    ]
+  },
+  "findings": [
+    {
+      "severity": "info",
+      "file": "traigent/evaluators/base.py",
+      "issue": "Large file with 2578 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/core/optimized_function.py",
+      "issue": "Large file with 2144 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/core/orchestrator.py",
+      "issue": "Large file with 1918 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/analytics/intelligence.py",
+      "issue": "Large file with 1898 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/cloud/client.py",
+      "issue": "Large file with 1698 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/cloud/auth.py",
+      "issue": "Large file with 1634 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/analytics/predictive.py",
+      "issue": "Large file with 1542 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/cloud/billing.py",
+      "issue": "Large file with 1298 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/tvl/spec_loader.py",
+      "issue": "Large file with 1267 lines - consider refactoring"
+    },
+    {
+      "severity": "info",
+      "file": "traigent/security/encryption.py",
+      "issue": "Large file with 1263 lines - consider refactoring"
+    },
+    {
+      "severity": "warning",
+      "file": "multiple files",
+      "issue": "Found 16 DEPRECATED markers in codebase"
+    }
+  ],
+  "score": 5.0,
+  "pass": true
+}

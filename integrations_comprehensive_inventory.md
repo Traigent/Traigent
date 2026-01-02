@@ -1,4 +1,4 @@
-# TraiGent Integrations Directory - Comprehensive Inventory
+# Traigent Integrations Directory - Comprehensive Inventory
 
 ## Overview
 The `traigent/integrations/` directory contains the framework integration system that enables zero-code optimization across multiple LLM providers and frameworks. This system uses a hybrid plugin + framework override architecture.

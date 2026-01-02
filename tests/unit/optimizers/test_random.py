@@ -48,9 +48,10 @@ class TestRandomSearchOptimizer:
         config_space = {"model": ["a", "b", "c"], "size": ["small", "medium", "large"]}
         optimizer = RandomSearchOptimizer(config_space, ["accuracy"], random_seed=42)
 
-        # Generate multiple configs
+        # Config space has 9 unique combinations (3x3), so we can only generate 9 configs
+        # Generate all 9 unique configs
         configs = []
-        for _ in range(10):
+        for _ in range(9):
             config = optimizer.suggest_next_trial([])
             configs.append(config)
 
@@ -60,9 +61,13 @@ class TestRandomSearchOptimizer:
             assert config["model"] in ["a", "b", "c"]
             assert config["size"] in ["small", "medium", "large"]
 
+        # All 9 should be unique
+        config_strs = [str(sorted(c.items())) for c in configs]
+        assert len(set(config_strs)) == 9
+
         # With fixed seed, should be deterministic
         optimizer2 = RandomSearchOptimizer(config_space, ["accuracy"], random_seed=42)
-        configs2 = [optimizer2.suggest_next_trial([]) for _ in range(10)]
+        configs2 = [optimizer2.suggest_next_trial([]) for _ in range(9)]
 
         assert configs == configs2
 
@@ -114,7 +119,8 @@ class TestRandomSearchOptimizer:
 
     def test_suggest_next_trial_max_trials_reached(self):
         """Test that suggestion fails when max trials is reached."""
-        optimizer = RandomSearchOptimizer({"x": [0, 1]}, ["accuracy"], max_trials=3)
+        # Use continuous space so exhaustion doesn't trigger before max_trials
+        optimizer = RandomSearchOptimizer({"x": (0.0, 1.0)}, ["accuracy"], max_trials=3)
 
         # Suggest 3 trials
         for _ in range(3):
@@ -342,8 +348,12 @@ class TestRandomSearchOptimizer:
         """Test behavior with empty config space."""
         optimizer = RandomSearchOptimizer({}, ["accuracy"])
 
-        config = optimizer.suggest_next_trial([])
-        assert config == {}
+        # Empty config space has cardinality 0, so it's immediately exhausted
+        assert optimizer.config_space_cardinality == 0
+        assert optimizer.is_config_space_exhausted()
+
+        with pytest.raises(OptimizationError, match="Config space exhausted"):
+            optimizer.suggest_next_trial([])
 
     def test_single_value_parameters(self):
         """Test parameters with single possible value."""

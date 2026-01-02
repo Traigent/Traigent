@@ -10,6 +10,7 @@ All data sent is privacy-safe and contains no sensitive information.
 import asyncio
 import logging
 import uuid
+import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,10 @@ from traigent.storage.local_storage import LocalStorageManager
 
 if TYPE_CHECKING:
     pass
+
+# Note: "Unclosed client session" warnings from background analytics tasks
+# are suppressed locally in _submit_analytics_background() using catch_warnings()
+# to avoid process-wide suppression that could hide real leaks elsewhere.
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +40,7 @@ class LocalAnalytics:
         """Initialize analytics collector.
 
         Args:
-            config: TraiGent configuration with analytics settings
+            config: Traigent configuration with analytics settings
         """
         self.config = config
         storage_path_option = config.get_local_storage_path()
@@ -225,7 +230,7 @@ class LocalAnalytics:
             api_key = BackendConfig.get_api_key()
             if not api_key:
                 logger.debug(
-                    "No OptiGen/TraiGent API key found, analytics submission skipped"
+                    "No OptiGen/Traigent API key found, analytics submission skipped"
                 )
                 return {"success": False, "reason": "No API key available"}
 
@@ -240,12 +245,13 @@ class LocalAnalytics:
                 api_key=api_key,
                 base_url=BackendConfig.get_backend_url(),
                 enable_fallback=False,  # We're explicitly sending analytics
+                timeout=5.0,  # Short timeout for analytics - don't block program exit
             )
 
-            async with backend_client:
+            try:
+                await backend_client.__aenter__()
                 # Create a lightweight analytics session
                 # Using the hybrid session method for analytics submission
-                # Since create_privacy_optimization_session doesn't exist in BackendIntegratedClient
                 (
                     session_id,
                     token,
@@ -314,6 +320,12 @@ class LocalAnalytics:
                         "success": False,
                         "reason": "Failed to submit trial results",
                     }
+            finally:
+                # Ensure session is closed even on cancellation
+                try:
+                    await backend_client.__aexit__(None, None, None)
+                except Exception:
+                    pass  # Best effort cleanup
 
         except TimeoutError:
             return {"success": False, "reason": "Request timeout"}
@@ -368,7 +380,6 @@ class LocalAnalytics:
         total_sessions = stats.get("total_sessions", 0)
         avg_trials = stats.get("avg_trials_per_session", 0)
         avg_config_space = stats.get("avg_config_space_size", 0)
-        stats.get("days_since_first_use", 0)
 
         # Estimate time investment
         estimated_time_per_trial = 2  # minutes (conservative estimate)
@@ -473,11 +484,28 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
             # We're in an async context, but we can't await here since this is a sync function
             # Instead, we'll schedule the coroutine to run soon without creating an unawaited task
             async def _submit_wrapper() -> None:
-                try:
-                    await analytics.submit_usage_stats()
-                    logger.debug("Analytics submission completed")
-                except Exception as e:
-                    logger.debug(f"Analytics submission failed: {e}")
+                # Suppress "Unclosed client session" warnings locally for this
+                # fire-and-forget task that may be cancelled on program exit
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message="Unclosed client session",
+                        category=ResourceWarning,
+                    )
+                    try:
+                        # Use timeout to ensure we don't block program exit
+                        await asyncio.wait_for(
+                            analytics.submit_usage_stats(), timeout=10.0
+                        )
+                        logger.debug("Analytics submission completed")
+                    except TimeoutError:
+                        logger.debug("Analytics submission timed out")
+                    except asyncio.CancelledError:
+                        # Task was cancelled (e.g., program exiting) - expected behavior
+                        logger.debug("Analytics submission cancelled")
+                        raise  # Re-raise to properly propagate cancellation
+                    except Exception as e:
+                        logger.debug(f"Analytics submission failed: {e}")
 
             # Use ensure_future which properly schedules the coroutine
             asyncio.ensure_future(_submit_wrapper())

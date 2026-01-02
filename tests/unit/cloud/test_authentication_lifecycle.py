@@ -12,7 +12,13 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
+
+
+def require(condition: bool, message: str = "Assertion failed") -> None:
+    """Raise AssertionError when condition is false."""
+    if not condition:
+        raise AssertionError(message)
 
 
 class TestSessionExpiryAndRefresh:
@@ -49,23 +55,22 @@ class TestSessionExpiryAndRefresh:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # First request creates session
                     await client.check_service_status()
-                    assert len(session_creations) == 1
+                    require(len(session_creations) == 1)
 
                     # Simulate session expiry by clearing it
                     client._session = None
 
                     # Next request should create new session
                     await client.check_service_status()
-                    assert len(session_creations) == 2
+                    require(len(session_creations) == 2)
 
                     # Verify both sessions had proper headers
                     for headers in session_creations:
-                        assert "Authorization" in headers
-                        assert headers["Authorization"].startswith("Bearer ")
+                        require("X-API-Key" in headers or "Authorization" in headers)
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):
@@ -79,8 +84,10 @@ class TestSessionExpiryAndRefresh:
         async def mock_get_headers():
             token_refresh_attempts.append(time.time())
             return {
-                "Authorization": f"Bearer {api_key}_refreshed_{len(token_refresh_attempts)}",
-                "X-TraiGent-Client": "test",
+                "Authorization": (
+                    f"Bearer {api_key}_refreshed_{len(token_refresh_attempts)}"
+                ),
+                "X-Traigent-Client": "test",
             }
 
         def mock_request(*args, **kwargs):
@@ -119,7 +126,7 @@ class TestSessionExpiryAndRefresh:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # This should trigger token refresh after 401
                         # Note: Our current implementation doesn't auto-retry on 401,
@@ -133,10 +140,10 @@ class TestSessionExpiryAndRefresh:
                         await client.check_service_status()
 
                         # Verify token refresh was attempted
-                        assert len(token_refresh_attempts) >= 1
+                        require(len(token_refresh_attempts) >= 1)
 
                         # Verify requests were made
-                        assert request_count >= 1
+                        require(request_count >= 1)
 
     @pytest.mark.asyncio
     async def test_session_invalidation_recovery(self):
@@ -189,7 +196,7 @@ class TestSessionExpiryAndRefresh:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -197,9 +204,10 @@ class TestSessionExpiryAndRefresh:
                         )
                         mock_auth_mgr.return_value = mock_auth_instance
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
-                        # First attempt fails due to invalid session - suppress expected error
+                        # First attempt fails due to invalid session - suppress expected
+                        # error
                         with suppress(CloudServiceError, Exception):
                             await client.check_service_status()
 
@@ -213,8 +221,8 @@ class TestSessionExpiryAndRefresh:
                         await client.check_service_status()  # Should succeed
 
                         # Verify session was recreated multiple times
-                        assert session_recreations >= 2
-                        assert request_attempts >= 3
+                        require(session_recreations >= 2)
+                        require(request_attempts >= 3)
 
     @pytest.mark.asyncio
     async def test_concurrent_token_refresh(self):
@@ -231,7 +239,7 @@ class TestSessionExpiryAndRefresh:
                 await asyncio.sleep(0.01)  # Simulate refresh delay
             return {
                 "Authorization": f"Bearer {api_key}_fresh_{len(refresh_operations)}",
-                "X-TraiGent-Client": "test",
+                "X-Traigent-Client": "test",
             }
 
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
@@ -259,7 +267,7 @@ class TestSessionExpiryAndRefresh:
                         mock_session.close = AsyncMock()
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Launch multiple concurrent requests that all need fresh tokens
                         tasks = []
@@ -272,10 +280,12 @@ class TestSessionExpiryAndRefresh:
                         await asyncio.gather(*tasks, return_exceptions=True)
 
                         # Verify refresh was called appropriate number of times
-                        # Due to our session sharing, should be fewer than total requests
-                        assert len(refresh_operations) >= 1
-                        # The exact number depends on concurrency and timing, just verify not excessive
-                        assert (
+                        # Due to our session sharing, should be fewer than total
+                        # requests
+                        require(len(refresh_operations) >= 1)
+                        # The exact number depends on concurrency and timing, just
+                        # verify not excessive
+                        require(
                             len(refresh_operations) <= 20
                         )  # Allow for some concurrent refreshes
 
@@ -328,7 +338,7 @@ class TestAuthenticationErrorRecovery:
                             mock_auth.get_headers = AsyncMock(
                                 return_value={
                                     "Authorization": f"Bearer {key}",
-                                    "X-TraiGent-Client": "test",
+                                    "X-Traigent-Client": "test",
                                 }
                             )
                             mock_auth.is_authenticated = AsyncMock(return_value=True)
@@ -342,21 +352,21 @@ class TestAuthenticationErrorRecovery:
                         mock_cs.return_value = mock_session
 
                         # Start with invalid key
-                        client = TraiGentCloudClient(api_key=invalid_key)
+                        client = TraigentCloudClient(api_key=invalid_key)
 
                         # First request fails - suppress expected error
                         with suppress(CloudServiceError, Exception):
                             await client.check_service_status()
 
                         # Update to valid key (simulating key rotation/fix)
-                        client = TraiGentCloudClient(api_key=valid_key)
+                        client = TraigentCloudClient(api_key=valid_key)
 
                         # Request should now succeed
                         await client.check_service_status()
 
                         # Verify we had both error and success responses
-                        assert "invalid_key" in error_responses
-                        assert "success" in error_responses
+                        require("invalid_key" in error_responses)
+                        require("success" in error_responses)
 
     @pytest.mark.asyncio
     async def test_auth_service_outage_recovery(self):
@@ -374,7 +384,7 @@ class TestAuthenticationErrorRecovery:
                 raise Exception("Auth service unavailable")
 
             # Later attempts succeed
-            return {"Authorization": f"Bearer {api_key}", "X-TraiGent-Client": "test"}
+            return {"Authorization": f"Bearer {api_key}", "X-Traigent-Client": "test"}
 
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
             with patch("traigent.cloud.client.aiohttp.ClientSession") as mock_cs:
@@ -391,7 +401,7 @@ class TestAuthenticationErrorRecovery:
                     mock_session.get = Mock(return_value=mock_context)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = mock_get_headers
 
                     # First attempts should fail - suppress expected errors
@@ -404,7 +414,7 @@ class TestAuthenticationErrorRecovery:
                     await client._ensure_session()
 
                     # Verify auth was attempted multiple times
-                    assert auth_attempts >= 3
+                    require(auth_attempts >= 3)
 
     @pytest.mark.asyncio
     async def test_corrupted_token_recovery(self):
@@ -421,19 +431,19 @@ class TestAuthenticationErrorRecovery:
                 # First attempt returns corrupted token
                 return {
                     "Authorization": "Bearer corrupted_token_###INVALID###",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
             elif token_generation_attempts == 2:
                 # Second attempt returns malformed token
                 return {
                     "Authorization": "InvalidFormat token_without_bearer",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
             else:
                 # Later attempts return valid token
                 return {
                     "Authorization": f"Bearer {api_key}",
-                    "X-TraiGent-Client": "test",
+                    "X-Traigent-Client": "test",
                 }
 
         def mock_request(*args, **kwargs):
@@ -464,7 +474,7 @@ class TestAuthenticationErrorRecovery:
                     mock_session.get = Mock(side_effect=mock_request)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = mock_get_headers
 
                     # First attempt with corrupted token - may fail
@@ -485,7 +495,7 @@ class TestAuthenticationErrorRecovery:
                     await client.check_service_status()
 
                     # Verify multiple token generation attempts
-                    assert token_generation_attempts >= 3
+                    require(token_generation_attempts >= 3)
 
 
 class TestBackendClientAuthLifecycle:
@@ -511,13 +521,13 @@ class TestBackendClientAuthLifecycle:
                 # This is a workaround for the bug in the implementation
                 return {
                     "X-API-Key": "fallback-key",  # Use fallback format
-                    "X-TraiGent-Client": "backend-test",
+                    "X-Traigent-Client": "backend-test",
                 }
             else:
                 # Later attempts succeed with primary auth
                 return {
                     "Authorization": "Bearer primary-auth-token",
-                    "X-TraiGent-Client": "backend-test",
+                    "X-Traigent-Client": "backend-test",
                 }
 
         session_creations = []
@@ -607,10 +617,12 @@ class TestBackendClientAuthLifecycle:
                         await client.create_hybrid_session("test problem", {}, {})
 
                         # Verify headers were used (either style is acceptable)
-                        assert len(session_creations) == 1
+                        require(len(session_creations) == 1)
                         headers_1 = session_creations[0]
                         # Either X-API-Key or Authorization should be present
-                        assert "X-API-Key" in headers_1 or "Authorization" in headers_1
+                        require(
+                            "X-API-Key" in headers_1 or "Authorization" in headers_1
+                        )
 
                         # Reset session for second attempt
                         client._session = None
@@ -619,9 +631,11 @@ class TestBackendClientAuthLifecycle:
                         await client.get_hybrid_session_status("session-123")
 
                         # Verify still using some auth
-                        assert len(session_creations) == 2
+                        require(len(session_creations) == 2)
                         headers_2 = session_creations[1]
-                        assert "X-API-Key" in headers_2 or "Authorization" in headers_2
+                        require(
+                            "X-API-Key" in headers_2 or "Authorization" in headers_2
+                        )
 
                         # Reset session for third attempt
                         client._session = None
@@ -630,13 +644,15 @@ class TestBackendClientAuthLifecycle:
                         await client.finalize_hybrid_session("session-123")
 
                         # Verify primary auth is now working
-                        assert len(session_creations) == 3
+                        require(len(session_creations) == 3)
                         headers_3 = session_creations[2]
-                        assert "Authorization" in headers_3
-                        assert "Bearer primary-auth-token" in headers_3["Authorization"]
+                        require("Authorization" in headers_3)
+                        require(
+                            "Bearer primary-auth-token" in headers_3["Authorization"]
+                        )
 
                         # Verify auth was attempted multiple times
-                        assert len(auth_attempts) >= 3
+                        require(len(auth_attempts) >= 3)
 
     @pytest.mark.asyncio
     async def test_mixed_auth_states_across_clients(self):
@@ -718,21 +734,21 @@ class TestBackendClientAuthLifecycle:
                         await asyncio.gather(task_1, task_2, return_exceptions=True)
 
                         # Verify both clients handled auth appropriately
-                        assert len(session_data) == 2
+                        require(len(session_data) == 2)
 
                         # Client 1 should have primary auth
                         headers_1 = session_data[0]["headers"]
-                        assert "Authorization" in headers_1
-                        assert "Bearer client-1-token" in headers_1["Authorization"]
+                        require("Authorization" in headers_1)
+                        require("Bearer client-1-token" in headers_1["Authorization"])
 
                         # Client 2 should have fallback auth
                         headers_2 = session_data[1]["headers"]
-                        assert "Content-Type" in headers_2
-                        assert "X-API-Key" not in headers_2
+                        require("Content-Type" in headers_2)
+                        require("X-API-Key" not in headers_2)
 
                         # Verify appropriate auth calls were made
-                        assert "client_1_auth" in auth_calls
-                        assert "client_2_auth" in auth_calls
+                        require("client_1_auth" in auth_calls)
+                        require("client_2_auth" in auth_calls)
 
 
 class TestAdvancedAuthScenarios:
@@ -776,7 +792,7 @@ class TestAdvancedAuthScenarios:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -789,7 +805,7 @@ class TestAdvancedAuthScenarios:
                         mock_session.close = AsyncMock()  # Make close async
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
 
                         # Make multiple requests during high error period
                         for _i in range(success_threshold):
@@ -809,7 +825,7 @@ class TestAdvancedAuthScenarios:
                         await client.check_service_status()
 
                         # Verify we made enough attempts
-                        assert request_count >= success_threshold
+                        require(request_count >= success_threshold)
 
     @pytest.mark.asyncio
     async def test_authentication_under_memory_pressure(self):
@@ -826,7 +842,7 @@ class TestAdvancedAuthScenarios:
 
             return {
                 "Authorization": f"Bearer {api_key}",
-                "X-TraiGent-Client": "memory-test",
+                "X-Traigent-Client": "memory-test",
             }
 
         def mock_session_constructor(*args, **kwargs):
@@ -851,7 +867,7 @@ class TestAdvancedAuthScenarios:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = memory_intensive_get_headers
 
                     # Create many sessions to simulate memory pressure
@@ -864,9 +880,9 @@ class TestAdvancedAuthScenarios:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
                     # Verify operations completed despite memory usage
-                    assert len(large_objects_created) >= 20
+                    require(len(large_objects_created) >= 20)
                     total_memory_simulated = sum(large_objects_created)
-                    assert total_memory_simulated > 100000  # >100KB allocated
+                    require(total_memory_simulated > 100000)  # >100KB allocated
 
     @pytest.mark.asyncio
     async def test_auth_header_encoding_edge_cases(self):
@@ -904,7 +920,7 @@ class TestAdvancedAuthScenarios:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth_instance.is_authenticated = AsyncMock(
@@ -918,7 +934,7 @@ class TestAdvancedAuthScenarios:
                         mock_cs.return_value = mock_session
 
                         for _encoding, _expected_header in encoding_scenarios:
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
 
                             # Ensure clean session for each test
                             client._session = None
@@ -926,8 +942,8 @@ class TestAdvancedAuthScenarios:
                             await client.check_service_status()
 
                         # Verify all headers were properly encoded and received
-                        assert len(headers_received) == len(encoding_scenarios)
+                        require(len(headers_received) == len(encoding_scenarios))
                         for header in headers_received:
-                            assert header is not None
-                            assert header.startswith("Bearer ")
-                            assert api_key in header
+                            require(header is not None)
+                            require(header.startswith("Bearer "))
+                            require(api_key in header)

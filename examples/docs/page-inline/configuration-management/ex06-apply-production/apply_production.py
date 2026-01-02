@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example: Production Configuration Management with TraiGent."""
+"""Example: Production Configuration Management with Traigent."""
 from __future__ import annotations
 
 import json
@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 
 class OptimizedChatService:
-    """Production-ready chat service with TraiGent configuration management."""
+    """Production-ready chat service with Traigent configuration management."""
 
     def __init__(self, config_path: str | None = None):
         """Initialize service with configuration management.
@@ -64,7 +64,7 @@ class OptimizedChatService:
         }
 
     def _setup_optimized_functions(self):
-        """Set up TraiGent-optimized functions."""
+        """Set up Traigent-optimized functions."""
 
         # Define the optimized greeting function
         @traigent.optimize(
@@ -217,7 +217,7 @@ class ProductionDeployment:
 
 def demo_production_usage():
     """Demonstrate production usage patterns."""
-    print("TraiGent Production Configuration Management")
+    print("Traigent Production Configuration Management")
     print("=" * 50)
 
     # Example 1: Basic production service

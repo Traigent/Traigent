@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Documentation Synchronization Script for TraiGent SDK
+Documentation Synchronization Script for Traigent SDK
 
 Automatically synchronizes documentation across multiple files to ensure consistency.
 Updates version numbers, feature lists, and API references.
@@ -297,7 +297,7 @@ class DocumentationSynchronizer:
 
 def main():
     """Main entry point."""
-    parser = argparse.ArgumentParser(description="Synchronize TraiGent documentation")
+    parser = argparse.ArgumentParser(description="Synchronize Traigent documentation")
     parser.add_argument("--version", help="Update version number everywhere")
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview changes without applying"
