@@ -161,19 +161,6 @@ DEFAULT_LOG_LEVEL = "INFO"
 DEBUG_MODE = False
 
 # =============================================================================
-# DEPRECATED CONSTANTS (for backward compatibility)
-# =============================================================================
-
-# Legacy constants maintained for backward compatibility
-# These should be gradually phased out in future versions
-
-# Old default timeout value
-LEGACY_TIMEOUT = 30.0
-
-# Old magic number for bounds checking
-LEGACY_EPSILON = 1e-6
-
-# =============================================================================
 # TYPE-SAFE CONSTANT GROUPS
 # =============================================================================
 

@@ -281,6 +281,16 @@ validate_*.py
 .release_review/**/.mypy_cache/
 .release_review/walkthrough_review/
 
+# Post-release fixes workspace
+# Keep core protocol/tracking files versioned for team sharing
+!.post_release_recommendation_fixes/
+!.post_release_recommendation_fixes/*.md
+# Ignore agent artifacts and caches
+.post_release_recommendation_fixes/**/artifacts/
+.post_release_recommendation_fixes/**/.mypy_cache/
+.post_release_recommendation_fixes/**/.tracking.lock
+.post_release_recommendation_fixes/**/tmp/
+
 # Marketing materials viewer (local development only)
 tools/marketing-viewer/
 run_marketing_viewer.sh
@@ -351,6 +361,7 @@ tests/optimizer_validation/viewer/graph_data.json
 tests/optimizer_validation/viewer/_results/
 tests/optimizer_validation/viewer/*.html
 !tests/optimizer_validation/viewer/index.html
+!tests/optimizer_validation/viewer/failed_tests.html
 tests/optimizer_validation/viewer/ontology/*.ttl
 !tests/optimizer_validation/viewer/ontology/schema.ttl
 

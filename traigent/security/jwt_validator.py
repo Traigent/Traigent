@@ -52,7 +52,6 @@ class ValidationMode(Enum):
     PRODUCTION = "production"  # Full verification, no bypass allowed
     STAGING = "staging"  # Full verification with extended logging
     DEVELOPMENT = "development"  # Time-limited tokens with warnings
-    STRUCTURE_ONLY = "structure_only"  # DEPRECATED: Minimal validation for testing only
 
 
 @dataclass
@@ -173,7 +172,6 @@ class SecureJWTValidator:
         elif self.validation_mode in [
             ValidationMode.STAGING,
             ValidationMode.DEVELOPMENT,
-            ValidationMode.STRUCTURE_ONLY,
         ]:
             # For non-production modes, warn about missing configuration but don't fail
             missing_configs = []
@@ -246,8 +244,6 @@ class SecureJWTValidator:
                 result = self._validate_staging(token)
             elif self.validation_mode == ValidationMode.DEVELOPMENT:
                 result = self._validate_development_secure(token)
-            elif self.validation_mode == ValidationMode.STRUCTURE_ONLY:
-                result = self._validate_structure_only(token)
             else:
                 raise JWTSecurityError(
                     f"Invalid validation mode: {self.validation_mode}"
@@ -515,89 +511,6 @@ class SecureJWTValidator:
             return JWTValidationResult(
                 valid=False,
                 error=f"Invalid token structure: {e}",
-                warnings=warnings,
-            )
-
-    def _validate_structure_only(self, token: str) -> JWTValidationResult:
-        """Structure-only validation - minimal validation for testing only.
-
-        SECURITY WARNING: This mode provides NO security validation whatsoever.
-        It only checks that the token has valid JWT structure.
-
-        NEVER use this in production. This mode is DEPRECATED and will be removed
-        in a future version.
-        """
-        import warnings as py_warnings
-
-        py_warnings.warn(
-            "STRUCTURE_ONLY validation mode is DEPRECATED and provides NO security. "
-            "It will be removed in a future version. Use ValidationMode.DEVELOPMENT "
-            "or ValidationMode.PRODUCTION instead.",
-            DeprecationWarning,
-            stacklevel=3,
-        )
-
-        warnings = [
-            "NO SECURITY VERIFICATION - Structure-only validation mode",
-            "NOT suitable for production use",
-            "Use only for testing purposes",
-            "DEPRECATED: This mode will be removed in a future version",
-        ]
-
-        try:
-            # Check if JWT library is available
-            if not JWT_AVAILABLE:
-                # Without JWT library, we can only do basic string checks
-                parts = token.split(".")
-                if len(parts) != 3:
-                    return JWTValidationResult(
-                        valid=False,
-                        error="Invalid JWT structure: must have 3 parts",
-                        warnings=warnings,
-                    )
-
-                # Basic success response when JWT unavailable
-                return JWTValidationResult(
-                    valid=True,
-                    payload={"structure_only": True, "no_verification": True},
-                    warnings=warnings,
-                    security_metadata={
-                        "mode": "structure_only_no_jwt",
-                        "validated_at": time.time(),
-                    },
-                )
-
-            # Decode without any verification - UNSAFE but needed for compatibility
-            # SECURITY NOTE: This is intentionally insecure for testing only
-            unverified_payload = jwt.decode(
-                token,
-                options={
-                    "verify_signature": False,  # nosec B105 - intentional for test mode
-                    "verify_exp": False,
-                },
-            )
-
-            return JWTValidationResult(
-                valid=True,
-                payload=unverified_payload,
-                expires_at=unverified_payload.get("exp"),
-                warnings=warnings,
-                security_metadata={
-                    "mode": "structure_only",
-                    "validated_at": time.time(),
-                },
-            )
-
-        except jwt.InvalidTokenError as e:
-            return JWTValidationResult(
-                valid=False,
-                error=f"Invalid JWT structure: {e}",
-                warnings=warnings,
-            )
-        except Exception as e:
-            return JWTValidationResult(
-                valid=False,
-                error=f"Token validation failed: {e}",
                 warnings=warnings,
             )
 

@@ -132,6 +132,66 @@ def process_results_with_evidence(data: dict[str, Any]) -> dict[str, Any]:
     return data
 
 
+def backfill_evidence_from_results() -> int:
+    """Backfill evidence from historical result files into persistent_results.
+
+    Scans all result JSON files and extracts evidence for any persistent
+    results that are missing it. This ensures complete test details are
+    available from previous runs.
+
+    Returns:
+        Number of results updated with evidence
+    """
+    persistent = load_persistent_results()
+    if not persistent:
+        return 0
+
+    # Find results missing evidence
+    missing_evidence = {
+        nodeid for nodeid, result in persistent.items() if not result.get("evidence")
+    }
+    if not missing_evidence:
+        return 0
+
+    # Scan all result files (sorted by modification time, newest first)
+    result_files = sorted(
+        RESULTS_DIR.glob("*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+    updated_count = 0
+    for result_file in result_files:
+        if result_file.name == "persistent_results.json":
+            continue
+        if result_file.name.endswith("_streaming.json"):
+            continue
+
+        if not missing_evidence:
+            break  # All filled
+
+        try:
+            with open(result_file) as f:
+                data = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        tests = data.get("tests", [])
+        for test in tests:
+            nodeid = test.get("nodeid")
+            if nodeid and nodeid in missing_evidence:
+                evidence = extract_evidence(test)
+                if evidence:
+                    persistent[nodeid]["evidence"] = evidence
+                    missing_evidence.discard(nodeid)
+                    updated_count += 1
+
+    if updated_count > 0:
+        save_persistent_results(persistent)
+
+    return updated_count
+
+
 def collect_tests() -> list[dict[str, Any]]:
     """Collect all test metadata using pytest's collection API."""
     import pytest
@@ -743,6 +803,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._handle_get_results()
         elif path == "/api/persistent-results":
             self._handle_get_persistent_results()
+        elif path == "/api/failed-tests":
+            self._handle_get_failed_tests()
         elif path.startswith("/api/run/status/"):
             job_id = path.split("/")[-1]
             self._handle_get_status(job_id)
@@ -768,6 +830,8 @@ class ViewerHandler(SimpleHTTPRequestHandler):
             self._handle_run_tests()
         elif path == "/api/chat":
             self._handle_chat()
+        elif path == "/api/backfill-evidence":
+            self._handle_backfill_evidence()
         else:
             self.send_error(404, "Not Found")
 
@@ -819,6 +883,47 @@ class ViewerHandler(SimpleHTTPRequestHandler):
         """Handle GET /api/persistent-results - return stored test results."""
         results = load_persistent_results()
         self._send_json(results)
+
+    def _handle_get_failed_tests(self) -> None:
+        """Handle GET /api/failed-tests - return only failed tests with details."""
+        persistent = load_persistent_results()
+
+        failed_tests = []
+        passed_count = 0
+        total_count = len(persistent)
+
+        for nodeid, result in persistent.items():
+            if result.get("outcome") == "failed":
+                failed_tests.append(
+                    {
+                        "nodeid": nodeid,
+                        "outcome": "failed",
+                        "duration": result.get("duration"),
+                        "longrepr": result.get("longrepr"),
+                        "evidence": result.get("evidence"),
+                    }
+                )
+            elif result.get("outcome") == "passed":
+                passed_count += 1
+
+        # Sort by nodeid for consistency
+        failed_tests.sort(key=lambda x: x["nodeid"])
+
+        self._send_json(
+            {
+                "failed": failed_tests,
+                "summary": {
+                    "failed": len(failed_tests),
+                    "passed": passed_count,
+                    "total": total_count,
+                },
+            }
+        )
+
+    def _handle_backfill_evidence(self) -> None:
+        """Handle POST /api/backfill-evidence - backfill evidence from result files."""
+        count = backfill_evidence_from_results()
+        self._send_json({"backfilled": count})
 
     def _handle_get_status(self, job_id: str) -> None:
         """Handle GET /api/run/status/:job_id - return job status with streaming updates."""
@@ -1055,6 +1160,11 @@ class ViewerHandler(SimpleHTTPRequestHandler):
 
 def start_server(host: str, port: int) -> None:
     """Start the test viewer server."""
+    # Backfill evidence from historical result files on startup
+    backfill_count = backfill_evidence_from_results()
+    if backfill_count > 0:
+        print(f"[startup] Backfilled evidence for {backfill_count} test results")
+
     server = HTTPServer((host, port), ViewerHandler)
 
     print(f"\n{'='*60}")

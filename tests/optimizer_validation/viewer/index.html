@@ -1296,6 +1296,7 @@
                     <span id="global-status-text">Running tests...</span>
                 </div>
                 <a href="coverage_analysis.html" style="text-decoration: none;"><button>Coverage Analysis</button></a>
+                <a href="failed_tests.html" style="text-decoration: none;"><button style="border-color: var(--error);">❌ Failed</button></a>
                 <button onclick="refreshTests()">Refresh</button>
                 <div class="run-controls">
                     <select id="run-mode-select">
@@ -3547,13 +3548,39 @@
         }
 
         function buildEvidenceDisplay(test, result) {
-            // If no evidence available, show a message
+            // If no evidence available, show test metadata from collection
             if (!result?.evidence) {
+                const params = test.params || {};
+                const hasParams = Object.keys(params).length > 0;
+                const hasResult = result?.outcome;
+
+                // Build a minimal info display from test metadata
+                let metadataHtml = '';
+                if (hasParams) {
+                    const paramRows = Object.entries(params).map(([k, v]) =>
+                        `<tr><td>${escapeHtml(k)}</td><td>${escapeHtml(String(v))}</td></tr>`
+                    ).join('');
+                    metadataHtml = `
+                        <div class="detail-section">
+                            <h3>Test Parameters</h3>
+                            <table class="summary-table">
+                                <tr><th>Parameter</th><th>Value</th></tr>
+                                ${paramRows}
+                            </table>
+                        </div>
+                    `;
+                }
+
+                const statusNote = hasResult
+                    ? `<p class="pending-value" style="color: var(--warning);">Detailed evidence not available for this run. Re-run the test to capture full details.</p>`
+                    : `<p class="pending-value">Run test to capture detailed evidence</p>`;
+
                 return `
                     <div class="detail-section">
                         <h3>Test Evidence</h3>
-                        <p class="pending-value">Run test to capture detailed evidence</p>
+                        ${statusNote}
                     </div>
+                    ${metadataHtml}
                 `;
             }
 

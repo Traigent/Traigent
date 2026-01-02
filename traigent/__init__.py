@@ -234,23 +234,5 @@ __all__ = [
     "StrategyConfig",
 ]
 
-# Legacy compatibility: expose the package via the builtins namespace.
-# DEPRECATED: This pollutes the global namespace and will be removed in v1.0.0.
-# Tests should use explicit imports: `import traigent`
-import os
-import warnings
-
-if os.environ.get("TRAIGENT_ENABLE_BUILTINS_COMPAT", "").lower() in ("1", "true"):
-    # Only enable if explicitly requested (for legacy test compatibility)
-    builtins.traigent = sys.modules[__name__]  # type: ignore[attr-defined]
-elif os.environ.get("PYTEST_CURRENT_TEST"):
-    # Auto-enable in pytest but warn about deprecation
-    warnings.warn(
-        "traigent is injected into builtins for test compatibility. "
-        "This is deprecated and will be removed in v1.0.0. "
-        "Use explicit 'import traigent' instead. "
-        "Set TRAIGENT_ENABLE_BUILTINS_COMPAT=1 to suppress this warning.",
-        DeprecationWarning,
-        stacklevel=1,
-    )
-    builtins.traigent = sys.modules[__name__]  # type: ignore[attr-defined]
+# NOTE: Legacy builtins injection removed in v0.9.0
+# Use explicit imports: `import traigent`
