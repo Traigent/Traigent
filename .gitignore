@@ -290,6 +290,9 @@ validate_*.py
 .post_release_recommendation_fixes/**/.mypy_cache/
 .post_release_recommendation_fixes/**/.tracking.lock
 .post_release_recommendation_fixes/**/tmp/
+# Keep shared templates versioned
+!.post_release_recommendation_fixes/templates/
+!.post_release_recommendation_fixes/templates/**
 
 # Marketing materials viewer (local development only)
 tools/marketing-viewer/
