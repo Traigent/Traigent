@@ -1,6 +1,6 @@
 # ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
 
-**Current Version**: 0.8.0 (Beta)
+**Current Version**: 0.9.0 (Beta)
 
 ---
 

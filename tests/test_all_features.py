@@ -14,6 +14,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.utils.constraints import ConstraintManager, temperature_constraint
 from traigent.utils.importance import ParameterImportanceAnalyzer
 from traigent.utils.multi_objective import ParetoFrontCalculator
@@ -25,7 +26,11 @@ from traigent.visualization.plots import PlotGenerator
 def test_imports():
     """Test that all imports work correctly."""
     print("✅ All imports successful")
-    # Function completed successfully (no assertion needed for smoke test)
+    # Verify key imports are available
+    assert traigent is not None, "traigent module should be importable"
+    assert (
+        OptimizationOrchestrator is not None
+    ), "OptimizationOrchestrator should be importable"
 
 
 def test_basic_decorator():

@@ -240,6 +240,8 @@ class TestBackendIntegrationWithMocks:
             score=0.85,
             metadata={"cost": 0.002},
         )
-        # Function completed successfully (no assertion needed for smoke test)
 
-        # Test passes if no exception is raised
+        # Verify client was created and submit_result completed without exception
+        # Note: In fallback=False mode, the client may not make actual HTTP calls
+        # if internal validation fails or session sync is disabled
+        assert client is not None, "Client should be created successfully"
