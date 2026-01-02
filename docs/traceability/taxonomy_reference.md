@@ -7,7 +7,7 @@ This document captures the industry taxonomies and standards we actively referen
 ## 0. Tag dimensions & constraints
 
 - **Layer (required, exactly 1):** `CONC-Layer-*` — choose from: API, Core, Integration, Infra, Data, Tooling
-- **Quality (optional, 0–2):** `CONC-Quality-*` ordered by priority. Files with 3+ quality tags should be split or reduced.
+- **Quality (optional, 0–3):** `CONC-Quality-*` ordered by priority. Files with 4+ quality tags should be split or reduced.
 - **Optional, closed vocabularies:** `CONC-View-*`, `CONC-Lifecycle-*` (if used), `CONC-Domain-*`, `CONC-Compliance-*`, `CONC-ML-*`
 - **Deprecated layers:** CrossCutting, Experimental, Util, Test — see `docs/traceability/taxonomy.yaml` for migration guidance.
 - **Deprecated quality tag:** `CONC-Quality-Compliance` — use a normal quality plus a `CONC-Compliance-*` tag when needed.
@@ -59,7 +59,7 @@ When a file truly spans multiple layers, use symbol-level entries in `trace_link
 
 ## 3. Quality Attributes (ISO/IEC 25010 + SEI scenarios)
 
-Select **0–2** quality tags per file, listed in priority order. If a file seems to need 3+, consider whether it should be split or if some concerns are secondary.
+Select **0–3** quality tags per file, listed in priority order. If a file seems to need 4+, consider whether it should be split or if some concerns are secondary.
 
 | Tag | Description | Example concerns | Typical modules |
 | --- | --- | --- | --- |

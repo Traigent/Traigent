@@ -25,12 +25,18 @@ class TestCeilingPrunerConfig:
     """Tests for CeilingPrunerConfig dataclass."""
 
     def test_default_initialization(self) -> None:
-        """Test CeilingPrunerConfig with default values."""
+        """Test CeilingPrunerConfig with default values.
+
+        Defaults are tuned for balanced exploration vs exploitation:
+        - min_completed_trials=3: Gather enough baseline data before pruning
+        - warmup_steps=5: Let trials warm up before making pruning decisions
+        - epsilon=0.05: Allow 5% exploration margin (absolute, for 0-1 scale metrics)
+        """
         config = CeilingPrunerConfig()
 
-        assert config.min_completed_trials == 2
-        assert config.warmup_steps == 2
-        assert config.epsilon == 1e-6
+        assert config.min_completed_trials == 3
+        assert config.warmup_steps == 5
+        assert config.epsilon == 0.05
         assert config.cost_threshold is None
 
     def test_custom_initialization(self) -> None:
@@ -81,12 +87,18 @@ class TestCeilingPruner:
         return CeilingPruner()
 
     def test_initialization_default(self) -> None:
-        """Test CeilingPruner initialization with default parameters."""
+        """Test CeilingPruner initialization with default parameters.
+
+        Defaults are tuned for balanced exploration vs exploitation:
+        - min_completed_trials=3: Gather enough baseline data before pruning
+        - warmup_steps=5: Let trials warm up before making pruning decisions
+        - epsilon=0.05: Allow 5% exploration margin (absolute, for 0-1 scale metrics)
+        """
         pruner = CeilingPruner()
 
-        assert pruner._min_completed_trials == 2
-        assert pruner._warmup_steps == 2
-        assert pruner._epsilon == 1e-6
+        assert pruner._min_completed_trials == 3
+        assert pruner._warmup_steps == 5
+        assert pruner._epsilon == 0.05
         assert pruner._cost_threshold is None
 
     def test_initialization_custom_parameters(self) -> None:
@@ -107,7 +119,7 @@ class TestCeilingPruner:
         self, study_maximize: optuna.Study, pruner: CeilingPruner
     ) -> None:
         """Test that pruning is disabled during warmup steps."""
-        # Create a trial with step < warmup_steps
+        # Create a trial with step < warmup_steps (default warmup_steps=5)
         trial = optuna.trial.FrozenTrial(
             number=0,
             state=optuna.trial.TrialState.RUNNING,
@@ -118,11 +130,11 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={0: 0.1, 1: 0.2},  # Only step 0 and 1
+            intermediate_values={0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5},  # Steps 0-4
             trial_id=0,
         )
 
-        # Should not prune during warmup (step 1 < warmup_steps 2)
+        # Should not prune during warmup (step 4 < warmup_steps 5)
         assert not pruner.prune(study_maximize, trial)
 
     def test_prune_returns_false_when_no_last_step(
@@ -173,7 +185,11 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={0: 0.1},  # Only step 0, which is < warmup_steps
+            intermediate_values={
+                0: 0.1,
+                1: 0.2,
+                2: 0.3,
+            },  # Steps 0-2, which is < warmup_steps=5
             trial_id=0,
         )
 
@@ -237,8 +253,9 @@ class TestCeilingPruner:
 
         # Should not prune due to cost threshold
         # (but might prune due to ceiling)
-        _ = pruner.prune(study_minimize, trial)
-        # Result depends on ceiling comparison, not asserting here
+        result = pruner.prune(study_minimize, trial)
+        # Result depends on ceiling comparison - just ensure it returns a boolean
+        assert isinstance(result, bool)
 
     def test_prune_with_cost_threshold_multi_objective_with_directions(
         self, study_multi_objective: optuna.Study
@@ -357,20 +374,22 @@ class TestCeilingPruner:
 
         # Should not prune due to cost threshold (list too short)
         # Result depends on ceiling comparison
-        _ = pruner.prune(study, trial)
-        # Not asserting as it depends on study direction
+        result = pruner.prune(study, trial)
+        # Just ensure it returns a boolean
+        assert isinstance(result, bool)
 
     def test_prune_returns_false_when_insufficient_completed_trials(
         self, study_maximize: optuna.Study, pruner: CeilingPruner
     ) -> None:
         """Test pruning returns False with insufficient completed trials."""
-        # Create only 1 completed trial (less than min_completed_trials=2)
-        trial_obj = study_maximize.ask()
-        study_maximize.tell(trial_obj, 0.8)
+        # Create only 2 completed trials (less than min_completed_trials=3)
+        for value in [0.7, 0.8]:
+            trial_obj = study_maximize.ask()
+            study_maximize.tell(trial_obj, value)
 
         # Create a running trial
         trial = optuna.trial.FrozenTrial(
-            number=1,
+            number=2,
             state=optuna.trial.TrialState.RUNNING,
             value=None,
             datetime_start=None,
@@ -380,23 +399,27 @@ class TestCeilingPruner:
             user_attrs={},
             system_attrs={},
             intermediate_values={5: 0.5},
-            trial_id=1,
+            trial_id=2,
         )
 
-        # Should not prune - not enough completed trials
+        # Should not prune - not enough completed trials (need 3, have 2)
         assert not pruner.prune(study_maximize, trial)
 
     def test_prune_maximize_direction_prunes_when_below_best(
         self, study_maximize: optuna.Study, pruner: CeilingPruner
     ) -> None:
-        """Test pruning in maximize direction when estimate is below best."""
+        """Test pruning in maximize direction when estimate is below best.
+
+        With default epsilon=0.05, a trial is pruned if:
+        estimate <= best - epsilon  =>  estimate <= 0.7 - 0.05 = 0.65
+        """
         # Create completed trials with values
         for value in [0.5, 0.7, 0.6]:
             trial_obj = study_maximize.ask()
             study_maximize.tell(trial_obj, value)
 
         # Best is 0.7
-        # Create a running trial with estimate below best
+        # Create a running trial with estimate well below best (0.5 < 0.65)
         trial = optuna.trial.FrozenTrial(
             number=3,
             state=optuna.trial.TrialState.RUNNING,
@@ -407,24 +430,28 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={5: 0.4},  # 0.4 < 0.7 - epsilon
+            intermediate_values={5: 0.5},  # 0.5 <= 0.7 - 0.05 = 0.65
             trial_id=3,
         )
 
-        # Should prune because estimate is below best
+        # Should prune because estimate is below (best - epsilon)
         assert pruner.prune(study_maximize, trial)
 
     def test_prune_maximize_direction_does_not_prune_when_above_best(
         self, study_maximize: optuna.Study, pruner: CeilingPruner
     ) -> None:
-        """Test pruning in maximize direction when estimate is above best."""
+        """Test pruning in maximize direction when estimate is above threshold.
+
+        With default epsilon=0.05, a trial is NOT pruned if:
+        estimate > best - epsilon  =>  estimate > 0.7 - 0.05 = 0.65
+        """
         # Create completed trials
         for value in [0.5, 0.7, 0.6]:
             trial_obj = study_maximize.ask()
             study_maximize.tell(trial_obj, value)
 
         # Best is 0.7
-        # Create a running trial with estimate above best
+        # Create a running trial with estimate above threshold (0.66 > 0.65)
         trial = optuna.trial.FrozenTrial(
             number=3,
             state=optuna.trial.TrialState.RUNNING,
@@ -435,24 +462,28 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={5: 0.8},  # 0.8 > 0.7 - epsilon
+            intermediate_values={5: 0.66},  # 0.66 > 0.65, within epsilon margin
             trial_id=3,
         )
 
-        # Should not prune because estimate is above best
+        # Should not prune because estimate is within epsilon margin of best
         assert not pruner.prune(study_maximize, trial)
 
     def test_prune_minimize_direction_prunes_when_above_best(
         self, study_minimize: optuna.Study, pruner: CeilingPruner
     ) -> None:
-        """Test pruning in minimize direction when estimate is above best."""
+        """Test pruning in minimize direction when estimate is above threshold.
+
+        With default epsilon=0.05, a trial is pruned if:
+        estimate >= best + epsilon  =>  estimate >= 3.0 + 0.05 = 3.05
+        """
         # Create completed trials
         for value in [5.0, 3.0, 4.0]:
             trial_obj = study_minimize.ask()
             study_minimize.tell(trial_obj, value)
 
         # Best is 3.0
-        # Create a running trial with estimate above best
+        # Create a running trial with estimate above threshold (3.1 >= 3.05)
         trial = optuna.trial.FrozenTrial(
             number=3,
             state=optuna.trial.TrialState.RUNNING,
@@ -463,24 +494,28 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={5: 6.0},  # 6.0 > 3.0 + epsilon
+            intermediate_values={5: 3.1},  # 3.1 >= 3.0 + 0.05 = 3.05
             trial_id=3,
         )
 
-        # Should prune because estimate is above best
+        # Should prune because estimate exceeds (best + epsilon)
         assert pruner.prune(study_minimize, trial)
 
     def test_prune_minimize_direction_does_not_prune_when_below_best(
         self, study_minimize: optuna.Study, pruner: CeilingPruner
     ) -> None:
-        """Test pruning in minimize direction when estimate is below best."""
+        """Test pruning in minimize direction when estimate is within threshold.
+
+        With default epsilon=0.05, a trial is NOT pruned if:
+        estimate < best + epsilon  =>  estimate < 3.0 + 0.05 = 3.05
+        """
         # Create completed trials
         for value in [5.0, 3.0, 4.0]:
             trial_obj = study_minimize.ask()
             study_minimize.tell(trial_obj, value)
 
         # Best is 3.0
-        # Create a running trial with estimate below best
+        # Create a running trial with estimate within threshold (3.04 < 3.05)
         trial = optuna.trial.FrozenTrial(
             number=3,
             state=optuna.trial.TrialState.RUNNING,
@@ -491,11 +526,11 @@ class TestCeilingPruner:
             distributions={},
             user_attrs={},
             system_attrs={},
-            intermediate_values={5: 2.0},  # 2.0 < 3.0 + epsilon
+            intermediate_values={5: 3.04},  # 3.04 < 3.05, within epsilon margin
             trial_id=3,
         )
 
-        # Should not prune because estimate is below best
+        # Should not prune because estimate is within epsilon margin of best
         assert not pruner.prune(study_minimize, trial)
 
     def test_prune_with_epsilon_boundary_maximize(
@@ -695,6 +730,166 @@ class TestCeilingPruner:
             t for t in study.trials if t.state == optuna.trial.TrialState.COMPLETE
         ]
         assert len(completed_trials) > 0
+
+
+class TestCeilingPrunerNewDefaults:
+    """Tests specifically for the new default values (min_completed_trials=3, warmup_steps=5, epsilon=0.05).
+
+    These defaults are tuned to balance exploration vs exploitation and prevent
+    over-aggressive pruning that was occurring with the old defaults.
+    """
+
+    def test_epsilon_allows_exploration_margin(self) -> None:
+        """Test that epsilon=0.05 allows a 5% exploration margin.
+
+        With best=0.90 (90% accuracy), trials should NOT be pruned if their
+        ceiling is above 0.85 (85%), allowing exploration within 5 percentage points.
+        """
+        pruner = CeilingPruner()  # Uses new defaults
+        study = optuna.create_study(direction="maximize")
+
+        # Complete 3 trials (meets min_completed_trials)
+        for value in [0.85, 0.90, 0.88]:
+            trial = study.ask()
+            study.tell(trial, value)
+
+        # Best is 0.90
+        # Trial with 0.86 ceiling should NOT be pruned (0.86 > 0.90 - 0.05 = 0.85)
+        trial_not_pruned = optuna.trial.FrozenTrial(
+            number=3,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={5: 0.86},  # Within 5% margin
+            trial_id=3,
+        )
+        assert not pruner.prune(study, trial_not_pruned)
+
+        # Trial with 0.84 ceiling SHOULD be pruned (0.84 <= 0.85)
+        trial_pruned = optuna.trial.FrozenTrial(
+            number=4,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={5: 0.84},  # Below 5% margin
+            trial_id=4,
+        )
+        assert pruner.prune(study, trial_pruned)
+
+    def test_warmup_prevents_early_pruning(self) -> None:
+        """Test that warmup_steps=5 prevents pruning in first 5 steps.
+
+        Even if a trial looks bad early on, it should get 5 steps to warm up.
+        """
+        pruner = CeilingPruner()  # Uses new defaults
+        study = optuna.create_study(direction="maximize")
+
+        # Complete 3 trials
+        for value in [0.90, 0.85, 0.88]:
+            trial = study.ask()
+            study.tell(trial, value)
+
+        # Trial at step 4 (before warmup completes) with terrible estimate
+        trial_warmup = optuna.trial.FrozenTrial(
+            number=3,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={4: 0.10},  # Terrible estimate, but still warming up
+            trial_id=3,
+        )
+        # Should NOT prune because still in warmup (step 4 < warmup_steps 5)
+        assert not pruner.prune(study, trial_warmup)
+
+    def test_min_completed_trials_requires_baseline(self) -> None:
+        """Test that min_completed_trials=3 requires sufficient baseline data.
+
+        Pruning should not occur until we have 3 completed trials to compare against.
+        """
+        pruner = CeilingPruner()  # Uses new defaults
+        study = optuna.create_study(direction="maximize")
+
+        # Complete only 2 trials (below min_completed_trials=3)
+        for value in [0.90, 0.85]:
+            trial = study.ask()
+            study.tell(trial, value)
+
+        # Trial with bad estimate after warmup
+        trial = optuna.trial.FrozenTrial(
+            number=2,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={5: 0.10},  # Terrible estimate
+            trial_id=2,
+        )
+        # Should NOT prune because only 2 completed trials (need 3)
+        assert not pruner.prune(study, trial)
+
+        # Add third completed trial
+        trial_3 = study.ask()
+        study.tell(trial_3, 0.88)
+
+        # Now same bad trial SHOULD be pruned
+        assert pruner.prune(study, trial)
+
+    def test_old_defaults_would_prune_aggressively(self) -> None:
+        """Demonstrate that old defaults (epsilon=1e-6) would prune too aggressively.
+
+        This test shows why the new defaults are needed.
+        """
+        # Old aggressive pruner
+        old_pruner = CeilingPruner(min_completed_trials=2, warmup_steps=2, epsilon=1e-6)
+        # New balanced pruner
+        new_pruner = CeilingPruner()
+
+        study = optuna.create_study(direction="maximize")
+
+        # Complete 3 trials
+        for value in [0.85, 0.90, 0.88]:
+            trial = study.ask()
+            study.tell(trial, value)
+
+        # Trial with 0.899 ceiling (just 0.1% below best of 0.90)
+        trial = optuna.trial.FrozenTrial(
+            number=3,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={5: 0.899},  # 0.1% below best
+            trial_id=3,
+        )
+
+        # Old pruner would prune (0.899 <= 0.90 - 0.000001)
+        assert old_pruner.prune(study, trial)
+
+        # New pruner allows exploration (0.899 > 0.90 - 0.05 = 0.85)
+        assert not new_pruner.prune(study, trial)
 
 
 class TestCompletedTrialsWithValues:

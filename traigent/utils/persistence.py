@@ -1,4 +1,4 @@
-"""File-based persistence system for TraiGent optimization results."""
+"""File-based persistence system for Traigent optimization results."""
 
 # Traceability: CONC-Layer-Data CONC-Quality-Reliability CONC-Quality-Maintainability FUNC-STORAGE REQ-STOR-007 SYNC-StorageLogging
 

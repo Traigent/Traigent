@@ -1,6 +1,6 @@
 """Mock cloud service implementations for testing.
 
-This module provides mock implementations of TraiGent cloud services
+This module provides mock implementations of Traigent cloud services
 for testing without requiring actual cloud connectivity.
 """
 
@@ -16,8 +16,8 @@ from traigent.cloud.models import (
 )
 
 
-class MockTraiGentCloudClient:
-    """Mock TraiGent cloud client for testing."""
+class MockTraigentCloudClient:
+    """Mock Traigent cloud client for testing."""
 
     def __init__(
         self,
@@ -144,7 +144,7 @@ class MockTraiGentCloudClient:
         )
 
 
-class MockTraiGentCloudClientWithAuth(MockTraiGentCloudClient):
+class MockTraigentCloudClientWithAuth(MockTraigentCloudClient):
     """Mock cloud client with authentication simulation."""
 
     def __init__(self, *args, **kwargs):
@@ -160,7 +160,7 @@ class MockTraiGentCloudClientWithAuth(MockTraiGentCloudClient):
         self._authenticated = status
 
 
-class MockPrivacyCloudClient(MockTraiGentCloudClient):
+class MockPrivacyCloudClient(MockTraigentCloudClient):
     """Mock cloud client for privacy-first testing."""
 
     def __init__(self, *args, **kwargs):
@@ -239,8 +239,8 @@ class MockCloudServiceError(Exception):
 def create_mock_cloud_client(client_type: str = "standard", **kwargs):
     """Factory function to create mock cloud clients."""
     clients = {
-        "standard": MockTraiGentCloudClient,
-        "auth": MockTraiGentCloudClientWithAuth,
+        "standard": MockTraigentCloudClient,
+        "auth": MockTraigentCloudClientWithAuth,
         "privacy": MockPrivacyCloudClient,
         "hybrid": MockHybridCloudClient,
     }

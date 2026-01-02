@@ -1,7 +1,7 @@
 """Parameter-Based Injection (Mixed Approach) example module.
 
 Combines custom parameters with standard parameters for flexible optimization.
-Mix TraiGent-optimized parameters with fixed configurations.
+Mix Traigent-optimized parameters with fixed configurations.
 """
 
 from __future__ import annotations
@@ -67,7 +67,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 
 @traigent.optimize(
     configuration_space={
-        # Standard parameters that TraiGent can directly optimize
+        # Standard parameters that Traigent can directly optimize
         "temperature": [0.1, 0.3, 0.5, 0.7, 0.9],
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
         # Custom parameters for business logic
@@ -83,7 +83,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 )
 def content_generator(topic: str, context: str = "") -> str:
     """Content generator using mixed parameter optimization approach."""
-    # Get optimized parameters from TraiGent
+    # Get optimized parameters from Traigent
     config = traigent.get_config()
     if not isinstance(config, dict):
         config = {}

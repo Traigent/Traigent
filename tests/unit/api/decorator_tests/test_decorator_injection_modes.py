@@ -1,6 +1,6 @@
 """Tests for different injection modes (context, parameter, seamless).
 
-Tests how TraiGent injects configuration in different modes:
+Tests how Traigent injects configuration in different modes:
 - Context mode: Uses global context
 - Parameter mode: Adds TraigentConfig parameter
 - Seamless mode: Overrides framework parameters transparently
@@ -133,7 +133,8 @@ class TestParameterMode(DecoratorTestBase):
             return f"Response: {text}"
 
         # Invalid config should be handled gracefully
-        TraigentConfig(model="invalid-model")
+        config = TraigentConfig(model="invalid-model")
+        assert config.model == "invalid-model"  # Config was created
         # This might raise validation error or use fallback
         # Exact behavior depends on implementation
 

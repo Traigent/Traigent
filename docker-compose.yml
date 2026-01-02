@@ -1,0 +1,86 @@
+version: '3.8'
+
+services:
+  # Development environment with all dependencies
+  dev:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+      - pip-cache:/root/.cache/pip
+    environment:
+      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_LOG_LEVEL=DEBUG
+    command: ["bash"]
+    stdin_open: true
+    tty: true
+
+  # Run tests
+  test:
+    build:
+      context: .
+      target: testing
+    volumes:
+      - .:/app
+    environment:
+      - TRAIGENT_MOCK_MODE=true
+    command: ["pytest", "tests/", "-v", "--tb=short"]
+
+  # Run unit tests only (faster)
+  test-unit:
+    build:
+      context: .
+      target: testing
+    volumes:
+      - .:/app
+    environment:
+      - TRAIGENT_MOCK_MODE=true
+    command: ["pytest", "tests/unit/", "-v", "--tb=short"]
+
+  # Run linting
+  lint:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    command: ["make", "lint"]
+
+  # Run formatting
+  format:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    command: ["make", "format"]
+
+  # Interactive Python shell with traigent loaded
+  shell:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    environment:
+      - TRAIGENT_MOCK_MODE=true
+    command: ["python", "-c", "import traigent; import IPython; IPython.embed()"]
+    stdin_open: true
+    tty: true
+
+  # Streamlit playground
+  playground:
+    build:
+      context: .
+      target: development
+    volumes:
+      - .:/app
+    ports:
+      - "8501:8501"
+    environment:
+      - TRAIGENT_MOCK_MODE=true
+    command: ["streamlit", "run", "playground/traigent_control_center.py", "--server.address", "0.0.0.0"]
+
+volumes:
+  pip-cache:

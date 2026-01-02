@@ -1,4 +1,4 @@
-"""LangChain integrations for TraiGent."""
+"""LangChain integrations for Traigent."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 

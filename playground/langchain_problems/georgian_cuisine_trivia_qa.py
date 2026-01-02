@@ -318,9 +318,9 @@ Be specific about regional variations and traditional preparations.""",
         def georgian_cuisine_trivia_optimized(question: str) -> str:
             """Optimized Georgian cuisine trivia assistant."""
             llm = ChatOpenAI(
-                model="gpt-4o-mini",  # Will be overridden by TraiGent
-                temperature=0.3,  # Will be overridden by TraiGent
-                model_kwargs={"max_tokens": 150},  # Will be overridden by TraiGent
+                model="gpt-4o-mini",  # Will be overridden by Traigent
+                temperature=0.3,  # Will be overridden by Traigent
+                model_kwargs={"max_tokens": 150},  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

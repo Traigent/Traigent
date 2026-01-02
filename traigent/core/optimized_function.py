@@ -36,7 +36,6 @@ import os
 import sys
 import threading
 import time
-import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from enum import Enum, auto
@@ -102,14 +101,50 @@ def _emit_cost_warning_once() -> None:
         return
 
     _COST_WARNING_EMITTED = True
-    warnings.warn(
-        "TraiGent optimization will make multiple LLM API calls. "
-        "Cost estimates are approximations; actual billing is determined by your LLM provider. "
-        "Set TRAIGENT_MOCK_MODE=true for testing. See DISCLAIMER.md for full details.",
-        UserWarning,
-        stacklevel=4,  # Point to caller of optimize()
-    )
-    # Ensure warning goes to stderr
+
+    # ANSI color codes for terminal styling
+    YELLOW = "\033[93m"
+    CYAN = "\033[96m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    # Check if terminal supports colors (not redirected to file)
+    use_colors = sys.stderr.isatty()
+
+    if use_colors:
+        msg = (
+            f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
+            f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
+            f"Cost estimates are approximations based on {CYAN}tokencost{RESET} library pricing.\n"
+            f"Actual billing is determined by your LLM provider.\n\n"
+            f"{BOLD}Configuration:{RESET}\n"
+            f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
+            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_MODE=true{RESET}\n"
+            f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
+        )
+    else:
+        msg = (
+            "\n[!] COST WARNING\n"
+            "Traigent optimization will make multiple LLM API calls.\n"
+            "Cost estimates are approximations based on tokencost library pricing.\n"
+            "Actual billing is determined by your LLM provider.\n\n"
+            "Configuration:\n"
+            "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
+            "  - Disable for testing:   TRAIGENT_MOCK_MODE=true\n"
+            "  - Full details:          DISCLAIMER.md\n"
+        )
+
+    # Use warnings module for filterability; fallback to stderr on encoding errors
+    import warnings
+
+    try:
+        warnings.warn(msg, UserWarning, stacklevel=2)
+    except UnicodeEncodeError:
+        # Fallback for ASCII-only locales
+        try:
+            print(msg, file=sys.stderr)
+        except UnicodeEncodeError:
+            print(msg.encode("ascii", errors="replace").decode(), file=sys.stderr)
     sys.stderr.flush()
 
 
@@ -656,6 +691,13 @@ class OptimizedFunction:
         else:
             algorithm_kwargs = dict(algorithm_kwargs)
 
+        # Fail fast on invalid parallel_trials usage - users must use parallel_config
+        if "parallel_trials" in algorithm_kwargs:
+            raise ValueError(
+                "parallel_trials is not a valid parameter for optimize(). "
+                "Use parallel_config={'trial_concurrency': N} instead."
+            )
+
         runtime_tvl_spec_kw = algorithm_kwargs.pop("tvl_spec", None)
         runtime_tvl_env_kw = algorithm_kwargs.pop("tvl_environment", None)
         runtime_tvl_bundle_kw = algorithm_kwargs.pop("tvl", None)
@@ -696,6 +738,13 @@ class OptimizedFunction:
                 algorithm_kwargs,
                 tvl_artifact.runtime_overrides(),
             )
+
+        # Normalize configuration_space to handle Range/IntRange/LogRange/Choices objects
+        # This must happen after TVL processing but before validation
+        if configuration_space is not None:
+            from traigent.api.parameter_ranges import normalize_configuration_space
+
+            configuration_space, _ = normalize_configuration_space(configuration_space)
 
         runtime_objective_input = (
             objectives if objectives is not None else legacy_objectives
@@ -877,13 +926,19 @@ class OptimizedFunction:
         updated_timeout = timeout if timeout is not None else overrides.get("timeout")
 
         for key in (
-            "parallel_trials",
+            "parallel_config",
             "max_total_examples",
             "samples_include_pruned",
-            "tvl_metadata",
         ):
             if key in overrides and key not in algorithm_kwargs:
                 algorithm_kwargs[key] = overrides[key]
+
+        # Fail fast on invalid parallel_trials usage - users must use parallel_config
+        if "parallel_trials" in overrides or "parallel_trials" in algorithm_kwargs:
+            raise ValueError(
+                "parallel_trials is not a valid parameter for optimize(). "
+                "Use parallel_config={'trial_concurrency': N} instead."
+            )
 
         return updated_algorithm, updated_max_trials, updated_timeout
 
@@ -1097,6 +1152,20 @@ class OptimizedFunction:
                 capture_llm_metrics=True,
             )
 
+        effective_metric_functions: dict[str, Callable[..., Any]] = dict(
+            self.metric_functions or {}
+        )
+
+        if self.scoring_function is not None:
+            target_metric: str | None = None
+            if "accuracy" in self.objectives:
+                target_metric = "accuracy"
+            elif "score" in self.objectives:
+                target_metric = "score"
+
+            if target_metric and target_metric not in effective_metric_functions:
+                effective_metric_functions[target_metric] = self.scoring_function
+
         effective_workers = int(effective_batch_size or 1)
         if effective_workers < 1:
             effective_workers = 1
@@ -1116,7 +1185,7 @@ class OptimizedFunction:
             execution_mode=self.execution_mode,
             privacy_enabled=effective_privacy_enabled,
             mock_mode_config=self.mock_mode_config,
-            metric_functions=self.metric_functions,
+            metric_functions=effective_metric_functions or None,
         )
 
     def _build_optimization_orchestrator(
@@ -1138,6 +1207,8 @@ class OptimizedFunction:
         orchestrator_kwargs: dict[str, Any] = {
             "cache_policy": cache_policy,
         }
+        if self.default_config:
+            orchestrator_kwargs["default_config"] = self.default_config.copy()
 
         # Pass budget stop condition parameters
         if "budget_limit" in algorithm_kwargs:
@@ -1151,11 +1222,19 @@ class OptimizedFunction:
 
         orchestrator_kwargs["samples_include_pruned"] = samples_include_pruned_value
 
+        # Pass constraints to orchestrator
+        if self.constraints:
+            orchestrator_kwargs["constraints"] = self.constraints
+
         # Pass plateau stop condition parameters
         if "plateau_window" in algorithm_kwargs:
             orchestrator_kwargs["plateau_window"] = algorithm_kwargs["plateau_window"]
         if "plateau_epsilon" in algorithm_kwargs:
             orchestrator_kwargs["plateau_epsilon"] = algorithm_kwargs["plateau_epsilon"]
+        if "cost_limit" in algorithm_kwargs:
+            orchestrator_kwargs["cost_limit"] = algorithm_kwargs["cost_limit"]
+        if "cost_approved" in algorithm_kwargs:
+            orchestrator_kwargs["cost_approved"] = algorithm_kwargs["cost_approved"]
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -1241,6 +1320,68 @@ class OptimizedFunction:
 
         return result
 
+    async def _try_cloud_execution(
+        self,
+        dataset: Dataset,
+        max_trials: int | None,
+        timeout: float | None,
+        effective_config_space: dict[str, Any],
+        algorithm_kwargs: dict[str, Any],
+    ) -> OptimizationResult | None:
+        """Try cloud execution, returning None if fallback to local is needed."""
+        use_cloud = self._is_cloud_execution_mode() and (
+            max_trials is None or max_trials > 0
+        )
+        if not use_cloud:
+            return None
+
+        try:
+            return await self._optimize_with_cloud_service(
+                dataset,
+                max_trials,
+                timeout,
+                configuration_space=effective_config_space,
+                **algorithm_kwargs,
+            )
+        except (AuthenticationError, ConfigurationError, ValidationError):
+            raise
+        except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
+            logger.warning(
+                "Cloud optimization failed (transient), falling back to local: %s", e
+            )
+        except Exception as e:
+            logger.warning(
+                "Cloud optimization failed unexpectedly, falling back to local: %s",
+                e,
+                exc_info=True,
+            )
+        return None
+
+    def _apply_mock_config_overrides(
+        self, algorithm: str, optimizer_kwargs: dict[str, Any]
+    ) -> str:
+        """Apply mock config overrides to algorithm and optimizer_kwargs."""
+        mock_config = getattr(self, "mock_mode_config", None) or {}
+        if not isinstance(mock_config, dict):
+            return algorithm
+
+        # Override algorithm if specified in mock config
+        mock_optimizer = mock_config.get("optimizer")
+        if mock_optimizer and isinstance(mock_optimizer, str):
+            algorithm = mock_optimizer
+            logger.debug("Using optimizer '%s' from mock_mode_config", mock_optimizer)
+
+        # Extract and pass random_seed to optimizer for reproducibility
+        random_seed = mock_config.get("random_seed")
+        if random_seed is not None:
+            optimizer_kwargs["random_seed"] = random_seed
+            logger.debug(
+                "Passing random_seed=%s to optimizer from mock_mode_config",
+                random_seed,
+            )
+
+        return algorithm
+
     async def _execute_optimization(
         self,
         *,
@@ -1275,32 +1416,11 @@ class OptimizedFunction:
         )
 
         # Phase 4: Try cloud execution if applicable
-        use_cloud_execution = self._is_cloud_execution_mode() and (
-            max_trials is None or max_trials > 0
+        cloud_result = await self._try_cloud_execution(
+            dataset, max_trials, timeout, effective_config_space, algorithm_kwargs
         )
-
-        if use_cloud_execution:
-            try:
-                return await self._optimize_with_cloud_service(
-                    dataset,
-                    max_trials,
-                    timeout,
-                    configuration_space=effective_config_space,
-                    **algorithm_kwargs,
-                )
-            except (AuthenticationError, ConfigurationError, ValidationError):
-                raise
-            except (OSError, TimeoutError, ConnectionError) as e:
-                logger.warning(
-                    "Cloud optimization failed (transient), falling back to local: %s",
-                    e,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Cloud optimization failed unexpectedly, falling back to local: %s",
-                    e,
-                    exc_info=True,
-                )
+        if cloud_result is not None:
+            return cloud_result
 
         # Phase 5: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
@@ -1311,6 +1431,9 @@ class OptimizedFunction:
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials and algorithm == "random":
             optimizer_kwargs["max_trials"] = max_trials
+
+        # Apply mock config overrides if present
+        algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
@@ -1362,7 +1485,7 @@ class OptimizedFunction:
         timeout: float | None = None,
         **kwargs: Any,
     ) -> OptimizationResult:
-        """Run optimization using TraiGent Cloud Service.
+        """Run optimization using Traigent Cloud Service.
 
         Args:
             dataset: Evaluation dataset
@@ -1374,11 +1497,11 @@ class OptimizedFunction:
             OptimizationResult from cloud service
         """
         from traigent.api.types import TrialResult, TrialStatus
-        from traigent.cloud.client import CloudOptimizationResult, TraiGentCloudClient
+        from traigent.cloud.client import CloudOptimizationResult, TraigentCloudClient
 
         # Initialize cloud client if not already done
         if self._cloud_client is None:
-            self._cloud_client = TraiGentCloudClient(enable_fallback=True)
+            self._cloud_client = TraigentCloudClient(enable_fallback=True)
 
         if max_trials is not None and max_trials <= 0:
             logger.info("Cloud optimization skipped due to max_trials=0.")
@@ -1644,7 +1767,10 @@ class OptimizedFunction:
                         else:
                             logger.warning("Token signature validation failed")
 
-            except (json.JSONDecodeError, ValueError, KeyError) as e:
+            except (
+                ValueError,
+                KeyError,
+            ) as e:  # JSONDecodeError is subclass of ValueError
                 logger.debug(f"Invalid approval token: {e}")
 
         # No valid approval found

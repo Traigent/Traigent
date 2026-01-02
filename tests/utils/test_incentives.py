@@ -399,7 +399,7 @@ class TestIncentiveManager:
             "optimization_master",
         ]
 
-        for threshold, achievement in zip(thresholds, achievements):
+        for threshold, achievement in zip(thresholds, achievements, strict=False):
             # Create exact number of completed sessions
             storage = self.incentive_manager.storage
 
@@ -422,8 +422,8 @@ class TestIncentiveManager:
 
         try:
             # Should handle permission error gracefully
-            self.incentive_manager._save_state()
-            # Should not raise exception
+            result = self.incentive_manager._save_state()
+            assert result is None  # Method returns None even on error
         finally:
             # Restore permissions for cleanup
             self.incentive_manager._state_file.chmod(0o644)
@@ -609,7 +609,7 @@ class TestIncentiveManagerIntegration:
 
         scores = [0.85, 0.78, 0.92]
 
-        for config, score in zip(configs, scores):
+        for config, score in zip(configs, scores, strict=False):
             self.storage.add_trial_result(session_id, config, score)
 
         self.storage.finalize_session(session_id, "completed")

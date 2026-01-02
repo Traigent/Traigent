@@ -1,7 +1,7 @@
 """Unit tests for LangChain discovery module.
 
 Tests for auto-discovery utilities that find LangChain components
-that can be optimized by TraiGent.
+that can be optimized by Traigent.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility

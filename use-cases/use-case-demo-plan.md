@@ -1,4 +1,4 @@
-# TraiGent Use Case Demo Plan
+# Traigent Use Case Demo Plan
 
 This document tracks the implementation of all 5 agent types from the Traigent Agent Optimization Guide.
 
@@ -387,6 +387,6 @@ python use-cases/customer-support/eval/evaluator.py
 
 - All datasets are synthetic but realistic
 - LLM-as-judge implementations follow calibrated rubrics from the guide
-- Each use case demonstrates a different aspect of TraiGent's optimization capabilities
+- Each use case demonstrates a different aspect of Traigent's optimization capabilities
 - Mock mode is used by default to avoid API costs during development
 - All implementations include proper fallbacks for testing without API access

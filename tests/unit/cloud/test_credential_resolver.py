@@ -356,7 +356,8 @@ class TestCache:
         resolver = CredentialResolver(config)
 
         # Should not raise
-        await resolver.cache(sample_credentials)
+        result = await resolver.cache(sample_credentials)
+        assert result is None  # Method returns None when no file configured
 
     @pytest.mark.asyncio
     async def test_cache_writes_encrypted_credentials(
@@ -384,7 +385,8 @@ class TestCache:
             side_effect=Exception("write error"),
         ):
             # Should not raise
-            await resolver.cache(sample_credentials)
+            result = await resolver.cache(sample_credentials)
+            assert result is None  # Method returns None even on error
 
 
 class TestEncryptDecrypt:

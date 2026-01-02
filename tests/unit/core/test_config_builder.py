@@ -8,7 +8,6 @@ validating configuration objects for the optimization system.
 
 from __future__ import annotations
 
-import copy
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -23,13 +22,10 @@ from traigent.core.config_builder import (
 )
 from traigent.core.constants import (
     DEFAULT_EXECUTION_MODE,
-    DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
-    DEFAULT_PROMPT_STYLE,
-    DEFAULT_TEMPERATURE,
 )
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-from traigent.core.types import Parameter, ParameterType
+from traigent.core.types import ParameterType
 
 
 class TestOptimizedFunctionConfig:
@@ -116,7 +112,10 @@ class TestOptimizedFunctionConfig:
     ) -> None:
         """Test initialization with all parameters."""
         eval_dataset = [{"input": "test", "output": "result"}]
-        constraint = lambda x: x["temperature"] > 0
+
+        def constraint(x):
+            return x["temperature"] > 0
+
         custom_evaluator = MagicMock()
         scoring_function = MagicMock()
         metric_functions = {"accuracy": MagicMock()}
@@ -513,7 +512,10 @@ class TestOptimizedFunctionConfig:
 
     def test_valid_callable_constraints(self) -> None:
         """Test configuration with valid callable constraints."""
-        constraint1 = lambda x: x["temperature"] > 0
+
+        def constraint1(x):
+            return x["temperature"] > 0
+
         constraint2 = MagicMock()
 
         config = OptimizedFunctionConfig(constraints=[constraint1, constraint2])
@@ -646,7 +648,9 @@ class TestConfigurationSpaceBuilder:
     # Constraint tests
     def test_add_constraint(self, builder: ConfigurationSpaceBuilder) -> None:
         """Test adding a constraint function."""
-        constraint = lambda x: x["temperature"] < x["top_p"]
+
+        def constraint(x):
+            return x["temperature"] < x["top_p"]
 
         result = builder.add_constraint(constraint)
 
@@ -656,8 +660,12 @@ class TestConfigurationSpaceBuilder:
 
     def test_add_multiple_constraints(self, builder: ConfigurationSpaceBuilder) -> None:
         """Test adding multiple constraints."""
-        constraint1 = lambda x: x["a"] < x["b"]
-        constraint2 = lambda x: x["b"] < x["c"]
+
+        def constraint1(x):
+            return x["a"] < x["b"]
+
+        def constraint2(x):
+            return x["b"] < x["c"]
 
         builder.add_constraint(constraint1).add_constraint(constraint2)
 

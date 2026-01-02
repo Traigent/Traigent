@@ -1,7 +1,7 @@
 digraph PackageSummary {
     rankdir=TB;
     node [shape=box, style=filled, fontname="Helvetica", fontsize=10];
-    label="TraiGent Package Summary\n(Files / Lines / Classes)";
+    label="Traigent Package Summary\n(Files / Lines / Classes)";
     labelloc=t;
     fontsize=16;
 

@@ -172,7 +172,7 @@ def _generate_covering_combos(
 
     all_combos: list[dict[str, Any]] = []
     for values in itertools.product(*value_spaces):
-        candidate = dict(zip(names, values))
+        candidate = dict(zip(names, values, strict=False))
         if _respects_constraints(candidate, constraints):
             all_combos.append(candidate)
 
@@ -221,7 +221,7 @@ def _grid_configurations(config_space: dict[str, list[Any]]):
     keys = list(config_space.keys())
     values = [config_space[key] for key in keys]
     for combination in itertools.product(*values):
-        yield dict(zip(keys, combination))
+        yield dict(zip(keys, combination, strict=False))
 
 
 def _grid_score(config: dict[str, Any]) -> float:

@@ -67,7 +67,7 @@ def intelligent_content_system(topic: str) -> str:
     return getattr(content_result, "content", str(content_result))
 
 
-# TraiGent optimizes each LLM call independently for best results
+# Traigent optimizes each LLM call independently for best results
 
 if __name__ == "__main__":
     try:

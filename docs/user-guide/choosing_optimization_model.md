@@ -1,6 +1,8 @@
 # Choosing the Right Optimization Model
 
-TraiGent SDK offers two distinct optimization models. This guide helps you choose the right approach for your use case.
+Traigent SDK offers two distinct optimization models. This guide helps you choose the right approach for your use case.
+
+> **OSS note:** The open-source build supports `edge_analytics` only. Interactive and agent optimization require a managed backend (TraigentCloudClient + API key).
 
 ## Quick Decision Guide
 
@@ -21,7 +23,7 @@ graph TD
 
 **How it works:**
 
-- Optimization logic runs in the cloud
+- Optimization guidance runs in a remote service
 - Function execution happens locally
 - Only configuration suggestions and results are exchanged
 
@@ -43,7 +45,7 @@ graph TD
 
 **How it works:**
 
-- Complete agent specification sent to cloud
+- Complete agent specification sent to the managed backend
 - Execution and optimization happen in the cloud
 - Results returned after optimization completes
 
@@ -81,10 +83,10 @@ graph TD
 ### Model 1: Interactive Optimization
 
 ```python
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
-cloud_client = TraiGentCloudClient(api_key="your-api-key")
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
 
 # For a custom local function
 async def my_custom_function(text: str, temperature: float) -> str:
@@ -128,11 +130,11 @@ while True:
 ### Model 2: Agent Optimization
 
 ```python
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 from traigent.cloud.models import AgentSpecification
 from traigent.evaluators.base import Dataset, EvaluationExample
 
-cloud_client = TraiGentCloudClient(api_key="your-api-key")
+cloud_client = TraigentCloudClient(api_key="your-api-key")  # Managed backend required
 
 # Define a standard AI agent
 agent_spec = AgentSpecification(
@@ -309,4 +311,4 @@ Choose based on your primary constraints:
 - **Performance-first**: Model 2
 - **Flexibility-first**: Hybrid
 
-Remember that you can start with one model and migrate to another as your requirements evolve. The TraiGent SDK is designed to support this flexibility.
+Remember that you can start with one model and migrate to another as your requirements evolve. The Traigent SDK is designed to support this flexibility.

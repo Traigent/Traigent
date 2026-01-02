@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 import streamlit as st
 
-# Import TraiGent modules and utilities
+# Import Traigent modules and utilities
 try:
     # Import availability checks only
     import langchain_problems  # noqa: F401 - Import check only

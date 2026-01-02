@@ -4,7 +4,7 @@
     "dataset_size": 20,
     "evaluation_samples": 100,
     "traigent_version": "0.1.0",
-    "description": "Real TraiGent optimization results comparing Claude models on 20 diverse tasks"
+    "description": "Real Traigent optimization results comparing Claude models on 20 diverse tasks"
   },
   "configurations": [
     {

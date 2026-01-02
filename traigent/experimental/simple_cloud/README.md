@@ -13,9 +13,9 @@ This module contains **simplified, naive implementations** of platform executors
 
 ## What This Is NOT
 
-❌ **NOT the real TraiGent cloud architecture**
+❌ **NOT the real Traigent cloud architecture**
 ❌ **NOT production-ready code**
-❌ **NOT TraiGent's proprietary IP**
+❌ **NOT Traigent's proprietary IP**
 ❌ **NOT optimized for performance or scale**
 ❌ **NOT suitable for real optimization workloads**
 
@@ -40,7 +40,7 @@ Simple Cloud (Experimental)
 
 ## Real vs Simple Cloud
 
-| Feature | Simple Cloud (Here) | Real TraiGent Cloud |
+| Feature | Simple Cloud (Here) | Real Traigent Cloud |
 |---------|--------------------|--------------------|
 | **Purpose** | Local testing | Production optimization |
 | **Performance** | Basic, unoptimized | Highly optimized |
@@ -64,7 +64,7 @@ result = await executor.complete("Hello")
 # Real usage should use framework override:
 @traigent.optimize(auto_override_frameworks=True)
 def my_function():
-    # This uses the REAL TraiGent optimization
+    # This uses the REAL Traigent optimization
     llm = ChatAnthropic(model="claude-3-opus")
     return llm.invoke("Hello")
 ```

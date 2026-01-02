@@ -84,6 +84,10 @@ async def test_auth_flow():
         print("\nFor more information:")
         print("  traigent auth --help")
 
+    # Verify that CLI and manager objects were created successfully
+    assert cli is not None, "TraigentAuthCLI should be created"
+    assert auth_manager is not None, "AuthManager should be created"
+
 
 if __name__ == "__main__":
     asyncio.run(test_auth_flow())

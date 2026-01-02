@@ -1,6 +1,6 @@
 """Utility helpers for Optuna-based optimizers.
 
-This module centralises shared functionality for converting TraiGent configuration
+This module centralises shared functionality for converting Traigent configuration
 spaces into Optuna distributions and for deriving optimisation directions. The
 helpers are intentionally lightweight so they can be imported from both runtime
 code and tests without introducing additional dependencies.
@@ -31,6 +31,13 @@ except ImportError as exc:  # pragma: no cover - exercised in environments w/o O
 else:
     OPTUNA_IMPORT_ERROR = None
 
+from traigent.api.parameter_ranges import (
+    Choices,
+    IntRange,
+    LogRange,
+    ParameterRange,
+    Range,
+)
 from traigent.utils.exceptions import OptimizationError
 
 MINIMIZE_KEYWORDS = {"cost", "latency", "error", "time", "memory", "loss"}
@@ -51,13 +58,62 @@ def config_space_to_distributions(
     *,
     include_fixed: bool = True,
 ) -> dict[str, BaseDistribution]:
-    """Convert a TraiGent configuration space into Optuna distributions."""
+    """Convert a Traigent configuration space into Optuna distributions."""
 
     ensure_optuna_available()
 
     distributions: dict[str, BaseDistribution] = {}
 
     for param_name, definition in config_space.items():
+        # Handle ParameterRange instances directly (Range, IntRange, LogRange, Choices)
+        if isinstance(definition, Range):
+            if definition.step is not None:
+                distributions[param_name] = FloatDistribution(
+                    low=definition.low,
+                    high=definition.high,
+                    step=definition.step,
+                    log=definition.log,
+                )
+            else:
+                distributions[param_name] = FloatDistribution(
+                    low=definition.low,
+                    high=definition.high,
+                    log=definition.log,
+                )
+            continue
+
+        if isinstance(definition, IntRange):
+            if definition.step is not None:
+                distributions[param_name] = IntDistribution(
+                    low=definition.low,
+                    high=definition.high,
+                    step=definition.step,
+                    log=definition.log,
+                )
+            else:
+                distributions[param_name] = IntDistribution(
+                    low=definition.low,
+                    high=definition.high,
+                    log=definition.log,
+                )
+            continue
+
+        if isinstance(definition, LogRange):
+            distributions[param_name] = FloatDistribution(
+                low=definition.low,
+                high=definition.high,
+                log=True,
+            )
+            continue
+
+        if isinstance(definition, Choices):
+            distributions[param_name] = CategoricalDistribution(list(definition.values))
+            continue
+
+        # Fallback: if it's some other ParameterRange subclass, normalize it
+        if isinstance(definition, ParameterRange):
+            definition = definition.to_config_value()
+
         if isinstance(definition, dict):
             param_type = (definition.get("type") or "categorical").lower()
 

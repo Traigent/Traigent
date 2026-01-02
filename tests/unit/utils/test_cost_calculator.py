@@ -778,7 +778,7 @@ class TestThreadSafety:
             t.join()
 
         # All threads should get the same instance
-        assert len(set(id(c) for c in calculators)) == 1
+        assert len({id(c) for c in calculators}) == 1
 
 
 class TestAdditionalLoggerCoverage:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Local Integration Test Script for TraiGent + OptiGen.
+"""Local Integration Test Script for Traigent + OptiGen.
 
-This script tests the integration between TraiGent SDK and the local OptiGen
+This script tests the integration between Traigent SDK and the local OptiGen
 backend environment. It validates the complete flow from SDK configuration
 to data storage and retrieval.
 """
@@ -139,13 +139,13 @@ def check_api_key_management() -> bool:
 
 
 def check_traigent_import() -> bool:
-    """Check if TraiGent SDK can be imported."""
+    """Check if Traigent SDK can be imported."""
     try:
-        print_status("Checking TraiGent SDK import...")
+        print_status("Checking Traigent SDK import...")
         import traigent
 
         print_status(
-            "✅ TraiGent SDK imported successfully (version available)", "SUCCESS"
+            "✅ Traigent SDK imported successfully (version available)", "SUCCESS"
         )
 
         # Check if we can access Edge Analytics mode configuration
@@ -156,11 +156,11 @@ def check_traigent_import() -> bool:
 
         return True
     except ImportError as e:
-        print_status(f"❌ Cannot import TraiGent SDK: {e}", "ERROR")
-        print_status("Make sure TraiGent is installed: pip install -e .", "INFO")
+        print_status(f"❌ Cannot import Traigent SDK: {e}", "ERROR")
+        print_status("Make sure Traigent is installed: pip install -e .", "INFO")
         return False
     except Exception as e:
-        print_status(f"❌ Error testing TraiGent: {e}", "ERROR")
+        print_status(f"❌ Error testing Traigent: {e}", "ERROR")
         return False
 
 
@@ -228,7 +228,7 @@ def run_integration_test() -> bool:
     try:
         print_status("Running basic SDK integration test...")
 
-        # Import TraiGent and configure for Edge Analytics mode
+        # Import Traigent and configure for Edge Analytics mode
         import traigent
 
         config = traigent.TraigentConfig.edge_analytics_mode()
@@ -251,7 +251,7 @@ def run_integration_test() -> bool:
 def main():
     """Run all integration tests."""
     print("=" * 60)
-    print("🧪 TraiGent + OptiGen Local Integration Test")
+    print("🧪 Traigent + OptiGen Local Integration Test")
     print("=" * 60)
     print()
 
@@ -259,7 +259,7 @@ def main():
         ("Backend Health", check_backend_health),
         ("Feature Flags", lambda: bool(check_feature_flags())),
         ("API Key Management", check_api_key_management),
-        ("TraiGent SDK", check_traigent_import),
+        ("Traigent SDK", check_traigent_import),
         ("Database Connection", check_database_connection),
         ("Frontend Access", check_frontend_access),
         ("SDK Integration", run_integration_test),
@@ -314,7 +314,7 @@ def main():
         print("• Ensure Docker services are running")
         print("• Check environment variables in .env file")
         print("• Verify feature flags are correctly set")
-        print("• Make sure TraiGent SDK is installed")
+        print("• Make sure Traigent SDK is installed")
         return False
 
 

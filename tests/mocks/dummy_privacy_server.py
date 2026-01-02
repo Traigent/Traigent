@@ -1,6 +1,6 @@
 """Dummy server implementation for testing privacy-first mode.
 
-This module provides a complete mock server that simulates the TraiGent Cloud
+This module provides a complete mock server that simulates the Traigent Cloud
 service behavior for privacy-first optimization mode, ensuring that:
 1. No actual data is received from the client
 2. Only metadata and aggregated metrics are processed
@@ -49,7 +49,7 @@ class MockSession:
 
 
 class DummyPrivacyServer:
-    """Mock server that simulates TraiGent Cloud for privacy-first mode testing."""
+    """Mock server that simulates Traigent Cloud for privacy-first mode testing."""
 
     def __init__(self):
         self.sessions: dict[str, MockSession] = {}

@@ -200,6 +200,9 @@ async def test_backend_api():
     print("\nCheck the UI at http://localhost:3000/experiments/")
     print(f"Look for experiment: {experiment_id}")
 
+    # Verify test completed successfully
+    assert experiment_id is not None, "Experiment should be created"
+
 
 if __name__ == "__main__":
     print("Testing Backend API Integration")

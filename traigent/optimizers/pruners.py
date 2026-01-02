@@ -12,11 +12,17 @@ import optuna
 
 @dataclass(slots=True)
 class CeilingPrunerConfig:
-    """Configuration for :class:`CeilingPruner`."""
+    """Configuration for :class:`CeilingPruner`.
 
-    min_completed_trials: int = 2
-    warmup_steps: int = 2
-    epsilon: float = 1e-6
+    Defaults are tuned to balance exploration vs exploitation:
+    - min_completed_trials=3: Gather enough baseline data before pruning
+    - warmup_steps=5: Let trials warm up before making pruning decisions
+    - epsilon=0.05: Allow 5% exploration margin to avoid overly aggressive pruning
+    """
+
+    min_completed_trials: int = 3
+    warmup_steps: int = 5
+    epsilon: float = 0.05  # 5% exploration margin
     cost_threshold: float | None = None
 
 
@@ -28,14 +34,20 @@ class CeilingPruner(optuna.pruners.BasePruner):
     estimate sinks below the best completed trial (within ``epsilon``), the trial is pruned.
 
     Optionally supports absolute cost-based pruning when ``cost_threshold`` is set.
+
+    Note:
+        The ``epsilon`` parameter is an **absolute** value, not a percentage.
+        For metrics on a 0-1 scale (e.g., accuracy), epsilon=0.05 means 5 percentage points.
+        For metrics on a 0-100 scale, epsilon=0.05 would be negligible (0.05 points).
+        Ensure your epsilon matches your metric scale.
     """
 
     def __init__(
         self,
         *,
-        min_completed_trials: int = 2,
-        warmup_steps: int = 2,
-        epsilon: float = 1e-6,
+        min_completed_trials: int = 3,
+        warmup_steps: int = 5,
+        epsilon: float = 0.05,
         cost_threshold: float | None = None,
     ) -> None:
         self._min_completed_trials = min_completed_trials

@@ -1,4 +1,4 @@
-"""API key management module for TraiGent authentication.
+"""API key management module for Traigent authentication.
 
 This module handles API key lifecycle, validation, rotation, and secure storage.
 Extracted from AuthManager to follow Single Responsibility Principle.
@@ -279,9 +279,13 @@ class APIKeyManager:
     def validate_format(self, key: str | None) -> bool:
         """Validate API key format.
 
-        Accepts `tg_`-prefixed 64-character keys containing alphanumerics or
-        underscores. Returns False for any deviation so callers can reject
-        suspicious values early.
+        Accepts keys with valid prefixes and lengths, containing only
+        alphanumerics or underscores after the prefix.
+        Returns False for any deviation so callers can reject suspicious values early.
+
+        Supported formats:
+        - `tg_`: Standard Traigent API keys (64 characters total)
+        - `uk_`: User/utility keys issued by the backend (46 characters total)
 
         Args:
             key: API key to validate
@@ -292,13 +296,29 @@ class APIKeyManager:
         if not key or not isinstance(key, str):
             return False
 
-        if not key.startswith("tg_"):
+        # Define valid prefixes and their expected total lengths
+        prefix_lengths = {
+            "tg_": 64,  # Standard Traigent API keys
+            "uk_": 46,  # User/utility keys from backend
+        }
+
+        # Find matching prefix
+        matched_prefix = None
+        for prefix in prefix_lengths:
+            if key.startswith(prefix):
+                matched_prefix = prefix
+                break
+
+        if matched_prefix is None:
             return False
 
-        if len(key) != 64:
+        expected_length = prefix_lengths[matched_prefix]
+        if len(key) != expected_length:
             return False
 
-        allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        allowed = set(
+            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+        )
         return all(char in allowed for char in key[3:])
 
     def get_status(self) -> dict[str, Any]:

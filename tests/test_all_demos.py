@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TraiGent SDK Demo Test Runner
+Traigent SDK Demo Test Runner
 
 This script runs all demos with basic sanity checks to verify they work correctly.
 Use this for quick validation of the entire demo suite.
@@ -183,7 +183,7 @@ class DemoRunner:
                     "SUMMARY",
                     "Results",
                     "optimization",
-                    "TraiGent",
+                    "Traigent",
                 ]
 
                 has_positive = any(
@@ -254,11 +254,11 @@ def get_demo_categories() -> dict[str, list[tuple[Path, list[str], str]]]:
 
     categories = {
         "basic": [
-            (demos_dir / "basic" / "simple_example.py", ["TraiGent"], None),
-            (demos_dir / "basic" / "quick_demo.py", ["TraiGent"], None),
-            (demos_dir / "basic" / "zero_friction_demo.py", ["TraiGent"], None),
-            (demos_dir / "basic" / "adaptive_parameters.py", ["TraiGent"], None),
-            (demos_dir / "basic" / "basic_optimization.py", ["TraiGent"], None),
+            (demos_dir / "basic" / "simple_example.py", ["Traigent"], None),
+            (demos_dir / "basic" / "quick_demo.py", ["Traigent"], None),
+            (demos_dir / "basic" / "zero_friction_demo.py", ["Traigent"], None),
+            (demos_dir / "basic" / "adaptive_parameters.py", ["Traigent"], None),
+            (demos_dir / "basic" / "basic_optimization.py", ["Traigent"], None),
         ],
         "advanced": [
             (demos_dir / "advanced" / "sprint4_features_demo.py", ["Sprint 4"], None),
@@ -274,32 +274,32 @@ def get_demo_categories() -> dict[str, list[tuple[Path, list[str], str]]]:
             ),
             (
                 demos_dir / "advanced" / "config_injection_patterns.py",
-                ["TraiGent"],
+                ["Traigent"],
                 None,
             ),
             (
                 demos_dir / "advanced" / "invoker_evaluator_separation.py",
-                ["TraiGent"],
+                ["Traigent"],
                 None,
             ),
-            (demos_dir / "advanced" / "batch_processing_simple.py", ["TraiGent"], None),
+            (demos_dir / "advanced" / "batch_processing_simple.py", ["Traigent"], None),
             (
                 demos_dir / "advanced" / "batch_processing_advanced.py",
-                ["TraiGent"],
+                ["Traigent"],
                 None,
             ),
         ],
         "commercial": [
             (
                 demos_dir / "commercial" / "cloud_execution_simple_demo.py",
-                ["TraiGent"],
+                ["Traigent"],
                 None,
             ),
-            (demos_dir / "commercial" / "cto_demo.py", ["TraiGent"], None),
-            (demos_dir / "commercial" / "simple_cto_demo.py", ["TraiGent"], None),
+            (demos_dir / "commercial" / "cto_demo.py", ["Traigent"], None),
+            (demos_dir / "commercial" / "simple_cto_demo.py", ["Traigent"], None),
             (
                 demos_dir / "commercial" / "sprint5_cloud_service_demo.py",
-                ["TraiGent"],
+                ["Traigent"],
                 None,
             ),
             # Skip full server demo due to complexity
@@ -329,7 +329,7 @@ def get_demo_categories() -> dict[str, list[tuple[Path, list[str], str]]]:
 def main():
     """Main demo test runner."""
     parser = argparse.ArgumentParser(
-        description="Test all TraiGent SDK demos",
+        description="Test all Traigent SDK demos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -383,7 +383,7 @@ Examples:
     # Initialize runner
     runner = DemoRunner(verbose=args.verbose, timeout=args.timeout)
 
-    print("🚀 TraiGent SDK Demo Test Runner")
+    print("🚀 Traigent SDK Demo Test Runner")
     print("=" * 50)
     print(f"📍 Project Root: {PROJECT_ROOT}")
     print(f"⏱️  Timeout: {args.timeout}s per demo")

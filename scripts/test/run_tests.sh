@@ -3,7 +3,7 @@
 
 set -e
 
-echo "🧪 Running TraiGent SDK Tests"
+echo "🧪 Running Traigent SDK Tests"
 echo "============================"
 
 # Function to run tests and capture results

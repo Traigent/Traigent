@@ -4,6 +4,8 @@
 
 When running FEVER case study with grid search and limited trials (e.g., 30 out of 729), only `gpt-4o-mini` configurations were being tested. Other models (`gpt-4.1-nano`, `gpt-4.1-mini`) were not seen until trial 244+.
 
+**Note:** Spider case-study references below are historical; only `paper_experiments/case_study_fever/` exists in this repo today.
+
 ## Root Cause Analysis
 
 ### Issue #1: Base GridSearchOptimizer Parameter Ordering
@@ -135,7 +137,7 @@ No override warnings ✅
 
 1. `traigent/optimizers/grid.py` - Fixed parameter ordering (model last)
 2. `tests/unit/optimizers/test_grid.py` - Updated test expectations
-3. `paper_experiments/case_study_spider/pipeline.py` - Removed custom optimizer
+3. `paper_experiments/case_study_spider/pipeline.py` - Removed custom optimizer (historical; file not in repo)
 4. `docs/grid_search_model_prioritization.md` - Documented the change
 
 ## Impact

@@ -32,6 +32,8 @@ _evaluator_module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_evaluator_module)
 SupportEvaluator = _evaluator_module.SupportEvaluator
 
+DATASET_PATH = Path(__file__).parent.parent / "datasets" / "support_tickets.jsonl"
+
 
 SUPPORT_SYSTEM_PROMPT = """You are a customer support agent for ShopEasy, a popular e-commerce platform.
 Your role is to help customers with their inquiries while maintaining a {tone} tone.
@@ -76,6 +78,11 @@ Response Format:
 Respond naturally to the customer:"""
 
 
+def is_mock_mode() -> bool:
+    """Check if mock mode is enabled via environment variable."""
+    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+
+
 def build_escalation_decision_prompt(
     query: str,
     customer_context: dict[str, Any],
@@ -110,8 +117,9 @@ Should this be escalated? Respond with only "YES" or "NO":"""
     },
     objectives=["resolution_accuracy", "tone_quality", "escalation_accuracy", "cost"],
     evaluation=EvaluationOptions(
-        eval_dataset="use-cases/customer-support/datasets/support_tickets.jsonl",
-        custom_evaluator=SupportEvaluator(),
+        eval_dataset=str(DATASET_PATH),
+        # SupportEvaluator has scoring_function interface: (prediction, expected, input_data) -> dict
+        scoring_function=SupportEvaluator(),
     ),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
@@ -154,46 +162,52 @@ def customer_support_agent(
         query=query,
     )
 
+    if is_mock_mode():
+        return generate_mock_response(
+            query, customer_context, tone, empathy_level, escalation_threshold
+        )
+
     # Use LangChain for LLM call
     try:
         from langchain_openai import ChatOpenAI
+    except ImportError as exc:
+        raise ImportError(
+            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "Install it with: pip install langchain-openai"
+        ) from exc
 
-        llm = ChatOpenAI(
-            model=model,
-            temperature=temperature,
-        )
+    llm = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+    )
 
-        # Generate response
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-        response = llm.invoke(messages)
-        response_text = response.content
+    # Generate response
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+    response = llm.invoke(messages)
+    response_text = response.content
 
-        # Determine escalation
-        escalation_prompt = build_escalation_decision_prompt(
-            query, customer_context, response_text
-        )
-        escalation_response = llm.invoke(escalation_prompt)
-        should_escalate = "YES" in escalation_response.content.upper()
+    # Determine escalation
+    escalation_prompt = build_escalation_decision_prompt(
+        query, customer_context, response_text
+    )
+    escalation_response = llm.invoke(escalation_prompt)
+    should_escalate = "YES" in escalation_response.content.upper()
 
-        # Determine resolution type
-        resolution_type = determine_resolution_type(response_text, should_escalate)
+    # Determine resolution type
+    resolution_type = determine_resolution_type(response_text, should_escalate)
 
-        return {
-            "response": response_text,
-            "should_escalate": should_escalate,
-            "resolution_type": resolution_type,
-            "model": model,
-            "temperature": temperature,
-            "tone": tone,
-            "empathy_level": empathy_level,
-        }
-
-    except ImportError:
-        # Fallback for mock mode without LangChain
-        return generate_mock_response(query, customer_context, tone, empathy_level)
+    return {
+        "response": response_text,
+        "should_escalate": should_escalate,
+        "resolution_type": resolution_type,
+        "model": model,
+        "temperature": temperature,
+        "tone": tone,
+        "empathy_level": empathy_level,
+    }
 
 
 def determine_resolution_type(response: str, should_escalate: bool) -> str:
@@ -222,6 +236,7 @@ def generate_mock_response(
     customer_context: dict[str, Any],
     tone: str,
     empathy_level: str,
+    escalation_threshold: str,
 ) -> dict[str, Any]:
     """Generate a mock response for testing without LLM."""
     query_lower = query.lower()
@@ -230,10 +245,28 @@ def generate_mock_response(
 
     # Determine if escalation is needed based on keywords
     escalation_keywords = ["supervisor", "manager", "lawyer", "sue", "unacceptable"]
-    should_escalate = any(kw in query_lower for kw in escalation_keywords)
+    explicit_escalation = any(
+        kw in query_lower for kw in ["supervisor", "manager", "lawyer", "sue"]
+    )
+    keyword_hits = sum(1 for kw in escalation_keywords if kw in query_lower)
 
-    # Also escalate for very negative sentiment on high-value customers
-    if sentiment == "very_negative" and customer_tier in ["gold", "platinum"]:
+    if explicit_escalation:
+        should_escalate = True
+    elif escalation_threshold == "conservative":
+        should_escalate = keyword_hits > 0 or sentiment in [
+            "negative",
+            "very_negative",
+        ]
+    elif escalation_threshold == "aggressive":
+        should_escalate = keyword_hits > 1
+    else:
+        should_escalate = keyword_hits > 0
+
+    if (
+        sentiment == "very_negative"
+        and customer_tier in ["gold", "platinum"]
+        and escalation_threshold != "aggressive"
+    ):
         should_escalate = True
 
     # Generate appropriate response based on query type
@@ -311,11 +344,11 @@ Is there anything else I can help you with today?"""
 async def run_optimization():
     """Run the customer support agent optimization."""
     print("=" * 60)
-    print("Customer Support Agent - TraiGent Optimization")
+    print("Customer Support Agent - Traigent Optimization")
     print("=" * 60)
 
     # Check if mock mode is enabled
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+    mock_mode = is_mock_mode()
     print(f"\nMock Mode: {'Enabled' if mock_mode else 'Disabled'}")
 
     if not mock_mode:
@@ -332,10 +365,12 @@ async def run_optimization():
     print("\nObjectives: resolution_accuracy, tone_quality, escalation_accuracy, cost")
     print("-" * 60)
 
-    # Run optimization
+    # Run optimization with Bayesian and early stopping
     results = await customer_support_agent.optimize(
-        algorithm="random",
-        max_trials=20,
+        algorithm="bayesian",
+        max_trials=12,
+        max_examples=20,  # Use 20 examples per trial for faster demo
+        pruner="median",  # Early stop underperforming trials
     )
 
     # Display results

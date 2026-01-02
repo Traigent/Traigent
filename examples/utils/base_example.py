@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shared utilities for TraiGent examples.
+Shared utilities for Traigent examples.
 
 This module provides common functionality used across examples:
 - Mock mode setup
@@ -21,7 +21,7 @@ os.environ["TRAIGENT_MOCK_MODE"] = "true"
 
 
 class BaseExample(ABC):
-    """Base class for TraiGent examples."""
+    """Base class for Traigent examples."""
 
     def __init__(self, name: str):
         self.name = name
@@ -29,7 +29,7 @@ class BaseExample(ABC):
 
     @abstractmethod
     def get_config(self) -> dict[str, Any]:
-        """Return TraiGent optimization configuration."""
+        """Return Traigent optimization configuration."""
         pass
 
     def create_dataset(self, samples: list[dict]) -> str:
@@ -153,7 +153,7 @@ CLASSIFICATION_DATASET = [
 ]
 
 if __name__ == "__main__":
-    print("🔧 TraiGent Examples Shared Utilities")
+    print("🔧 Traigent Examples Shared Utilities")
     print("This module provides common functionality for examples.")
     print("\nAvailable utilities:")
     print("  • BaseExample class for consistent example structure")

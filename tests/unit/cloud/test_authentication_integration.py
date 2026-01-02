@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.client import CloudServiceError, TraiGentCloudClient
+from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 from traigent.cloud.models import (
     AgentExecutionRequest,
     AgentSpecification,
@@ -119,7 +119,7 @@ class TestFullOptimizationWorkflows:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "integration-test",
+                                "X-Traigent-Client": "integration-test",
                                 "Content-Type": "application/json",
                             }
                         )
@@ -133,7 +133,7 @@ class TestFullOptimizationWorkflows:
                         mock_session.get = Mock(side_effect=track_http_request("GET"))
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
                         client.auth = mock_auth_instance
 
                         # Execute complete optimization workflow
@@ -186,9 +186,9 @@ class TestFullOptimizationWorkflows:
                                     == http_requests[0]["headers"]["Authorization"]
                                 )
                                 assert headers.get(
-                                    "X-TraiGent-Client"
+                                    "X-Traigent-Client"
                                 ) == http_requests[0]["headers"].get(
-                                    "X-TraiGent-Client"
+                                    "X-Traigent-Client"
                                 )
 
     @pytest.mark.asyncio
@@ -241,7 +241,7 @@ class TestFullOptimizationWorkflows:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test-client",
+                                "X-Traigent-Client": "test-client",
                                 "Content-Type": "application/json",
                             }
                         )
@@ -254,7 +254,7 @@ class TestFullOptimizationWorkflows:
                         mock_session.post = Mock(side_effect=mock_request_with_retry)
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
                         client.auth = mock_auth_instance
 
                         # Simulate retries by calling create_optimization_session multiple times
@@ -407,7 +407,7 @@ class TestAgentWorkflows:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "agent-test",
+                                "X-Traigent-Client": "agent-test",
                                 "Content-Type": "application/json",
                             }
                         )
@@ -423,7 +423,7 @@ class TestAgentWorkflows:
                         mock_session.get = Mock(side_effect=track_agent_request("GET"))
                         mock_cs.return_value = mock_session
 
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
                         client.auth = mock_auth_instance
 
                         # Execute complete agent workflow
@@ -499,7 +499,7 @@ class TestAgentWorkflows:
 
                             # Check for additional agent-specific headers
                             assert (
-                                "X-TraiGent-Client" in headers
+                                "X-Traigent-Client" in headers
                             ), f"Agent request {i} missing client header"
 
     @pytest.mark.asyncio
@@ -550,7 +550,7 @@ class TestAgentWorkflows:
                             mock_auth_instance.get_headers = AsyncMock(
                                 return_value={
                                     "Authorization": f"Bearer {api_key}",
-                                    "X-TraiGent-Client": f"client-{client_id}",
+                                    "X-Traigent-Client": f"client-{client_id}",
                                     "Content-Type": "application/json",
                                 }
                             )
@@ -565,7 +565,7 @@ class TestAgentWorkflows:
                             )
                             mock_cs.return_value = mock_session
 
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
                             client.auth = mock_auth_instance
 
                             agent_spec = AgentSpecification(
@@ -950,7 +950,7 @@ class TestMultiClientWorkflows:
                             mock_auth_instance.get_headers = AsyncMock(
                                 return_value={
                                     "Authorization": f"Bearer {api_key}",
-                                    "X-TraiGent-Client": f"client-{client_name}",
+                                    "X-Traigent-Client": f"client-{client_name}",
                                     "Content-Type": "application/json",
                                 }
                             )
@@ -965,7 +965,7 @@ class TestMultiClientWorkflows:
                             )
                             mock_cs.return_value = mock_session
 
-                            client = TraiGentCloudClient(api_key=api_key)
+                            client = TraigentCloudClient(api_key=api_key)
                             client.auth = mock_auth_instance
 
                             # Each client performs its workflow
@@ -1057,7 +1057,7 @@ class TestMultiClientWorkflows:
                         mock_auth_instance1.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key_1}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                                 "Content-Type": "application/json",
                             }
                         )
@@ -1066,7 +1066,7 @@ class TestMultiClientWorkflows:
                         )
                         mock_auth_mgr1.return_value = mock_auth_instance1
 
-                        client = TraiGentCloudClient(api_key=api_key_1)
+                        client = TraigentCloudClient(api_key=api_key_1)
                         client.auth = mock_auth_instance1
 
                         # Make initial request
@@ -1082,7 +1082,7 @@ class TestMultiClientWorkflows:
                         mock_auth_instance2.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key_2}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                                 "Content-Type": "application/json",
                             }
                         )
@@ -1091,7 +1091,7 @@ class TestMultiClientWorkflows:
                         )
                         mock_auth_mgr2.return_value = mock_auth_instance2
 
-                        client = TraiGentCloudClient(api_key=api_key_2)
+                        client = TraigentCloudClient(api_key=api_key_2)
                         client.auth = mock_auth_instance2
 
                         # Make request with new key

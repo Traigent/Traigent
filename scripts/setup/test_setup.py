@@ -34,7 +34,7 @@ def run_command(cmd, description):
 
 def main():
     """Setup and run tests."""
-    print("🧪 TraiGent SDK Test Setup")
+    print("🧪 Traigent SDK Test Setup")
 
     # 1. Install test dependencies
     if run_command("pip install -e '.[dev]'", "Installing test dependencies") != 0:

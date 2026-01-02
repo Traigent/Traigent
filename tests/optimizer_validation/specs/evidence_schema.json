@@ -1,0 +1,336 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://traigent.io/schemas/test-evidence.json",
+  "title": "Test Evidence Schema",
+  "description": "Schema for optimizer validation test evidence emitted during test runs",
+  "type": "object",
+  "required": ["type", "scenario", "expected", "actual", "validation_checks", "passed"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "TEST_EVIDENCE",
+      "description": "Evidence type marker"
+    },
+    "scenario": {
+      "type": "object",
+      "description": "Test scenario configuration",
+      "required": ["name", "config_space", "injection_mode", "max_trials"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Unique scenario identifier"
+        },
+        "description": {
+          "type": ["string", "null"],
+          "description": "Human-readable scenario description"
+        },
+        "config_space": {
+          "type": "object",
+          "description": "Configuration space with parameter definitions",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["categorical", "continuous", "fixed"],
+                "description": "Parameter type"
+              },
+              "values": {
+                "type": "array",
+                "description": "Categorical values"
+              },
+              "range": {
+                "type": "array",
+                "items": {"type": "number"},
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Continuous range [min, max]"
+              },
+              "value": {
+                "description": "Fixed value"
+              },
+              "cardinality": {
+                "oneOf": [
+                  {"type": "integer", "minimum": 1},
+                  {"type": "string", "const": "∞"}
+                ],
+                "description": "Number of possible values"
+              }
+            }
+          },
+          "properties": {
+            "_summary": {
+              "type": "object",
+              "description": "Config space summary statistics",
+              "properties": {
+                "categorical_combinations": {"type": "integer"},
+                "has_continuous": {"type": "boolean"},
+                "total_space": {
+                  "oneOf": [
+                    {"type": "integer"},
+                    {"type": "string", "const": "infinite"}
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "injection_mode": {
+          "type": "string",
+          "enum": ["context", "parameter", "attribute", "seamless"],
+          "description": "How configuration is injected into the function"
+        },
+        "execution_mode": {
+          "type": ["string", "null"],
+          "enum": ["edge_analytics", "privacy", "hybrid", "cloud", "standard", null],
+          "description": "Execution environment mode"
+        },
+        "algorithm": {
+          "type": ["string", "null"],
+          "enum": ["random", "grid", "optuna_tpe", "optuna_cmaes", "optuna_random", null],
+          "description": "Optimization algorithm used"
+        },
+        "parallel_mode": {
+          "type": ["string", "null"],
+          "enum": ["sequential", "parallel", null],
+          "description": "Trial execution parallelism"
+        },
+        "max_trials": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Maximum number of trials to run"
+        },
+        "timeout": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Timeout in seconds"
+        },
+        "dataset_size": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Number of dataset examples"
+        },
+        "objectives": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Objective metric names"
+        },
+        "constraints": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Constraint names"
+        }
+      }
+    },
+    "dataset": {
+      "type": ["object", "null"],
+      "description": "Dataset information",
+      "properties": {
+        "path": {
+          "type": ["string", "null"],
+          "description": "Path to dataset file"
+        },
+        "size": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Actual number of examples in dataset"
+        },
+        "configured_size": {
+          "type": ["integer", "null"],
+          "description": "Size configured in scenario"
+        },
+        "samples": {
+          "type": ["array", "null"],
+          "maxItems": 3,
+          "description": "Sample dataset entries for preview"
+        },
+        "is_auto_generated": {
+          "type": "boolean",
+          "description": "Whether dataset was auto-generated"
+        }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "description": "Expected test outcomes",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": ["SUCCESS", "FAILURE", "PARTIAL"],
+          "description": "Expected test result"
+        },
+        "min_trials": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Minimum expected trials"
+        },
+        "max_trials": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "Maximum expected trials"
+        },
+        "expected_stop_reason": {
+          "type": ["string", "null"],
+          "description": "Expected reason for stopping"
+        },
+        "best_score_range": {
+          "type": ["array", "null"],
+          "items": {"type": "number"},
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Expected score range [min, max]"
+        },
+        "required_metrics": {
+          "type": ["array", "null"],
+          "items": {"type": "string"},
+          "description": "Metrics that must be present"
+        },
+        "error_type": {
+          "type": ["string", "null"],
+          "description": "Expected exception type name"
+        },
+        "error_message_contains": {
+          "type": ["string", "null"],
+          "description": "Substring expected in error message"
+        }
+      }
+    },
+    "actual": {
+      "type": "object",
+      "description": "Actual test results",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["success", "exception"],
+          "description": "Result type"
+        },
+        "trial_count": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Number of trials completed"
+        },
+        "stop_reason": {
+          "type": ["string", "null"],
+          "description": "Why optimization stopped"
+        },
+        "best_score": {
+          "type": ["number", "null"],
+          "description": "Best score achieved"
+        },
+        "best_config": {
+          "type": ["object", "null"],
+          "description": "Configuration that achieved best score"
+        },
+        "duration": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "description": "Total duration in seconds"
+        },
+        "success_rate": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of successful trials"
+        },
+        "algorithm": {
+          "type": ["string", "null"],
+          "description": "Algorithm that was used"
+        },
+        "exception_type": {
+          "type": ["string", "null"],
+          "description": "Exception class name if failed"
+        },
+        "message": {
+          "type": ["string", "null"],
+          "description": "Exception message if failed"
+        }
+      }
+    },
+    "trials": {
+      "type": "array",
+      "description": "Individual trial results",
+      "items": {
+        "type": "object",
+        "required": ["index", "config", "status"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based trial index"
+          },
+          "config": {
+            "type": "object",
+            "description": "Configuration used for this trial"
+          },
+          "score": {
+            "type": ["number", "null"],
+            "description": "Score achieved"
+          },
+          "status": {
+            "type": "string",
+            "description": "Trial status"
+          },
+          "duration": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "Trial duration in seconds"
+          },
+          "is_best": {
+            "type": "boolean",
+            "description": "Whether this was the best trial"
+          },
+          "metrics": {
+            "type": ["object", "null"],
+            "description": "All metrics from this trial"
+          },
+          "error": {
+            "type": ["string", "null"],
+            "description": "Error message if trial failed"
+          }
+        }
+      }
+    },
+    "validation_checks": {
+      "type": "array",
+      "description": "Individual validation check results",
+      "items": {
+        "type": "object",
+        "required": ["name", "passed"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Check name"
+          },
+          "passed": {
+            "type": "boolean",
+            "description": "Whether check passed"
+          },
+          "expected": {
+            "description": "Expected value"
+          },
+          "actual": {
+            "description": "Actual value"
+          },
+          "message": {
+            "type": ["string", "null"],
+            "description": "Additional context"
+          }
+        }
+      }
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Overall test pass/fail status"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Warning messages"
+    }
+  }
+}

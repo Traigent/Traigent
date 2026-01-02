@@ -1,4 +1,4 @@
-# TraiGent Execution Modes Guide
+# Traigent Execution Modes Guide
 
 > **Current status:** Open-source builds support `edge_analytics` (local) only. Cloud and hybrid are roadmap-ready but require a managed backend.
 
@@ -13,6 +13,8 @@ Use `edge_analytics` for all OSS runs. This guide focuses on local mode and note
 | `edge_analytics` | ✅ Available | ✅ Data stays local | Default and supported today |
 | `cloud` | 🚧 Roadmap | ⚠️ Metadata shared | Managed backend only (not shipped) |
 | `hybrid` | 🚧 Roadmap | ✅ I/O local, metadata shared | Managed backend only (not shipped) |
+
+> **Legacy alias:** `privacy` maps to `hybrid` and sets `privacy_enabled=True`, but hybrid execution is still a managed-backend feature.
 
 ## Local Mode (`edge_analytics`)
 
@@ -66,4 +68,6 @@ def my_agent(query: str) -> str:
 
 ## Privacy-Safe Analytics
 
-Analytics are optional and privacy-safe; disable with `enable_usage_analytics=False` or `export TRAIGENT_DISABLE_ANALYTICS=true`. No prompts, inputs, outputs, or code are transmitted in OSS local mode.
+Edge Analytics can submit aggregated, privacy-safe usage stats when a Traigent API key is configured. No prompts, inputs, outputs, or code are transmitted in OSS local mode.
+
+To disable usage analytics in managed setups, pass `enable_usage_analytics=False` via `traigent.initialize(config=TraigentConfig(...))`. In OSS, leave the Traigent API key unset to skip analytics submission entirely.

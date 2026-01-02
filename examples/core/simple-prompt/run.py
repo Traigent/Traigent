@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Simple Prompt Optimization - The "Hello World" of TraiGent.
+Simple Prompt Optimization - The "Hello World" of Traigent.
 
-This example demonstrates the most basic usage of TraiGent:
+This example demonstrates the most basic usage of Traigent:
 1. Decorating a function with @traigent.optimize
 2. Defining a configuration space (model, temperature)
 3. Running the optimization loop
@@ -30,7 +30,7 @@ BASE = Path(__file__).parent
 if MOCK:
     _prepare_mock_paths(BASE)
 
-# --- Import TraiGent ---
+# --- Import Traigent ---
 try:
     import traigent
 except ImportError:

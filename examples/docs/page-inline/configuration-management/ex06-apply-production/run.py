@@ -34,7 +34,7 @@ def _serialize_trials(opt_result: Any, limit: int = 10) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    print("Running TraiGent Production Configuration Example")
+    print("Running Traigent Production Configuration Example")
     print("=" * 60)
 
     # Initialize service (uses optimized functions inside)

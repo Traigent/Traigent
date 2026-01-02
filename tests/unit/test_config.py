@@ -1,5 +1,6 @@
 """Comprehensive unit tests for integration configuration system."""
 
+from dataclasses import fields
 from unittest.mock import patch
 
 import pytest
@@ -10,9 +11,35 @@ from traigent.integrations.config import (
     IntegrationConfig,
     ParameterConstraints,
     configure_integrations,
+    get_integration_config,
     integration_config,
 )
 from traigent.utils.exceptions import ValidationError as ValidationException
+
+
+@pytest.fixture(autouse=True)
+def reset_integration_config():
+    """Reset integration_config to defaults before and after each test.
+
+    This ensures test isolation when tests modify the global integration_config.
+    Important: We reset to actual IntegrationConfig defaults, not "current" values,
+    because other tests may have polluted the global state before this fixture runs.
+    """
+    # Get actual default values from a fresh IntegrationConfig instance
+    default_config = IntegrationConfig()
+    default_values = {
+        f.name: getattr(default_config, f.name) for f in fields(IntegrationConfig)
+    }
+
+    # Reset to defaults BEFORE the test runs
+    for name, value in default_values.items():
+        setattr(integration_config, name, value)
+
+    yield
+
+    # Reset to defaults AFTER the test runs
+    for name, value in default_values.items():
+        setattr(integration_config, name, value)
 
 
 class TestIntegrationConfig:
@@ -408,6 +435,9 @@ class TestParameterValidation:
 
     def test_validate_parameter_deprecation_warning(self):
         """Test that deprecation warnings are logged."""
+        # Import the actual logger from the module to patch it directly
+        import traigent.integrations.config as config_module
+
         # Create a deprecated constraint for testing
         with patch.object(
             FrameworkConstraints, "get_constraints_for_framework"
@@ -418,7 +448,8 @@ class TestParameterValidation:
             mock_constraints = {"old_param": deprecated_constraint}
             mock_get.return_value = mock_constraints
 
-            with patch("traigent.integrations.config.logger") as mock_logger:
+            # Patch the logger object directly (not the name) to handle cached references
+            with patch.object(config_module.logger, "warning") as mock_warning:
                 issues = FrameworkConstraints.validate_parameter(
                     "test", "old_param", "value"
                 )
@@ -426,10 +457,12 @@ class TestParameterValidation:
                 # Should not have validation issues
                 assert issues == []
 
-                # Should log deprecation warning
-                mock_logger.warning.assert_called_once()
-                warning_call = mock_logger.warning.call_args[0][0]
-                assert "Use new_param instead" in warning_call
+                # Should log deprecation warning (check it was called with expected message)
+                assert mock_warning.called, "Expected warning to be logged"
+                warning_calls = [call[0][0] for call in mock_warning.call_args_list]
+                assert any(
+                    "Use new_param instead" in call for call in warning_calls
+                ), f"Expected deprecation message in: {warning_calls}"
 
     def test_validate_parameter_multiple_issues(self):
         """Test validation with multiple issues (early return on type error)."""
@@ -446,6 +479,11 @@ class TestGlobalConfiguration:
 
     def test_global_integration_config_exists(self):
         """Test that global integration_config exists and is correct type."""
+        # Use get_integration_config() to ensure we get a fresh reference
+        config = get_integration_config()
+        assert config is not None
+        assert isinstance(config, IntegrationConfig)
+        # Also verify the module-level import works
         assert integration_config is not None
         assert isinstance(integration_config, IntegrationConfig)
 
@@ -454,55 +492,48 @@ class TestGlobalConfiguration:
         original_auto_discover = integration_config.auto_discover
         original_strict_mode = integration_config.strict_mode
 
-        try:
-            # Configure some options
-            configure_integrations(
-                auto_discover=not original_auto_discover,
-                strict_mode=not original_strict_mode,
-                discovery_cache_ttl=7200,
-            )
+        # Configure some options
+        configure_integrations(
+            auto_discover=not original_auto_discover,
+            strict_mode=not original_strict_mode,
+            discovery_cache_ttl=7200,
+        )
 
-            # Check that values were updated
-            assert integration_config.auto_discover == (not original_auto_discover)
-            assert integration_config.strict_mode == (not original_strict_mode)
-            assert integration_config.discovery_cache_ttl == 7200
-
-        finally:
-            # Restore original values
-            integration_config.auto_discover = original_auto_discover
-            integration_config.strict_mode = original_strict_mode
-            integration_config.discovery_cache_ttl = 3600
+        # Check that values were updated
+        assert integration_config.auto_discover == (not original_auto_discover)
+        assert integration_config.strict_mode == (not original_strict_mode)
+        assert integration_config.discovery_cache_ttl == 7200
+        # Cleanup handled by reset_integration_config fixture
 
     def test_configure_integrations_invalid_options(self):
         """Test configuring integrations with invalid options."""
-        with patch("traigent.integrations.config.logger") as mock_logger:
-            configure_integrations(
-                valid_option=True, invalid_option="should_warn", another_invalid=123
-            )
+        # Import the actual logger from the module to patch it directly
+        import traigent.integrations.config as config_module
+
+        # Patch the logger object directly (not the name) to handle cached references
+        with patch.object(config_module.logger, "warning") as mock_warning:
+            configure_integrations(invalid_option="should_warn", another_invalid=123)
 
             # Should warn about invalid options
-            assert mock_logger.warning.call_count >= 2
-            warning_calls = [call[0][0] for call in mock_logger.warning.call_args_list]
-            assert any("invalid_option" in call for call in warning_calls)
-            assert any("another_invalid" in call for call in warning_calls)
+            warning_calls = [call[0][0] for call in mock_warning.call_args_list]
+            assert any(
+                "invalid_option" in call for call in warning_calls
+            ), f"Expected warning about 'invalid_option' in: {warning_calls}"
+            assert any(
+                "another_invalid" in call for call in warning_calls
+            ), f"Expected warning about 'another_invalid' in: {warning_calls}"
 
     def test_configure_integrations_type_safety(self):
         """Test that configuration maintains type safety."""
-        original_fuzzy_threshold = integration_config.fuzzy_matching_threshold
+        # Valid type change
+        configure_integrations(fuzzy_matching_threshold=0.9)
+        assert integration_config.fuzzy_matching_threshold == 0.9
 
-        try:
-            # Valid type change
-            configure_integrations(fuzzy_matching_threshold=0.9)
-            assert integration_config.fuzzy_matching_threshold == 0.9
-
-            # Invalid type should still be set (Python is dynamic)
-            with pytest.raises(ValidationException):
-                configure_integrations(fuzzy_matching_threshold="invalid")
-            assert integration_config.fuzzy_matching_threshold == 0.9
-
-        finally:
-            # Restore original value
-            integration_config.fuzzy_matching_threshold = original_fuzzy_threshold
+        # Invalid type should raise and not change the value
+        with pytest.raises(ValidationException):
+            configure_integrations(fuzzy_matching_threshold="invalid")
+        assert integration_config.fuzzy_matching_threshold == 0.9
+        # Cleanup handled by reset_integration_config fixture
 
     def test_configure_integrations_rejects_negative_cache_ttl(self):
         """Negative discovery_cache_ttl should raise an error."""

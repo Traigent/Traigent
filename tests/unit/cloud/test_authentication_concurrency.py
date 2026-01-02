@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 
 
 class TestConcurrentSessionCreation:
@@ -43,13 +43,13 @@ class TestConcurrentSessionCreation:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to return valid headers
                     client.auth.get_headers = AsyncMock(
                         return_value={
                             "Authorization": f"Bearer {api_key}",
-                            "X-TraiGent-Client": "test",
+                            "X-Traigent-Client": "test",
                         }
                     )
 
@@ -105,13 +105,13 @@ class TestConcurrentSessionCreation:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to return valid headers
                     client.auth.get_headers = AsyncMock(
                         return_value={
                             "Authorization": f"Bearer {api_key}",
-                            "X-TraiGent-Client": "test",
+                            "X-Traigent-Client": "test",
                         }
                     )
 
@@ -154,7 +154,7 @@ class TestConcurrentSessionCreation:
             await asyncio.sleep(0.05)  # Simulate network delay
             with operations_lock:
                 operations.append("get_headers_end")
-            return {"Authorization": f"Bearer {api_key}", "X-TraiGent-Client": "test"}
+            return {"Authorization": f"Bearer {api_key}", "X-Traigent-Client": "test"}
 
         def mock_session_constructor(*args, **kwargs):
             with operations_lock:
@@ -169,7 +169,7 @@ class TestConcurrentSessionCreation:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to be slow
                     client.auth.get_headers = slow_get_headers
@@ -230,13 +230,13 @@ class TestConcurrentSessionCreation:
                 side_effect=mock_session_constructor,
             ):
                 with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to return valid headers
                     client.auth.get_headers = AsyncMock(
                         return_value={
                             "Authorization": f"Bearer {api_key}",
-                            "X-TraiGent-Client": "test",
+                            "X-Traigent-Client": "test",
                         }
                     )
 
@@ -277,13 +277,13 @@ class TestConcurrentSessionCreation:
         with patch("traigent.cloud.client.AIOHTTP_AVAILABLE", True):
             with patch("traigent.cloud.client.aiohttp.ClientTimeout"):
                 # Start with first API key
-                client = TraiGentCloudClient(api_key=api_key_1)
+                client = TraigentCloudClient(api_key=api_key_1)
 
                 # Mock the auth.get_headers to return valid headers for first key
                 client.auth.get_headers = AsyncMock(
                     return_value={
                         "Authorization": f"Bearer {api_key_1}",
-                        "X-TraiGent-Client": "test",
+                        "X-Traigent-Client": "test",
                     }
                 )
 
@@ -304,13 +304,13 @@ class TestConcurrentSessionCreation:
                 request_headers.clear()
 
                 # Update API key (simulating key rotation)
-                client = TraiGentCloudClient(api_key=api_key_2)
+                client = TraigentCloudClient(api_key=api_key_2)
 
                 # Mock the auth.get_headers to return valid headers for second key
                 client.auth.get_headers = AsyncMock(
                     return_value={
                         "Authorization": f"Bearer {api_key_2}",
-                        "X-TraiGent-Client": "test",
+                        "X-Traigent-Client": "test",
                     }
                 )
 
@@ -361,7 +361,7 @@ class TestBackendClientConcurrency:
                         mock_auth_instance.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": "Bearer test-token",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         mock_auth.return_value = mock_auth_instance
@@ -483,13 +483,13 @@ class TestSessionLifecycleConcurrency:
                     mock_session.close = AsyncMock()
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to return valid headers
                     client.auth.get_headers = AsyncMock(
                         return_value={
                             "Authorization": f"Bearer {api_key}",
-                            "X-TraiGent-Client": "test",
+                            "X-Traigent-Client": "test",
                         }
                     )
 
@@ -562,12 +562,12 @@ class TestSessionLifecycleConcurrency:
                     # Create multiple clients for concurrent context manager usage
                     clients = []
                     for _ in range(5):
-                        client = TraiGentCloudClient(api_key=api_key)
+                        client = TraigentCloudClient(api_key=api_key)
                         # Mock the auth.get_headers to return valid headers
                         client.auth.get_headers = AsyncMock(
                             return_value={
                                 "Authorization": f"Bearer {api_key}",
-                                "X-TraiGent-Client": "test",
+                                "X-Traigent-Client": "test",
                             }
                         )
                         clients.append(client)
@@ -627,13 +627,13 @@ class TestHeaderConsistencyUnderLoad:
                     mock_session.post = Mock(side_effect=track_request)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
 
                     # Mock the auth.get_headers to return valid headers
                     client.auth.get_headers = AsyncMock(
                         return_value={
                             "Authorization": expected_header,
-                            "X-TraiGent-Client": "test",
+                            "X-Traigent-Client": "test",
                         }
                     )
 
@@ -663,7 +663,7 @@ class TestHeaderConsistencyUnderLoad:
         # Use a mutable header dict to test for mutations
         original_headers = {
             "Authorization": f"Bearer {api_key}",
-            "X-TraiGent-Client": "test",
+            "X-Traigent-Client": "test",
             "Content-Type": "application/json",
         }
 
@@ -696,7 +696,7 @@ class TestHeaderConsistencyUnderLoad:
                     mock_session.post = Mock(return_value=mock_context)
                     mock_cs.return_value = mock_session
 
-                    client = TraiGentCloudClient(api_key=api_key)
+                    client = TraigentCloudClient(api_key=api_key)
                     client.auth.get_headers = get_headers_with_check
 
                     # Run concurrent requests

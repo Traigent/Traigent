@@ -45,7 +45,7 @@ class ExampleSelectionConfig:
     temperature: float  # 0.0, 0.3, 0.7
 
 
-# Search space definition for TraiGent optimization
+# Search space definition for Traigent optimization
 EXAMPLE_SELECTION_SEARCH_SPACE = {
     "selection_method": [
         "random",  # Baseline

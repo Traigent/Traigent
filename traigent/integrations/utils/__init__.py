@@ -1,4 +1,4 @@
-"""Integration utilities for TraiGent framework overrides."""
+"""Integration utilities for Traigent framework overrides."""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 

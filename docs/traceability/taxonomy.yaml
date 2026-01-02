@@ -30,7 +30,7 @@ dimensions:
 
   Quality:
     required: false
-    cardinality: 0-2  # Reduced from 3 to force prioritization
+    cardinality: 0-3  # Allow up to three quality tags
     allowed:
       - CONC-Quality-Performance    # Optimizes time/resource behavior
       - CONC-Quality-Reliability    # Fault tolerance, error handling, recovery
@@ -43,7 +43,7 @@ dimensions:
       Ask: "If I removed all code related to <quality>, would the file lose significant functionality?"
       If yes → tag it. If no → don't.
       
-      Maximum 2 tags. If you think 3+ apply, pick the 2 most essential.
+      Maximum 3 tags. If you think 4+ apply, pick the 3 most essential.
 
   Compliance:
     required: false

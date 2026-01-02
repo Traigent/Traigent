@@ -154,7 +154,7 @@ class SystemMetrics:
     average_response_time_ms: float = 0.0
     error_rate_percent: float = 0.0
 
-    # TraiGent specific metrics
+    # Traigent specific metrics
     active_optimizations: int = 0
     completed_optimizations_today: int = 0
     queue_depth: int = 0

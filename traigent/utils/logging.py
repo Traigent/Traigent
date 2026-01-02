@@ -1,4 +1,4 @@
-"""Logging utilities for TraiGent SDK."""
+"""Logging utilities for Traigent SDK."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Observability CONC-Quality-Maintainability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
@@ -10,7 +10,7 @@ import logging
 def setup_logging(
     level: str = "INFO", format_string: str | None = None, use_rich: bool = False
 ) -> None:
-    """Setup logging configuration for TraiGent.
+    """Setup logging configuration for Traigent.
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)

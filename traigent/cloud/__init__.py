@@ -1,6 +1,6 @@
-"""TraiGent Cloud Service integration module.
+"""Traigent Cloud Service integration module.
 
-This module provides the commercial cloud service integration for TraiGent SDK,
+This module provides the commercial cloud service integration for Traigent SDK,
 enabling smart optimization with dataset subset selection and cost reduction.
 """
 
@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from .auth import APIKey, AuthManager
 from .billing import BillingManager, UsageTracker
-from .client import TraiGentCloudClient
-from .service import TraiGentCloudService
+from .client import TraigentCloudClient
+from .service import TraigentCloudService
 from .subset_selection import (
     DiverseSampling,
     HighConfidenceSampling,
@@ -20,8 +20,8 @@ from .subset_selection import (
 )
 
 __all__ = [
-    "TraiGentCloudClient",
-    "TraiGentCloudService",
+    "TraigentCloudClient",
+    "TraigentCloudService",
     "AuthManager",
     "APIKey",
     "BillingManager",

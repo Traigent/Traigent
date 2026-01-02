@@ -1,8 +1,8 @@
 # Release Readiness Testing Prompt (Extended v2)
 
-You are a senior AI engineer who just discovered TraiGent and is excited to optimize your LLM agents. You have **NO prior knowledge** of TraiGent's internals—you only know what's in the README.
+You are a senior AI engineer who just discovered Traigent and is excited to optimize your LLM agents. You have **NO prior knowledge** of Traigent's internals—you only know what's in the README.
 
-**Your mission**: Validate that TraiGent is release-ready by:
+**Your mission**: Validate that Traigent is release-ready by:
 1. Following the README exactly as a first-time user would
 2. Creating your own experiments to stress-test the SDK
 3. Documenting every point of friction, confusion, or failure
@@ -19,7 +19,7 @@ cd /tmp  # or another clean location
 mkdir traigent-test-$(date +%s)
 cd traigent-test-*
 
-# Verify no prior TraiGent state
+# Verify no prior Traigent state
 pip list | grep -i traigent  # Should show nothing
 ls ~/.traigent 2>/dev/null   # Note if this exists (prior state)
 ```
@@ -38,8 +38,8 @@ export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 
 ```bash
 # Clone and install - follow README EXACTLY
-git clone -b feature/responsible-optimization https://github.com/Traigent/Traigent.git
-cd Traigent
+git clone https://github.com/traigent/traigent-sdk.git
+cd traigent-sdk
 
 # Follow README instructions for your preferred method (pip or uv)
 # Document any deviations or errors
@@ -48,7 +48,7 @@ cd Traigent
 **Checklist:**
 - [ ] Clone succeeds without authentication issues
 - [ ] Virtual environment creation works
-- [ ] `pip install -e ".[dev,integrations,analytics]"` completes without errors
+- [ ] `pip install -e ".[dev,integrations,analytics,security]"` completes without errors
 - [ ] No deprecation warnings during install (note any that appear)
 - [ ] Total install time: _____ minutes
 
@@ -61,7 +61,7 @@ python -c "import traigent; print(traigent.__version__)"
 ```
 
 **Checklist:**
-- [ ] All three show version `0.8.0`
+- [ ] All three show version `0.9.0`
 - [ ] `traigent info` shows expected features and integrations
 - [ ] No import warnings when loading traigent module
 
@@ -137,7 +137,7 @@ EOF
 
 ### 3.2 Parameter-Sensitive Mock Function
 
-Create a function where TraiGent can actually discover meaningful differences:
+Create a function where Traigent can actually discover meaningful differences:
 
 ```python
 # my_experiment.py
@@ -551,7 +551,7 @@ For each gap found, create an entry like this:
 **Category**: [Installation | Documentation | API | CLI | Error Handling | Performance]
 
 **Severity**:
-- 🔴 Blocker: User cannot proceed, would abandon TraiGent
+- 🔴 Blocker: User cannot proceed, would abandon Traigent
 - 🟡 Friction: Confusing but workaround exists, poor error message
 - 🟢 Polish: Works but could be improved
 
@@ -618,7 +618,7 @@ After completing all tests, fill out this summary:
 
 ## Success Criteria
 
-TraiGent is **release-ready** when:
+Traigent is **release-ready** when:
 
 1. ✅ A new user can install and run quickstarts in **under 10 minutes**
 2. ✅ Creating a custom optimization experiment is **intuitive from README alone**
@@ -636,7 +636,7 @@ TraiGent is **release-ready** when:
 1. **README is your only guide** — Do NOT look at source code to figure things out
 2. **Document confusion** — If something isn't clear from docs, that's a gap
 3. **Try to break it** — Edge cases reveal real issues
-4. **Fresh environment** — No cached packages or prior TraiGent state
+4. **Fresh environment** — No cached packages or prior Traigent state
 5. **Mock mode only** — Use `TRAIGENT_MOCK_MODE=true` for all experiments
 6. **Be creative** — Try combinations the developers might not have tested
 7. **Report everything** — Even minor friction points matter for release readiness

@@ -46,13 +46,16 @@ async def test_function_with_metrics(**kwargs):
         cost=0.003 * (1 + kwargs.get("temperature", 0.5)),
         response_time=1000 + int(kwargs.get("temperature", 0.5) * 500),
     )
+    assert isinstance(response, MockLLMResponse), "Response should be MockLLMResponse"
     return response
 
 
 @pytest.mark.asyncio
 async def test_function_without_metrics(**kwargs):
     """Test function that returns a simple string (no metrics)."""
-    return "output"
+    result = "output"
+    assert isinstance(result, str), "Result should be a string"
+    return result
 
 
 async def main():

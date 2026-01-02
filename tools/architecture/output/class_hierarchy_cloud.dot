@@ -110,9 +110,9 @@ digraph ClassHierarchy {
         style=dashed;
         color=gray;
         traigent_cloud_client_CloudOptimizationResult [label="CloudOptimizationResult\n(0 methods)" fillcolor="#c8e6c9"];
-        traigent_cloud_client_TraiGentCloudClient [label="TraiGentCloudClient\n(46 methods)" fillcolor="#c8e6c9"];
+        traigent_cloud_client_TraigentCloudClient [label="TraigentCloudClient\n(46 methods)" fillcolor="#c8e6c9"];
         traigent_cloud_client_CloudServiceError [label="CloudServiceError\n(1 methods)" fillcolor="#c8e6c9"];
-        traigent_cloud_client_BaseTraiGentClient [label="BaseTraiGentClient\n(6 methods)" fillcolor="#bbdefb"];
+        traigent_cloud_client_BaseTraigentClient [label="BaseTraigentClient\n(6 methods)" fillcolor="#bbdefb"];
         traigent_cloud_client_StandardizedClientError [label="StandardizedClientError\n(1 methods)" fillcolor="#c8e6c9"];
     }
 
@@ -240,7 +240,7 @@ digraph ClassHierarchy {
         color=gray;
         traigent_cloud_service_OptimizationResponse [label="OptimizationResponse\n(0 methods)" fillcolor="#c8e6c9"];
         traigent_cloud_service_OptimizationRequest [label="OptimizationRequest\n(0 methods)" fillcolor="#c8e6c9"];
-        traigent_cloud_service_TraiGentCloudService [label="TraiGentCloudService\n(8 methods)" fillcolor="#c8e6c9"];
+        traigent_cloud_service_TraigentCloudService [label="TraigentCloudService\n(8 methods)" fillcolor="#c8e6c9"];
     }
 
     subgraph cluster_traigent_cloud_session_operations {
@@ -310,7 +310,7 @@ digraph ClassHierarchy {
     traigent_cloud_auth_TokenExpiredError -> traigent_cloud_auth_AuthenticationError;
     traigent_cloud_auth_TokenExpiredError -> ValueError;
     traigent_cloud_auth_InvalidCredentialsError -> traigent_cloud_auth_AuthenticationError;
-    traigent_cloud_client_TraiGentCloudClient -> traigent_cloud_client_BaseTraiGentClient;
+    traigent_cloud_client_TraigentCloudClient -> traigent_cloud_client_BaseTraigentClient;
     traigent_cloud_client_CloudServiceError -> traigent_cloud_client_StandardizedClientError;
     traigent_cloud_subset_selection_DiverseSampling -> traigent_cloud_subset_selection_BaseSubsetSelector;
     traigent_cloud_subset_selection_RepresentativeSampling -> traigent_cloud_subset_selection_BaseSubsetSelector;

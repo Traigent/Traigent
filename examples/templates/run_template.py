@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Row-driven example runner for TraiGent scenarios.
+"""Row-driven example runner for Traigent scenarios.
 
 Usage:
     python examples/run_template.py --row 3
@@ -606,7 +606,7 @@ def _should_skip_with_missing_keys(config: ScenarioConfig) -> bool:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run TraiGent scenario by CSV row id")
+    parser = argparse.ArgumentParser(description="Run Traigent scenario by CSV row id")
     parser.add_argument(
         "--row",
         type=int,

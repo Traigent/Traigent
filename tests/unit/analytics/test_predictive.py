@@ -416,4 +416,4 @@ class TestEdgeCases:
         assert "performance_forecasts" in forecast
         assert forecast["forecast_period_days"] == 30
         assert isinstance(forecast["cost_forecasts"], ForecastResult)
-        assert len(forecast["recommendations"]) >= 0
+        assert isinstance(forecast["recommendations"], list)

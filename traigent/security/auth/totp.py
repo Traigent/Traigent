@@ -29,7 +29,7 @@ except ImportError:
 class TOTPAuthProvider:
     """Time-based One-Time Password (TOTP) authentication provider."""
 
-    def __init__(self, issuer_name: str = "TraiGent", secret_length: int = 32) -> None:
+    def __init__(self, issuer_name: str = "Traigent", secret_length: int = 32) -> None:
         """Initialize TOTP provider.
 
         Args:

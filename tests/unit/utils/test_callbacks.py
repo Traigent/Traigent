@@ -10,8 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from datetime import UTC, datetime
-from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -183,7 +182,6 @@ class TestProgressBarCallback:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Test trial complete callback throttles rapid updates."""
-        import time
 
         callback.last_update = time.time() - 1.0  # 1 second ago
 
@@ -237,8 +235,6 @@ class TestProgressBarCallback:
             current_algorithm="grid",
         )
 
-        import time
-
         callback.last_update = time.time() - 1.0  # Allow update
 
         # Should handle None best_score gracefully (bug was fixed)
@@ -271,6 +267,29 @@ class TestProgressBarCallback:
         assert "Optimization complete!" in captured.out
         assert "Best score: 0.920" in captured.out
         assert "Total time: 120.5s" in captured.out
+
+    def test_on_optimization_complete_timeout_shows_warning(
+        self, callback: ProgressBarCallback, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Timeout stop reason should be visible in console output."""
+        result = OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.CANCELLED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+            stop_reason="timeout",
+        )
+
+        callback.on_optimization_complete(result)
+
+        captured = capsys.readouterr()
+        assert "timeout" in captured.out.lower()
 
 
 class TestLoggingCallback:
@@ -348,9 +367,10 @@ class TestLoggingCallback:
         algorithm = "grid"
 
         # Should not raise exception
-        callback_without_logger.on_optimization_start(
+        result = callback_without_logger.on_optimization_start(
             config_space, objectives, algorithm
         )
+        assert result is None  # Method returns None
 
     def test_on_trial_start(
         self, callback_with_logger: LoggingCallback, mock_logger: MagicMock
@@ -976,7 +996,8 @@ class TestSimpleProgressCallback:
             timestamp=datetime.now(UTC),
         )
 
-        callback_print.on_trial_complete(trial, progress_info)
+        result = callback_print.on_trial_complete(trial, progress_info)
+        assert result is None  # Method returns None
 
         # Should not print score details for failed trials
         # Output should be minimal or empty with show_details=True but no score

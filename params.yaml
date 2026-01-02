@@ -10,7 +10,8 @@ optimize:
   strategy: "bayesian"  # Options: grid, random, bayesian
   budget: 5.0  # Maximum cost in USD
   timeout: 3600  # Maximum time in seconds
-  parallel_trials: 3
+  parallel_config:
+    trial_concurrency: 3
   # Model configurations to test
   models:
     - provider: "anthropic"

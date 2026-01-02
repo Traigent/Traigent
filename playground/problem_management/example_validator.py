@@ -1,5 +1,5 @@
 """
-Example Validator for TraiGent SDK.
+Example Validator for Traigent SDK.
 
 This module provides validation for generated examples to ensure they meet
 quality standards and have proper structure for each problem type.

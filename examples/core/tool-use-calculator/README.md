@@ -34,11 +34,13 @@ Best score: 1.0
 
 - **Parameter injection mode**: Explicit config passing
 - **Tool integration**: Calculator function
-- **Strategy API**: Custom algorithm and parallel workers
+- **Parallel configuration**: Custom algorithm and trial/worker concurrency
 
 ```python
-strategy = traigent.set_strategy(algorithm="random", parallel_workers=2)
-result = await solve_math.optimize(strategy=strategy)
+result = await solve_math.optimize(
+    algorithm="random",
+    parallel_config={"trial_concurrency": 2, "thread_workers": 2},
+)
 ```
 
 ## Use Cases

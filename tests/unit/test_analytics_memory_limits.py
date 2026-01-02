@@ -226,7 +226,7 @@ class TestCostOptimizationMemoryLimits:
         # Add more spending updates than the limit
         num_updates = MAX_OPTIMIZATION_HISTORY_SIZE + 200
 
-        for i in range(num_updates):
+        for _i in range(num_updates):
             allocator.update_spending(ResourceType.COMPUTE, 10.0)
 
         # Should be pruned to within limit

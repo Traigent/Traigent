@@ -1,4 +1,4 @@
-"""Test all TraiGent SDK features to ensure everything is working correctly."""
+"""Test all Traigent SDK features to ensure everything is working correctly."""
 
 import asyncio
 import sys
@@ -14,6 +14,7 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
+from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.utils.constraints import ConstraintManager, temperature_constraint
 from traigent.utils.importance import ParameterImportanceAnalyzer
 from traigent.utils.multi_objective import ParetoFrontCalculator
@@ -25,6 +26,11 @@ from traigent.visualization.plots import PlotGenerator
 def test_imports():
     """Test that all imports work correctly."""
     print("✅ All imports successful")
+    # Verify key imports are available
+    assert traigent is not None, "traigent module should be importable"
+    assert (
+        OptimizationOrchestrator is not None
+    ), "OptimizationOrchestrator should be importable"
 
 
 def test_basic_decorator():
@@ -238,7 +244,7 @@ def test_importance_analysis():
 
 async def main():
     """Run all tests."""
-    print("🧪 Testing TraiGent SDK Features")
+    print("🧪 Testing Traigent SDK Features")
     print("=" * 50)
 
     test_imports()
@@ -251,7 +257,7 @@ async def main():
     test_importance_analysis()
 
     print("\n✅ All tests passed!")
-    print("TraiGent SDK is working correctly!")
+    print("Traigent SDK is working correctly!")
 
 
 if __name__ == "__main__":

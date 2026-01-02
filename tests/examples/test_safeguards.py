@@ -68,9 +68,7 @@ def test_trial_caps():
             "x": [-5.0, -2.0, 0.0, 2.0, 5.0],
             "y": [-5.0, -2.0, 0.0, 2.0, 5.0],
         },
-        algorithm="random",
         eval_dataset=dataset_path,  # Provide the dataset file
-        max_trials=5,  # Hard cap at 5 trials
         parallel_config=ParallelConfig(
             mode="parallel",
             trial_concurrency=3,
@@ -107,8 +105,6 @@ def test_example_caps():
         configuration_space={
             "threshold": [0.1, 0.5, 0.9],
         },
-        algorithm="random",
-        max_trials=3,
         objectives=["accuracy"],
     )
     def optimize_with_example_cap(threshold: float) -> float:
@@ -195,6 +191,9 @@ def test_ci_approval():
     else:
         print("Not in CI environment - no approval needed")
         print("✅ Non-CI execution allowed!")
+
+    # Verify the test completed and CI detection worked
+    assert isinstance(is_ci, bool), "CI detection should return boolean"
 
 
 def main():

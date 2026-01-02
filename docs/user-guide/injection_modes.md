@@ -2,7 +2,7 @@
 
 ## Overview
 
-TraiGent provides four powerful configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
+Traigent provides four powerful configuration injection modes to seamlessly integrate optimization into your existing code. Each mode offers different trade-offs between simplicity, flexibility, and control.
 
 ## Quick Comparison
 
@@ -13,9 +13,9 @@ TraiGent provides four powerful configuration injection modes to seamlessly inte
 | **Parameter** | Function signature | Yes | Type-safe apps, team projects |
 | **Attribute** | None | No | External monitoring, debugging |
 
-## 1. Context Mode (Default) 🔄
+## 1. Context Mode (Default)
 
-Access configuration through TraiGent's context system — flexible, thread/async-safe, and works everywhere.
+Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.
 
 ### Basic Example
 
@@ -58,7 +58,7 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 
 ### How It Works
 
-1. TraiGent sets a thread/async-local config context
+1. Traigent sets a thread/async-local config context
 2. Your function reads config via `traigent.get_config()` (or `get_trial_config()` during optimization)
 3. Optimizer updates the active config per trial
 4. Your code stays unchanged apart from the decorator and get call
@@ -85,9 +85,9 @@ def trading_algorithm(market_data: pd.DataFrame) -> List[Trade]:
 - Want the cleanest code possible
 - Have full control over source code
 
-## 2. Seamless Mode 🪄
+## 2. Seamless Mode
 
-TraiGent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).
+Traigent automatically injects configuration values into simple variable assignments using safe AST transformation (no exec).
 
 ### Basic Example
 
@@ -101,7 +101,7 @@ TraiGent automatically injects configuration values into simple variable assignm
     }
 )
 def robust_api_call(query: str) -> str:
-    # These assignments are overridden by TraiGent during optimization
+    # These assignments are overridden by Traigent during optimization
     model = "gpt-4"
     max_retries = 3
     timeout = 30
@@ -132,7 +132,7 @@ def robust_api_call(query: str) -> str:
     }
 )
 def rag_pipeline(documents: List[str], query: str) -> str:
-    # These variable assignments are overridden by TraiGent
+    # These variable assignments are overridden by Traigent
     chunk_size = 1000
     overlap = 100
     top_k = 5
@@ -154,7 +154,7 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 
 ### How It Works
 
-1. TraiGent parses your function's AST (Abstract Syntax Tree)
+1. Traigent parses your function's AST (Abstract Syntax Tree)
 2. Finds variable assignments matching config keys (e.g., `chunk_size = 1000`)
 3. Replaces the assigned values with optimized config values at runtime
 4. No `exec()` used — safe AST transformation with validation
@@ -179,10 +179,10 @@ def rag_pipeline(documents: List[str], query: str) -> str:
 
 - Optimizing existing code without modifications
 - Quick prototyping and experimentation
-- Code where you want minimal TraiGent-specific changes
+- Code where you want minimal Traigent-specific changes
 - Functions with straightforward variable assignments
 
-## 3. Parameter Mode 💪
+## 3. Parameter Mode
 
 Explicit configuration injection with full type safety.
 
@@ -203,25 +203,27 @@ from traigent import TraigentConfig
 def train_model(
     data: np.ndarray,
     labels: np.ndarray,
-    config: TraigentConfig  # TraiGent injects here
+    config: TraigentConfig  # Traigent injects here
 ) -> Model:
     # Type-safe configuration access
     model = create_model()
 
     optimizer = get_optimizer(
-        config.optimizer,
-        lr=config.learning_rate
+        config["optimizer"],
+        lr=config["learning_rate"]
     )
 
     for epoch in range(100):
-        for i in range(0, len(data), config.batch_size):
-            batch_data = data[i:i + config.batch_size]
-            batch_labels = labels[i:i + config.batch_size]
+        for i in range(0, len(data), config["batch_size"]):
+            batch_data = data[i:i + config["batch_size"]]
+            batch_labels = labels[i:i + config["batch_size"]]
 
             loss = train_step(model, batch_data, batch_labels, optimizer)
 
     return model
 ```
+
+> **Note:** `TraigentConfig` exposes built-in fields (e.g., `model`, `temperature`) as attributes and custom parameters via dict-style access (`config["learning_rate"]` or `config.get(...)`). Use a wrapper dataclass for stricter typing.
 
 ### Advanced Example with Custom Config Types
 
@@ -242,11 +244,11 @@ class TransformerConfig:
     @classmethod
     def from_traigent(cls, config: TraigentConfig) -> "TransformerConfig":
         return cls(
-            n_layers=config.n_layers,
-            n_heads=config.n_heads,
-            d_model=config.d_model,
-            dropout=config.dropout,
-            activation=config.activation
+            n_layers=config["n_layers"],
+            n_heads=config["n_heads"],
+            d_model=config["d_model"],
+            dropout=config["dropout"],
+            activation=config["activation"]
         )
 
 @traigent.optimize(
@@ -294,9 +296,9 @@ def create_application(
     config: TraigentConfig
 ) -> Application:
     # Use config to initialize all components
-    db = Database(pool_size=config.db_pool_size)
-    cache = Cache(ttl=config.cache_ttl)
-    rate_limiter = RateLimiter(limit=config.rate_limit)
+    db = Database(pool_size=config["db_pool_size"])
+    cache = Cache(ttl=config["cache_ttl"])
+    rate_limiter = RateLimiter(limit=config["rate_limit"])
 
     return Application(
         database=db,
@@ -326,11 +328,9 @@ def create_application(
 - Using dependency injection
 - Want IDE support and autocomplete
 
-## 4. Attribute Mode 🎨
+## 4. Attribute Mode
 
 Store configuration as a function attribute for external access.
-
-> Default attribute name: `current_config` (override with `attribute_name` if you need a different name).
 
 ### Basic Example
 
@@ -494,13 +494,13 @@ def my_function(prompt: str) -> str:
 For existing code where you don't want to add `get_config()` calls:
 
 ```python
-# Seamless mode: TraiGent overrides variable assignments automatically
+# Seamless mode: Traigent overrides variable assignments automatically
 @traigent.optimize(
     injection_mode="seamless",
     configuration_space={"threshold": [0.5, 0.7, 0.9]}
 )
 def process():
-    threshold = 0.5  # TraiGent will override this value during optimization
+    threshold = 0.5  # Traigent will override this value during optimization
     return apply_threshold(data, threshold)
 ```
 
@@ -594,7 +594,7 @@ Understanding **when** to use each config access method is critical:
 | Lifecycle Phase | Access Method | Description |
 |-----------------|---------------|-------------|
 | **During/After Optimization** | `traigent.get_config()` | Unified accessor inside your optimized function. Works during trials and after `apply_best_config()`. |
-| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Only valid inside your optimized function while `.optimize()` is running. |
+| **During Optimization** | `traigent.get_trial_config()` | Returns the config being tested in the current trial. Deprecated; prefer `traigent.get_config()` unless you need explicit trial-only access. |
 | **After Optimization** | `result.best_config` | The best configuration found, returned in `OptimizationResult`. Recommended for most post-optimization use. |
 | **After Optimization** | `func.current_config` | The config currently applied to the function (same as `best_config` after optimization). |
 
@@ -629,4 +629,4 @@ response = my_function("Hello!")  # Uses {"model": "gpt-4o", "temperature": 0.5}
 print(f"Applied config: {my_function.current_config}")    # ✅ Same as best_config
 ```
 
-> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`. Use `traigent.get_config()` inside your function for lifecycle-safe access.
+> **Warning**: Calling `get_trial_config()` outside an active optimization trial raises `OptimizationStateError`. Prefer `traigent.get_config()` inside your function for lifecycle-safe access.

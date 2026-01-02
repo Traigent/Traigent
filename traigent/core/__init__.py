@@ -1,4 +1,4 @@
-"""Core orchestration components for TraiGent SDK."""
+"""Core orchestration components for Traigent SDK."""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Usability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 

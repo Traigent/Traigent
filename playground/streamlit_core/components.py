@@ -3,7 +3,7 @@ Common UI Components Module
 ==========================
 
 This module contains reusable UI components and utilities used across
-different sections of the TraiGent control center.
+different sections of the Traigent control center.
 """
 
 from typing import Any, Dict, List, Optional
@@ -37,7 +37,7 @@ def render_hero_banner():
                     <div style="display: flex; justify-content: space-between; align-items: center;">
                         <div>
                             <h1 style="color: white; font-size: 1.5rem; font-weight: 700; margin: 0 0 0.5rem 0;">
-                                🤖 TraiGent - AI Agent Discovery Platform
+                                🤖 Traigent - AI Agent Discovery Platform
                             </h1>
                             <p style="color: #d1fae5; font-size: 1rem; margin: 0; line-height: 1.4;">
                                 Find the perfect AI configuration for your specific use case.

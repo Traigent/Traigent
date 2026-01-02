@@ -1,4 +1,4 @@
-# Getting Started with TraiGent SDK
+# Getting Started with Traigent SDK
 
 The fastest path to optimize an LLM workflow with **zero code changes**.
 
@@ -28,7 +28,7 @@ def answer_question(question: str) -> str:
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
     return llm.invoke(question).content
 
-# Async-safe in TraiGent - use asyncio.run in sync contexts
+# Async-safe in Traigent - use asyncio.run in sync contexts
 if __name__ == "__main__":
     import asyncio
     results = asyncio.run(answer_question.optimize(max_trials=5, algorithm="grid"))
@@ -83,10 +83,33 @@ traigent validate examples/datasets/hello-world/evaluation_set.jsonl
 traigent plot my_run -p progress
 ```
 
+## 🔀 Multi-Provider Model Testing
+
+To test models from different providers (OpenAI, Anthropic, Google, etc.) with a unified interface, we recommend [LiteLLM](https://github.com/BerriAI/litellm):
+
+```bash
+pip install litellm
+```
+
+```python
+from litellm import completion
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-4o-mini", "claude-3-haiku-20240307", "gemini/gemini-pro"],
+    },
+    ...
+)
+def my_agent(query: str) -> str:
+    config = traigent.get_config()
+    response = completion(model=config.get("model"), messages=[{"role": "user", "content": query}])
+    return response.choices[0].message.content
+```
+
 ## 🔒 Execution Model
 
 Open-source builds support `execution_mode="edge_analytics"` (local). Cloud/hybrid orchestration is a roadmap item—keep runs in local mode unless you have a managed backend wired up.
 
 ---
 
-Ready for more? Dive into the [examples](../examples/) and the [API reference](../api-reference/complete-function-specification.md).
+Ready for more? Dive into the [examples](../../examples/) and the [API reference](../api-reference/complete-function-specification.md).

@@ -108,9 +108,7 @@ GLOBAL_PARALLEL_CONFIG = ParallelConfig(
     thread_workers=DEFAULT_WORKERS,
 )
 
-traigent.configure(
-    parallel_config=GLOBAL_PARALLEL_CONFIG, parallel_workers=DEFAULT_WORKERS
-)
+traigent.configure(parallel_config=GLOBAL_PARALLEL_CONFIG)
 print(
     "Resolved concurrency: "
     f"profile={CONCURRENCY_PROFILE or 'auto'}, "
@@ -243,7 +241,6 @@ def _print_results(result: OptimizationResult) -> None:
     },
     execution_mode="edge_analytics",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
-    algorithm="random",
 )
 def summarize_keyword(text: str) -> str:
     if MOCK:
@@ -281,7 +278,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 9 if not MOCK else 4
-        r = await summarize_keyword.optimize(max_trials=trials)
+        r = await summarize_keyword.optimize(algorithm="random", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

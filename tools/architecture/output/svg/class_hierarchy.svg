@@ -1856,23 +1856,23 @@
 <text text-anchor="middle" x="23035" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">CloudOptimizationResult</text>
 <text text-anchor="middle" x="23035" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(0 methods)</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient -->
+<!-- traigent_cloud_client_TraigentCloudClient -->
 <g id="node135" class="node">
-<title>traigent_cloud_client_TraiGentCloudClient</title>
+<title>traigent_cloud_client_TraigentCloudClient</title>
 <polygon fill="#c8e6c9" stroke="black" points="22947.5,-75 22834.5,-75 22834.5,-39 22947.5,-39 22947.5,-75"/>
-<text text-anchor="middle" x="22891" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentCloudClient</text>
+<text text-anchor="middle" x="22891" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentCloudClient</text>
 <text text-anchor="middle" x="22891" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(46 methods)</text>
 </g>
-<!-- traigent_cloud_client_BaseTraiGentClient -->
+<!-- traigent_cloud_client_BaseTraigentClient -->
 <g id="node136" class="node">
-<title>traigent_cloud_client_BaseTraiGentClient</title>
+<title>traigent_cloud_client_BaseTraigentClient</title>
 <polygon fill="#bbdefb" stroke="black" points="22972,-158 22862,-158 22862,-122 22972,-122 22972,-158"/>
-<text text-anchor="middle" x="22917" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">BaseTraiGentClient</text>
+<text text-anchor="middle" x="22917" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">BaseTraigentClient</text>
 <text text-anchor="middle" x="22917" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">(6 methods)</text>
 </g>
-<!-- traigent_cloud_client_TraiGentCloudClient&#45;&gt;traigent_cloud_client_BaseTraiGentClient -->
+<!-- traigent_cloud_client_TraigentCloudClient&#45;&gt;traigent_cloud_client_BaseTraigentClient -->
 <g id="edge15" class="edge">
-<title>traigent_cloud_client_TraiGentCloudClient&#45;&gt;traigent_cloud_client_BaseTraiGentClient</title>
+<title>traigent_cloud_client_TraigentCloudClient&#45;&gt;traigent_cloud_client_BaseTraigentClient</title>
 <path fill="none" stroke="black" d="M22896.51,-75.18C22899.96,-85.92 22904.47,-99.97 22908.39,-112.16"/>
 <polygon fill="none" stroke="black" points="22905.11,-113.39 22911.49,-121.85 22911.77,-111.26 22905.11,-113.39"/>
 </g>
@@ -2274,11 +2274,11 @@
 <text text-anchor="middle" x="31589" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">OptimizationResponse</text>
 <text text-anchor="middle" x="31589" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(0 methods)</text>
 </g>
-<!-- traigent_cloud_service_TraiGentCloudService -->
+<!-- traigent_cloud_service_TraigentCloudService -->
 <g id="node193" class="node">
-<title>traigent_cloud_service_TraiGentCloudService</title>
+<title>traigent_cloud_service_TraigentCloudService</title>
 <polygon fill="#c8e6c9" stroke="black" points="31507.5,-75 31386.5,-75 31386.5,-39 31507.5,-39 31507.5,-75"/>
-<text text-anchor="middle" x="31447" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentCloudService</text>
+<text text-anchor="middle" x="31447" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentCloudService</text>
 <text text-anchor="middle" x="31447" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(8 methods)</text>
 </g>
 <!-- traigent_cloud_session_operations_SessionOperations -->
@@ -5263,11 +5263,11 @@
 <text text-anchor="middle" x="72570" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">CostBreakdown</text>
 <text text-anchor="middle" x="72570" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(1 methods)</text>
 </g>
-<!-- traigent_utils_diagnostics_TraiGentDiagnostics -->
+<!-- traigent_utils_diagnostics_TraigentDiagnostics -->
 <g id="node554" class="node">
-<title>traigent_utils_diagnostics_TraiGentDiagnostics</title>
+<title>traigent_utils_diagnostics_TraigentDiagnostics</title>
 <polygon fill="#c8e6c9" stroke="black" points="72984,-75 72870,-75 72870,-39 72984,-39 72984,-75"/>
-<text text-anchor="middle" x="72927" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentDiagnostics</text>
+<text text-anchor="middle" x="72927" y="-60" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentDiagnostics</text>
 <text text-anchor="middle" x="72927" y="-49" font-family="Helvetica,sans-Serif" font-size="10.00">(9 methods)</text>
 </g>
 <!-- traigent_utils_diagnostics_DiagnosticReport -->
@@ -5291,16 +5291,16 @@
 <text text-anchor="middle" x="13182" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">EvaluationError</text>
 <text text-anchor="middle" x="13182" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">(1 methods)</text>
 </g>
-<!-- traigent_utils_error_handler_TraiGentError -->
+<!-- traigent_utils_error_handler_TraigentError -->
 <g id="node561" class="node">
-<title>traigent_utils_error_handler_TraiGentError</title>
+<title>traigent_utils_error_handler_TraigentError</title>
 <polygon fill="#c8e6c9" stroke="black" points="13044,-241 12964,-241 12964,-205 13044,-205 13044,-241"/>
-<text text-anchor="middle" x="13004" y="-226" font-family="Helvetica,sans-Serif" font-size="10.00">TraiGentError</text>
+<text text-anchor="middle" x="13004" y="-226" font-family="Helvetica,sans-Serif" font-size="10.00">TraigentError</text>
 <text text-anchor="middle" x="13004" y="-215" font-family="Helvetica,sans-Serif" font-size="10.00">(2 methods)</text>
 </g>
-<!-- traigent_utils_error_handler_EvaluationError&#45;&gt;traigent_utils_error_handler_TraiGentError -->
+<!-- traigent_utils_error_handler_EvaluationError&#45;&gt;traigent_utils_error_handler_TraigentError -->
 <g id="edge93" class="edge">
-<title>traigent_utils_error_handler_EvaluationError&#45;&gt;traigent_utils_error_handler_TraiGentError</title>
+<title>traigent_utils_error_handler_EvaluationError&#45;&gt;traigent_utils_error_handler_TraigentError</title>
 <path fill="none" stroke="black" d="M13144.25,-158.18C13116.9,-170.62 13079.76,-187.53 13050.57,-200.81"/>
 <polygon fill="none" stroke="black" points="13049.04,-197.66 13041.39,-204.99 13051.94,-204.03 13049.04,-197.66"/>
 </g>
@@ -5311,9 +5311,9 @@
 <text text-anchor="middle" x="13065" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">ConfigurationError</text>
 <text text-anchor="middle" x="13065" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">(1 methods)</text>
 </g>
-<!-- traigent_utils_error_handler_ConfigurationError&#45;&gt;traigent_utils_error_handler_TraiGentError -->
+<!-- traigent_utils_error_handler_ConfigurationError&#45;&gt;traigent_utils_error_handler_TraigentError -->
 <g id="edge92" class="edge">
-<title>traigent_utils_error_handler_ConfigurationError&#45;&gt;traigent_utils_error_handler_TraiGentError</title>
+<title>traigent_utils_error_handler_ConfigurationError&#45;&gt;traigent_utils_error_handler_TraigentError</title>
 <path fill="none" stroke="black" d="M13052.06,-158.18C13043.65,-169.35 13032.54,-184.1 13023.12,-196.62"/>
 <polygon fill="none" stroke="black" points="13020.14,-194.75 13016.92,-204.85 13025.73,-198.96 13020.14,-194.75"/>
 </g>
@@ -5324,9 +5324,9 @@
 <text text-anchor="middle" x="12944" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">DependencyError</text>
 <text text-anchor="middle" x="12944" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">(1 methods)</text>
 </g>
-<!-- traigent_utils_error_handler_DependencyError&#45;&gt;traigent_utils_error_handler_TraiGentError -->
+<!-- traigent_utils_error_handler_DependencyError&#45;&gt;traigent_utils_error_handler_TraigentError -->
 <g id="edge90" class="edge">
-<title>traigent_utils_error_handler_DependencyError&#45;&gt;traigent_utils_error_handler_TraiGentError</title>
+<title>traigent_utils_error_handler_DependencyError&#45;&gt;traigent_utils_error_handler_TraigentError</title>
 <path fill="none" stroke="black" d="M12956.72,-158.18C12965,-169.35 12975.93,-184.1 12985.2,-196.62"/>
 <polygon fill="none" stroke="black" points="12982.53,-198.89 12991.29,-204.85 12988.15,-194.73 12982.53,-198.89"/>
 </g>
@@ -5337,9 +5337,9 @@
 <text text-anchor="middle" x="12837" y="-143" font-family="Helvetica,sans-Serif" font-size="10.00">APIKeyError</text>
 <text text-anchor="middle" x="12837" y="-132" font-family="Helvetica,sans-Serif" font-size="10.00">(1 methods)</text>
 </g>
-<!-- traigent_utils_error_handler_APIKeyError&#45;&gt;traigent_utils_error_handler_TraiGentError -->
+<!-- traigent_utils_error_handler_APIKeyError&#45;&gt;traigent_utils_error_handler_TraigentError -->
 <g id="edge91" class="edge">
-<title>traigent_utils_error_handler_APIKeyError&#45;&gt;traigent_utils_error_handler_TraiGentError</title>
+<title>traigent_utils_error_handler_APIKeyError&#45;&gt;traigent_utils_error_handler_TraigentError</title>
 <path fill="none" stroke="black" d="M12868.48,-158.04C12873.65,-160.75 12878.96,-163.48 12884,-166 12907.85,-177.9 12934.71,-190.51 12956.96,-200.74"/>
 <polygon fill="none" stroke="black" points="12955.65,-203.99 12966.19,-204.97 12958.56,-197.62 12955.65,-203.99"/>
 </g>

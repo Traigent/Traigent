@@ -188,7 +188,7 @@ class RemoteOptimizationService(ABC):
     """Abstract interface for remote optimization services.
 
     This interface defines the contract for communicating with remote optimization
-    services, whether they are TraiGent Cloud services or third-party providers.
+    services, whether they are Traigent Cloud services or third-party providers.
     """
 
     def __init__(
@@ -681,7 +681,7 @@ class MockRemoteService(RemoteOptimizationService):
 
     def __init__(
         self,
-        service_name: str = "MockTraiGentService",
+        service_name: str = "MockTraigentService",
         endpoint: str = "mock://localhost",
         api_key: str | None = None,
         **kwargs: Any,

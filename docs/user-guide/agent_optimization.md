@@ -1,10 +1,10 @@
 # Agent Optimization Guide
 
-This guide explains how to optimize AI agents using TraiGent SDK's Model 2: Agent Specification-Based Execution.
+This guide explains how to optimize AI agents using Traigent SDK's Model 2: Agent Specification-Based Execution.
 
 ## Overview
 
-Agent optimization allows you to send complete agent specifications to the TraiGent Cloud Service for optimization. This approach is ideal when:
+Agent optimization allows you to send complete agent specifications to the Traigent Cloud Service for optimization. This approach is ideal when:
 
 - You want to optimize complex agent behaviors beyond simple parameter tuning
 - You're comfortable with sending agent specifications to the cloud
@@ -73,9 +73,9 @@ Common objectives include:
 ### Step 1: Initialize Cloud Client
 
 ```python
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 
-client = TraiGentCloudClient(
+client = TraigentCloudClient(
     api_key="your-api-key",
     base_url="https://api.traigent.ai"
 )
@@ -142,7 +142,7 @@ while True:
 
 ## Configuration Mapping
 
-TraiGent automatically maps optimization parameters to your agent specification:
+Traigent automatically maps optimization parameters to your agent specification:
 
 ### Using the Configuration Mapper
 
@@ -547,6 +547,6 @@ logger.setLevel(logging.DEBUG)
 
 ## Next Steps
 
-- See [examples/agent_optimization.py](../../examples/agent_optimization.py) for complete examples
-- Check [hybrid_optimization.md](hybrid_optimization.md) for combining both models
-- Read [ARCHITECTURE.md](../ARCHITECTURE.md) for system design details
+- See the [examples catalog](../../examples/docs/START_HERE.md) for runnable examples
+- Review [Execution Modes](../guides/execution-modes.md) for local/cloud/hybrid context
+- Read [Architecture Overview](../architecture/ARCHITECTURE.md) for system design details

@@ -1,4 +1,4 @@
-"""API Key Management for TraiGent SDK.
+"""API Key Management for Traigent SDK.
 
 This module provides secure API key storage with best practice warnings.
 """

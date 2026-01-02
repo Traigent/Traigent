@@ -4,9 +4,12 @@
 
 The FrameworkOverrideManager has two modes:
 1. **Regular Mode**: Uses hardcoded parameter mappings for known frameworks
-2. **Enhanced Mode**: Adds dynamic discovery, validation, and version compatibility
+2. **Enhanced Mode**: Adds dynamic discovery and version-aware mapping when available
 
-## Regular Mode (use_enhanced_features=False)
+Plugin mappings (from `LLMPlugin` subclasses) take precedence over the static
+`PARAMETER_MAPPINGS` table in both modes.
+
+## Regular Mode (enhanced utilities unavailable)
 
 In regular mode, the system only uses the hardcoded mappings defined in `PARAMETER_MAPPINGS`:
 
@@ -24,13 +27,13 @@ PARAMETER_MAPPINGS = {
 
 ### How it works:
 1. When a framework is initialized (e.g., `OpenAI()`), we intercept the constructor
-2. We check if we have a TraiGent config with parameters
-3. We map TraiGent parameters to framework parameters using the hardcoded mapping
+2. We check if we have a Traigent config with parameters
+3. We map Traigent parameters to framework parameters using the hardcoded mapping
 4. We inject the mapped parameters into the constructor
 
 ### Example:
 ```python
-# TraiGent config has: {"model": "gpt-4", "temperature": 0.5}
+# Traigent config has: {"model": "gpt-4", "temperature": 0.5}
 # OpenAI expects: model="gpt-4", temperature=0.5
 # Mapping is straightforward: model -> model, temperature -> temperature
 ```
@@ -41,7 +44,7 @@ PARAMETER_MAPPINGS = {
 - No version awareness (parameter names might change between versions)
 - No validation of parameter types or values
 
-## Enhanced Mode (use_enhanced_features=True) - Default
+## Enhanced Mode (auto-enabled when utilities are available)
 
 Enhanced mode adds three powerful components:
 
@@ -73,41 +76,29 @@ method_params = discovery.discover_method_parameters(client, "chat.completions.c
 
 ### 2. ParameterValidator
 
-**Purpose**: Ensure parameters are valid before injection
-
-**Features**:
-- Type checking: Validates parameter types match expected signatures
-- Value constraints: Checks min/max values (e.g., temperature 0-2)
-- Type conversion: Attempts to convert compatible types
-- Sanitization: Removes incompatible parameters
-
-**Example**:
-```python
-# Validates that temperature is a float between 0 and 2
-# Converts "0.5" (string) to 0.5 (float) if needed
-# Warns if value is out of range
-```
+Validation helpers exist in `traigent/integrations/utils/validation.py`, but the
+override manager currently applies mappings without type coercion. Rely on
+config validation and provider plugins for strict validation until validation
+hooks are wired into the override path.
 
 ### 3. VersionCompatibilityManager
 
 **Purpose**: Handle parameter changes across SDK versions
 
 **Features**:
-- Version-specific mappings:
+- Version-specific mappings (when known):
   ```python
   # OpenAI v1.0: uses "max_tokens"
   # OpenAI v2.0 (hypothetical): might use "max_completion_tokens"
   ```
-- Deprecation warnings for old parameters
-- Parameter migration between versions
-- Automatic version detection
+- Optional compatibility lookups based on package version
 
 **Example scenario**:
 ```python
 # User has OpenAI v0.28 (old version)
 # Old version uses "engine" parameter
 # New version uses "model" parameter
-# Version manager automatically maps "model" -> "engine" for compatibility
+# Version manager can map "model" -> "engine" when a compatibility mapping exists
 ```
 
 ## Key Differences
@@ -163,10 +154,10 @@ The `_create_override_wrapper` has two strategies:
 
 ```python
 # Strategy 1: Use mapping
-# TraiGent: "model" -> Framework: "model_name" (via mapping)
+# Traigent: "model" -> Framework: "model_name" (via mapping)
 
 # Strategy 2: Fallback
-# TraiGent: "custom_param" -> Framework: "custom_param" (no mapping, use exact name)
+# Traigent: "custom_param" -> Framework: "custom_param" (no mapping, use exact name)
 ```
 
 This ensures maximum compatibility even with unknown parameters.
@@ -179,8 +170,5 @@ This ensures maximum compatibility even with unknown parameters.
 
 ## Recommendation
 
-Use Enhanced Mode (default) because:
-1. It falls back to regular mode behavior when discovery fails
-2. The overhead is minimal (milliseconds)
-3. It provides much better compatibility and error handling
-4. It future-proofs your code against SDK changes
+Enhanced mode is enabled automatically when discovery utilities are available.
+It falls back to regular behavior when discovery fails and keeps overhead low.

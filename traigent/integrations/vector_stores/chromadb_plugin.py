@@ -1,4 +1,4 @@
-"""ChromaDB integration plugin for TraiGent.
+"""ChromaDB integration plugin for Traigent.
 
 This module provides the ChromaDB-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -29,7 +29,7 @@ class ChromaDBPlugin(VectorStorePlugin):
             supported_packages=["chromadb"],
             priority=IntegrationPriority.NORMAL,
             description="ChromaDB vector store integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["chromadb>=0.4.0"],
             supports_versions={"chromadb": "0."},
         )

@@ -218,6 +218,51 @@ class TestOptimizedFunction:
         # System defaults to accuracy when empty list provided
         assert opt_func.objectives == ["accuracy"]
         assert opt_func.objective_schema is not None
+
+    @pytest.mark.asyncio
+    async def test_scoring_function_overrides_exact_match(self) -> None:
+        """scoring_function should override exact-match accuracy."""
+
+        def contains_accuracy(
+            output: str, expected: str, llm_metrics: dict | None = None
+        ) -> float:
+            if not output or not expected:
+                return 0.0
+            return 1.0 if expected.lower() in output.lower() else 0.0
+
+        def qa_agent(text: str) -> str:
+            # Deliberately not an exact match to expected output.
+            return "The capital of France is Paris."
+
+        dataset = Dataset(
+            [EvaluationExample({"text": "ignored"}, "Paris")],
+            name="scoring_function_test",
+            description="Test dataset",
+        )
+
+        opt_func = OptimizedFunction(
+            func=qa_agent,
+            config_space={"temperature": [0.1]},
+            objectives=["accuracy"],
+            eval_dataset=dataset,
+            scoring_function=contains_accuracy,
+        )
+
+        evaluator = opt_func._create_effective_evaluator(
+            timeout=5.0,
+            custom_evaluator=None,
+            effective_batch_size=1,
+            effective_thread_workers=None,
+            effective_privacy_enabled=False,
+        )
+
+        result = await evaluator.evaluate(
+            qa_agent,
+            {"temperature": 0.1},
+            dataset,
+        )
+
+        assert result.aggregated_metrics["accuracy"] == 1.0
         assert [obj.name for obj in opt_func.objective_schema.objectives] == [
             "accuracy"
         ]

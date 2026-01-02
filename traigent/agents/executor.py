@@ -1,4 +1,4 @@
-"""Base agent executor for TraiGent SDK.
+"""Base agent executor for Traigent SDK.
 
 This module defines the base interface for executing AI agents
 with different configurations and platforms.

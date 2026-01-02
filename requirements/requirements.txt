@@ -1,4 +1,4 @@
-# TraiGent SDK Core Dependencies
+# Traigent SDK Core Dependencies
 # Basic functionality - required for all installations
 
 click>=8.0.0

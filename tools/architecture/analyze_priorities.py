@@ -95,7 +95,7 @@ def analyze_priorities(data: dict) -> List[Issue]:
         ("BackendIntegratedClient", "cloud.backend_client", 55),
         ("CostOptimizationAI", "analytics.intelligence", 54),
         ("OptimizedFunction", "core.optimized_function", 50),
-        ("TraiGentCloudClient", "cloud.client", 46),
+        ("TraigentCloudClient", "cloud.client", 46),
         ("RemoteServiceRegistry", "optimizers.service_registry", 40),
     ]
 
@@ -175,7 +175,7 @@ def find_large_files(
 def generate_report(issues: List[Issue]) -> str:
     """Generate markdown report of prioritized issues."""
     lines = [
-        "# TraiGent High-Priority Issues Report",
+        "# Traigent High-Priority Issues Report",
         "",
         f"**Total Issues Identified**: {len(issues)}",
         "",

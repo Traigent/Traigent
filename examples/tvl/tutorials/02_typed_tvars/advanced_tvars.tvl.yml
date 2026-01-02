@@ -1,0 +1,146 @@
+# TVL 0.9 Tutorial: Typed TVAR System
+#
+# This tutorial demonstrates the full TVAR (Tuned Variable) type system
+# introduced in TVL 0.9. TVARs provide:
+#
+# - Explicit types: bool, int, float, enum[T], tuple[...], callable[Proto]
+# - Domain specifications: ranges, enums, sets, registry references
+# - Default values and units
+#
+# This is a RAG (Retrieval-Augmented Generation) optimization example.
+
+spec:
+  id: rag-advanced-tvars
+  version: "1.0"
+
+metadata:
+  owner: tutorials@traigent.ai
+  description: Demonstrates all TVAR types in TVL 0.9
+  tags:
+    - tutorial
+    - tvars
+    - rag
+
+# Full demonstration of TVAR types
+tvars:
+  # ==========================================================
+  # ENUM TYPE: Select from a fixed set of values
+  # ==========================================================
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini", "claude-3-sonnet", "claude-3-haiku"]
+    default: "gpt-4o-mini"
+
+  - name: embedding_model
+    type: enum[str]
+    domain: ["text-embedding-3-small", "text-embedding-3-large"]
+    default: "text-embedding-3-small"
+
+  # ==========================================================
+  # FLOAT TYPE: Continuous values with optional resolution
+  # ==========================================================
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.5]
+      resolution: 0.05  # Discretize to 0.05 increments
+    default: 0.7
+    unit: unitless
+
+  - name: top_p
+    type: float
+    domain:
+      range: [0.5, 1.0]
+    default: 0.95
+
+  - name: similarity_threshold
+    type: float
+    domain:
+      range: [0.5, 0.95]
+      resolution: 0.05
+    default: 0.7
+
+  # ==========================================================
+  # INT TYPE: Integer values
+  # ==========================================================
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 4096]
+    default: 1024
+
+  - name: retrieval_k
+    type: int
+    domain:
+      range: [3, 15]
+    default: 5
+
+  - name: chunk_size
+    type: int
+    domain:
+      range: [256, 1024]
+    default: 512
+
+  # ==========================================================
+  # BOOL TYPE: Boolean flags (implicit domain: [true, false])
+  # ==========================================================
+  - name: use_reranker
+    type: bool
+    default: true
+
+  - name: use_hybrid_search
+    type: bool
+    default: false
+
+  - name: include_metadata
+    type: bool
+    default: true
+
+# Multi-objective optimization for RAG
+objectives:
+  - name: answer_accuracy
+    direction: maximize
+    weight: 1.0
+
+  - name: context_relevance
+    direction: maximize
+    weight: 0.8
+
+  - name: latency_ms
+    direction: minimize
+    unit: ms
+    weight: 0.5
+
+  - name: cost_per_query
+    direction: minimize
+    unit: USD
+    weight: 0.3
+
+# Structural constraints with when/then implications
+constraints:
+  structural:
+    # If using GPT-4o, limit tokens to save cost
+    - when: "params.model == 'gpt-4o'"
+      then: "params.max_tokens <= 2048"
+
+    # Reranker requires more retrieved documents
+    - when: "params.use_reranker == true"
+      then: "params.retrieval_k >= 5"
+
+    # Hybrid search needs reasonable similarity threshold
+    - when: "params.use_hybrid_search == true"
+      then: "params.similarity_threshold >= 0.6"
+
+    # General constraint: chunk size should relate to retrieval
+    - expr: "params.chunk_size >= params.retrieval_k * 30"
+
+# Exploration settings
+exploration:
+  strategy:
+    type: nsga2  # Multi-objective algorithm
+    initial_sampling: sobol  # Quasi-random initial samples
+  parallelism:
+    max_parallel_trials: 4
+  budgets:
+    max_trials: 100
+    max_wallclock_s: 3600

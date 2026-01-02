@@ -239,3 +239,7 @@ def test_integration_prerequisites():
     print("\n✅ Integration test prerequisites:")
     print(f"   API Key: {api_key[:10]}... (length: {len(api_key)})")
     print(f"   Backend URL: {backend_url}")
+
+    # Verify prerequisites are valid
+    assert len(api_key) > 0, "API key should not be empty"
+    assert backend_url.startswith("http"), "Backend URL should be a valid URL"

@@ -1,7 +1,7 @@
-"""AWS Bedrock integration plugin for TraiGent.
+"""AWS Bedrock integration plugin for Traigent.
 
 This module provides the Bedrock-specific plugin implementation for
-parameter mappings and framework overrides, targeting the TraiGent
+parameter mappings and framework overrides, targeting the Traigent
 BedrockChatClient wrapper.
 """
 
@@ -49,7 +49,7 @@ class BedrockPlugin(LLMPlugin):
             supported_packages=["boto3", "botocore"],
             priority=IntegrationPriority.NORMAL,
             description="AWS Bedrock integration for Claude models",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["boto3>=1.34.0"],
             supports_versions={"boto3": "1."},
         )

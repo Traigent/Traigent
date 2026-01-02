@@ -1,18 +1,18 @@
-# TraiGent SDK Disclaimer
+# Traigent SDK Disclaimer
 
-This document outlines important disclaimers and terms of use for the TraiGent SDK.
+This document outlines important disclaimers and terms of use for the Traigent SDK.
 By using this software, you acknowledge and agree to the following terms.
 
 ## Cost Liability
 
-TraiGent optimizes LLM applications by running multiple trials across different configurations.
+Traigent optimizes LLM applications by running multiple trials across different configurations.
 **This can result in significant API costs.**
 
 ### Cost Estimates Are Approximations
 
-- Cost estimates provided by TraiGent are **approximations based on maximum context length and expected token usage**
+- Cost estimates provided by Traigent are **approximations based on maximum context length and expected token usage**
 - **Actual billing is determined solely by the LLM provider** (OpenAI, Anthropic, Google, etc.)
-- TraiGent cannot guarantee cost accuracy for:
+- Traigent cannot guarantee cost accuracy for:
   - New or updated models with changed pricing
   - Custom endpoints or self-hosted models
   - Provider-specific billing variations
@@ -30,7 +30,7 @@ Users are **solely responsible** for:
 
 ### Parallel Execution Warning
 
-TraiGent may execute multiple LLM calls in parallel during optimization. This means:
+Traigent may execute multiple LLM calls in parallel during optimization. This means:
 
 - Multiple API requests can be made simultaneously
 - Costs can accumulate rapidly during parallel execution
@@ -38,7 +38,7 @@ TraiGent may execute multiple LLM calls in parallel during optimization. This me
 
 ## Third-Party API Terms
 
-TraiGent integrates with third-party LLM providers. Users must comply with the terms of service
+Traigent integrates with third-party LLM providers. Users must comply with the terms of service
 of each provider they use:
 
 - **OpenAI**: https://openai.com/policies/terms-of-use
@@ -48,7 +48,7 @@ of each provider they use:
 - **Azure OpenAI**: https://www.microsoft.com/licensing/terms/
 - Other provider terms as applicable
 
-TraiGent is **not responsible** for:
+Traigent is **not responsible** for:
 
 - Provider billing, rate limits, or service interruptions
 - Changes to provider pricing or terms
@@ -115,6 +115,41 @@ To minimize unexpected costs, we strongly recommend:
    export TRAIGENT_COST_APPROVED=true  # Only after reviewing estimates
    ```
 
+## Customizing Cost Estimates
+
+Traigent uses the [tokencost](https://github.com/AgentOps-AI/tokencost) library for LLM pricing data.
+
+### Model Name Mappings
+
+To add custom model name aliases, edit `traigent/utils/cost_calculator.py`:
+
+```python
+# In CostCalculator class
+EXACT_MODEL_MAPPING = {
+    # Add your custom mappings here
+    "my-custom-model": "gpt-4o",  # Map to a known tokencost model
+    "internal-claude": "claude-3-5-sonnet-20241022",
+}
+```
+
+### Custom Pricing for Self-Hosted Models
+
+For self-hosted or custom endpoint models not in tokencost:
+
+1. The cost calculator will return `$0.00` for unknown models
+2. Monitor actual costs via your infrastructure billing
+3. Consider contributing new model pricing to the tokencost library
+
+### Updating Pricing Data
+
+To get the latest pricing data:
+
+```bash
+pip install --upgrade tokencost
+```
+
+Note: Pricing data in tokencost may lag behind provider announcements.
+
 ## Changes to This Disclaimer
 
 This disclaimer may be updated from time to time. Continued use of the software constitutes
@@ -122,7 +157,7 @@ acceptance of any changes. Users are responsible for reviewing this disclaimer p
 
 ## Contact
 
-For questions about this disclaimer or the TraiGent SDK, please open an issue on GitHub:
+For questions about this disclaimer or the Traigent SDK, please open an issue on GitHub:
 https://github.com/Traigent/Traigent/issues
 
 ---

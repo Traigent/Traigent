@@ -4,7 +4,7 @@
 
 ## Overview
 
-Few-shot learning effectiveness depends critically on which examples are selected, their ordering, and formatting. Teams report 20-40% accuracy variations based solely on example selection, yet most still use random or manually curated examples. This example demonstrates how TraiGent systematically discovers optimal selection strategies that significantly improve task performance.
+Few-shot learning effectiveness depends critically on which examples are selected, their ordering, and formatting. Teams report 20-40% accuracy variations based solely on example selection, yet most still use random or manually curated examples. This example demonstrates how Traigent systematically discovers optimal selection strategies that significantly improve task performance.
 
 ## Problem Statement
 
@@ -168,7 +168,7 @@ example_placement = [
 | Semantic KNN     | 0.81     | 0.82        | 15ms    | Similar queries |
 | MMR              | 0.85     | 0.92        | 45ms    | Balanced tasks |
 | Curriculum       | 0.79     | 0.87        | 25ms    | Complex reasoning |
-| TraiGent Optimized | **0.87** | **0.94**   | 35ms    | **All tasks** |
+| Traigent Optimized | **0.87** | **0.94**   | 35ms    | **All tasks** |
 
 ### Task-Specific Insights
 
@@ -250,7 +250,7 @@ def your_few_shot_function(**config):
    - Caching and optimization
 
 4. **Main Optimization** (`main.py`)
-   - TraiGent integration
+   - Traigent integration
    - Multi-objective optimization
    - Results analysis and insights
 
@@ -312,7 +312,7 @@ class CachedExampleSelector:
     ]
 )
 def optimize_selection(**config):
-    # TraiGent finds optimal trade-offs
+    # Traigent finds optimal trade-offs
     pass
 ```
 

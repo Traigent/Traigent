@@ -1,7 +1,5 @@
 """Tests for message coercion utilities."""
 
-import pytest
-
 from traigent.integrations.utils.message_coercion import (
     _extract_text_from_parts,
     _normalize_message_dict,

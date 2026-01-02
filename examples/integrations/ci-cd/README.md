@@ -1,12 +1,12 @@
-# TraiGent CI/CD Integration
+# Traigent CI/CD Integration
 
-This example demonstrates how to integrate TraiGent optimization gates into your CI/CD pipeline using **only the SDK's native capabilities** - no custom evaluation code required.
+This example demonstrates how to integrate Traigent optimization gates into your CI/CD pipeline using **only the SDK's native capabilities** - no custom evaluation code required.
 
 ## 🎯 Goals
 
 1. **Regression Gate**: Prevent merging if configuration underperforms baseline
 2. **Improvement Gate**: Alert when auto-tuning finds better configurations
-3. **Zero Custom Code**: Use only TraiGent decorator and SDK methods
+3. **No Custom Scoring Functions**: Use Traigent’s built-in evaluator + metrics (a small runner script wires it into CI)
 4. **Specification-Driven**: Configure behavior through environment variables
 
 ## 📁 Structure
@@ -201,16 +201,16 @@ diff saved_config.json <(jq .best_config results-ci/math/tuned.json)
 
 ## 📚 References
 
-- [TraiGent Documentation](https://traigent.ai/docs)
+- [Traigent Documentation](https://traigent.ai/docs)
 - [GitHub Actions Workflow](.github/workflows/traigent-ci-gates.yml)
 - [SDK Evaluator API](../../traigent/evaluators/base.py)
 
 ## 💡 Why This Approach?
 
-1. **SDK-Native**: Uses TraiGent's actual APIs, not workarounds
+1. **SDK-Native**: Uses Traigent's actual APIs, not workarounds
 2. **Efficient**: Direct evaluation without fake optimization
 3. **Maintainable**: Clear Python code instead of complex shell scripts
 4. **Scalable**: Easy to add new examples and metrics
 5. **Production-Ready**: Handles real-world edge cases
 
-This demonstrates the **proper way** to integrate TraiGent into CI/CD pipelines, leveraging the SDK's full capabilities while maintaining simplicity.
+This demonstrates the **proper way** to integrate Traigent into CI/CD pipelines, leveraging the SDK's full capabilities while maintaining simplicity.

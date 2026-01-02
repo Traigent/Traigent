@@ -1,4 +1,4 @@
-"""Feature flag management for TraiGent.
+"""Feature flag management for Traigent.
 
 Provides a lightweight registry for runtime-togglable flags with support for
 environment variables, configuration mappings, and test overrides.
@@ -180,7 +180,7 @@ flag_registry = FlagRegistry()
 flag_registry.register(
     Flag(
         name=FlagNames.OPTUNA_ROLLOUT,
-        default=False,
+        default=True,
         env_var="TRAIGENT_OPTUNA_ENABLED",
         description="Toggle Optuna-backed optimizers globally.",
         config_path="optimizers.optuna.enabled",

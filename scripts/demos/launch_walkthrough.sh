@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# TraiGent Interactive Walkthrough Launcher
+# Traigent Interactive Walkthrough Launcher
 # This script launches the interactive walkthrough system
 
 # Colors for output
@@ -12,18 +12,18 @@ NC='\033[0m' # No Color
 echo -e "${CYAN}"
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║                                                          ║"
-echo "║     🚀 TraiGent Interactive Walkthrough Launcher 🚀     ║"
+echo "║     🚀 Traigent Interactive Walkthrough Launcher 🚀     ║"
 echo "║                                                          ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 
 # Check if we're in the right directory
 if [ ! -f "walkthrough/walkthrough.sh" ]; then
-    echo -e "${YELLOW}⚠️  Please run this script from the TraiGent root directory${NC}"
+    echo -e "${YELLOW}⚠️  Please run this script from the Traigent root directory${NC}"
     exit 1
 fi
 
 # Launch the walkthrough
-echo -e "${GREEN}Launching TraiGent Interactive Walkthrough...${NC}"
+echo -e "${GREEN}Launching Traigent Interactive Walkthrough...${NC}"
 echo ""
 cd walkthrough && ./walkthrough.sh

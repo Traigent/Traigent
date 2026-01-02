@@ -1,7 +1,7 @@
-"""Experimental TraiGent Features - NOT FOR PRODUCTION USE.
+"""Experimental Traigent Features - NOT FOR PRODUCTION USE.
 
 ⚠️  WARNING: This module contains experimental features that are NOT part
-    of the production TraiGent SDK.
+    of the production Traigent SDK.
 
 This module is for:
 - Local development and testing
@@ -10,7 +10,7 @@ This module is for:
 - Experiments while OptiGen backend is under development
 
 DO NOT use these features in production code.
-The real TraiGent cloud implementation is proprietary IP in the OptiGen backend.
+The real Traigent cloud implementation is proprietary IP in the OptiGen backend.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -21,7 +21,7 @@ import warnings
 
 # Issue warning when experimental module is imported
 warnings.warn(
-    "You are importing experimental TraiGent features. "
+    "You are importing experimental Traigent features. "
     "These are NOT for production use and may change or be removed. "
     "Use only for local development/testing.",
     UserWarning,

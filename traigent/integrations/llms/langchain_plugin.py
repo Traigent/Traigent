@@ -1,4 +1,4 @@
-"""LangChain integration plugin for TraiGent.
+"""LangChain integration plugin for Traigent.
 
 This module provides the LangChain-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -54,7 +54,7 @@ class LangChainPlugin(LLMPlugin):
             ],
             priority=IntegrationPriority.HIGH,
             description="LangChain framework integration for LLM chains and agents",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["langchain>=0.1.0"],
             supports_versions={"langchain": "0.1", "langchain-core": "0.1"},
         )

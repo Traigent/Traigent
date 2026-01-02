@@ -1,6 +1,6 @@
-# Optuna Integration in TraiGent
+# Optuna Integration in Traigent
 
-The Optuna integration augments TraiGent's optimisation toolkit with a modern
+The Optuna integration augments Traigent's optimisation toolkit with a modern
 ask/tell capable backend. Optuna-based optimisers ship **in addition** to the
 existing random, grid, and Bayesian implementations—change the algorithm name
 to opt into the new behaviour.
@@ -53,7 +53,7 @@ optimizer.report_trial_result(config["_optuna_trial_id"], [0.82, 0.12])
 ## Ask/Tell coordination for distributed workloads
 
 Edge deployments typically evaluate trials outside the coordinator process.
-TraiGent now exposes the `OptunaCoordinator` helper to manage that workflow:
+Traigent now exposes the `OptunaCoordinator` helper to manage that workflow:
 
 ```python
 from traigent.optimizers.optuna_coordinator import OptunaCoordinator
@@ -85,9 +85,9 @@ Additional utilities:
 - `RateLimitedOptimizer` – wraps a coordinator and throttles how quickly new
   trials are requested, useful for constrained edge deployments.
 
-Refer to the [Optuna Integration Plan](../plans/optuna_integration_plan.md) for
-the detailed architecture and design decisions behind the coordinator and
-batching layers.
+Implementation details live alongside the coordinator and batching utilities in
+`traigent/optimizers/optuna_coordinator.py` and
+`traigent/optimizers/batch_optimizers.py`.
 
 ### Conditional Parameters
 
@@ -133,7 +133,7 @@ backend-specific prerequisites (migrations, credentials, network access).
 
 ## Adapter for existing decorators
 
-Some code paths call TraiGent's optimiser decorator directly instead of the
+Some code paths call Traigent's optimiser decorator directly instead of the
 registry. The `OptunaAdapter` translates those calls without requiring refactors:
 
 ```python
@@ -159,7 +159,6 @@ print("Best parameters", result["best_params"])
 
 ## Dependency
 
-The Optuna features require the `optuna` package. It has been added to the
-`requirements-bayesian.txt` optional extras—install via `pip install -r
-requirements/requirements-bayesian.txt` or include `optuna>=4.5.0` in your
-project dependencies.
+The Optuna features require the `optuna` package, which is included in Traigent's
+core dependencies and enabled by default. No additional installation or
+environment variables are required—Optuna optimizers are available out of the box.

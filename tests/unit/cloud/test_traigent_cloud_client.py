@@ -1,4 +1,4 @@
-"""Tests for TraiGent Cloud Client."""
+"""Tests for Traigent Cloud Client."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,7 +8,7 @@ import pytest
 from traigent.cloud.client import (
     CloudOptimizationResult,
     CloudServiceError,
-    TraiGentCloudClient,
+    TraigentCloudClient,
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.evaluators.base import Dataset, EvaluationExample
@@ -34,19 +34,19 @@ def sample_dataset():
 @pytest.fixture
 def mock_cloud_client():
     """Create mock cloud client for testing."""
-    return TraiGentCloudClient(
+    return TraigentCloudClient(
         api_key="tg_test_" + "x" * 56,
         base_url="http://localhost:8000",
         enable_fallback=True,
     )
 
 
-class TestTraiGentCloudClient:
-    """Test cases for TraiGent Cloud Client."""
+class TestTraigentCloudClient:
+    """Test cases for Traigent Cloud Client."""
 
     def test_client_initialization(self):
         """Test client initialization with different parameters."""
-        client = TraiGentCloudClient(
+        client = TraigentCloudClient(
             api_key="tg_test_key",
             base_url="https://api.traigent.ai",
             enable_fallback=False,
@@ -72,7 +72,7 @@ class TestTraiGentCloudClient:
 
         monkeypatch.setenv("TRAIGENT_ENV", "production")
 
-        client = TraiGentCloudClient()
+        client = TraigentCloudClient()
 
         assert client.base_url == BackendConfig.DEFAULT_PROD_URL
         assert client.api_base_url == BackendConfig.get_backend_api_url()
@@ -225,7 +225,7 @@ class TestTraiGentCloudClient:
         """Test optimization failure without fallback."""
 
         async def run_test():
-            client = TraiGentCloudClient(
+            client = TraigentCloudClient(
                 enable_fallback=False, api_key="tg_test_" + "x" * 56
             )
 

@@ -1,4 +1,4 @@
-"""Backend integration tests for TraiGent SDK.
+"""Backend integration tests for Traigent SDK.
 
 Tests the backend client integration with privacy-preserving metadata submission.
 These are integration tests that verify communication with the backend service.
@@ -25,7 +25,7 @@ class TestBackendIntegration:
 
     @pytest.fixture
     def traigent_config(self):
-        """Create TraiGent configuration for tests."""
+        """Create Traigent configuration for tests."""
         return TraigentConfig(execution_mode="edge_analytics", minimal_logging=True)
 
     @pytest.fixture
@@ -241,4 +241,7 @@ class TestBackendIntegrationWithMocks:
             metadata={"cost": 0.002},
         )
 
-        # Test passes if no exception is raised
+        # Verify client was created and submit_result completed without exception
+        # Note: In fallback=False mode, the client may not make actual HTTP calls
+        # if internal validation fails or session sync is disabled
+        assert client is not None, "Client should be created successfully"

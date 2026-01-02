@@ -1,0 +1,260 @@
+[
+  {
+    "file": "tests/unit/test_optigen_integration.py",
+    "test_name": "test_optimize_saas_invalid_poll_interval",
+    "line": 768,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/test_coverage_improvements.py",
+    "test_name": "test_optuna_emitter_unsubscribe_nonexistent",
+    "line": 152,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/api/test_types.py",
+    "test_name": "test_plot_trade_offs",
+    "line": 685,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/api/test_types.py",
+    "test_name": "test_validate_valid_config",
+    "line": 725,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/api/test_api_types.py",
+    "test_name": "test_plot_trade_offs",
+    "line": 782,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/api/test_api_types.py",
+    "test_name": "test_validate_valid_config",
+    "line": 822,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/scripts/test_migrate_optuna.py",
+    "test_name": "test_migration_dry_run",
+    "line": 10,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/cloud/test_cost_tracking.py",
+    "test_name": "test_cache_cost_item",
+    "line": 347,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/cloud/test_authentication_security.py",
+    "test_name": "test_jwt_signature_bypass_attempts",
+    "line": 185,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/cloud/test_credential_resolver.py",
+    "test_name": "test_cache_does_nothing_without_file",
+    "line": 351,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/cloud/test_credential_resolver.py",
+    "test_name": "test_cache_handles_errors",
+    "line": 378,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/cli/test_validation_edge_cases.py",
+    "test_name": "test_discover_functions_permission_denied",
+    "line": 226,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/integrations/test_module_integration.py",
+    "test_name": "test_concurrent_activation_state_access",
+    "line": 258,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/invokers/test_local.py",
+    "test_name": "test_validate_function_parameter_injection_with_param",
+    "line": 219,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_callbacks.py",
+    "test_name": "test_on_optimization_start_without_logger",
+    "line": 361,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_callbacks.py",
+    "test_name": "test_on_trial_complete_with_failed_status",
+    "line": 982,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_function_identity.py",
+    "test_name": "test_descriptor_relative_path_uses_forward_slashes",
+    "line": 342,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_batch_processing.py",
+    "test_name": "test_timeout_handling",
+    "line": 760,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_common_validators.py",
+    "test_name": "test_validate_or_raise_valid",
+    "line": 884,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/utils/test_batch_optimizer_utils.py",
+    "test_name": "test_progress_callback_edge_cases",
+    "line": 404,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/analytics/test_cost_optimization_rebalance.py",
+    "test_name": "test_rebalance_handles_zero_budget_allocations",
+    "line": 96,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/hooks/test_validator.py",
+    "test_name": "test_validate_directory_accepts_path_object",
+    "line": 874,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/optimizers/test_pruners.py",
+    "test_name": "test_prune_with_cost_threshold_scalar_value_below_threshold",
+    "line": 228,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/optimizers/test_pruners.py",
+    "test_name": "test_prune_with_cost_threshold_list_too_short",
+    "line": 335,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/optimizers/test_remote_services.py",
+    "test_name": "test_mock_service_close_nonexistent_session",
+    "line": 1209,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/optimizers/test_bayesian.py",
+    "test_name": "test_import_error",
+    "line": 842,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/security/auth/test_sms.py",
+    "test_name": "test_send_code_cleans_old_rate_limit_entries",
+    "line": 336,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/api/decorator_tests/test_decorator_injection_modes.py",
+    "test_name": "test_parameter_mode_validation",
+    "line": 124,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/integrations/observability/test_wandb.py",
+    "test_name": "test_log_trial_handles_artifact_write_error",
+    "line": 523,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/integrations/observability/test_wandb.py",
+    "test_name": "test_log_trial_handles_log_error",
+    "line": 543,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/integrations/observability/test_wandb.py",
+    "test_name": "test_end_optimization_run_no_active_run",
+    "line": 721,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/integrations/observability/test_mlflow.py",
+    "test_name": "test_trial_with_none_timestamp",
+    "line": 955,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/core/optimized_function_tests/test_optimization.py",
+    "test_name": "test_optimization_with_cloud_execution",
+    "line": 475,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/unit/core/optimized_function_tests/test_configuration_injection.py",
+    "test_name": "test_context_cleanup",
+    "line": 181,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/test_custom_evaluator_fix.py",
+    "test_name": "test_function",
+    "line": 78,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/test_ctd_coverage_from_csv.py",
+    "test_name": "test_coverage_report",
+    "line": 706,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/test_metrics_fix.py",
+    "test_name": "test_function",
+    "line": 68,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/test_execution_modes.py",
+    "test_name": "test_cloud_mode_data_encryption",
+    "line": 464,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/test_traigent_decorator_cloud_integration.py",
+    "test_name": "test_decorator_with_real_cloud_client_mock",
+    "line": 439,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/backend/test_backend_integration_flow.py",
+    "test_name": "test_submit_result_with_mock",
+    "line": 204,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/backend/test_backend_minimal.py",
+    "test_name": "test_backend_api",
+    "line": 31,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/backend/test_session_finalization_integration.py",
+    "test_name": "test_integration_prerequisites",
+    "line": 224,
+    "issue_type": "IT-NA"
+  },
+  {
+    "file": "tests/integration/backend/test_backend_integration.py",
+    "test_name": "test_submit_result_with_mock",
+    "line": 204,
+    "issue_type": "IT-NA"
+  }
+]

@@ -1,4 +1,4 @@
-"""Core constants and configuration values for TraiGent optimization system.
+"""Core constants and configuration values for Traigent optimization system.
 
 This module centralizes all magic numbers, default values, and configuration
 constants used throughout the core architecture. This promotes consistency
@@ -159,19 +159,6 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 # Debug mode flag
 DEBUG_MODE = False
-
-# =============================================================================
-# DEPRECATED CONSTANTS (for backward compatibility)
-# =============================================================================
-
-# Legacy constants maintained for backward compatibility
-# These should be gradually phased out in future versions
-
-# Old default timeout value
-LEGACY_TIMEOUT = 30.0
-
-# Old magic number for bounds checking
-LEGACY_EPSILON = 1e-6
 
 # =============================================================================
 # TYPE-SAFE CONSTANT GROUPS

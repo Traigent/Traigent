@@ -1,6 +1,6 @@
 """Parameter-Based Injection (Custom Parameters) example module.
 
-Define custom parameters and let TraiGent find optimal values.
+Define custom parameters and let Traigent find optimal values.
 This gives explicit control over which parameters to optimize.
 """
 
@@ -80,8 +80,8 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
     max_trials=10,
 )
 def adaptive_chat_bot(user_message: str) -> str:
-    """Adaptive chatbot using custom parameters optimized by TraiGent."""
-    # Get optimized parameters from TraiGent
+    """Adaptive chatbot using custom parameters optimized by Traigent."""
+    # Get optimized parameters from Traigent
     config = traigent.get_config()
     if not isinstance(config, dict):
         config = {}

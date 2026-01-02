@@ -1,6 +1,6 @@
-# TraiGent Examples
+# Traigent Examples
 
-This directory contains professional, production-ready examples demonstrating the TraiGent SDK across various use cases and optimization techniques.
+This directory contains professional, production-ready examples demonstrating the Traigent SDK across various use cases and optimization techniques.
 
 ## 🌐 Interactive Examples Gallery
 
@@ -23,14 +23,14 @@ The gallery provides:
 | Folder | Description | Count |
 | ------ | ----------- | ----- |
 | **`quickstart/`** | **Start here!** Ready-to-run README examples | 3 examples |
-| **`core/`** | Essential examples introducing core TraiGent concepts | 10 examples |
+| **`core/`** | Essential examples introducing core Traigent concepts | 10 examples |
 | **`advanced/`** | Advanced optimization patterns and specialized workflows | 5 categories |
 | **`integrations/`** | Framework and platform integrations (CI/CD, Bedrock, etc.) | 2+ integrations |
 | **`datasets/`** | Shared evaluation datasets and test data | 9+ datasets |
 | **`docs/`** | Comprehensive documentation, guides, and tutorials | Multiple guides |
 | **`templates/`** | Boilerplate templates for creating new examples | 2 templates |
 | **`utils/`** | Reusable utility modules shared across examples | Shared utilities |
-| **`tvl/`** | TVL (TraiGent Variable Language) specification examples | TVL specs |
+| **`tvl/`** | TVL (Traigent Variable Language) specification examples | TVL specs |
 | **`archive/`** | Historical artifacts and legacy examples for reference | Archive |
 
 ## ⚡ Quickstart Examples (Start Here!)
@@ -49,7 +49,7 @@ Each quickstart example demonstrates a key concept from the README with working 
 
 ## 🚀 Core Examples
 
-Perfect for learning TraiGent fundamentals. Each example is self-contained with clear documentation.
+Perfect for learning Traigent fundamentals. Each example is self-contained with clear documentation.
 
 | Example | Description | Key Concepts | Runtime |
 | ------- | ----------- | ------------ | ------- |
@@ -74,7 +74,7 @@ Perfect for learning TraiGent fundamentals. Each example is self-contained with 
 
 ## 🎓 Advanced Examples
 
-For users comfortable with TraiGent basics who want to explore advanced patterns:
+For users comfortable with Traigent basics who want to explore advanced patterns:
 
 | Category | Examples | Focus Area |
 | -------- | -------- | ---------- |
@@ -125,7 +125,7 @@ examples/
 
 **Available datasets:**
 
-- `quickstart/` - Q&A samples for README examples (also symlinked at repo root as `qa_samples.jsonl`)
+- `data/qa_samples.jsonl` - Q&A samples for README examples
 - `simple-prompt/` - Basic summarization examples
 - `hello-world/` - Simple Q&A examples
 - `few-shot-classification/` - Classification with examples
@@ -149,7 +149,7 @@ examples/
 git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 
-# Install TraiGent
+# Install Traigent
 pip install -e .
 
 # Run any example in mock mode (no API keys)

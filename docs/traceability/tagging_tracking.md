@@ -6,7 +6,7 @@ Update this table to claim work and report status. Status values: `todo`, `in-pr
 
 | migration_id | scope | files_changed | deprecated_tags_removed | timestamp | notes |
 | --- | --- | --- | --- | --- | --- |
-| taxonomy-v2-migration | CrossCutting→{Infra,Core,Data}, Experimental→{Integration,Core}, ≤2 Quality | 24 | CrossCutting(16), Experimental(8), 3+Quality(1) | 2025-11-24T10:00:00Z | Safe regex migration via tools/migrate_tags.py. Taxonomy formalized in docs/traceability/taxonomy.yaml |
+| taxonomy-v2-migration | CrossCutting→{Infra,Core,Data}, Experimental→{Integration,Core}, ≤2 Quality (legacy) | 24 | CrossCutting(16), Experimental(8), 3+Quality(1) | 2025-11-24T10:00:00Z | Safe regex migration via tools/migrate_tags.py. Policy updated to ≤3 on 2026-01-01. |
 
 ## Module Ownership Table
 
@@ -27,5 +27,3 @@ Update this table to claim work and report status. Status values: `todo`, `in-pr
 | traigent/utils/* | retag to Layer/Quality; verify FUNC/REQ links | completed | agent-7f2d6d8c-1c07-4c5f-9f3a-9a6b76d8e1f4 | 2025-11-26T23:35:00Z | ✅ taxonomy-v2: All CrossCutting tags migrated to Infra/Core/Data. |
 | traigent/experimental/* | migrate Experimental tags | completed | 1ee37cf9-c7ce-4429-ab17-85cc0121ee45 | 2025-11-26T23:35:00Z | ✅ taxonomy-v2: All Experimental tags migrated to Integration (platforms) or Core (simulator). |
 | trace metadata (`trace_links.json`) | align symbols for mixed-layer files | todo | | | |
-| traigent/config | In Progress | [x] | [x] | [x] | |
-| traigent/core | Pending | [ ] | [ ] | [ ] | |

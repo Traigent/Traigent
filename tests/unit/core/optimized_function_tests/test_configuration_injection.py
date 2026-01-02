@@ -64,8 +64,8 @@ class TestConfigurationInjection:
 
         def test_func(text: str) -> str:
             # Function with variable assignments that can be overridden
-            temperature = 0.5  # This should be overridden by TraiGent
-            model = "gpt-3.5"  # This should be overridden by TraiGent
+            temperature = 0.5  # This should be overridden by Traigent
+            model = "gpt-3.5"  # This should be overridden by Traigent
             return f"{text} (temp={temperature}, model={model})"
 
         opt_func = OptimizedFunction(
@@ -197,7 +197,8 @@ class TestConfigurationInjection:
         set_config({"temperature": 0.7, "extra": "value"})
 
         # Call function
-        opt_func("test")
+        result = opt_func("test")
+        assert result is not None  # Function returns a string
 
         # Context should be restored after call
         # (Exact behavior depends on implementation)
@@ -208,7 +209,7 @@ class TestConfigurationInjection:
         """Test seamless injection with extra function parameters."""
 
         def test_func(text: str, custom_param: str = "default") -> str:
-            temperature = 0.5  # This will be overridden by TraiGent
+            temperature = 0.5  # This will be overridden by Traigent
             return f"{text} (temp={temperature}, custom={custom_param})"
 
         opt_func = OptimizedFunction(

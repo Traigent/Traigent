@@ -1,4 +1,4 @@
-#+ AWS Bedrock Operations Guide (Experiments)
+# AWS Bedrock Operations Guide (Experiments)
 
 This guide outlines a minimal setup to run paper experiments against AWS Bedrock without deploying any server components.
 
@@ -21,8 +21,6 @@ export AWS_PROFILE=traigent-bedrock
 # export AWS_ACCESS_KEY_ID=...
 # export AWS_SECRET_ACCESS_KEY=...
 
-# Tell pipelines to use Bedrock
-export TRAIGENT_LLM_PROVIDER=bedrock
 # Optional explicit model override
 # export BEDROCK_MODEL_ID=anthropic.claude-3-sonnet-20240229-v1:0
 
@@ -46,8 +44,10 @@ python paper_experiments/case_study_kilt/run_case_study.py \
   --model claude-3-sonnet \
   --temperature 0.3 \
   --trials 1 --parallel-trials 1
+```
 
 Run the FEVER case study with Bedrock:
+
 ```bash
 python paper_experiments/case_study_fever/run_case_study.py \
   --mock-mode off --provider bedrock \
@@ -55,12 +55,14 @@ python paper_experiments/case_study_fever/run_case_study.py \
 ```
 
 Run the Spider case study with Bedrock:
+
 ```bash
 python paper_experiments/case_study_spider/run_case_study.py \
   --mock-mode off --provider bedrock \
   --trials 1 --parallel-trials 1
 ```
-```
+
+Note: use `--provider bedrock` in the experiment scripts above.
 
 If the Bedrock path is selected, the pipeline will route through `traigent.integrations.bedrock_client.BedrockChatClient`.
 

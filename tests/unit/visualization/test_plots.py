@@ -996,7 +996,7 @@ class TestGenerateOptimizationReport:
 
                 report = plotter.generate_optimization_report(result)
 
-        assert "TraiGent Optimization Report" in report
+        assert "Traigent Optimization Report" in report
         assert "test_function" in report
         assert "test_algo" in report
         assert "accuracy, cost" in report
@@ -1107,7 +1107,7 @@ class TestCreateQuickPlot:
         result = _make_result(trials, {}, objectives=["accuracy"])
 
         output = create_quick_plot(result, plot_type="report")
-        assert "TraiGent Optimization Report" in output
+        assert "Traigent Optimization Report" in output
 
     def test_unknown_plot_type(self) -> None:
         """Test handling of unknown plot type."""

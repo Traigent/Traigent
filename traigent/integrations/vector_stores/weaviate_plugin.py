@@ -1,4 +1,4 @@
-"""Weaviate integration plugin for TraiGent.
+"""Weaviate integration plugin for Traigent.
 
 This module provides the Weaviate-specific plugin implementation for
 parameter mappings and framework overrides.
@@ -29,7 +29,7 @@ class WeaviatePlugin(VectorStorePlugin):
             supported_packages=["weaviate-client"],
             priority=IntegrationPriority.NORMAL,
             description="Weaviate vector store integration",
-            author="TraiGent Team",
+            author="Traigent Team",
             requires_packages=["weaviate-client>=4.0.0"],
             supports_versions={"weaviate-client": "4."},
         )

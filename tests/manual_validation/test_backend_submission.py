@@ -147,6 +147,10 @@ async def test_submission():
     print("\n" + "=" * 60)
     print("Test complete!")
 
+    # Verify that a session was created and client is functional
+    assert session_id is not None, "Session ID should be created"
+    assert backend_client is not None, "Backend client should be created"
+
 
 if __name__ == "__main__":
     try:

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from traigent.cloud.client import TraiGentCloudClient
+from traigent.cloud.client import TraigentCloudClient
 from traigent.cloud.models import (
     DatasetSubsetIndices,
     NextTrialResponse,
@@ -52,7 +52,7 @@ def sample_dataset():
 @pytest.fixture
 def mock_cloud_client():
     """Create a mock cloud client that acts as remote service."""
-    client = AsyncMock(spec=TraiGentCloudClient)
+    client = AsyncMock(spec=TraigentCloudClient)
 
     # Track state
     client._trial_count = 0
