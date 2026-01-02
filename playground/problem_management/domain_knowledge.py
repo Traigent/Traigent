@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from traigent.utils.secure_path import validate_path
 
 class DomainKnowledge:
     """
@@ -21,7 +22,11 @@ class DomainKnowledge:
 
     def __init__(self):
         """Initialize domain knowledge."""
-        self.knowledge_dir = Path(__file__).parent / "domain_knowledge"
+        self._base_dir = Path(__file__).parent
+        self.knowledge_dir = validate_path(
+            self._base_dir / "domain_knowledge",
+            self._base_dir,
+        )
         self.knowledge_dir.mkdir(exist_ok=True)
 
         # Initialize built-in domain knowledge
@@ -418,7 +423,10 @@ class DomainKnowledge:
             Dictionary containing domain-specific patterns
         """
         # Try to load from file first
-        domain_file = self.knowledge_dir / f"{domain}.json"
+        domain_file = validate_path(
+            self.knowledge_dir / f"{domain}.json",
+            self.knowledge_dir,
+        )
         if domain_file.exists():
             try:
                 with open(domain_file) as f:
@@ -441,7 +449,10 @@ class DomainKnowledge:
             domain: Domain name
             knowledge: Domain knowledge dictionary
         """
-        domain_file = self.knowledge_dir / f"{domain}.json"
+        domain_file = validate_path(
+            self.knowledge_dir / f"{domain}.json",
+            self.knowledge_dir,
+        )
         with open(domain_file, "w") as f:
             json.dump(knowledge, f, indent=2)
 

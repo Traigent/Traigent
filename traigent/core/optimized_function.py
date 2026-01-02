@@ -171,6 +171,130 @@ class OptimizationState(Enum):
     ERROR = auto()
 
 
+def _is_ci_environment() -> bool:
+    """Detect if running in a CI environment (robust detection - 10 providers)."""
+    return (
+        os.getenv("CI") in ("true", "1")
+        or os.getenv("GITHUB_ACTIONS") in ("true", "1")
+        or os.getenv("JENKINS_URL") is not None
+        or os.getenv("GITLAB_CI") in ("true", "1")
+        or os.getenv("CIRCLECI") in ("true", "1")
+        or os.getenv("TRAVIS") in ("true", "1")
+        or os.getenv("BUILDKITE") in ("true", "1")
+        or os.getenv("TEAMCITY_VERSION") is not None
+        or os.getenv("AZURE_HTTP_USER_AGENT") is not None
+        or os.getenv("BITBUCKET_BUILD_NUMBER") is not None
+    )
+
+
+def _check_env_var_approval() -> bool:
+    """Check if CI run is approved via environment variable."""
+    if os.getenv("TRAIGENT_RUN_APPROVED") == "1":
+        approved_by = os.getenv("TRAIGENT_APPROVED_BY", "environment_variable")
+        logger.info(f"CI optimization approved by: {approved_by}")
+        return True
+    return False
+
+
+def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
+    """Validate a legacy format approval token."""
+    if "approved_by" not in token_data or "expires_at" not in token_data:
+        return False
+    try:
+        expires_str = token_data["expires_at"]
+        expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        now = datetime.now()
+        if expires_at.tzinfo:
+            now = now.replace(tzinfo=UTC)
+        if expires_at > now:
+            logger.info(
+                f"CI optimization approved by legacy token: {token_data['approved_by']}"
+            )
+            return True
+    except (ValueError, KeyError):
+        pass
+    return False
+
+
+def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
+    """Validate an HMAC-signed approval token."""
+    required_fields = ["approver", "expires_iso", "nonce", "signature"]
+    if not all(field in token_data for field in required_fields):
+        return False
+
+    secret = os.getenv("TRAIGENT_APPROVAL_SECRET", "").encode()
+    if not secret:
+        logger.warning(
+            "TRAIGENT_APPROVAL_SECRET not set, cannot validate token signature"
+        )
+        # Check expiry without signature validation
+        try:
+            expires_at = datetime.fromisoformat(
+                token_data["expires_iso"].replace("Z", "+00:00")
+            )
+            now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
+            if expires_at > now:
+                logger.warning(
+                    f"Token approved by {token_data['approver']} (signature not verified)"
+                )
+                return True
+        except (ValueError, KeyError):
+            pass
+        return False
+
+    # Compute expected signature
+    payload = f"{token_data['approver']}|{token_data['expires_iso']}|{token_data['nonce']}".encode()
+    expected_sig = base64.b64encode(
+        hmac.new(secret, payload, hashlib.sha256).digest()
+    ).decode()
+
+    # Constant-time comparison
+    if not hmac.compare_digest(token_data.get("signature", ""), expected_sig):
+        logger.warning("Token signature validation failed")
+        return False
+
+    # Check expiration
+    try:
+        expires_at = datetime.fromisoformat(
+            token_data["expires_iso"].replace("Z", "+00:00")
+        )
+        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
+
+        # Enforce max TTL of 24 hours from creation
+        if expires_at - now > timedelta(hours=24):
+            logger.warning("Token TTL exceeds 24 hours, rejecting")
+            return False
+        if expires_at > now:
+            logger.info(
+                f"CI optimization approved by HMAC token: {token_data['approver']}"
+            )
+            return True
+        logger.debug("Token expired")
+    except (ValueError, KeyError):
+        pass
+    return False
+
+
+def _check_token_file_approval(token_file: Path) -> bool:
+    """Check if CI run is approved via token file."""
+    if not token_file.exists():
+        return False
+
+    try:
+        with open(token_file) as f:
+            token_data = json.load(f)
+
+        # Try HMAC token first, then legacy format
+        if _validate_hmac_token(token_data):
+            return True
+        if _validate_legacy_token(token_data):
+            return True
+    except (ValueError, KeyError) as e:  # JSONDecodeError is subclass of ValueError
+        logger.debug(f"Invalid approval token: {e}")
+
+    return False
+
+
 class OptimizedFunction:
     """Wrapper for functions decorated with @traigent.optimize.
 
@@ -1693,35 +1817,18 @@ class OptimizedFunction:
 
         # Allow mock mode to run without CI approval since no real calls occur
         if is_mock_mode():
+            msg = "Skipping CI approval in mock mode"
             if is_production():
-                logger.warning(
-                    "Skipping CI approval in mock mode while ENVIRONMENT=production."
-                )
+                logger.warning(f"{msg} while ENVIRONMENT=production.")
             else:
-                logger.info("Skipping CI approval in mock mode.")
+                logger.info(f"{msg}.")
             return
 
-        # Detect CI environment (robust detection - 10 providers)
-        is_ci = (
-            os.getenv("CI") in ("true", "1")
-            or os.getenv("GITHUB_ACTIONS") in ("true", "1")
-            or os.getenv("JENKINS_URL") is not None
-            or os.getenv("GITLAB_CI") in ("true", "1")
-            or os.getenv("CIRCLECI") in ("true", "1")
-            or os.getenv("TRAVIS") in ("true", "1")
-            or os.getenv("BUILDKITE") in ("true", "1")
-            or os.getenv("TEAMCITY_VERSION") is not None
-            or os.getenv("AZURE_HTTP_USER_AGENT") is not None
-            or os.getenv("BITBUCKET_BUILD_NUMBER") is not None
-        )
-
-        if not is_ci:
+        if not _is_ci_environment():
             return  # Interactive mode - no approval needed
 
         # Check environment variable approval (primary method)
-        if os.getenv("TRAIGENT_RUN_APPROVED") == "1":
-            approved_by = os.getenv("TRAIGENT_APPROVED_BY", "environment_variable")
-            logger.info(f"CI optimization approved by: {approved_by}")
+        if _check_env_var_approval():
             return
 
         # Check token file approval (secondary method)
@@ -1732,85 +1839,8 @@ class OptimizedFunction:
         token_file = validate_path(
             storage_root / "approval.token", storage_root, must_exist=False
         )
-        if token_file.exists():
-            try:
-                with open(token_file) as f:
-                    token_data = json.load(f)
-
-                # Validate token structure
-                required_fields = ["approver", "expires_iso", "nonce", "signature"]
-                if not all(field in token_data for field in required_fields):
-                    # Fall back to legacy token format
-                    if "approved_by" in token_data and "expires_at" in token_data:
-                        expires_str = token_data["expires_at"]
-                        expires_at = datetime.fromisoformat(
-                            expires_str.replace("Z", "+00:00")
-                        )
-                        now = datetime.now()
-                        if expires_at.tzinfo:
-                            now = now.replace(tzinfo=UTC)
-                        if expires_at > now:
-                            logger.info(
-                                f"CI optimization approved by legacy token: {token_data['approved_by']}"
-                            )
-                            return
-                    logger.debug("Invalid token structure")
-                else:
-                    # Validate HMAC signature
-                    secret = os.getenv("TRAIGENT_APPROVAL_SECRET", "").encode()
-                    if not secret:
-                        logger.warning(
-                            "TRAIGENT_APPROVAL_SECRET not set, cannot validate token signature"
-                        )
-                        # Could still check expiry without signature validation
-                        expires_at = datetime.fromisoformat(
-                            token_data["expires_iso"].replace("Z", "+00:00")
-                        )
-                        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
-                        if expires_at > now:
-                            logger.warning(
-                                f"Token approved by {token_data['approver']} (signature not verified)"
-                            )
-                            return
-                    else:
-                        # Compute expected signature
-                        payload = f"{token_data['approver']}|{token_data['expires_iso']}|{token_data['nonce']}".encode()
-                        expected_sig = base64.b64encode(
-                            hmac.new(secret, payload, hashlib.sha256).digest()
-                        ).decode()
-
-                        # Constant-time comparison
-                        if hmac.compare_digest(
-                            token_data.get("signature", ""), expected_sig
-                        ):
-                            # Check expiration
-                            expires_at = datetime.fromisoformat(
-                                token_data["expires_iso"].replace("Z", "+00:00")
-                            )
-                            now = (
-                                datetime.now(UTC)
-                                if expires_at.tzinfo
-                                else datetime.now()
-                            )
-
-                            # Enforce max TTL of 24 hours from creation
-                            if expires_at - now > timedelta(hours=24):
-                                logger.warning("Token TTL exceeds 24 hours, rejecting")
-                            elif expires_at > now:
-                                logger.info(
-                                    f"CI optimization approved by HMAC token: {token_data['approver']}"
-                                )
-                                return
-                            else:
-                                logger.debug("Token expired")
-                        else:
-                            logger.warning("Token signature validation failed")
-
-            except (
-                ValueError,
-                KeyError,
-            ) as e:  # JSONDecodeError is subclass of ValueError
-                logger.debug(f"Invalid approval token: {e}")
+        if _check_token_file_approval(token_file):
+            return
 
         # No valid approval found
         raise OptimizationError(
