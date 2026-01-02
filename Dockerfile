@@ -9,12 +9,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install system dependencies
+# Install system dependencies and create non-root user for security
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
     build-essential \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 traigent \
+    && useradd --uid 1000 --gid 1000 --shell /bin/bash --create-home traigent
 
 WORKDIR /app
 
@@ -37,6 +39,9 @@ COPY . .
 ENV TRAIGENT_MOCK_MODE=true \
     TRAIGENT_LOG_LEVEL=DEBUG
 
+# Run as non-root user
+USER traigent
+
 # Default command
 CMD ["pytest", "tests/", "-v"]
 
@@ -51,6 +56,9 @@ COPY . .
 
 ENV TRAIGENT_MOCK_MODE=true
 
+# Run as non-root user
+USER traigent
+
 CMD ["pytest", "tests/", "-v", "--tb=short"]
 
 # Production stage (minimal footprint)
@@ -62,5 +70,8 @@ RUN pip install -e "."
 COPY traigent/ ./traigent/
 
 ENV TRAIGENT_MOCK_MODE=false
+
+# Run as non-root user
+USER traigent
 
 CMD ["python", "-m", "traigent"]

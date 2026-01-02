@@ -141,7 +141,10 @@ class BandTarget:
 
         # Convert center/tol to low/high if needed
         if has_center_tol and not has_interval:
-            assert self.center is not None and self.tol is not None
+            if self.center is None or self.tol is None:
+                raise ValueError(
+                    "center and tol must be set when using center/tol mode"
+                )
             self.low = self.center - self.tol
             self.high = self.center + self.tol
 
@@ -349,7 +352,8 @@ class StructuralConstraint:
 
         # Convert when/then implication to expression
         # when -> then is equivalent to: not(when) or then
-        assert self.when is not None and self.then is not None
+        if self.when is None or self.then is None:
+            raise ValueError("when and then must be set for implication constraints")
         return f"not ({self.when}) or ({self.then})"
 
     @classmethod
@@ -627,7 +631,10 @@ def parse_domain_spec(
                             )
                         if isinstance(value, int):
                             return value
-                        assert isinstance(value, float)
+                        if not isinstance(value, float):
+                            raise TypeError(
+                                f"Expected int or float for {which}, got {type(value).__name__}"
+                            )
                         if value.is_integer():
                             return int(value)
                         raise ValueError(
