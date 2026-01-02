@@ -344,6 +344,20 @@ class PythonConstraintValidator:
             ),
         )
 
+    def _add_tvar_value(
+        self,
+        relevant: dict[str, Any],
+        config: dict[str, Any],
+        tvar: Any,
+        var_names: dict[int, str],
+    ) -> None:
+        """Add a tvar's value to the relevant dict if present in config."""
+        if tvar is None:
+            return
+        var_name = var_names.get(id(tvar))
+        if var_name and var_name in config:
+            relevant[var_name] = config[var_name]
+
     def _get_relevant_values(
         self,
         config: dict[str, Any],
@@ -353,21 +367,22 @@ class PythonConstraintValidator:
         """Extract values relevant to a constraint from the config."""
         relevant: dict[str, Any] = {}
 
-        # Get variables involved in the constraint
         if constraint.expr is not None:
-            var_name = var_names.get(id(constraint.expr.tvar))
-            if var_name and var_name in config:
-                relevant[var_name] = config[var_name]
+            self._add_tvar_value(relevant, config, constraint.expr.tvar, var_names)
         else:
             # Implication constraint
-            if constraint.when is not None:
-                var_name = var_names.get(id(constraint.when.tvar))
-                if var_name and var_name in config:
-                    relevant[var_name] = config[var_name]
-            if constraint.then is not None:
-                var_name = var_names.get(id(constraint.then.tvar))
-                if var_name and var_name in config:
-                    relevant[var_name] = config[var_name]
+            self._add_tvar_value(
+                relevant,
+                config,
+                constraint.when.tvar if constraint.when else None,
+                var_names,
+            )
+            self._add_tvar_value(
+                relevant,
+                config,
+                constraint.then.tvar if constraint.then else None,
+                var_names,
+            )
 
         return relevant
 

@@ -1080,8 +1080,9 @@ class BaseEvaluator(ABC):
             logger.warning(error_msg)
             return None, error_msg
 
-        except (APIKeyError, FriendlyTraigentError, CoreTraigentError):
+        except (FriendlyTraigentError, CoreTraigentError):
             # Surface authentication/configuration issues immediately.
+            # Note: APIKeyError is a subclass of FriendlyTraigentError
             raise
         except Exception as e:
             lowered = str(e).lower()
@@ -1101,6 +1102,46 @@ class BaseEvaluator(ABC):
             logger.warning(error_msg)
             return None, error_msg
 
+    async def _evaluate_single_non_detailed(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> tuple[Any, str | None]:
+        """Evaluate a single example in non-detailed mode with tracing."""
+        example_id = (
+            example.metadata.get("example_id", f"example_{index}")
+            if example.metadata
+            else f"example_{index}"
+        )
+        start_time = time.time()
+
+        with self._example_trace_context(example_id, index, example) as span:
+            output, error = await self._execute_function(
+                func, config, example.input_data, executor=None
+            )
+            execution_time = time.time() - start_time
+
+            if span is not None:
+                _, record_fn, available = _get_tracing_functions()
+                if available and record_fn is not None:
+                    record_fn(
+                        span,
+                        success=(error is None),
+                        actual_output=output,
+                        error=error,
+                        execution_time=execution_time,
+                    )
+
+        if progress_callback:
+            progress_callback(
+                index, {"success": error is None, "output": output, "error": error}
+            )
+
+        return output, error
+
     async def _evaluate_batch_sequential(
         self,
         func: Callable[..., Any],
@@ -1113,7 +1154,7 @@ class BaseEvaluator(ABC):
         """Evaluate dataset sequentially (max_workers=1)."""
         outputs: list[Any] = []
         errors: list[str | None] = []
-        example_results: list[ExampleResult | None] = [] if detailed else []
+        example_results: list[ExampleResult | None] = []
         consumed = 0
         exhausted = False
 
@@ -1135,38 +1176,11 @@ class BaseEvaluator(ABC):
                 outputs.append(result.actual_output)
                 errors.append(result.error_message)
             else:
-                # Non-detailed mode: still add tracing if available
-                example_id = (
-                    example.metadata.get("example_id", f"example_{i}")
-                    if example.metadata
-                    else f"example_{i}"
+                output, error = await self._evaluate_single_non_detailed(
+                    func, config, example, i, progress_callback
                 )
-                start_time = time.time()
-
-                with self._example_trace_context(example_id, i, example) as span:
-                    output, error = await self._execute_function(
-                        func, config, example.input_data, executor=None
-                    )
-                    execution_time = time.time() - start_time
-
-                    # Record to tracing span if available
-                    if span is not None:
-                        _, record_fn, available = _get_tracing_functions()
-                        if available and record_fn is not None:
-                            record_fn(
-                                span,
-                                success=(error is None),
-                                actual_output=output,
-                                error=error,
-                                execution_time=execution_time,
-                            )
-
                 outputs.append(output)
                 errors.append(error)
-                if progress_callback:
-                    progress_callback(
-                        i, {"success": error is None, "output": output, "error": error}
-                    )
 
             consumed += 1
 
@@ -1378,7 +1392,8 @@ class BaseEvaluator(ABC):
                             await cancel_pending(pending_tasks)
                             raise
                     continue
-                except (APIKeyError, FriendlyTraigentError, CoreTraigentError):
+                except (FriendlyTraigentError, CoreTraigentError):
+                    # Note: APIKeyError is a subclass of FriendlyTraigentError
                     await cancel_pending(pending_tasks)
                     raise
                 except Exception as exc:

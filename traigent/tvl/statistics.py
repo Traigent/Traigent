@@ -231,6 +231,28 @@ def _beta_quantile_approx(p: float, alpha: float, beta: float) -> float:
     return x
 
 
+def _compute_beta_coefficient(x: float, a: float, b: float) -> float:
+    """Compute the beta function coefficient bt = x^a * (1-x)^b / B(a, b)."""
+    try:
+        log_bt = a * math.log(x) + b * math.log(1 - x) - _log_beta(a, b)
+        return math.exp(log_bt)
+    except (ValueError, OverflowError):
+        return 0.0
+
+
+def _cf_step(aa: float, c: float, d: float, fpmin: float) -> tuple[float, float, float]:
+    """Single continued fraction step in Lentz's algorithm."""
+    d = 1.0 + aa * d
+    if abs(d) < fpmin:
+        d = fpmin
+    c = 1.0 + aa / c
+    if abs(c) < fpmin:
+        c = fpmin
+    d = 1.0 / d
+    delta = d * c
+    return c, d, delta
+
+
 def _regularized_beta(x: float, a: float, b: float) -> float:
     """Approximate regularized incomplete beta function I_x(a, b).
 
@@ -244,33 +266,20 @@ def _regularized_beta(x: float, a: float, b: float) -> float:
     Returns:
         I_x(a, b) = B(x; a, b) / B(a, b).
     """
-    if x <= 0:
-        return 0.0
-    if x >= 1:
-        return 1.0
+    if x <= 0 or x >= 1:
+        return 0.0 if x <= 0 else 1.0
 
-    # Use the continued fraction representation
-    # For numerical stability, use I_x if x < (a+1)/(a+b+2), else 1 - I_{1-x}(b, a)
+    # For numerical stability, use I_x if x < threshold, else 1 - I_{1-x}(b, a)
     threshold = (a + 1) / (a + b + 2)
-
     if x > threshold:
         return 1.0 - _regularized_beta(1 - x, b, a)
 
-    # Compute the beta function coefficient
-    # bt = x^a * (1-x)^b / B(a, b)
-    # Using log for numerical stability
-    try:
-        log_bt = a * math.log(x) + b * math.log(1 - x)
-        log_bt -= _log_beta(a, b)
-        bt = math.exp(log_bt)
-    except (ValueError, OverflowError):
-        bt = 0.0
+    bt = _compute_beta_coefficient(x, a, b)
 
     # Lentz's continued fraction algorithm
     eps = 1e-15
     fpmin = 1e-30
 
-    # Start continued fraction
     c = 1.0
     d = 1.0 - (a + b) * x / (a + 1)
     if abs(d) < fpmin:
@@ -281,26 +290,13 @@ def _regularized_beta(x: float, a: float, b: float) -> float:
     for m in range(1, 100):
         m2 = 2 * m
         # Even step
-        aa = m * (b - m) * x / ((a + m2 - 1) * (a + m2))
-        d = 1.0 + aa * d
-        if abs(d) < fpmin:
-            d = fpmin
-        c = 1.0 + aa / c
-        if abs(c) < fpmin:
-            c = fpmin
-        d = 1.0 / d
-        h *= d * c
+        aa_even = m * (b - m) * x / ((a + m2 - 1) * (a + m2))
+        c, d, delta = _cf_step(aa_even, c, d, fpmin)
+        h *= delta
 
         # Odd step
-        aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1))
-        d = 1.0 + aa * d
-        if abs(d) < fpmin:
-            d = fpmin
-        c = 1.0 + aa / c
-        if abs(c) < fpmin:
-            c = fpmin
-        d = 1.0 / d
-        delta = d * c
+        aa_odd = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1))
+        c, d, delta = _cf_step(aa_odd, c, d, fpmin)
         h *= delta
 
         if abs(delta - 1.0) < eps:
@@ -374,73 +370,83 @@ def paired_comparison_test(
     Raises:
         ValueError: If samples are empty or have mismatched lengths.
     """
+    _validate_paired_samples(x_samples, y_samples)
+
+    n = len(x_samples)
+    differences = [x - y for x, y in zip(x_samples, y_samples, strict=True)]
+    mean_diff, var_diff = _compute_difference_stats(differences, n)
+    se_diff = math.sqrt(var_diff / n) if n > 1 and var_diff > 0 else 0.0
+    df = max(1, n - 1)
+
+    if se_diff < 1e-15:
+        return _handle_degenerate_case(mean_diff, epsilon, direction, df)
+
+    t_stat, p_value = _compute_test_statistics(
+        mean_diff, epsilon, se_diff, direction, df
+    )
+
+    return PairedComparisonResult(
+        reject_null=False,  # Deprecated: use p_value with your alpha
+        p_value=p_value,
+        effect_size=mean_diff,
+        test_statistic=t_stat,
+        degrees_of_freedom=df,
+    )
+
+
+def _validate_paired_samples(
+    x_samples: Sequence[float], y_samples: Sequence[float]
+) -> None:
+    """Validate that paired samples are non-empty and equal length."""
     if len(x_samples) == 0 or len(y_samples) == 0:
         raise ValueError("Cannot perform comparison with empty samples")
-
     if len(x_samples) != len(y_samples):
         raise ValueError(
             f"Paired test requires equal-length samples, got {len(x_samples)} and {len(y_samples)}"
         )
 
-    n = len(x_samples)
 
-    # Compute paired differences
-    differences = [x - y for x, y in zip(x_samples, y_samples, strict=True)]
-
-    # Mean and variance of differences
+def _compute_difference_stats(differences: list[float], n: int) -> tuple[float, float]:
+    """Compute mean and variance of differences."""
     mean_diff = sum(differences) / n
-    if n > 1:
-        var_diff = sum((d - mean_diff) ** 2 for d in differences) / (n - 1)
-    else:
-        var_diff = 0.0
+    var_diff = (
+        sum((d - mean_diff) ** 2 for d in differences) / (n - 1) if n > 1 else 0.0
+    )
+    return mean_diff, var_diff
 
-    # Effect size is the mean difference
-    effect_size = mean_diff
 
-    # Standard error of the mean difference
-    se_diff = math.sqrt(var_diff / n) if n > 1 and var_diff > 0 else 0.0
-
-    # Degrees of freedom for paired t-test
-    df = max(1, n - 1)
-
-    if se_diff < 1e-15:
-        # No variance - degenerate case
-        if direction == "greater":
-            reject = effect_size > epsilon
-        else:
-            reject = effect_size < -epsilon
-
-        return PairedComparisonResult(
-            reject_null=reject,
-            p_value=0.0 if reject else 1.0,
-            effect_size=effect_size,
-            test_statistic=float("inf") if reject else 0.0,
-            degrees_of_freedom=df,
-        )
-
-    # Compute test statistic for one-sided test
-    if direction == "greater":
-        # Testing H0: mean(x-y) <= epsilon
-        t_stat = (mean_diff - epsilon) / se_diff
-    else:
-        # Testing H0: mean(x-y) >= -epsilon
-        t_stat = (mean_diff + epsilon) / se_diff
-
-    # Compute p-value
-    if direction == "greater":
-        p_value = _t_cdf_upper(t_stat, df)
-    else:
-        p_value = _t_cdf_lower(t_stat, df)
-
-    # Don't hardcode rejection decision - let caller apply their alpha
-    # reject_null is deprecated; caller should use p_value with their configured alpha
+def _handle_degenerate_case(
+    effect_size: float,
+    epsilon: float,
+    direction: Literal["greater", "less"],
+    df: int,
+) -> PairedComparisonResult:
+    """Handle degenerate case with zero variance."""
+    reject = effect_size > epsilon if direction == "greater" else effect_size < -epsilon
     return PairedComparisonResult(
-        reject_null=False,  # Deprecated: use p_value with your alpha
-        p_value=p_value,
+        reject_null=reject,
+        p_value=0.0 if reject else 1.0,
         effect_size=effect_size,
-        test_statistic=t_stat,
+        test_statistic=float("inf") if reject else 0.0,
         degrees_of_freedom=df,
     )
+
+
+def _compute_test_statistics(
+    mean_diff: float,
+    epsilon: float,
+    se_diff: float,
+    direction: Literal["greater", "less"],
+    df: int,
+) -> tuple[float, float]:
+    """Compute t-statistic and p-value for the test."""
+    if direction == "greater":
+        t_stat = (mean_diff - epsilon) / se_diff
+        p_value = _t_cdf_upper(t_stat, df)
+    else:
+        t_stat = (mean_diff + epsilon) / se_diff
+        p_value = _t_cdf_lower(t_stat, df)
+    return t_stat, p_value
 
 
 def _t_cdf_lower(t: float, df: int) -> float:
@@ -543,6 +549,20 @@ def hypervolume_improvement(
     return max(0.0, new_hv - current_hv)
 
 
+def _compare_objective(
+    a_val: float, b_val: float, direction: Literal["maximize", "minimize"]
+) -> tuple[bool, bool]:
+    """Compare single objective values.
+
+    Returns:
+        Tuple of (is_at_least_as_good, is_strictly_better).
+    """
+    if direction == "maximize":
+        return a_val >= b_val, a_val > b_val
+    else:  # minimize
+        return a_val <= b_val, a_val < b_val
+
+
 def _dominates(
     a: Sequence[float],
     b: Sequence[float],
@@ -564,24 +584,15 @@ def _dominates(
     if len(a) != len(b) or len(a) != len(directions):
         return False
 
-    at_least_as_good = True
     strictly_better = False
-
     for i, direction in enumerate(directions):
-        if direction == "maximize":
-            if a[i] < b[i]:
-                at_least_as_good = False
-                break
-            if a[i] > b[i]:
-                strictly_better = True
-        else:  # minimize
-            if a[i] > b[i]:
-                at_least_as_good = False
-                break
-            if a[i] < b[i]:
-                strictly_better = True
+        at_least_as_good, is_better = _compare_objective(a[i], b[i], direction)
+        if not at_least_as_good:
+            return False
+        if is_better:
+            strictly_better = True
 
-    return at_least_as_good and strictly_better
+    return strictly_better
 
 
 def _calculate_hypervolume(

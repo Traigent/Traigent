@@ -81,7 +81,7 @@ lint:  ## Run all linters (ruff, mypy, bandit)
 	@echo "Running Ruff..."
 	$(RUFF) check $(SRC_DIR) --fix
 	@echo "Running MyPy..."
-	$(MYPY) --config-file pyproject.toml
+	$(MYPY) $(SRC_DIR) --install-types --non-interactive
 	@echo "Running Bandit..."
 	$(BANDIT) -r $(SRC_DIR) -ll --skip B101,B601
 

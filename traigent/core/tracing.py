@@ -186,6 +186,41 @@ def get_tracer() -> Tracer | None:
     return _initialize_tracer()
 
 
+def _set_session_span_attributes(
+    span: Span,
+    function_name: str,
+    max_trials: int | None,
+    timeout: float | None,
+    algorithm: str | None,
+    objectives: list[str] | None,
+    config_space: dict[str, Any] | None,
+) -> None:
+    """Set attributes on an optimization session span."""
+    # Add test context attributes first (so they appear at top in Jaeger)
+    for key, value in get_test_context().items():
+        if isinstance(value, (str, int, float, bool)):
+            span.set_attribute(key, value)
+
+    span.set_attribute("traigent.function_name", function_name)
+
+    if max_trials is not None:
+        span.set_attribute("traigent.max_trials", max_trials)
+    if timeout is not None:
+        span.set_attribute("traigent.timeout", timeout)
+    if algorithm:
+        span.set_attribute("traigent.algorithm", algorithm)
+    if objectives:
+        span.set_attribute("traigent.objectives", ",".join(objectives))
+    if config_space:
+        try:
+            config_str = json.dumps(config_space)
+            if len(config_str) > 1000:
+                config_str = config_str[:1000] + "..."
+            span.set_attribute("traigent.config_space", config_str)
+        except (TypeError, ValueError):
+            pass
+
+
 @contextmanager
 def optimization_session_span(
     function_name: str,
@@ -199,71 +234,61 @@ def optimization_session_span(
 
     This creates a NEW trace for each optimization session, ensuring
     that each test/optimization run appears as a separate trace in Jaeger.
-
-    Args:
-        function_name: Name of the function being optimized
-        max_trials: Maximum number of trials
-        timeout: Optimization timeout
-        algorithm: Optimization algorithm
-        objectives: List of objective names
-        config_space: Configuration space
-
-    Yields:
-        The span object, or None if tracing is disabled
     """
     tracer = get_tracer()
     if tracer is None:
         yield None
         return
 
-    # Build a descriptive span name
+    # Build span name from test context or function name
     test_ctx = get_test_context()
-    if test_ctx.get("test.name"):
-        span_name = f"optimization: {test_ctx['test.name']}"
-    else:
-        span_name = f"optimization: {function_name}"
+    span_name = (
+        f"optimization: {test_ctx['test.name']}"
+        if test_ctx.get("test.name")
+        else f"optimization: {function_name}"
+    )
 
-    # CRITICAL: Create a fresh context and attach it to start a NEW trace
-    # This ensures each optimization session (test) gets its own trace ID
-    # rather than being nested under a shared parent context
+    # Create fresh context to start a NEW trace (not nested under parent)
     fresh_context = otel_context.Context() if otel_context else None
-
-    # Attach the fresh context to make it the active context
-    # This detaches us from any existing trace context
     token = (
         otel_context.attach(fresh_context) if otel_context and fresh_context else None
     )
 
     try:
         with tracer.start_as_current_span(span_name) as span:
-            # Add test context attributes first (so they appear at top in Jaeger)
-            for key, value in test_ctx.items():
-                if isinstance(value, (str, int, float, bool)):
-                    span.set_attribute(key, value)
-
-            span.set_attribute("traigent.function_name", function_name)
-            if max_trials is not None:
-                span.set_attribute("traigent.max_trials", max_trials)
-            if timeout is not None:
-                span.set_attribute("traigent.timeout", timeout)
-            if algorithm:
-                span.set_attribute("traigent.algorithm", algorithm)
-            if objectives:
-                span.set_attribute("traigent.objectives", ",".join(objectives))
-            if config_space:
-                try:
-                    # Serialize config space (truncate if too large)
-                    config_str = json.dumps(config_space)
-                    if len(config_str) > 1000:
-                        config_str = config_str[:1000] + "..."
-                    span.set_attribute("traigent.config_space", config_str)
-                except (TypeError, ValueError):
-                    pass
+            _set_session_span_attributes(
+                span,
+                function_name,
+                max_trials,
+                timeout,
+                algorithm,
+                objectives,
+                config_space,
+            )
             yield span
     finally:
-        # Detach the fresh context to restore previous context
         if token is not None and otel_context:
             otel_context.detach(token)
+
+
+def _shorten_key(key: str) -> str:
+    """Shorten a key name for readability."""
+    short_key = key[:5] if len(key) > 5 else key
+    return "temp" if short_key == "tempe" else short_key
+
+
+def _add_priority_keys(
+    config: dict[str, Any], priority_keys: list[str]
+) -> tuple[list[str], set[str]]:
+    """Add priority keys to parts list."""
+    parts = []
+    seen_keys: set[str] = set()
+    for key in priority_keys:
+        if key in config:
+            short_key = _shorten_key(key)
+            parts.append(f"{short_key}={config[key]}")
+            seen_keys.add(key)
+    return parts, seen_keys
 
 
 def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
@@ -281,27 +306,13 @@ def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
 
     # Priority keys to show first (common LLM config params)
     priority_keys = ["model", "temperature", "temp", "max_tokens", "provider"]
-
-    parts = []
-    seen_keys = set()
-
-    # Add priority keys first
-    for key in priority_keys:
-        if key in config:
-            value = config[key]
-            # Shorten key names for readability
-            short_key = key[:5] if len(key) > 5 else key
-            if short_key == "tempe":
-                short_key = "temp"
-            parts.append(f"{short_key}={value}")
-            seen_keys.add(key)
+    parts, seen_keys = _add_priority_keys(config, priority_keys)
 
     # Add remaining keys if there's room
     for key, value in config.items():
         if key in seen_keys or key.startswith("_"):
             continue
-        short_key = key[:5] if len(key) > 5 else key
-        parts.append(f"{short_key}={value}")
+        parts.append(f"{_shorten_key(key)}={value}")
         if len(", ".join(parts)) > max_length:
             break
 
@@ -309,6 +320,29 @@ def _format_config_summary(config: dict[str, Any], max_length: int = 50) -> str:
     if len(result) > max_length:
         result = result[: max_length - 3] + "..."
     return result
+
+
+def _extract_dict_preview(input_data: dict[str, Any]) -> str:
+    """Extract a preview string from a dictionary."""
+    common_keys = ["text", "input", "query", "prompt", "message", "content"]
+    for key in common_keys:
+        if key in input_data:
+            return str(input_data[key])
+    # Fallback to first value or empty dict representation
+    if input_data:
+        return str(next(iter(input_data.values())))
+    return "{}"
+
+
+def _truncate_and_quote(preview: str, max_length: int) -> str:
+    """Clean up, truncate, and optionally quote a preview string."""
+    preview = preview.replace("\n", " ").strip()
+    if len(preview) > max_length:
+        preview = preview[: max_length - 3] + "..."
+    # Add quotes if it looks like text (not JSON-like)
+    if preview and not preview.startswith("{") and not preview.startswith("["):
+        preview = f'"{preview}"'
+    return preview
 
 
 def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
@@ -328,31 +362,11 @@ def _format_input_preview(input_data: Any, max_length: int = 35) -> str:
         if isinstance(input_data, str):
             preview = input_data
         elif isinstance(input_data, dict):
-            # Try to get a meaningful value from common keys
-            for key in ["text", "input", "query", "prompt", "message", "content"]:
-                if key in input_data:
-                    preview = str(input_data[key])
-                    break
-            else:
-                # Just show first value or the dict itself
-                if input_data:
-                    first_value = next(iter(input_data.values()))
-                    preview = str(first_value)
-                else:
-                    preview = "{}"
+            preview = _extract_dict_preview(input_data)
         else:
             preview = str(input_data)
 
-        # Clean up and truncate
-        preview = preview.replace("\n", " ").strip()
-        if len(preview) > max_length:
-            preview = preview[: max_length - 3] + "..."
-
-        # Add quotes if it looks like text
-        if preview and not preview.startswith("{") and not preview.startswith("["):
-            preview = f'"{preview}"'
-
-        return preview
+        return _truncate_and_quote(preview, max_length)
     except Exception:
         return ""
 
@@ -520,6 +534,24 @@ def example_evaluation_span(
         yield span
 
 
+def _serialize_output(output: Any, max_length: int) -> str:
+    """Serialize output to string with truncation."""
+    try:
+        output_str = json.dumps(output) if not isinstance(output, str) else output
+    except (TypeError, ValueError):
+        output_str = str(output)
+    if len(output_str) > max_length:
+        output_str = output_str[:max_length] + "..."
+    return output_str
+
+
+def _set_span_metrics(span: Span, metrics: dict[str, float]) -> None:
+    """Set numeric metrics on a span."""
+    for name, value in metrics.items():
+        if isinstance(value, (int, float)):
+            span.set_attribute(f"example.metric.{name}", value)
+
+
 def record_example_result(
     span: Span | None,
     success: bool,
@@ -544,23 +576,12 @@ def record_example_result(
     span.set_attribute("example.success", success)
 
     if actual_output is not None:
-        try:
-            output_str = (
-                json.dumps(actual_output)
-                if not isinstance(actual_output, str)
-                else actual_output
-            )
-            # Truncate if too large
-            if len(output_str) > 500:
-                output_str = output_str[:500] + "..."
-            span.set_attribute("example.actual_output", output_str)
-        except (TypeError, ValueError):
-            span.set_attribute("example.actual_output", str(actual_output)[:500])
+        span.set_attribute(
+            "example.actual_output", _serialize_output(actual_output, 500)
+        )
 
     if metrics:
-        for name, value in metrics.items():
-            if isinstance(value, (int, float)):
-                span.set_attribute(f"example.metric.{name}", value)
+        _set_span_metrics(span, metrics)
 
     if execution_time is not None:
         span.set_attribute("example.execution_time_ms", execution_time * 1000)

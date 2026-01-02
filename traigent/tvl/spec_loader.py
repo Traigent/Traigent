@@ -23,6 +23,7 @@ from traigent.utils.logging import get_logger
 from .models import (
     ConvergenceCriteria,
     DerivedConstraint,
+    DomainSpec,
     EnvironmentSnapshot,
     EvaluationSet,
     ExplorationBudgets,
@@ -30,6 +31,7 @@ from .models import (
     RegistryResolver,
     StructuralConstraint,
     TVarDecl,
+    TVarType,
     TVLHeader,
     normalize_tvar_type,
     parse_domain_spec,
@@ -108,12 +110,8 @@ class TVLSpecArtifact:
     exploration_budgets: ExplorationBudgets | None = None
     exploration_parallelism: int | None = None
 
-    def runtime_overrides(self) -> dict[str, Any]:
-        """Return decorator/runtime overrides derived from the spec."""
-
-        overrides: dict[str, Any] = {}
-
-        # Legacy budget fields first (they take precedence if set)
+    def _apply_legacy_budget_overrides(self, overrides: dict[str, Any]) -> None:
+        """Apply legacy budget fields to overrides."""
         if self.algorithm:
             overrides.setdefault("algorithm", self.algorithm)
         if self.budget.max_trials is not None:
@@ -129,35 +127,47 @@ class TVLSpecArtifact:
                 "samples_include_pruned", self.budget.samples_include_pruned
             )
 
+    def _apply_exploration_budget_overrides(self, overrides: dict[str, Any]) -> None:
+        """Apply TVL 0.9 exploration_budgets to overrides."""
+        if self.exploration_budgets is None:
+            return
+        if self.exploration_budgets.max_trials is not None:
+            overrides.setdefault("max_trials", self.exploration_budgets.max_trials)
+        if self.exploration_budgets.max_spend_usd is not None:
+            overrides.setdefault("cost_limit", self.exploration_budgets.max_spend_usd)
+        if self.exploration_budgets.max_wallclock_s is not None:
+            overrides.setdefault("timeout", self.exploration_budgets.max_wallclock_s)
+
+    def _convert_parallel_trials_to_config(self, overrides: dict[str, Any]) -> None:
+        """Convert parallel_trials to parallel_config structure."""
+        if "parallel_trials" not in overrides:
+            return
+        parallel_trials_value = overrides.get("parallel_trials")
+        if "parallel_config" not in overrides:
+            if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
+                from traigent.config.parallel import ParallelConfig
+
+                overrides["parallel_config"] = ParallelConfig.from_legacy(
+                    parallel_trials=parallel_trials_value
+                )
+        overrides.pop("parallel_trials", None)
+
+    def runtime_overrides(self) -> dict[str, Any]:
+        """Return decorator/runtime overrides derived from the spec."""
+        overrides: dict[str, Any] = {}
+
+        # Legacy budget fields first (they take precedence if set)
+        self._apply_legacy_budget_overrides(overrides)
+
         # TVL 0.9 exploration_budgets (only set if not already set by legacy)
-        if self.exploration_budgets is not None:
-            if self.exploration_budgets.max_trials is not None:
-                overrides.setdefault("max_trials", self.exploration_budgets.max_trials)
-            if self.exploration_budgets.max_spend_usd is not None:
-                overrides.setdefault(
-                    "cost_limit", self.exploration_budgets.max_spend_usd
-                )
-            if self.exploration_budgets.max_wallclock_s is not None:
-                overrides.setdefault(
-                    "timeout", self.exploration_budgets.max_wallclock_s
-                )
+        self._apply_exploration_budget_overrides(overrides)
 
         # TVL 0.9 exploration parallelism
         if self.exploration_parallelism is not None:
             overrides.setdefault("parallel_trials", self.exploration_parallelism)
 
-        # Ensure parallelism impacts runtime by mapping legacy parallel_trials into
-        # the unified parallel_config structure used by execution.
-        if "parallel_trials" in overrides:
-            parallel_trials_value = overrides.get("parallel_trials")
-            if "parallel_config" not in overrides:
-                if isinstance(parallel_trials_value, int) and parallel_trials_value > 0:
-                    from traigent.config.parallel import ParallelConfig
-
-                    overrides["parallel_config"] = ParallelConfig.from_legacy(
-                        parallel_trials=parallel_trials_value
-                    )
-            overrides.pop("parallel_trials", None)
+        # Convert parallel_trials to unified parallel_config structure
+        self._convert_parallel_trials_to_config(overrides)
 
         return overrides
 
@@ -455,6 +465,63 @@ def _normalize_parameter(
     )
 
 
+def _resolve_registry_domain(
+    name: str,
+    domain: DomainSpec,
+    registry_resolver: RegistryResolver | None,
+) -> list[Any]:
+    """Resolve a registry domain to concrete values."""
+    if registry_resolver is None:
+        raise TVLValidationError(
+            f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
+            "but no registry_resolver was provided."
+        )
+    assert domain.registry is not None  # validated by DomainSpec
+    resolved_values = registry_resolver.resolve(
+        domain.registry, filter_expr=domain.filter, version=domain.version
+    )
+    if not isinstance(resolved_values, list):
+        raise TVLValidationError(
+            f"RegistryResolver.resolve() must return a list; got {type(resolved_values)}"
+        )
+    if not resolved_values:
+        raise TVLValidationError(
+            f"Registry domain '{domain.registry}' for TVAR '{name}' resolved to no values"
+        )
+    return resolved_values
+
+
+def _parse_single_tvar(
+    idx: int, decl: dict[str, Any]
+) -> tuple[str, TVarType, str, DomainSpec, Any, str | None]:
+    """Parse a single TVAR declaration and validate its fields."""
+    if not isinstance(decl, dict):
+        raise TVLValidationError(f"TVAR declaration at index {idx} must be a mapping")
+
+    name = decl.get("name")
+    if not isinstance(name, str) or not name:
+        raise TVLValidationError(f"TVAR at index {idx} requires a 'name' string")
+
+    raw_type = decl.get("type")
+    if not isinstance(raw_type, str):
+        raise TVLValidationError(f"TVAR '{name}' requires a 'type' string")
+
+    tvar_type = normalize_tvar_type(raw_type)
+    if tvar_type is None:
+        raise TVLValidationError(f"TVAR '{name}' has unsupported type '{raw_type}'")
+
+    domain_data = decl.get("domain")
+    try:
+        domain = parse_domain_spec(name, tvar_type, domain_data)
+    except ValueError as exc:
+        raise TVLValidationError(str(exc)) from exc
+
+    unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
+    default = decl.get("default")
+
+    return name, tvar_type, raw_type, domain, default, unit
+
+
 def _parse_tvars(
     resolved: dict[str, Any],
     *,
@@ -479,36 +546,10 @@ def _parse_tvars(
     units: dict[str, str] = {}
 
     for idx, decl in enumerate(tvars_section):
-        if not isinstance(decl, dict):
-            raise TVLValidationError(
-                f"TVAR declaration at index {idx} must be a mapping"
-            )
+        name, tvar_type, raw_type, domain, default, unit = _parse_single_tvar(idx, decl)
 
-        name = decl.get("name")
-        if not isinstance(name, str) or not name:
-            raise TVLValidationError(f"TVAR at index {idx} requires a 'name' string")
-
-        raw_type = decl.get("type")
-        if not isinstance(raw_type, str):
-            raise TVLValidationError(f"TVAR '{name}' requires a 'type' string")
-
-        tvar_type = normalize_tvar_type(raw_type)
-        if tvar_type is None:
-            raise TVLValidationError(f"TVAR '{name}' has unsupported type '{raw_type}'")
-
-        domain_data = decl.get("domain")
-        try:
-            domain = parse_domain_spec(name, tvar_type, domain_data)
-        except ValueError as exc:
-            raise TVLValidationError(str(exc)) from exc
-
-        # Extract unit if present
-        unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
         if unit:
             units[name] = unit
-
-        # Extract default if present
-        default = decl.get("default")
 
         tvar = TVarDecl(
             name=name,
@@ -522,24 +563,9 @@ def _parse_tvars(
 
         # Convert to configuration space format
         if domain.kind == "registry":
-            if registry_resolver is None:
-                raise TVLValidationError(
-                    f"TVAR '{name}' uses a registry domain ('{domain.registry}') "
-                    "but no registry_resolver was provided."
-                )
-            assert domain.registry is not None  # validated by DomainSpec
-            resolved_values = registry_resolver.resolve(
-                domain.registry, filter_expr=domain.filter, version=domain.version
+            configuration_space[name] = _resolve_registry_domain(
+                name, domain, registry_resolver
             )
-            if not isinstance(resolved_values, list):
-                raise TVLValidationError(
-                    f"RegistryResolver.resolve() must return a list; got {type(resolved_values)}"
-                )
-            if not resolved_values:
-                raise TVLValidationError(
-                    f"Registry domain '{domain.registry}' for TVAR '{name}' resolved to no values"
-                )
-            configuration_space[name] = resolved_values
         else:
             configuration_space[name] = domain.to_configuration_space_entry()
 
@@ -835,14 +861,72 @@ def _resolve_range(range_value: Any, name: str) -> tuple[float, float]:
     )
 
 
+def _parse_banded_objective(
+    name: str, band_spec: dict[str, Any], weight: float, unit: str | None
+) -> ObjectiveDefinition:
+    """Parse a banded objective (TVL 0.9)."""
+    from .models import BandTarget
+
+    if not isinstance(band_spec, dict):
+        raise TVLValidationError(f"Objective '{name}' band must be a mapping")
+
+    target = band_spec.get("target")
+    if target is None:
+        raise TVLValidationError(f"Banded objective '{name}' requires a 'target'")
+
+    try:
+        band_target = BandTarget.from_dict(target)
+    except ValueError as exc:
+        raise TVLValidationError(
+            f"Invalid band target for objective '{name}': {exc}"
+        ) from exc
+
+    test_type = band_spec.get("test", "TOST")
+    if test_type != "TOST":
+        raise TVLValidationError(
+            f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
+        )
+
+    alpha = float(band_spec.get("alpha", 0.05))
+    if not 0 < alpha < 1:
+        raise TVLValidationError(
+            f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"
+        )
+
+    return ObjectiveDefinition(
+        name=name,
+        orientation="band",
+        weight=weight,
+        unit=unit,
+        band=band_target,
+        band_test="TOST",
+        band_alpha=alpha,
+    )
+
+
+def _parse_standard_objective(
+    name: str, entry: dict[str, Any], weight: float, unit: str | None
+) -> ObjectiveDefinition:
+    """Parse a standard objective with direction."""
+    direction = (entry.get("direction") or "maximize").lower()
+    if direction not in {"maximize", "minimize"}:
+        raise TVLValidationError(
+            f"Objective '{name}' direction must be 'maximize' or 'minimize'"
+        )
+    return ObjectiveDefinition(
+        name=name,
+        orientation=cast(Literal["maximize", "minimize"], direction),
+        weight=weight,
+        unit=unit,
+    )
+
+
 def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
     """Parse objectives supporting both standard and banded objectives (TVL 0.9).
 
     Standard objectives have a direction (maximize/minimize).
     Banded objectives have a band with target, test, and alpha.
     """
-    from .models import BandTarget
-
     objectives = resolved.get("objectives")
     if objectives is None:
         return None
@@ -860,66 +944,11 @@ def _parse_objectives(resolved: dict[str, Any]) -> ObjectiveSchema | None:
         weight = float(entry.get("weight", 1.0))
         unit = entry.get("unit") if isinstance(entry.get("unit"), str) else None
 
-        # Check if this is a banded objective (TVL 0.9)
         band_spec = entry.get("band")
         if band_spec is not None:
-            if not isinstance(band_spec, dict):
-                raise TVLValidationError(f"Objective '{name}' band must be a mapping")
-
-            # Parse band target
-            target = band_spec.get("target")
-            if target is None:
-                raise TVLValidationError(
-                    f"Banded objective '{name}' requires a 'target'"
-                )
-
-            try:
-                band_target = BandTarget.from_dict(target)
-            except ValueError as exc:
-                raise TVLValidationError(
-                    f"Invalid band target for objective '{name}': {exc}"
-                ) from exc
-
-            # Parse test type (TVL 0.9 mandates TOST)
-            test_type = band_spec.get("test", "TOST")
-            if test_type != "TOST":
-                raise TVLValidationError(
-                    f"Banded objective '{name}' test must be 'TOST', got '{test_type}'"
-                )
-
-            # Parse alpha (significance level)
-            alpha = float(band_spec.get("alpha", 0.05))
-            if not 0 < alpha < 1:
-                raise TVLValidationError(
-                    f"Banded objective '{name}' alpha must be in (0, 1), got {alpha}"
-                )
-
-            definitions.append(
-                ObjectiveDefinition(
-                    name=name,
-                    orientation="band",
-                    weight=weight,
-                    unit=unit,
-                    band=band_target,
-                    band_test="TOST",
-                    band_alpha=alpha,
-                )
-            )
+            definitions.append(_parse_banded_objective(name, band_spec, weight, unit))
         else:
-            # Standard objective with direction
-            direction = (entry.get("direction") or "maximize").lower()
-            if direction not in {"maximize", "minimize"}:
-                raise TVLValidationError(
-                    f"Objective '{name}' direction must be 'maximize' or 'minimize'"
-                )
-            definitions.append(
-                ObjectiveDefinition(
-                    name=name,
-                    orientation=cast(Literal["maximize", "minimize"], direction),
-                    weight=weight,
-                    unit=unit,
-                )
-            )
+            definitions.append(_parse_standard_objective(name, entry, weight, unit))
 
     return ObjectiveSchema.from_objectives(definitions)
 

@@ -152,30 +152,69 @@ class PromotionGate:
         self.objectives = {obj.name: obj for obj in objectives}
         self._objective_list = objectives
 
+    def _evaluate_objectives(
+        self,
+        incumbent_metrics: dict[str, Sequence[float]],
+        candidate_metrics: dict[str, Sequence[float]],
+    ) -> tuple[list[Any], dict[str, float]]:
+        """Evaluate each objective and collect results and p-values."""
+        objective_results = []
+        raw_p_values: dict[str, float] = {}
+
+        for obj in self._objective_list:
+            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics:
+                continue
+            result = self._compare_objective(
+                obj, incumbent_metrics[obj.name], candidate_metrics[obj.name]
+            )
+            objective_results.append(result)
+            raw_p_values[obj.name] = result.p_value
+
+        return objective_results, raw_p_values
+
+    def _apply_p_value_adjustment(
+        self, raw_p_values: dict[str, float]
+    ) -> dict[str, float]:
+        """Apply multiple testing adjustment if configured."""
+        if self.policy.adjust == "BH" and len(raw_p_values) > 1:
+            p_list = list(raw_p_values.values())
+            adjusted_list = benjamini_hochberg_adjust(p_list)
+            return dict(zip(raw_p_values.keys(), adjusted_list, strict=True))
+        return raw_p_values.copy()
+
+    def _check_dominance(
+        self,
+        objective_results: list[Any],
+        adjusted_p_values: dict[str, float],
+    ) -> tuple[bool, bool]:
+        """Check epsilon-Pareto dominance conditions.
+
+        Returns:
+            Tuple of (any_better, any_worse)
+        """
+        alpha = self.policy.alpha
+        any_better = False
+        any_worse = False
+
+        for result in objective_results:
+            adj_p = adjusted_p_values.get(result.name, result.p_value)
+            if result.candidate_better and adj_p < alpha:
+                any_better = True
+            elif not result.candidate_better and result.effect_size < -result.epsilon:
+                any_worse = True
+
+        return any_better, any_worse
+
     def evaluate(
         self,
         incumbent_metrics: dict[str, Sequence[float]],
         candidate_metrics: dict[str, Sequence[float]],
         constraint_data: dict[str, tuple[int, int]] | None = None,
     ) -> PromotionDecision:
-        """Evaluate candidate for promotion against incumbent.
-
-        Args:
-            incumbent_metrics: Metric samples for incumbent.
-                Keys are objective names, values are sequences of samples.
-            candidate_metrics: Metric samples for candidate.
-                Keys are objective names, values are sequences of samples.
-            constraint_data: Optional data for chance constraints.
-                Keys are constraint names, values are (successes, trials).
-
-        Returns:
-            PromotionDecision with the evaluation result.
-        """
-        # First, check chance constraints
+        """Evaluate candidate for promotion against incumbent."""
+        # Check chance constraints first
         chance_results = self._evaluate_chance_constraints(constraint_data or {})
-        constraints_satisfied = all(r.satisfied for r in chance_results)
-
-        if not constraints_satisfied:
+        if not all(r.satisfied for r in chance_results):
             failed_names = [r.name for r in chance_results if not r.satisfied]
             return PromotionDecision(
                 decision="reject",
@@ -184,21 +223,10 @@ class PromotionGate:
                 dominance_satisfied=False,
             )
 
-        # Evaluate each objective
-        objective_results = []
-        raw_p_values: dict[str, float] = {}
-
-        for obj in self._objective_list:
-            if obj.name not in incumbent_metrics or obj.name not in candidate_metrics:
-                continue
-
-            inc_samples = incumbent_metrics[obj.name]
-            cand_samples = candidate_metrics[obj.name]
-
-            result = self._compare_objective(obj, inc_samples, cand_samples)
-            objective_results.append(result)
-            raw_p_values[obj.name] = result.p_value
-
+        # Evaluate objectives
+        objective_results, raw_p_values = self._evaluate_objectives(
+            incumbent_metrics, candidate_metrics
+        )
         if not objective_results:
             return PromotionDecision(
                 decision="no_decision",
@@ -208,69 +236,33 @@ class PromotionGate:
                 dominance_satisfied=False,
             )
 
-        # Apply multiple testing adjustment if configured
-        if self.policy.adjust == "BH" and len(raw_p_values) > 1:
-            p_list = list(raw_p_values.values())
-            adjusted_list = benjamini_hochberg_adjust(p_list)
-            adjusted_p_values = dict(
-                zip(raw_p_values.keys(), adjusted_list, strict=True)
-            )
-        else:
-            adjusted_p_values = raw_p_values.copy()
-
-        # Check epsilon-Pareto dominance
-        # Candidate dominates if it's significantly better (p < alpha) on at least one
-        # objective and not significantly worse on any.
-        alpha = self.policy.alpha
-
-        # Update results with adjusted p-values and check dominance
-        any_better = False
-        any_worse = False
-
-        for result in objective_results:
-            adj_p = adjusted_p_values.get(result.name, result.p_value)
-
-            if result.candidate_better:
-                if adj_p < alpha:
-                    any_better = True
-            else:
-                # Check if incumbent is significantly better
-                # For this, we'd need to test the reverse hypothesis
-                # Simplified: if candidate is not better and effect size shows
-                # incumbent is better by more than epsilon, consider it worse
-                if result.effect_size < -result.epsilon:
-                    any_worse = True
-
+        # Apply p-value adjustment and check dominance
+        adjusted_p_values = self._apply_p_value_adjustment(raw_p_values)
+        any_better, any_worse = self._check_dominance(
+            objective_results, adjusted_p_values
+        )
         dominance_satisfied = any_better and not any_worse
 
         # Make decision
+        decision: Literal["promote", "reject", "no_decision"]
         if dominance_satisfied:
-            return PromotionDecision(
-                decision="promote",
-                reason="Candidate satisfies epsilon-Pareto dominance",
-                objective_results=objective_results,
-                chance_results=chance_results,
-                adjusted_p_values=adjusted_p_values,
-                dominance_satisfied=True,
-            )
+            decision, reason = "promote", "Candidate satisfies epsilon-Pareto dominance"
         elif any_worse:
-            return PromotionDecision(
-                decision="reject",
-                reason="Candidate is dominated by incumbent on some objectives",
-                objective_results=objective_results,
-                chance_results=chance_results,
-                adjusted_p_values=adjusted_p_values,
-                dominance_satisfied=False,
+            decision, reason = (
+                "reject",
+                "Candidate is dominated by incumbent on some objectives",
             )
         else:
-            return PromotionDecision(
-                decision="no_decision",
-                reason="Insufficient evidence for dominance",
-                objective_results=objective_results,
-                chance_results=chance_results,
-                adjusted_p_values=adjusted_p_values,
-                dominance_satisfied=False,
-            )
+            decision, reason = "no_decision", "Insufficient evidence for dominance"
+
+        return PromotionDecision(
+            decision=decision,
+            reason=reason,
+            objective_results=objective_results,
+            chance_results=chance_results,
+            adjusted_p_values=adjusted_p_values,
+            dominance_satisfied=dominance_satisfied,
+        )
 
     def _compare_objective(
         self,

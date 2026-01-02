@@ -1320,6 +1320,68 @@ class OptimizedFunction:
 
         return result
 
+    async def _try_cloud_execution(
+        self,
+        dataset: Dataset,
+        max_trials: int | None,
+        timeout: float | None,
+        effective_config_space: dict[str, Any],
+        algorithm_kwargs: dict[str, Any],
+    ) -> OptimizationResult | None:
+        """Try cloud execution, returning None if fallback to local is needed."""
+        use_cloud = self._is_cloud_execution_mode() and (
+            max_trials is None or max_trials > 0
+        )
+        if not use_cloud:
+            return None
+
+        try:
+            return await self._optimize_with_cloud_service(
+                dataset,
+                max_trials,
+                timeout,
+                configuration_space=effective_config_space,
+                **algorithm_kwargs,
+            )
+        except (AuthenticationError, ConfigurationError, ValidationError):
+            raise
+        except OSError as e:  # Includes TimeoutError and ConnectionError (subclasses)
+            logger.warning(
+                "Cloud optimization failed (transient), falling back to local: %s", e
+            )
+        except Exception as e:
+            logger.warning(
+                "Cloud optimization failed unexpectedly, falling back to local: %s",
+                e,
+                exc_info=True,
+            )
+        return None
+
+    def _apply_mock_config_overrides(
+        self, algorithm: str, optimizer_kwargs: dict[str, Any]
+    ) -> str:
+        """Apply mock config overrides to algorithm and optimizer_kwargs."""
+        mock_config = getattr(self, "mock_mode_config", None) or {}
+        if not isinstance(mock_config, dict):
+            return algorithm
+
+        # Override algorithm if specified in mock config
+        mock_optimizer = mock_config.get("optimizer")
+        if mock_optimizer and isinstance(mock_optimizer, str):
+            algorithm = mock_optimizer
+            logger.debug("Using optimizer '%s' from mock_mode_config", mock_optimizer)
+
+        # Extract and pass random_seed to optimizer for reproducibility
+        random_seed = mock_config.get("random_seed")
+        if random_seed is not None:
+            optimizer_kwargs["random_seed"] = random_seed
+            logger.debug(
+                "Passing random_seed=%s to optimizer from mock_mode_config",
+                random_seed,
+            )
+
+        return algorithm
+
     async def _execute_optimization(
         self,
         *,
@@ -1354,35 +1416,11 @@ class OptimizedFunction:
         )
 
         # Phase 4: Try cloud execution if applicable
-        use_cloud_execution = self._is_cloud_execution_mode() and (
-            max_trials is None or max_trials > 0
+        cloud_result = await self._try_cloud_execution(
+            dataset, max_trials, timeout, effective_config_space, algorithm_kwargs
         )
-
-        if use_cloud_execution:
-            try:
-                return await self._optimize_with_cloud_service(
-                    dataset,
-                    max_trials,
-                    timeout,
-                    configuration_space=effective_config_space,
-                    **algorithm_kwargs,
-                )
-            except (AuthenticationError, ConfigurationError, ValidationError):
-                raise
-            except (
-                OSError,
-                TimeoutError,
-            ) as e:  # ConnectionError is subclass of OSError
-                logger.warning(
-                    "Cloud optimization failed (transient), falling back to local: %s",
-                    e,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Cloud optimization failed unexpectedly, falling back to local: %s",
-                    e,
-                    exc_info=True,
-                )
+        if cloud_result is not None:
+            return cloud_result
 
         # Phase 5: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
@@ -1394,26 +1432,8 @@ class OptimizedFunction:
         if max_trials and algorithm == "random":
             optimizer_kwargs["max_trials"] = max_trials
 
-        # Extract optimizer configuration from mock_mode_config if present
-        # This allows tests to specify optimizer type and random_seed via mock config
-        mock_config = getattr(self, "mock_mode_config", None) or {}
-        if isinstance(mock_config, dict):
-            # Override algorithm if specified in mock config
-            mock_optimizer = mock_config.get("optimizer")
-            if mock_optimizer and isinstance(mock_optimizer, str):
-                algorithm = mock_optimizer
-                logger.debug(
-                    "Using optimizer '%s' from mock_mode_config", mock_optimizer
-                )
-
-            # Extract and pass random_seed to optimizer for reproducibility
-            random_seed = mock_config.get("random_seed")
-            if random_seed is not None:
-                optimizer_kwargs["random_seed"] = random_seed
-                logger.debug(
-                    "Passing random_seed=%s to optimizer from mock_mode_config",
-                    random_seed,
-                )
+        # Apply mock config overrides if present
+        algorithm = self._apply_mock_config_overrides(algorithm, optimizer_kwargs)
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs

@@ -704,6 +704,46 @@ class OptimizationOrchestrator:
         )
         return caps.remaining_cap, caps.target_batch_size, caps.infinite_budget
 
+    async def _try_hybrid_batch_generation(
+        self, dataset: Dataset, remaining: int
+    ) -> list[dict[str, Any]]:
+        """Try to generate configs via hybrid/async batch generation."""
+        try:
+            remote_context = {
+                "privacy_enabled": getattr(
+                    self.traigent_config, "privacy_enabled", False
+                ),
+                "parallel_trials": remaining,
+                "mode": "hybrid",
+                "dataset_size": len(dataset),
+            }
+            return (
+                await self.optimizer.generate_candidates_async(
+                    remaining, remote_context=remote_context
+                )
+                or []
+            )
+        except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
+            logger.warning(
+                "Async batch suggestion unavailable, falling back to sequential: %s", e
+            )
+            return []
+
+    def _generate_sequential_configs(self, count: int) -> list[dict[str, Any]]:
+        """Generate configs sequentially from the optimizer."""
+        configs: list[dict[str, Any]] = []
+        for _ in range(count):
+            try:
+                configs.append(self.optimizer.suggest_next_trial(self._trials))
+            except OptimizationError:
+                break
+            except (ValueError, TypeError, KeyError, AttributeError) as e:
+                logger.exception(
+                    "Optimizer failed to suggest trial during batch generation: %s", e
+                )
+                break
+        return configs
+
     async def _generate_parallel_configs(
         self,
         dataset: Dataset,
@@ -715,7 +755,6 @@ class OptimizationOrchestrator:
             Tuple of (configs, used_async_batch)
         """
         configs: list[dict[str, Any]] = []
-        used_async_batch = False
         remaining = target_batch_size
 
         baseline_config = self._consume_default_config()
@@ -723,44 +762,19 @@ class OptimizationOrchestrator:
             configs.append(baseline_config)
             remaining -= 1
             if remaining <= 0:
-                return configs, used_async_batch
+                return configs, False
 
-        mode_enum = self.traigent_config.execution_mode_enum
-        if mode_enum is ExecutionMode.HYBRID:
-            try:
-                remote_context = {
-                    "privacy_enabled": getattr(
-                        self.traigent_config, "privacy_enabled", False
-                    ),
-                    "parallel_trials": remaining,
-                    "mode": "hybrid",
-                    "dataset_size": len(dataset),
-                }
-                async_candidates = await self.optimizer.generate_candidates_async(
-                    remaining, remote_context=remote_context
-                )
-                if async_candidates:
-                    configs.extend(async_candidates)
-                used_async_batch = len(async_candidates) > 0
-            except (ValueError, TypeError, AttributeError, NotImplementedError) as e:
-                logger.warning(
-                    "Async batch suggestion unavailable, falling back to sequential: %s",
-                    e,
-                )
+        # Try hybrid/async generation if applicable
+        used_async_batch = False
+        if self.traigent_config.execution_mode_enum is ExecutionMode.HYBRID:
+            async_configs = await self._try_hybrid_batch_generation(dataset, remaining)
+            if async_configs:
+                configs.extend(async_configs)
+                used_async_batch = True
 
+        # Fall back to sequential generation
         if not used_async_batch:
-            for _ in range(remaining):
-                try:
-                    cfg = self.optimizer.suggest_next_trial(self._trials)
-                    configs.append(cfg)
-                except OptimizationError:
-                    break
-                except (ValueError, TypeError, KeyError, AttributeError) as e:
-                    logger.exception(
-                        "Optimizer failed to suggest trial during batch generation: %s",
-                        e,
-                    )
-                    break
+            configs.extend(self._generate_sequential_configs(remaining))
 
         return configs, used_async_batch
 
@@ -1340,82 +1354,78 @@ class OptimizationOrchestrator:
                 session_span=session_span,
             )
 
-    async def _run_optimization_with_tracing(
+    def _check_cost_approval(self, dataset: Dataset) -> None:
+        """Check cost approval before optimization."""
+        if self.cost_enforcer.is_mock_mode:
+            return
+        estimated_cost = self._estimate_optimization_cost(dataset)
+        if not self.cost_enforcer.check_and_approve(estimated_cost):
+            from traigent.core.cost_enforcement import OptimizationAborted
+
+            raise OptimizationAborted(
+                f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
+                f"limit: ${self.cost_enforcer.config.limit:.2f}. "
+                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+            )
+
+    def _check_budget_limits(
+        self, trial_count: int
+    ) -> tuple[float, float, StopReason | None]:
+        """Check trial and sample budget limits.
+
+        Returns:
+            Tuple of (remaining_trials, remaining_samples, stop_reason_if_any)
+        """
+        remaining = (
+            float("inf") if self.max_trials is None else self.max_trials - trial_count
+        )
+
+        if remaining <= 0:
+            logger.info(f"Trial limit reached: {self.max_trials}")
+            return remaining, 0, "max_trials_reached"
+
+        remaining_samples = self._remaining_sample_budget()
+        if remaining_samples <= 0:
+            logger.info(
+                "Sample limit reached: max_total_examples=%s", self._max_total_examples
+            )
+            return remaining, remaining_samples, "max_samples_reached"
+
+        return remaining, remaining_samples, None
+
+    async def _run_optimization_loop(
         self,
         func: Callable[..., Any],
         dataset: Dataset,
         session_id: str | None,
         function_identifier: str | None,
-        session_span: Any,
-    ) -> OptimizationResult:
-        """Run optimization with tracing enabled.
+    ) -> int:
+        """Run the main optimization loop. Returns final trial count."""
+        trial_count = 0
 
-        This is the inner implementation that runs within the tracing span.
-        """
-        # Pre-optimization cost approval check
-        # Skip if mock mode or already approved
-        if not self.cost_enforcer.is_mock_mode:
-            estimated_cost = self._estimate_optimization_cost(dataset)
-            if not self.cost_enforcer.check_and_approve(estimated_cost):
-                from traigent.core.cost_enforcement import OptimizationAborted
+        while True:
+            remaining, remaining_samples, budget_stop = self._check_budget_limits(
+                trial_count
+            )
+            if budget_stop:
+                if not self._stop_reason:
+                    self._stop_reason = budget_stop
+                break
 
-                raise OptimizationAborted(
-                    f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
-                    f"limit: ${self.cost_enforcer.config.limit:.2f}. "
-                    f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
+            if self._should_stop(trial_count):
+                break
+
+            if self.parallel_trials > 1:
+                trial_count, action = await self._run_parallel_batch(
+                    func=func,
+                    dataset=dataset,
+                    session_id=session_id,
+                    function_name=function_identifier,
+                    trial_count=trial_count,
+                    remaining=remaining,
+                    remaining_samples=remaining_samples,
                 )
-
-        try:
-            # Check for immediate timeout
-            if self.timeout is not None and self.timeout == 0:
-                self._stop_reason = "timeout"
-                self._status = OptimizationStatus.CANCELLED
-                return self._create_optimization_result()
-
-            # Main optimization loop
-            trial_count = 0
-
-            while True:
-                # Calculate remaining trial budget for cap enforcement
-                if self.max_trials is None:
-                    remaining = float("inf")
-                else:
-                    remaining = self.max_trials - trial_count
-
-                if remaining <= 0:
-                    logger.info(f"Trial limit reached: {self.max_trials}")
-                    self._stop_reason = "max_trials_reached"
-                    break
-
-                remaining_samples = self._remaining_sample_budget()
-                if remaining_samples <= 0:
-                    logger.info(
-                        "Sample limit reached: max_total_examples=%s",
-                        self._max_total_examples,
-                    )
-                    if not self._stop_reason:
-                        self._stop_reason = "max_samples_reached"
-                    break
-
-                # Check stopping conditions
-                if self._should_stop(trial_count):
-                    break
-
-                if self.parallel_trials > 1:
-                    trial_count, action = await self._run_parallel_batch(
-                        func=func,
-                        dataset=dataset,
-                        session_id=session_id,
-                        function_name=function_identifier,
-                        trial_count=trial_count,
-                        remaining=remaining,
-                        remaining_samples=remaining_samples,
-                    )
-                    if action == "continue":
-                        continue
-                    if action == "break":
-                        break
-
+            else:
                 trial_count, action = await self._trial_lifecycle.run_sequential_trial(
                     func=func,
                     dataset=dataset,
@@ -1424,58 +1434,78 @@ class OptimizationOrchestrator:
                     trial_count=trial_count,
                 )
 
-                if action == "continue":
-                    continue
-                if action == "break":
-                    break
+            if action == "break":
+                break
 
-            # Set final status before creating result
-            if self._stop_reason == "timeout":
+        return trial_count
+
+    async def _finalize_optimization(
+        self,
+        result: OptimizationResult,
+        session_id: str | None,
+        session_span: Any,
+    ) -> None:
+        """Finalize optimization: record metrics, update backend, notify callbacks."""
+        record_optimization_complete(
+            session_span,
+            trial_count=len(self._trials),
+            best_score=result.best_score,
+            best_config=result.best_config,
+            stop_reason=self._stop_reason,
+        )
+
+        merge_run_metrics_into_session_summary(result)
+        await self.backend_session_manager.update_weighted_scores(result, session_id)
+        self.backend_session_manager.submit_session_aggregation(result, session_id)
+
+        session_summary = self.backend_session_manager.finalize_session(
+            session_id, self._status
+        )
+        self.backend_session_manager.attach_session_metadata(
+            result, session_id, session_summary
+        )
+
+        self._submit_usage_analytics()
+        self.callback_manager.on_optimization_complete(result)
+
+        cost_status = self.cost_enforcer.get_status()
+        logger.info(
+            f"Optimization {self._optimization_id} completed: "
+            f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
+            f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
+        )
+
+    async def _run_optimization_with_tracing(
+        self,
+        func: Callable[..., Any],
+        dataset: Dataset,
+        session_id: str | None,
+        function_identifier: str | None,
+        session_span: Any,
+    ) -> OptimizationResult:
+        """Run optimization with tracing enabled."""
+        self._check_cost_approval(dataset)
+
+        try:
+            # Check for immediate timeout
+            if self.timeout is not None and self.timeout == 0:
+                self._stop_reason = "timeout"
                 self._status = OptimizationStatus.CANCELLED
-            else:
-                self._status = OptimizationStatus.COMPLETED
+                return self._create_optimization_result()
 
-            # Create final result
+            await self._run_optimization_loop(
+                func, dataset, session_id, function_identifier
+            )
+
+            # Set final status
+            self._status = (
+                OptimizationStatus.CANCELLED
+                if self._stop_reason == "timeout"
+                else OptimizationStatus.COMPLETED
+            )
+
             result = self._create_optimization_result()
-
-            # Record optimization completion in tracing span
-            record_optimization_complete(
-                session_span,
-                trial_count=len(self._trials),
-                best_score=result.best_score,
-                best_config=result.best_config,
-                stop_reason=self._stop_reason,
-            )
-
-            merge_run_metrics_into_session_summary(result)
-
-            await self.backend_session_manager.update_weighted_scores(
-                result, session_id
-            )
-
-            self.backend_session_manager.submit_session_aggregation(result, session_id)
-
-            session_summary = self.backend_session_manager.finalize_session(
-                session_id, self._status
-            )
-
-            self.backend_session_manager.attach_session_metadata(
-                result, session_id, session_summary
-            )
-
-            self._submit_usage_analytics()
-
-            # Notify callbacks of optimization completion
-            self.callback_manager.on_optimization_complete(result)
-
-            # Log final cost status
-            cost_status = self.cost_enforcer.get_status()
-            logger.info(
-                f"Optimization {self._optimization_id} completed: "
-                f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
-                f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
-            )
-
+            await self._finalize_optimization(result, session_id, session_span)
             return result
 
         except Exception as e:

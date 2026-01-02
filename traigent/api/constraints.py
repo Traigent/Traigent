@@ -706,14 +706,13 @@ class Constraint:
     ) -> None:
         """Recursively collect tvar references from expression tree."""
         # Collect from main expression or when/then pair
-        expressions_to_collect = (
-            [("expr", self.expr)]
-            if self.expr is not None
-            else [("when", self.when), ("then", self.then)]
-        )
-        for path, expr in expressions_to_collect:
-            if expr is not None:
-                self._collect_from_expr(expr, path, var_names, missing_names)
+        if self.expr is not None:
+            self._collect_from_expr(self.expr, "expr", var_names, missing_names)
+        else:
+            # When expr is None, when/then are guaranteed non-None by __post_init__
+            assert self.when is not None and self.then is not None
+            self._collect_from_expr(self.when, "when", var_names, missing_names)
+            self._collect_from_expr(self.then, "then", var_names, missing_names)
 
     def _collect_from_expr(
         self,

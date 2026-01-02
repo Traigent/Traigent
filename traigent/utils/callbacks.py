@@ -619,29 +619,38 @@ class DetailedProgressCallback(OptimizationCallback):
         print(f"   Progress: [{bar}] {percent:.0f}%")
         print()
 
-    def on_optimization_complete(self, result: OptimizationResult) -> None:
-        """Called when optimization completes."""
+    def _print_header(self, result: OptimizationResult) -> None:
+        """Print the completion header."""
         print("\n" + "=" * 60)
-        if result.stop_reason == "timeout" or result.status == "cancelled":
-            timeout_value = None
-            if isinstance(result.metadata, dict):
-                timeout_value = result.metadata.get("timeout")
+        is_early_stop = result.stop_reason == "timeout" or result.status == "cancelled"
+        if is_early_stop:
+            timeout_value = (
+                result.metadata.get("timeout")
+                if isinstance(result.metadata, dict)
+                else None
+            )
             timeout_hint = f" ({timeout_value}s)" if timeout_value else ""
             print(f"⚠️ OPTIMIZATION STOPPED EARLY: TIMEOUT REACHED{timeout_hint}")
         else:
             print("✨ OPTIMIZATION COMPLETE!")
         print("=" * 60)
 
+    def _print_config(self, config: dict[str, Any]) -> None:
+        """Print the best configuration."""
+        print("⚙️  Best Configuration:")
+        for key, value in config.items():
+            formatted = f"{value:.2f}" if isinstance(value, float) else str(value)
+            print(f"   • {key}: {formatted}")
+
+    def on_optimization_complete(self, result: OptimizationResult) -> None:
+        """Called when optimization completes."""
+        self._print_header(result)
+
         if result.best_score is not None:
             print(f"🏆 Best Score: {result.best_score:.3f}")
 
         if result.best_config:
-            print("⚙️  Best Configuration:")
-            for key, value in result.best_config.items():
-                if isinstance(value, float):
-                    print(f"   • {key}: {value:.2f}")
-                else:
-                    print(f"   • {key}: {value}")
+            self._print_config(result.best_config)
 
         if result.duration:
             print(f"⏱️  Total Time: {result.duration:.1f} seconds")

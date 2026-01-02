@@ -250,6 +250,48 @@ class BaseOptimizer(ABC):
         self._best_config = None
         self._tried_config_hashes.clear()
 
+    def _get_dict_param_cardinality(self, definition: dict[str, Any]) -> int | None:
+        """Get cardinality for a dict-style parameter definition.
+
+        Returns:
+            Cardinality count, 0 for empty, or None for continuous types.
+        """
+        param_type = (definition.get("type") or "categorical").lower()
+
+        if param_type in {"fixed", "constant"}:
+            return 1
+
+        if param_type in {"categorical", "choice"}:
+            choices = definition.get("choices") or definition.get("values") or []
+            return len(choices) if choices else 0
+
+        if param_type in {"int", "integer"}:
+            low, high = definition.get("low"), definition.get("high")
+            if low is not None and high is not None:
+                step = definition.get("step", 1)
+                return max(((int(high) - int(low)) // int(step)) + 1, 1)
+            return None
+
+        # Float or other continuous types
+        return None
+
+    def _get_param_cardinality(self, definition: Any) -> int | None:
+        """Get cardinality for a single parameter definition.
+
+        Returns:
+            Cardinality count, 0 for empty, or None for continuous types.
+        """
+        if isinstance(definition, list):
+            return len(definition) if definition else 0
+
+        if isinstance(definition, tuple) and len(definition) == 2:
+            return None  # Continuous range
+
+        if isinstance(definition, dict):
+            return self._get_dict_param_cardinality(definition)
+
+        return 1  # Single fixed value
+
     def _compute_cardinality(self) -> int | None:
         """Compute the total number of unique configurations in the config space.
 
@@ -261,43 +303,13 @@ class BaseOptimizer(ABC):
             return 0
 
         cardinality = 1
-        for _param_name, definition in self.config_space.items():
-            if isinstance(definition, list):
-                # Categorical parameter - finite choices
-                if len(definition) == 0:
-                    return 0
-                cardinality *= len(definition)
-            elif isinstance(definition, tuple) and len(definition) == 2:
-                # Continuous range - infinite cardinality
+        for definition in self.config_space.values():
+            param_card = self._get_param_cardinality(definition)
+            if param_card is None:
                 return None
-            elif isinstance(definition, dict):
-                # Structured parameter definition
-                param_type = (definition.get("type") or "categorical").lower()
-                if param_type in {"fixed", "constant"}:
-                    # Fixed value - cardinality of 1
-                    cardinality *= 1
-                elif param_type in {"categorical", "choice"}:
-                    choices = (
-                        definition.get("choices") or definition.get("values") or []
-                    )
-                    if len(choices) == 0:
-                        return 0
-                    cardinality *= len(choices)
-                elif param_type in {"int", "integer"}:
-                    low = definition.get("low")
-                    high = definition.get("high")
-                    step = definition.get("step", 1)
-                    if low is not None and high is not None:
-                        count = ((int(high) - int(low)) // int(step)) + 1
-                        cardinality *= max(count, 1)
-                    else:
-                        return None
-                else:
-                    # Float or other continuous types
-                    return None
-            else:
-                # Single fixed value
-                cardinality *= 1
+            if param_card == 0:
+                return 0
+            cardinality *= param_card
 
         return cardinality
 

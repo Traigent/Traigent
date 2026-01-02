@@ -197,10 +197,9 @@ def _inverse_normal_cdf(p: float) -> float:
     Returns:
         z such that P(Z <= z) = p.
     """
-    if p <= 0:
-        return float("-inf")
-    if p >= 1:
-        return float("inf")
+    # Handle boundary cases
+    if p <= 0 or p >= 1:
+        return float("-inf") if p <= 0 else float("inf")
 
     # For p > 0.5, use symmetry
     if p > 0.5:
