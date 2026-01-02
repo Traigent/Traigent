@@ -9,14 +9,18 @@ Generated based on Round 2 rotation from v0.8.0.
 **Captain**: Claude Opus 4.5
 **Baseline**: v0.9.0-rc1 @ e3f3835
 
-### Assignment Matrix
+<!-- BEGIN AUTO-GENERATED ROTATION -->
+# Rotation Schedule: v0.9.0 (Round 2)
 
-| Category | Primary | Secondary | Spot-Check | Issues Found | Fixes Applied |
-|----------|---------|-----------|------------|--------------|---------------|
-| Security/Core | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 | TBD | TBD |
-| Integrations | Gemini 3.0 | Claude Opus 4.5 | GPT-5.2 | TBD | TBD |
-| Packaging/CI | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 | TBD | TBD |
-| Docs/Examples | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 | TBD | TBD |
+Generated: 2025-12-14
+
+| Category | Primary | Secondary | Spot-Check |
+|----------|---------|-----------|------------|
+| Security/Core | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 |
+| Integrations | Gemini 3.0 | Claude Opus 4.5 | GPT-5.2 |
+| Packaging/CI | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 |
+| Docs/Examples | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 |
+<!-- END AUTO-GENERATED ROTATION -->
 
 ### Component Mapping
 

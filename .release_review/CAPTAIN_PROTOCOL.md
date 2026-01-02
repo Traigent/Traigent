@@ -112,7 +112,7 @@ schedule = scheduler.rotate_from("v0.8.0")
 
 #### Tracking Rotation History
 
-Maintain `.release_review/<version>/ROTATION_HISTORY.md`:
+Maintain `.release_review/<version>/ROTATION_HISTORY.md`. The rotation scheduler writes an auto-generated block between markers; keep any manual notes outside the block:
 
 ```markdown
 # Rotation History
@@ -157,15 +157,15 @@ Maintain `.release_review/<version>/ROTATION_HISTORY.md`:
 ## Release Review Workspace (Versioned + Ignored Artifacts)
 
 This repo uses `.release_review/` as a dedicated home for the review system:
-- **Versioned (commit these)**: plan, tracking, captain protocol (share status with the team).
-- **Ignored (do not commit)**: `.release_review/artifacts/` (agent notes, scratch outputs).
+- **Versioned (commit these)**: plan, tracking, captain protocol, rotation schedule/history (share status with the team).
+- **Ignored (do not commit)**: `.release_review/<version>/artifacts/` (agent notes, scratch outputs).
 
 Store any agent-generated files under:
-- `.release_review/artifacts/<component>/<agent>/<YYYYMMDD>/...`
+- `.release_review/<version>/artifacts/<component>/<agent>/<YYYYMMDD>/...`
 
 Examples:
-- `.release_review/artifacts/traigent-integrations/codex/20251213/notes.md`
-- `.release_review/artifacts/release-blockers/claude/20251213/fix-plan.md`
+- `.release_review/v0.9.0/artifacts/traigent-integrations/codex/20251213/notes.md`
+- `.release_review/v0.9.0/artifacts/release-blockers/claude/20251213/fix-plan.md`
 
 **Rule**: `.release_review/PRE_RELEASE_REVIEW_TRACKING.md` is the canonical state across sessions. If chat history is lost, restart from that file.
 
@@ -308,17 +308,22 @@ When a fix requires changes outside the assigned component scope:
 
 ## Evidence Policy (What Goes in the Tracking File)
 
-For each component, Evidence MUST include:
-- **Commit(s)**: SHA(s) and branch name
-- **Tests**: exact command(s) run + PASS/FAIL summary
-- **Models**: confirm model policy used (or record actual model)
-- **Reviewer**: assigned agent + approving captain
-- **Timestamp**: ISO-8601 date/time of approval
-- **Follow-ups**: links/IDs to any tickets created (or “None”)
-- **Accepted risks**: explicit statement (or “None”)
+For each component, Evidence MUST be **machine-validated JSON** with these fields:
+- `format`: `standard` or `legacy`
+- `commits`: list of commit SHAs
+- `tests`: `{command,status,passed,total}`
+- `models`: model string used for review
+- `reviewer`: `<agent> + <captain>`
+- `timestamp`: ISO-8601 date/time of approval
+- `followups`: links/IDs or `None`
+- `accepted_risks`: explicit statement or `None`
 
-Example (single line is fine):
-`Commits: abc1234 on review/integrations/codex/20251213 | Tests: TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -q → PASS (42 passed) | Models: Codex/GPT-5.2/xhigh | Reviewer: codex + @captain | Timestamp: 2025-12-13T14:30:00Z | Follow-ups: #1234 | Accepted risks: None`
+Rules:
+- Use `format=standard` for all new reviews.
+- `format=legacy` is only for backfilled historical entries; it may use `UNKNOWN` values.
+
+Example (single line is required in the Evidence column):
+`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.2/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
 
 ## Iteration Limits and Escalation
 

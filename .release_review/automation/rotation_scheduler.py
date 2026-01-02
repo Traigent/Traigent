@@ -189,11 +189,16 @@ class RotationScheduler:
             assignments=assignments,
         )
 
-    def rotate_from(self, previous_version: str) -> RotationSchedule:
+    def rotate_from(
+        self,
+        previous_version: str,
+        new_version: str | None = None,
+    ) -> RotationSchedule:
         """Generate rotation based on previous release.
 
         Args:
             previous_version: Previous release version
+            new_version: Target release version for the new schedule
 
         Returns:
             New RotationSchedule with rotated assignments
@@ -209,7 +214,9 @@ class RotationScheduler:
 
         # Generate next round
         next_round = prev_round + 1
-        return self.get_schedule(next_round, f"v{next_round}.0.0")
+        if new_version is None:
+            raise ValueError("new_version is required for rotate_from")
+        return self.get_schedule(next_round, new_version)
 
     def save_schedule(self, schedule: RotationSchedule) -> Path:
         """Save schedule to history.
@@ -225,8 +232,62 @@ class RotationScheduler:
 
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         self.history_path.write_text(json.dumps(history, indent=2))
+        self.write_markdown(schedule)
 
         return self.history_path
+
+    def write_markdown(self, schedule: RotationSchedule) -> Path:
+        """Write or update the versioned rotation history markdown.
+
+        Args:
+            schedule: Schedule to render
+
+        Returns:
+            Path to the markdown file
+        """
+        version_dir = Path(".release_review") / schedule.version
+        version_dir.mkdir(parents=True, exist_ok=True)
+        md_path = version_dir / "ROTATION_HISTORY.md"
+
+        marker_start = "<!-- BEGIN AUTO-GENERATED ROTATION -->"
+        marker_end = "<!-- END AUTO-GENERATED ROTATION -->"
+        auto_block = schedule.to_markdown()
+
+        if md_path.exists():
+            content = md_path.read_text()
+            if marker_start in content and marker_end in content:
+                pre, rest = content.split(marker_start, 1)
+                _, post = rest.split(marker_end, 1)
+                new_content = (
+                    pre
+                    + marker_start
+                    + "\n"
+                    + auto_block
+                    + "\n"
+                    + marker_end
+                    + post
+                )
+            else:
+                new_content = (
+                    content.rstrip()
+                    + "\n\n"
+                    + marker_start
+                    + "\n"
+                    + auto_block
+                    + "\n"
+                    + marker_end
+                    + "\n"
+                )
+        else:
+            new_content = (
+                f"# Rotation History: {schedule.version}\n\n"
+                f"{marker_start}\n{auto_block}\n{marker_end}\n\n"
+                "## Component Mapping\n\n"
+                "(Fill in or link the component mapping for this release.)\n"
+            )
+
+        md_path.write_text(new_content)
+        return md_path
 
     def load_history(self) -> list[dict[str, Any]]:
         """Load rotation history.
@@ -364,7 +425,7 @@ def main() -> None:
         print("Usage: rotation_scheduler.py <command> [args]")
         print("Commands:")
         print("  generate <round> [version]  - Generate schedule for round N")
-        print("  rotate <prev_version>       - Rotate from previous version")
+        print("  rotate <prev_version> <new_version> - Rotate into a new version")
         print("  compare <round1> <round2>   - Compare two rounds")
         print("  stats                       - Show model assignment stats")
         print("  history                     - Show rotation history")
@@ -389,13 +450,20 @@ def main() -> None:
             print(f"Saved to: {path}")
 
     elif command == "rotate":
-        if len(sys.argv) < 3:
-            print("Usage: rotation_scheduler.py rotate <prev_version>")
+        if len(sys.argv) < 4:
+            print("Usage: rotation_scheduler.py rotate <prev_version> <new_version>")
             sys.exit(1)
         prev_version = sys.argv[2]
+        new_version = sys.argv[3]
 
-        schedule = scheduler.rotate_from(prev_version)
+        schedule = scheduler.rotate_from(prev_version, new_version)
         print(schedule.to_markdown())
+        print()
+
+        save = input("Save to history? [y/N]: ").strip().lower()
+        if save == "y":
+            path = scheduler.save_schedule(schedule)
+            print(f"Saved to: {path}")
 
     elif command == "compare":
         if len(sys.argv) < 4:

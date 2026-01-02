@@ -22,6 +22,7 @@ Key rules:
 - Continue start-to-finish without waiting for me
 - If you need my input, write to `.release_review/USER_QUESTIONS.md` and check periodically
 - Make judgment calls when reasonable; document decisions in tracking file
+- Record evidence as machine-validated JSON in the tracking file
 
 Start with version: v<VERSION>
 ```
