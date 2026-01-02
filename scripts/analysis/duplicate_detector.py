@@ -12,6 +12,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 
 class DuplicationDetector:
     """Detects code duplication patterns in Python files."""
@@ -116,7 +118,8 @@ class DuplicationDetector:
 
 
 def generate_report(
-    duplicates: Dict[str, List[Tuple[Path, int]]], output_file: str = None
+    duplicates: Dict[str, List[Tuple[Path, int]]],
+    output_file: str | Path | None = None,
 ) -> str:
     """Generate duplication report."""
     report_lines = [
@@ -199,9 +202,11 @@ def main():
 
     args = parser.parse_args()
 
-    directory = Path(args.directory)
-    if not directory.exists():
-        print(f"Error: Directory {directory} does not exist")
+    base_dir = Path.cwd()
+    try:
+        directory = validate_path(args.directory, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}")
         return 1
 
     detector = DuplicationDetector(min_lines=args.min_lines)
@@ -211,7 +216,10 @@ def main():
         print("No code duplication found!")
         return 0
 
-    output_file = args.output or f"duplication_report_{directory.name}.md"
+    output_file = validate_path(
+        args.output or f"duplication_report_{directory.name}.md",
+        base_dir,
+    )
     generate_report(duplicates, output_file)
 
     print(f"Analysis complete. Found {len(duplicates)} duplicate code blocks.")

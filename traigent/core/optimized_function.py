@@ -76,6 +76,7 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import validate_path
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -897,7 +898,8 @@ class OptimizedFunction:
             options = TVLOptions(spec_path=str(spec), environment=environment)
             return options
 
-        assert options is not None
+        if options is None:
+            raise ValueError("TVL options could not be resolved")
         if spec is not None and Path(options.spec_path) != Path(spec):
             raise ValueError("Conflicting TVL specs provided at runtime")
         if environment:
@@ -1116,8 +1118,9 @@ class OptimizedFunction:
                     "Options:\n"
                     "  1. Use injection_mode='context' or 'parameter' (recommended)\n"
                     "  2. Use sequential trials: parallel_config={'trial_concurrency': 1}\n"
-                    "  3. Set allow_parallel_attribute=True if you understand the risk "
-                    "and access config via traigent.get_config() inside your function"
+                    "  3. Opt in explicitly: injection={'injection_mode': 'attribute', "
+                    "'allow_parallel_attribute': True} and access config via "
+                    "traigent.get_config() inside your function"
                 )
             logger.warning(
                 "injection_mode='attribute' with parallel trials (trial_concurrency=%d) "
@@ -1723,8 +1726,12 @@ class OptimizedFunction:
 
         # Check token file approval (secondary method)
         storage_path = self.traigent_config.get_local_storage_path()
-        assert storage_path is not None, "Storage path not configured"
-        token_file = Path(storage_path) / "approval.token"
+        if storage_path is None:
+            raise ConfigurationError("Storage path not configured")
+        storage_root = Path(storage_path).expanduser().resolve()
+        token_file = validate_path(
+            storage_root / "approval.token", storage_root, must_exist=False
+        )
         if token_file.exists():
             try:
                 with open(token_file) as f:
@@ -1886,10 +1893,15 @@ To approve, use one of these methods:
         from dataclasses import asdict
 
         result_dict = asdict(self._optimization_results)
-        with open(path, "w") as f:
+        output_path = Path(path).expanduser()
+        base_dir = (
+            output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
+        )
+        output_path = validate_path(output_path, base_dir, must_exist=False)
+        with open(output_path, "w") as f:
             json.dump(result_dict, f, indent=2, default=str)
 
-        logger.info(f"Saved optimization results to {path}")
+        logger.info(f"Saved optimization results to {output_path}")
 
     def load_optimization_results(self, path: str) -> None:
         """Load optimization results from file.
@@ -1901,7 +1913,12 @@ To approve, use one of these methods:
             ConfigurationError: If results cannot be loaded
         """
         try:
-            with open(path) as f:
+            input_path = Path(path).expanduser()
+            base_dir = (
+                input_path.parent if input_path.is_absolute() else Path.cwd().resolve()
+            )
+            input_path = validate_path(input_path, base_dir, must_exist=True)
+            with open(input_path) as f:
                 result_dict = json.load(f)
 
             # Manual reconstruction since OptimizationResult is a dataclass

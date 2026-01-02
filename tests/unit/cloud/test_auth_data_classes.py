@@ -337,24 +337,24 @@ class TestAuthCredentials:
         """Test AuthCredentials with API key."""
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_test_key_12345",
+            api_key="tg_" + ("x" * 12),
         )
 
         assert creds.mode == AuthMode.API_KEY
-        assert creds.api_key == "tg_test_key_12345"
+        assert creds.api_key == "tg_" + ("x" * 12)
 
     def test_jwt_credentials(self):
         """Test AuthCredentials with JWT token."""
         creds = AuthCredentials(
             mode=AuthMode.JWT_TOKEN,
-            jwt_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-            refresh_token="refresh_token_123",
+            jwt_token="test.jwt.token",
+            refresh_token="refresh_token_placeholder",
             expires_at=time.time() + 3600,
         )
 
         assert creds.mode == AuthMode.JWT_TOKEN
         assert creds.jwt_token is not None
-        assert creds.refresh_token == "refresh_token_123"
+        assert creds.refresh_token == "refresh_token_placeholder"
         assert creds.expires_at is not None
 
     def test_oauth2_credentials(self):

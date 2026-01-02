@@ -14,6 +14,8 @@ from itertools import cycle
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import validate_path
+
 
 @dataclass
 class Assignment:
@@ -119,7 +121,8 @@ class RotationScheduler:
 
         if history_path is None:
             history_path = Path(".release_review/rotation_history.json")
-        self.history_path = Path(history_path)
+        self._base_dir = Path.cwd()
+        self.history_path = validate_path(history_path, self._base_dir)
 
     def get_schedule(
         self,
@@ -245,9 +248,15 @@ class RotationScheduler:
         Returns:
             Path to the markdown file
         """
-        version_dir = Path(".release_review") / schedule.version
+        version_dir = validate_path(
+            Path(".release_review") / schedule.version,
+            self._base_dir,
+        )
         version_dir.mkdir(parents=True, exist_ok=True)
-        md_path = version_dir / "ROTATION_HISTORY.md"
+        md_path = validate_path(
+            version_dir / "ROTATION_HISTORY.md",
+            self._base_dir,
+        )
 
         marker_start = "<!-- BEGIN AUTO-GENERATED ROTATION -->"
         marker_end = "<!-- END AUTO-GENERATED ROTATION -->"

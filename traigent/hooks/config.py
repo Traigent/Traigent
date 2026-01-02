@@ -15,6 +15,7 @@ from typing import Any
 import yaml
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import validate_path
 
 logger = get_logger(__name__)
 
@@ -222,7 +223,9 @@ def load_hooks_config(config_path: Path | str | None = None) -> HooksConfig:
         logger.info("No traigent.yml found, using default configuration")
         return HooksConfig()
 
-    config_path = Path(config_path)
+    config_path = validate_path(
+        Path(config_path), Path.cwd().resolve(), must_exist=True
+    )
 
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -248,6 +251,7 @@ def create_default_config(output_path: Path | str | None = None) -> Path:
         output_path = Path.cwd() / "traigent.yml"
     else:
         output_path = Path(output_path)
+    output_path = validate_path(output_path, Path.cwd().resolve(), must_exist=False)
 
     default_config = """# Traigent Agent Configuration Constraints
 # This file defines validation rules for agent configurations

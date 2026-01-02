@@ -430,7 +430,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
 
     api_key = None
     if combo.get("has_api_key"):
-        api_key = "tg_test_pairwise_key_0123456789"
+        api_key = "tg_" + ("x" * 12)
 
     from traigent.optigen_integration import OptiGenClient
 

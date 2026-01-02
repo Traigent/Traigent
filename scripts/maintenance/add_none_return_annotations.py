@@ -19,6 +19,7 @@ from typing import Iterable
 import libcst as cst
 import libcst.matchers as m
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
 
 class _ReturnAnalyzer(cst.CSTVisitor):
     def __init__(self) -> None:
@@ -117,8 +118,16 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    base_dir = pathlib.Path.cwd()
+    safe_paths: list[pathlib.Path] = []
+    for path in args.paths:
+        try:
+            safe_paths.append(validate_path(path, base_dir, must_exist=True))
+        except (PathTraversalError, FileNotFoundError) as exc:
+            raise SystemExit(f"Error: {exc}") from exc
+
     changed_files: list[pathlib.Path] = []
-    for file in iter_python_files(args.paths):
+    for file in iter_python_files(safe_paths):
         if process_file(file):
             changed_files.append(file)
 

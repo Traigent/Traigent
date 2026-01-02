@@ -387,7 +387,7 @@ class TestComplianceAndAudit:
         def test_func():
             return "done"
 
-        config = {"api_key": "sk-secret-key-12345", "password": "SuperSecret123!"}
+        config = {"api_key": "test_api_key_placeholder", "password": "SuperSecret123!"}
 
         wrapped = provider.inject_config(test_func, config)
 
@@ -395,7 +395,7 @@ class TestComplianceAndAudit:
             wrapped()
 
         # Check that actual values are not in logs
-        assert "sk-secret-key-12345" not in caplog.text
+        assert "test_api_key_placeholder" not in caplog.text
         assert "SuperSecret123!" not in caplog.text
 
     def test_safe_types_only(self):

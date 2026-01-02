@@ -83,7 +83,8 @@ class CloudOperations:
             response = await self.client._submit_agent_optimization(request)
 
             # Create session mapping
-            assert agent_spec.name is not None, "Agent name is required"
+            if agent_spec.name is None:
+                raise ValueError("Agent name is required")
             self.client.session_bridge.create_session_mapping(
                 session_id=response.session_id,
                 experiment_id=experiment_id,

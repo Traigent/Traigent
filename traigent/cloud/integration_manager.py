@@ -296,8 +296,10 @@ class IntegrationManager:
         Returns:
             IntegrationResult with privacy workflow details
         """
-        assert self._mcp_client is not None, "MCP client not initialized"
-        assert self._backend_client is not None, "Backend client not initialized"
+        if self._mcp_client is None:
+            raise RuntimeError("MCP client not initialized")
+        if self._backend_client is None:
+            raise RuntimeError("Backend client not initialized")
 
         try:
             # Step 1: Generate agent specification from function if needed
@@ -394,8 +396,10 @@ class IntegrationManager:
         Returns:
             IntegrationResult with cloud workflow details
         """
-        assert self._mcp_client is not None, "MCP client not initialized"
-        assert self._backend_client is not None, "Backend client not initialized"
+        if self._mcp_client is None:
+            raise RuntimeError("MCP client not initialized")
+        if self._backend_client is None:
+            raise RuntimeError("Backend client not initialized")
 
         try:
             # Step 1: Generate agent specification if needed
@@ -495,7 +499,8 @@ class IntegrationManager:
         Returns:
             Next trial suggestion
         """
-        assert self._backend_client is not None, "Backend client not initialized"
+        if self._backend_client is None:
+            raise RuntimeError("Backend client not initialized")
 
         try:
             validate_or_raise(
@@ -564,7 +569,8 @@ class IntegrationManager:
         Returns:
             True if submission successful
         """
-        assert self._backend_client is not None, "Backend client not initialized"
+        if self._backend_client is None:
+            raise RuntimeError("Backend client not initialized")
 
         try:
             validate_or_raise(
@@ -612,7 +618,8 @@ class IntegrationManager:
         Returns:
             True if finalization successful
         """
-        assert self._backend_client is not None, "Backend client not initialized"
+        if self._backend_client is None:
+            raise RuntimeError("Backend client not initialized")
 
         try:
             validate_or_raise(

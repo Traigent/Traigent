@@ -138,7 +138,8 @@ class OptimizerDirectClient:
         Returns:
             Next configuration or completion status
         """
-        assert self.session is not None, "Session not initialized"
+        if self.session is None:
+            raise RuntimeError("Session not initialized")
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
         session_id = session_id.strip()
@@ -170,7 +171,8 @@ class OptimizerDirectClient:
         Returns:
             Session status
         """
-        assert self.session is not None, "Session not initialized"
+        if self.session is None:
+            raise RuntimeError("Session not initialized")
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
         session_id = session_id.strip()
@@ -275,7 +277,8 @@ class OptimizerDirectClient:
         Returns:
             Submission response
         """
-        assert self.session is not None, "Session not initialized"
+        if self.session is None:
+            raise RuntimeError("Session not initialized")
         try:
             async with self.session.post(
                 f"{self.endpoint}/{session_id}", json=submission
@@ -313,7 +316,8 @@ class OptimizerDirectClient:
         Returns:
             Batch response
         """
-        assert self.session is not None, "Session not initialized"
+        if self.session is None:
+            raise RuntimeError("Session not initialized")
         try:
             async with self.session.post(
                 f"{self.endpoint}/{session_id}/batch", json={"submissions": submissions}

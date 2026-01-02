@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import validate_path
 
 @dataclass
 class AgentMetrics:
@@ -215,6 +216,7 @@ class MetricsTracker:
             Path to saved file
         """
         metrics_file = self.get_metrics_file(release.version)
+        metrics_file = validate_path(metrics_file, self.base_path, must_exist=False)
         metrics_file.write_text(json.dumps(release.to_dict(), indent=2))
         return metrics_file
 

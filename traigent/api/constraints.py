@@ -581,7 +581,8 @@ class Constraint:
             return self.expr.evaluate_config(config, var_names)
 
         # Implication: not(when) or then
-        assert self.when is not None and self.then is not None
+        if self.when is None or self.then is None:
+            raise ValueError("Implication constraint requires both 'when' and 'then'")
 
         when_result = self.when.evaluate_config(config, var_names)
         if not when_result:
@@ -606,7 +607,8 @@ class Constraint:
         if self.expr is not None:
             return f"REQUIRE: {self.expr.explain(var_names)}"
 
-        assert self.when is not None and self.then is not None
+        if self.when is None or self.then is None:
+            raise ValueError("Implication constraint requires both 'when' and 'then'")
         when_text = self.when.explain(var_names)
         then_text = self.then.explain(var_names)
         return f"IF {when_text} THEN {then_text}"
@@ -629,7 +631,8 @@ class Constraint:
         if self.expr is not None:
             return StructuralConstraint(expr=self.expr.to_expression(var_names))
 
-        assert self.when is not None and self.then is not None
+        if self.when is None or self.then is None:
+            raise ValueError("Implication constraint requires both 'when' and 'then'")
         return StructuralConstraint(
             when=self.when.to_expression(var_names),
             then=self.then.to_expression(var_names),
@@ -711,7 +714,8 @@ class Constraint:
             self._collect_from_expr(self.expr, "expr", var_names, missing_names)
         else:
             # When expr is None, when/then are guaranteed non-None by __post_init__
-            assert self.when is not None and self.then is not None
+            if self.when is None or self.then is None:
+                raise ValueError("Conditional constraint is missing when/then clauses")
             self._collect_from_expr(self.when, "when", var_names, missing_names)
             self._collect_from_expr(self.then, "then", var_names, missing_names)
 

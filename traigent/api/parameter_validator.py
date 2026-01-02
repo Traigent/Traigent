@@ -353,9 +353,8 @@ class ParameterValidator:
         if isinstance(injection_mode, str):
             return InjectionMode(injection_mode)
         # injection_mode is already an InjectionMode enum
-        assert isinstance(
-            injection_mode, InjectionMode
-        )  # Help mypy understand the type
+        if not isinstance(injection_mode, InjectionMode):
+            raise ValidationError("injection_mode must be an InjectionMode value")
         return injection_mode
 
 

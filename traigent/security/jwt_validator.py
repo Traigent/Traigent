@@ -110,6 +110,7 @@ class SecureJWTValidator:
         require_nbf: bool = True,
         require_jti: bool = True,
         max_clock_skew: int = 30,
+        development_public_key: str | None = None,
     ) -> None:
         """Initialize secure JWT validator.
 
@@ -121,6 +122,7 @@ class SecureJWTValidator:
             require_nbf: Require 'not before' claim
             require_jti: Require JWT ID for replay protection
             max_clock_skew: Maximum allowed clock skew in seconds
+            development_public_key: Optional PEM public key for development validation
         """
         self.jwks_url = jwks_url
         self.issuer = issuer
@@ -129,6 +131,9 @@ class SecureJWTValidator:
         self.require_nbf = require_nbf
         self.require_jti = require_jti
         self.max_clock_skew = max_clock_skew
+        self.development_public_key = development_public_key or os.getenv(
+            "TRAIGENT_DEV_JWT_PUBLIC_KEY"
+        )
         self._jwks_client = None
         self._seen_jti: set[Any] = set()  # Track JWT IDs for replay protection
         self._jti_lock = threading.Lock()  # Protect _seen_jti from race conditions
@@ -388,12 +393,37 @@ class SecureJWTValidator:
                     warnings=warnings,
                 )
 
-            # Still require a valid JWT structure and basic claims
-            unverified_header = jwt.get_unverified_header(token)
-            unverified_payload = jwt.decode(
-                token,
-                options={"verify_signature": False},
-            )
+            signing_key = self._get_development_signing_key(token)
+            if signing_key is None:
+                warnings.append(
+                    "No JWKS URL or development public key configured for signature verification"
+                )
+                return JWTValidationResult(
+                    valid=False,
+                    error="JWT signature verification unavailable in development mode",
+                    warnings=warnings,
+                )
+
+            decode_kwargs = {
+                "algorithms": self.ALLOWED_ALGORITHMS,
+                "leeway": self.max_clock_skew,
+                "options": {
+                    "verify_signature": True,
+                    "verify_exp": True,
+                    "verify_iat": True,
+                    "verify_nbf": self.require_nbf,
+                    "require_exp": False,
+                    "require_iat": True,
+                    "require_nbf": False,
+                    "require_jti": False,
+                },
+            }
+            if self.issuer:
+                decode_kwargs["issuer"] = self.issuer
+            if self.audience:
+                decode_kwargs["audience"] = self.audience
+
+            unverified_payload = jwt.decode(token, signing_key, **decode_kwargs)
 
             # Enforce short token lifetime in development
             iat = unverified_payload.get("iat", 0)
@@ -406,11 +436,10 @@ class SecureJWTValidator:
                     warnings=warnings,
                 )
 
-            # Basic security checks even in development
-            if unverified_header.get("alg") == "none":
+            if not iat:
                 return JWTValidationResult(
                     valid=False,
-                    error="Algorithm 'none' not allowed even in development",
+                    error="Development tokens must include an iat claim",
                     warnings=warnings,
                 )
 
@@ -442,77 +471,23 @@ class SecureJWTValidator:
         return self._validate_production(token)
 
     def _validate_development(self, token: str) -> JWTValidationResult:
-        """Development validation - legacy compatibility method with less strict validation.
+        """Development validation - legacy compatibility wrapper."""
+        return self._validate_development_secure(token)
 
-        SECURITY WARNING: This method does NOT verify the JWT signature. It should only
-        be used for local development and testing. Never use in production.
+    def _get_development_signing_key(self, token: str) -> Any | None:
+        """Resolve a signing key for development validation."""
+        if self.development_public_key:
+            return self.development_public_key
 
-        The signature bypass is intentional for development convenience but provides
-        no security guarantee about the token's authenticity.
-        """
-        import warnings as py_warnings
-
-        py_warnings.warn(
-            "JWT validation with verify_signature=False is insecure. "
-            "Use ValidationMode.PRODUCTION for production deployments.",
-            UserWarning,
-            stacklevel=3,
-        )
-
-        warnings = [
-            "Development mode - reduced security validation",
-            "NOT suitable for production use",
-            "SECURITY: Signature verification is DISABLED",
-        ]
-
+        jwks_client = self._get_jwks_client()
+        if jwks_client is None:
+            return None
         try:
-            # Check if JWT library is available
-            if not JWT_AVAILABLE:
-                warnings.append("Install PyJWT to enable JWT validation")
-                return JWTValidationResult(
-                    valid=False,
-                    error="JWT validation unavailable",
-                    warnings=warnings,
-                )
-
-            # Decode without verification for compatibility
-            # SECURITY NOTE: This is intentionally insecure for development only
-            unverified_payload = jwt.decode(
-                token,
-                options={
-                    "verify_signature": False,  # nosec B105 - intentional for dev mode
-                    "verify_exp": True,
-                    "verify_iat": True,
-                    "verify_nbf": True,
-                },
-            )
-
-            # Check for basic expiration if present
-            exp = unverified_payload.get("exp")
-            if exp and exp < time.time():
-                return JWTValidationResult(
-                    valid=False,
-                    error="Token has expired",
-                    warnings=warnings,
-                )
-
-            return JWTValidationResult(
-                valid=True,
-                payload=unverified_payload,
-                expires_at=exp,
-                warnings=warnings,
-                security_metadata={
-                    "mode": "development",
-                    "validated_at": time.time(),
-                },
-            )
-
-        except jwt.InvalidTokenError as e:
-            return JWTValidationResult(
-                valid=False,
-                error=f"Invalid token structure: {e}",
-                warnings=warnings,
-            )
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
+        except Exception as exc:
+            logger.warning("Failed to resolve JWKS signing key: %s", exc)
+            return None
+        return signing_key.key
 
     def _perform_security_checks(self, payload: dict[str, Any]) -> None:
         """Perform additional security checks on token payload."""

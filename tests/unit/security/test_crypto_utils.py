@@ -40,7 +40,7 @@ class TestSecureCredentialStorage:
         storage = SecureCredentialStorage()
 
         credentials = {
-            "api_key": "test_api_key_12345",
+            "api_key": "test_api_key_placeholder",
             "username": "testuser",
             "password": "testpass123",
         }

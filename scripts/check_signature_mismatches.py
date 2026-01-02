@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -119,9 +120,10 @@ def extract_api_usages(file_path: Path) -> list[dict[str, Any]]:
     usages = []
 
     try:
-        with open(file_path, encoding="utf-8") as f:
+        safe_path = validate_path(file_path, PROJECT_ROOT, must_exist=True)
+        with open(safe_path, encoding="utf-8") as f:
             content = f.read()
-    except (OSError, UnicodeDecodeError):
+    except (PathTraversalError, FileNotFoundError, OSError, UnicodeDecodeError):
         return usages
 
     # Parse AST

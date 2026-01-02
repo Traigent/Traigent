@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -495,6 +496,11 @@ class DocumentationDashboard:
 
         if output_path is None:
             output_path = self.root_path / "docs" / "dashboard_report.json"
+
+        try:
+            output_path = validate_path(output_path, self.root_path)
+        except (PathTraversalError, FileNotFoundError) as exc:
+            raise ValueError(f"Invalid output path: {exc}") from exc
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 

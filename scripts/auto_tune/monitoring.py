@@ -4,6 +4,7 @@ Monitoring and alerting system for auto-tuning pipeline.
 Provides health checks, metrics collection, and alerting.
 """
 
+import ipaddress
 import json
 import os
 import sys
@@ -13,6 +14,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import psutil
 import requests
@@ -335,6 +337,9 @@ class AlertManager:
     def _send_webhook(self, url: str, alert: Alert):
         """Send alert to webhook."""
         try:
+            if not self._is_safe_webhook_url(url):
+                logger.error("Refusing to send webhook to unsafe URL: %s", url)
+                return
             payload = {
                 "text": f"{alert.severity.value.upper()}: {alert.title}",
                 "attachments": [
@@ -355,6 +360,33 @@ class AlertManager:
 
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")
+
+    @staticmethod
+    def _is_safe_webhook_url(url: str) -> bool:
+        """Validate webhook URL to reduce SSRF risk."""
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+        if parsed.scheme != "https":
+            return False
+        if not parsed.hostname:
+            return False
+
+        hostname = parsed.hostname.lower()
+        if hostname in {"localhost", "127.0.0.1"} or hostname.endswith(".local"):
+            return False
+
+        try:
+            ip_addr = ipaddress.ip_address(hostname)
+        except ValueError:
+            return True
+
+        if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+            return False
+        if ip_addr.is_multicast or ip_addr.is_reserved:
+            return False
+        return True
 
     def _get_alert_color(self, severity: AlertSeverity) -> str:
         """Get color for alert severity."""

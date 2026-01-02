@@ -19,6 +19,7 @@ from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
+from ..utils.secure_path import validate_path
 
 logger = get_logger(__name__)
 
@@ -297,7 +298,11 @@ class LocalStorageManager:
 
     def load_session(self, session_id: str) -> OptimizationSession | None:
         """Load a session from storage."""
-        session_file = self.storage_path / "sessions" / f"{session_id}.json"
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
 
         if not session_file.exists():
             return None
@@ -394,14 +399,22 @@ class LocalStorageManager:
             raise TraigentStorageError(f"Session {session_id} not found") from None
 
         try:
-            path_obj = Path(export_path)
+            path_obj = Path(export_path).expanduser()
             path_obj.parent.mkdir(parents=True, exist_ok=True)
+            base_dir = (
+                path_obj.parent if path_obj.is_absolute() else Path.cwd().resolve()
+            )
+            path_obj = validate_path(path_obj, base_dir, must_exist=False)
 
             # Convert session to dict for JSON serialization
             session_data = asdict(session)
 
             # Atomic write: write to temp file, then rename
-            temp_path = path_obj.with_suffix(f"{path_obj.suffix}.tmp.{os.getpid()}")
+            temp_path = validate_path(
+                path_obj.with_suffix(f"{path_obj.suffix}.tmp.{os.getpid()}"),
+                path_obj.parent,
+                must_exist=False,
+            )
             try:
                 with open(temp_path, "w") as f:
                     json.dump(session_data, f, indent=2, default=str)
@@ -464,7 +477,11 @@ class LocalStorageManager:
         Uses temp file + rename pattern to prevent data corruption
         if the process crashes during write.
         """
-        session_file = self.storage_path / "sessions" / f"{session.session_id}.json"
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session.session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
 
         try:
             # Convert to dict for JSON serialization
@@ -472,7 +489,11 @@ class LocalStorageManager:
             session_data = self._make_json_serializable(session_data)
 
             # Atomic write: write to temp file, then rename
-            temp_path = session_file.with_suffix(f".json.tmp.{os.getpid()}")
+            temp_path = validate_path(
+                session_file.with_suffix(f".json.tmp.{os.getpid()}"),
+                session_file.parent,
+                must_exist=False,
+            )
             try:
                 with open(temp_path, "w") as f:
                     json.dump(session_data, f, indent=2)

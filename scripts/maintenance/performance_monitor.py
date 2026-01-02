@@ -18,6 +18,7 @@ from typing import Any, Callable, Dict, List
 
 import psutil
 
+from traigent.utils.secure_path import validate_path
 logger = logging.getLogger(__name__)
 
 
@@ -26,7 +27,8 @@ class PerformanceMonitor:
 
     def __init__(self, output_dir: str = "performance_reports"):
         """Initialize performance monitor."""
-        self.output_dir = Path(output_dir)
+        self._base_dir = Path.cwd()
+        self.output_dir = validate_path(output_dir, self._base_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.metrics = {}
         self.profiles = {}
@@ -99,13 +101,17 @@ class PerformanceMonitor:
         stats.sort_stats("cumulative")
 
         # Save detailed stats
-        profile_file = self.output_dir / f"{func_name.replace('.', '_')}_profile.txt"
+        profile_file = validate_path(
+            self.output_dir / f"{func_name.replace('.', '_')}_profile.txt",
+            self.output_dir,
+        )
         with open(profile_file, "w") as f:
             stats.print_stats(file=f)
 
         # Save top bottlenecks
-        bottlenecks_file = (
-            self.output_dir / f"{func_name.replace('.', '_')}_bottlenecks.json"
+        bottlenecks_file = validate_path(
+            self.output_dir / f"{func_name.replace('.', '_')}_bottlenecks.json",
+            self.output_dir,
         )
         bottlenecks = self._extract_bottlenecks(stats)
         with open(bottlenecks_file, "w") as f:
@@ -203,7 +209,7 @@ class PerformanceMonitor:
             timestamp = int(time.time())
             filename = f"performance_report_{timestamp}.json"
 
-        report_file = self.output_dir / filename
+        report_file = validate_path(self.output_dir / filename, self.output_dir)
         with open(report_file, "w") as f:
             json.dump(report, f, indent=2)
 

@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 
 @dataclass
 class SpanSummary:
@@ -362,14 +364,22 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    base_dir = Path.cwd()
+    try:
+        traces_dir = validate_path(args.traces_dir, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}")
+        return 1
+
     # Analyze traces
-    report = analyze_directory(args.traces_dir, test_filter=args.test_filter)
+    report = analyze_directory(traces_dir, test_filter=args.test_filter)
 
     # Output report
     if args.output:
-        with open(args.output, "w") as f:
+        output_path = validate_path(args.output, base_dir)
+        with open(output_path, "w") as f:
             json.dump(report.to_dict(), f, indent=2)
-        print(f"Report written to: {args.output}")
+        print(f"Report written to: {output_path}")
     elif args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:

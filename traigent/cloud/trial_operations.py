@@ -471,10 +471,7 @@ class TrialOperations:
             logger.warning(f"⚠️ No summary_stats found for trial {trial_id}")
 
     def _create_localhost_connector(self) -> Any:
-        """Create connector without SSL for localhost connections."""
-        backend_url = self.client.backend_config.backend_base_url
-        if backend_url and ("localhost" in backend_url or "127.0.0.1" in backend_url):
-            return aiohttp.TCPConnector(ssl=False)
+        """Create connector for localhost connections."""
         return None
 
     async def _handle_trial_success_response(
@@ -757,13 +754,7 @@ class TrialOperations:
                 f"Submitting summary_stats with structure: {json.dumps(submission_data, indent=2)[:1000]}"
             )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
+            connector = self._create_localhost_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(

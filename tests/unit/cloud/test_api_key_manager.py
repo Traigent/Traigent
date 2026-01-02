@@ -44,7 +44,7 @@ class TestMaskKey:
 
     def test_mask_key_normal(self) -> None:
         """Test masking a normal API key."""
-        key = "tg_abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXY"
+        key = "tg_" + ("a" * 24) + "VWXY"
         masked = APIKeyManager.mask_key(key)
         assert masked.startswith("tg_a")
         assert masked.endswith("VWXY")

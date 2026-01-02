@@ -9,6 +9,7 @@ import json
 import os
 import re
 import secrets
+from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -41,6 +42,7 @@ except ImportError:
 
 
 from ..utils.logging import get_logger
+from ..utils.secure_path import validate_path
 
 logger = get_logger(__name__)
 
@@ -274,23 +276,30 @@ class EncryptionManager:
         self,
         file_path: str,
         classification: DataClassification = DataClassification.INTERNAL,
+        base_dir: str | Path | None = None,
     ) -> str:
         """Encrypt a file.
 
         Args:
             file_path: Path to input file
             classification: Data classification level
+            base_dir: Base directory for allowed file operations
 
         Returns:
             Path to encrypted output file
         """
-        with open(file_path, "rb") as f:
+        base = (
+            Path(base_dir).expanduser().resolve() if base_dir else Path.cwd().resolve()
+        )
+        input_path = validate_path(file_path, base, must_exist=True)
+        with open(input_path, "rb") as f:
             data = f.read()
 
         encrypted_result = self.encrypt(data, classification)
 
         # Generate output file path
-        output_path = file_path + ".encrypted"
+        output_path = input_path.with_name(f"{input_path.name}.encrypted")
+        output_path = validate_path(output_path, base, must_exist=False)
 
         # Store encrypted data and metadata as JSON (for test compatibility)
         encrypted_data = {
@@ -307,18 +316,25 @@ class EncryptionManager:
         with open(output_path, "w") as f:
             json.dump(encrypted_data, f)
 
-        return output_path
+        return str(output_path)
 
-    def decrypt_file(self, encrypted_file_path: str) -> str:
+    def decrypt_file(
+        self, encrypted_file_path: str, base_dir: str | Path | None = None
+    ) -> str:
         """Decrypt a file.
 
         Args:
             encrypted_file_path: Path to encrypted file
+            base_dir: Base directory for allowed file operations
 
         Returns:
             Path to decrypted output file
         """
-        with open(encrypted_file_path) as f:
+        base = (
+            Path(base_dir).expanduser().resolve() if base_dir else Path.cwd().resolve()
+        )
+        input_path = validate_path(encrypted_file_path, base, must_exist=True)
+        with open(input_path) as f:
             encrypted_data = json.load(f)
 
         # Reconstruct encrypted_result
@@ -334,15 +350,16 @@ class EncryptionManager:
         decrypted_data = self.decrypt(encrypted_result)
 
         # Generate output file path
-        if encrypted_file_path.endswith(".encrypted"):
-            output_path = encrypted_file_path[:-10]  # Remove '.encrypted'
+        if input_path.name.endswith(".encrypted"):
+            output_path = input_path.with_name(input_path.name[:-10])
         else:
-            output_path = encrypted_file_path + ".decrypted"
+            output_path = input_path.with_name(f"{input_path.name}.decrypted")
+        output_path = validate_path(output_path, base, must_exist=False)
 
         with open(output_path, "wb") as f:
             f.write(decrypted_data)
 
-        return output_path
+        return str(output_path)
 
 
 class PIIDetector:

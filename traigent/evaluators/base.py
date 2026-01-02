@@ -1570,7 +1570,8 @@ class BaseEvaluator(ABC):
         """Run custom evaluator function with proper context."""
         from traigent.config.context import ConfigurationContext, get_trial_context
 
-        assert self.custom_eval_func is not None, "custom_eval_func must be set"
+        if self.custom_eval_func is None:
+            raise RuntimeError("custom_eval_func must be set before evaluation")
 
         trial_ctx = get_trial_context()
         capture_key = self._get_capture_key_context()

@@ -7,6 +7,8 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 try:  # pragma: no cover
     from .analysis_utils import (
         count_sloc,
@@ -163,15 +165,26 @@ def main() -> None:
     parser.add_argument("--skip-owners", action="store_true")
     args = parser.parse_args()
 
-    project_root = args.project_root.resolve()
-    source_root = (args.project_root / args.source_root).resolve()
+    base_dir = Path.cwd()
+    try:
+        project_root = validate_path(args.project_root, base_dir, must_exist=True)
+        source_root = validate_path(
+            project_root / args.source_root,
+            project_root,
+            must_exist=True,
+        )
+        coverage_xml = validate_path(args.coverage_xml, project_root, must_exist=True)
+        lint_json = validate_path(args.lint_json, project_root, must_exist=True)
+        output_path = validate_path(args.output, project_root)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
     codeowners_rules: Sequence[Tuple[str, List[str]]] = []
     if not args.skip_owners:
         codeowners_rules = load_codeowners(project_root)
 
-    coverage_map = load_coverage_map(args.coverage_xml, project_root)
-    lint_map = load_lint_map(args.lint_json, project_root)
+    coverage_map = load_coverage_map(coverage_xml, project_root)
+    lint_map = load_lint_map(lint_json, project_root)
 
     rows = gather_inventory(project_root, source_root, coverage_map, lint_map, codeowners_rules)
     header = [
@@ -185,7 +198,7 @@ def main() -> None:
         "test_coverage_percent",
         "lint_error_count",
     ]
-    write_csv(args.output, header, rows)
+    write_csv(output_path, header, rows)
 
 
 if __name__ == "__main__":  # pragma: no cover

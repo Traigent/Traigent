@@ -10,6 +10,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 try:  # pragma: no cover
     from .dependency_graph import Canvas
     from .viz_atlas import (
@@ -245,8 +247,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    config = load_config(args.config)
-    generate_layers(args.graph, args.out, config)
+    base_dir = Path.cwd()
+    try:
+        graph_path = validate_path(args.graph, base_dir, must_exist=True)
+        output_dir = validate_path(args.out, base_dir)
+        config_path = validate_path(args.config, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
+    config = load_config(config_path)
+    generate_layers(graph_path, output_dir, config)
 
 
 if __name__ == "__main__":  # pragma: no cover

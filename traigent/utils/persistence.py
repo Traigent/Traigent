@@ -16,6 +16,7 @@ from typing import Any, cast
 
 from ..api.types import OptimizationResult, OptimizationStatus, TrialResult
 from ..utils.function_identity import sanitize_identifier
+from ..utils.secure_path import validate_path
 
 logger = logging.getLogger(__name__)
 
@@ -152,8 +153,11 @@ class PersistenceManager:
         Args:
             base_dir: Base directory for storing optimization results
         """
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).expanduser().resolve()
         self.base_dir.mkdir(exist_ok=True)
+
+    def _resolve_path(self, path: Path, must_exist: bool = False) -> Path:
+        return validate_path(path, self.base_dir, must_exist=must_exist)
 
     def _atomic_write_json(self, file_path: Path, data: Any) -> None:
         """Write JSON data atomically using temp file + rename pattern.
@@ -164,11 +168,14 @@ class PersistenceManager:
             file_path: Target file path
             data: Data to serialize as JSON
         """
-        temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
+        validated_path = self._resolve_path(file_path)
+        temp_path = validated_path.with_suffix(
+            f"{validated_path.suffix}.tmp.{os.getpid()}"
+        )
         try:
             with open(temp_path, "w") as f:
                 json.dump(data, f, indent=2)
-            temp_path.replace(file_path)  # Atomic rename on POSIX
+            temp_path.replace(validated_path)  # Atomic rename on POSIX
         finally:
             if temp_path.exists():
                 temp_path.unlink()
@@ -180,11 +187,14 @@ class PersistenceManager:
             file_path: Target file path
             data: Data to serialize as JSON
         """
-        temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
+        validated_path = self._resolve_path(file_path)
+        temp_path = validated_path.with_suffix(
+            f"{validated_path.suffix}.tmp.{os.getpid()}"
+        )
         try:
             with gzip.open(temp_path, "wt") as f:
                 json.dump(data, f, indent=2)
-            temp_path.replace(file_path)  # Atomic rename on POSIX
+            temp_path.replace(validated_path)  # Atomic rename on POSIX
         finally:
             if temp_path.exists():
                 temp_path.unlink()
@@ -196,11 +206,14 @@ class PersistenceManager:
             file_path: Target file path
             data: Data to pickle
         """
-        temp_path = file_path.with_suffix(f"{file_path.suffix}.tmp.{os.getpid()}")
+        validated_path = self._resolve_path(file_path)
+        temp_path = validated_path.with_suffix(
+            f"{validated_path.suffix}.tmp.{os.getpid()}"
+        )
         try:
             with gzip.open(temp_path, "wb") as f:
                 pickle.dump(data, f)
-            temp_path.replace(file_path)  # Atomic rename on POSIX
+            temp_path.replace(validated_path)  # Atomic rename on POSIX
         finally:
             if temp_path.exists():
                 temp_path.unlink()
@@ -224,7 +237,7 @@ class PersistenceManager:
             name = f"{func_slug}_{timestamp}"
 
         # Create subdirectory for this optimization
-        result_dir = self.base_dir / name
+        result_dir = self._resolve_path(self.base_dir / name)
         result_dir.mkdir(exist_ok=True)
 
         # Save metadata as JSON
@@ -308,7 +321,7 @@ class PersistenceManager:
             FileNotFoundError: If result doesn't exist
             ValueError: If result data is corrupted
         """
-        result_dir = self.base_dir / name
+        result_dir = self._resolve_path(self.base_dir / name)
 
         if not result_dir.exists():
             raise FileNotFoundError(
@@ -316,7 +329,7 @@ class PersistenceManager:
             )
 
         # Load metadata
-        metadata_file = result_dir / METADATA_FILE
+        metadata_file = self._resolve_path(result_dir / METADATA_FILE, must_exist=True)
         if not metadata_file.exists():
             raise ValueError(f"Metadata file missing for result '{name}'")
 
@@ -324,8 +337,8 @@ class PersistenceManager:
             metadata = json.load(f)
 
         # Load trials using JSON instead of pickle for security
-        trials_file = result_dir / TRIALS_JSON_FILE
-        pkl_file = result_dir / TRIALS_PKL_FILE
+        trials_file = self._resolve_path(result_dir / TRIALS_JSON_FILE)
+        pkl_file = self._resolve_path(result_dir / TRIALS_PKL_FILE)
 
         # Try JSON first (secure), fall back to pickle with warning
         trials: list[TrialResult]
@@ -415,7 +428,7 @@ class PersistenceManager:
 
         for result_dir in self.base_dir.iterdir():
             if result_dir.is_dir():
-                metadata_file = result_dir / METADATA_FILE
+                metadata_file = self._resolve_path(result_dir / METADATA_FILE)
                 if metadata_file.exists():
                     try:
                         with open(metadata_file) as f:

@@ -466,6 +466,31 @@ def get_buffer_stats():
 - ❌ Config tied to function object
 - ❌ Potential for external mutations
 - ❌ Not ideal for pure functions
+- ❌ **Not safe for parallel trials** (see warning below)
+
+> ⚠️ **Parallel Execution Warning**: Attribute mode stores configuration on the
+> function object, which is shared across all concurrent trial invocations. When
+> running with `trial_concurrency > 1`, the `current_config` attribute can be
+> overwritten by another trial mid-execution, causing race conditions.
+>
+> **Recommendations:**
+> - Use `injection_mode="context"` or `"parameter"` for parallel trials
+> - Use `traigent.get_config()` inside your function for correct per-trial access
+> - If you must use attribute mode with parallel trials, set
+>   `allow_parallel_attribute=True` in your injection options and access config
+>   via `traigent.get_config()`:
+>
+> ```python
+> @traigent.optimize(
+>     injection={"injection_mode": "attribute", "allow_parallel_attribute": True},
+>     parallel_config={"trial_concurrency": 2},
+>     ...
+> )
+> def my_func(query: str) -> str:
+>     # Use get_config() for thread-safe access, not my_func.current_config
+>     config = traigent.get_config()
+>     return process(query, config)
+> ```
 
 ### When to Use
 

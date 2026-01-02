@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import validate_path
 
 logger = get_logger(__name__)
 
@@ -266,7 +267,10 @@ class FileVersionManager:
 
                 if "sha256" in file_info and absolute_path.suffix == ".json":
                     try:
-                        with open(absolute_path, "rb") as f:
+                        validated_path = validate_path(
+                            absolute_path, base_path, must_exist=True
+                        )
+                        with open(validated_path, "rb") as f:
                             actual_checksum = hashlib.sha256(f.read()).hexdigest()
                     except OSError as exc:
                         logger.warning(

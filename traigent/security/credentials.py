@@ -239,12 +239,12 @@ class EnhancedCredentialStore:
     def _init_secure_encryption(self, master_password: str | None = None) -> None:
         """Initialize encryption with secure key derivation."""
         password_path = self._master_password_path()
-        # Variable initialization, not a hardcoded secret
-        secret_value: str | None = None  # nosec B105
+        # Variable initialization, not a hardcoded value
+        master_password_value: str | None = None  # nosec B105
         password_source = "parameter"
 
         if master_password:
-            secret_value = master_password
+            master_password_value = master_password
         else:
             # Reading from environment variable, not hardcoded
             env_value = (
@@ -253,20 +253,24 @@ class EnhancedCredentialStore:
                 else None
             )
             if env_value:
-                secret_value = env_value
+                master_password_value = env_value
                 password_source = "environment"
             elif password_path.exists():
-                secret_value = self._load_master_password_from_file(password_path)
+                master_password_value = self._load_master_password_from_file(
+                    password_path
+                )
                 password_source = "file"
 
-        if secret_value is None:
+        if master_password_value is None:
             # Cryptographically secure random generation, not hardcoded
-            secret_value = secrets.token_urlsafe(32)  # nosec B105
+            master_password_value = secrets.token_urlsafe(32)  # nosec B105
             password_source = "generated"
-            self._store_master_password(secret_value, password_path)
+            self._store_master_password(master_password_value, password_path)
 
-        self._master_password = SecureString(secret_value)
-        secret_value = None  # Dereference (doesn't wipe underlying string from memory)
+        self._master_password = SecureString(master_password_value)
+        master_password_value = (
+            None  # Dereference (doesn't wipe underlying string from memory)
+        )
 
         if password_source == "generated":
             logger.critical(

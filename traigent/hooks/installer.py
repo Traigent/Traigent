@@ -12,6 +12,7 @@ import stat
 from pathlib import Path
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import validate_path
 
 logger = get_logger(__name__)
 
@@ -152,6 +153,9 @@ class HooksInstaller:
         Returns:
             True if hook was installed successfully
         """
+        hooks_dir = self.get_hooks_dir()
+        hook_path = validate_path(hook_path, hooks_dir, must_exist=False)
+
         if hook_path.exists():
             if not force:
                 # Check if it's already a Traigent hook

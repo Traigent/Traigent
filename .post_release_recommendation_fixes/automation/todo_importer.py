@@ -19,6 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.append(str(SCRIPT_DIR))
 
 from versioning import infer_version_from_source, resolve_base_path, resolve_version
+from traigent.utils.secure_path import validate_path
 
 
 @dataclass
@@ -101,7 +102,12 @@ class TodoImporter:
         if not self.source.exists():
             return False, [f"Source file not found: {self.source}"]
 
-        content = self.source.read_text()
+        source_path = validate_path(
+            self.source,
+            self.source.parent if self.source.is_absolute() else Path.cwd().resolve(),
+            must_exist=True,
+        )
+        content = source_path.read_text()
         errors = []
 
         # Check for required sections
@@ -224,6 +230,10 @@ class TodoImporter:
         """
         items = self.parse_source()
         target_path = Path(target)
+        base_dir = (
+            target_path.parent if target_path.is_absolute() else Path.cwd().resolve()
+        )
+        target_path = validate_path(target_path, base_dir, must_exist=False)
 
         # Group by priority
         high = [i for i in items if i.priority == "High"]

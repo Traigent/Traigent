@@ -12,6 +12,8 @@ import os
 import threading
 from typing import Any, cast
 
+from traigent.utils.secure_path import validate_path
+
 # Optional cryptography dependencies
 try:
     from cryptography.fernet import Fernet, InvalidToken
@@ -293,13 +295,21 @@ class SecureFileManager:
     """Secure file operations with proper permissions."""
 
     @staticmethod
-    def write_secure_file(file_path: str, data: dict[str, Any]) -> None:
+    def write_secure_file(
+        file_path: str, data: dict[str, Any], base_dir: str | Path | None = None
+    ) -> None:
         """Write file with secure permissions from the start."""
         import shutil
         import tempfile
         from pathlib import Path
 
-        file_path_obj = Path(file_path)
+        file_path_obj = Path(file_path).expanduser()
+        base = (
+            Path(base_dir).expanduser().resolve()
+            if base_dir is not None
+            else file_path_obj.parent.resolve()
+        )
+        file_path_obj = validate_path(file_path_obj, base, must_exist=False)
         file_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
         # Use temporary file with secure permissions
@@ -317,17 +327,25 @@ class SecureFileManager:
             tmp_file_path = tmp_file.name
 
         # Atomically move to final location
-        shutil.move(tmp_file_path, file_path)
+        shutil.move(tmp_file_path, file_path_obj)
 
         # Ensure final file has correct permissions
-        os.chmod(file_path, 0o600)
+        os.chmod(file_path_obj, 0o600)
 
     @staticmethod
-    def read_secure_file(file_path: str) -> dict[str, Any]:
+    def read_secure_file(
+        file_path: str, base_dir: str | Path | None = None
+    ) -> dict[str, Any]:
         """Read file and verify permissions."""
         from pathlib import Path
 
-        file_path_obj = Path(file_path)
+        file_path_obj = Path(file_path).expanduser()
+        base = (
+            Path(base_dir).expanduser().resolve()
+            if base_dir is not None
+            else file_path_obj.parent.resolve()
+        )
+        file_path_obj = validate_path(file_path_obj, base, must_exist=True)
 
         if not file_path_obj.exists():
             raise FileNotFoundError(f"Credential file not found: {file_path_obj}")

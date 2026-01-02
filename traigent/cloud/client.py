@@ -626,7 +626,8 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> dict[str, Any]:
         """Submit optimization request to cloud service."""
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Session not initialized")
 
         url = f"{self.api_base_url}/optimize"
         session = self._aio_session  # Capture for use in nested function
@@ -737,7 +738,8 @@ class TraigentCloudClient(BaseTraigentClient):
     async def check_service_status(self) -> dict[str, Any]:
         """Check Traigent Cloud Service status."""
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Session not initialized")
 
         url = f"{self.base_url}/health"
         attempts = max(1, self.max_retries)
@@ -884,7 +886,8 @@ class TraigentCloudClient(BaseTraigentClient):
             raise ValueError("session_id is required")
 
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Session not initialized")
 
         url = f"{self.api_base_url}/sessions/{session_id}"
         params = {"cascade": "true" if cascade else "false"}
@@ -967,7 +970,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 billing_tier=billing_tier,
             )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
@@ -1017,7 +1021,8 @@ class TraigentCloudClient(BaseTraigentClient):
             session_id=session_id, previous_results=previous_results
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/next-trial"
             request_data = self._serialize_next_trial_request(request)
@@ -1093,7 +1098,8 @@ class TraigentCloudClient(BaseTraigentClient):
             metadata=metadata or {},
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/results"
             request_data = self._serialize_trial_result(result)
@@ -1140,7 +1146,8 @@ class TraigentCloudClient(BaseTraigentClient):
             session_id=session_id, include_full_history=include_full_history
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/finalize"
             request_data = self._serialize_finalization_request(request)
@@ -1337,11 +1344,12 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
-        assert request.agent_spec is not None, "agent_spec is required"
-        assert request.dataset is not None, "dataset is required"
-        assert (
-            request.configuration_space is not None
-        ), "configuration_space is required"
+        if request.agent_spec is None:
+            raise ValueError("agent_spec is required")
+        if request.dataset is None:
+            raise ValueError("dataset is required")
+        if request.configuration_space is None:
+            raise ValueError("configuration_space is required")
 
         return await self.optimize_agent(
             agent_spec=request.agent_spec,
@@ -1403,7 +1411,8 @@ class TraigentCloudClient(BaseTraigentClient):
             metadata=optimization_strategy or {},
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/agent/optimize"
             payload = self._serialize_agent_optimization_request(request)
@@ -1473,7 +1482,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 execution_context=execution_context,
             )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/agent/execute"
             payload = self._serialize_agent_execution_request(request)
@@ -1515,7 +1525,8 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudServiceError: If status retrieval fails
         """
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Session not initialized")
 
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/status"
@@ -1559,7 +1570,8 @@ class TraigentCloudClient(BaseTraigentClient):
         """
         await self._ensure_session()
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError("Client session not initialized")
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/cancel"
 
@@ -1593,8 +1605,10 @@ class TraigentCloudClient(BaseTraigentClient):
         self, request: AgentOptimizationRequest
     ) -> dict[str, Any]:
         """Serialize agent optimization request."""
-        assert request.agent_spec is not None, "agent_spec is required"
-        assert request.dataset is not None, "dataset is required"
+        if request.agent_spec is None:
+            raise ValueError("agent_spec is required")
+        if request.dataset is None:
+            raise ValueError("dataset is required")
 
         return {
             "agent_spec": self._serialize_agent_spec(request.agent_spec),
@@ -1612,7 +1626,8 @@ class TraigentCloudClient(BaseTraigentClient):
         self, request: AgentExecutionRequest
     ) -> dict[str, Any]:
         """Serialize agent execution request."""
-        assert request.agent_spec is not None, "agent_spec is required"
+        if request.agent_spec is None:
+            raise ValueError("agent_spec is required")
 
         return {
             "agent_spec": self._serialize_agent_spec(request.agent_spec),

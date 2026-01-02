@@ -316,7 +316,10 @@ class ProductionMCPClient:
                     if not await self.connect():
                         raise NetworkError("Unable to connect to MCP server") from None
 
-                assert self._session is not None, "Connected but session is None"
+                if self._session is None:
+                    raise ConnectionError(
+                        "Connected to MCP server but session is unavailable"
+                    )
                 self._stats["total_requests"] += 1
 
                 # Call tool via MCP
@@ -391,7 +394,10 @@ class ProductionMCPClient:
                 if not await self.connect():
                     raise ConnectionError("Unable to connect to MCP server") from None
 
-            assert self._session is not None, "Connected but session is None"
+            if self._session is None:
+                raise ConnectionError(
+                    "Connected to MCP server but session is unavailable"
+                )
             resources = await self._session.list_resources()
 
             return MCPResponse(
@@ -417,7 +423,10 @@ class ProductionMCPClient:
                 if not await self.connect():
                     raise ConnectionError("Unable to connect to MCP server") from None
 
-            assert self._session is not None, "Connected but session is None"
+            if self._session is None:
+                raise ConnectionError(
+                    "Connected to MCP server but session is unavailable"
+                )
             resource = await self._session.read_resource(uri)
 
             return MCPResponse(

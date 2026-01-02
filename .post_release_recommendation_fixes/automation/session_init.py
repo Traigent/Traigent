@@ -23,6 +23,7 @@ from versioning import (
     resolve_base_path,
     resolve_version,
 )
+from traigent.utils.secure_path import validate_path
 
 
 class SessionInitializer:
@@ -57,12 +58,14 @@ class SessionInitializer:
     def _read_text(self, path: Path) -> str:
         """Read text from a path validated under the base path."""
         self._ensure_within_base(path)
-        return path.read_text()
+        validated_path = validate_path(path, self.base_path, must_exist=True)
+        return validated_path.read_text()
 
     def _write_text(self, path: Path, content: str) -> None:
         """Write text to a path validated under the base path."""
         self._ensure_within_base(path)
-        path.write_text(content)
+        validated_path = validate_path(path, self.base_path, must_exist=False)
+        validated_path.write_text(content)
 
     def init_session(
         self,

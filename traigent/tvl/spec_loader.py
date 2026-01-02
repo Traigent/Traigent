@@ -223,7 +223,13 @@ def _parse_config_space_format(
 
 def _parse_exploration_section(
     resolved: dict,
-) -> tuple[TVLBudget, str | None, ConvergenceCriteria | None, ExplorationBudgets | None, int | None]:
+) -> tuple[
+    TVLBudget,
+    str | None,
+    ConvergenceCriteria | None,
+    ExplorationBudgets | None,
+    int | None,
+]:
     """Parse exploration/optimization section, handling legacy format."""
     has_exploration = "exploration" in resolved
     has_optimization = "optimization" in resolved

@@ -370,7 +370,8 @@ class RandomSampler(BaseSampler, Generic[T]):
                 index = self._rng.randrange(self._population_size)
                 choice = self._population[index]
             else:
-                assert self._index_pool is not None  # For type checking only
+                if self._index_pool is None:
+                    raise RuntimeError("Index pool not initialized for sampling")
                 if not self._index_pool:
                     self._mark_exhausted()
                     return None

@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
 
+from traigent.utils.secure_path import PathTraversalError, validate_path
+
 try:  # pragma: no cover
     from .analysis_utils import load_coverage_map
 except ImportError:  # pragma: no cover
@@ -390,13 +392,30 @@ def main() -> None:
     parser.add_argument("--out", type=Path, required=True, help="Output directory for risk results")
     args = parser.parse_args()
 
-    weights = load_risk_config(args.config)
-    modules = load_metrics(args.metrics)
+    base_dir = Path.cwd()
+    try:
+        metrics_path = validate_path(args.metrics, base_dir, must_exist=True)
+        lint_path = validate_path(args.lint, base_dir, must_exist=True) if args.lint else None
+        coverage_path = (
+            validate_path(args.coverage, base_dir, must_exist=True)
+            if args.coverage
+            else None
+        )
+        clones_path = validate_path(args.clones, base_dir, must_exist=True) if args.clones else None
+        churn_path = validate_path(args.churn, base_dir, must_exist=True) if args.churn else None
+        owners_path = validate_path(args.owners, base_dir, must_exist=True) if args.owners else None
+        config_path = validate_path(args.config, base_dir)
+        output_dir = validate_path(args.out, base_dir)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
-    lint_counts = load_lint_counts(args.lint) if args.lint else {}
-    clone_counts = load_clones(args.clones) if args.clones else {}
-    churn_counts = load_churn(args.churn) if args.churn else {}
-    owners = load_owners(args.owners) if args.owners else {}
+    weights = load_risk_config(config_path)
+    modules = load_metrics(metrics_path)
+
+    lint_counts = load_lint_counts(lint_path) if lint_path else {}
+    clone_counts = load_clones(clones_path) if clones_path else {}
+    churn_counts = load_churn(churn_path) if churn_path else {}
+    owners = load_owners(owners_path) if owners_path else {}
 
     file_to_module = map_files_to_modules(modules)
 
@@ -413,8 +432,8 @@ def main() -> None:
         if module:
             modules[module].churn += value
 
-    if args.coverage and args.coverage.exists():
-        coverage_map = load_coverage_signal(args.coverage)
+    if coverage_path and coverage_path.exists():
+        coverage_map = load_coverage_signal(coverage_path)
     else:
         coverage_map = {}
     coverage_by_module: Dict[str, float] = {}
@@ -430,7 +449,6 @@ def main() -> None:
 
     risk_data = compute_risk(modules, weights)
 
-    output_dir = args.out
     output_dir.mkdir(parents=True, exist_ok=True)
     write_heatmap_csv(output_dir / "risk_heatmap.csv", risk_data)
     write_top20(output_dir / "top20.md", risk_data)

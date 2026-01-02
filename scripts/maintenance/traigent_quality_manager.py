@@ -33,42 +33,48 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from traigent.utils.secure_path import validate_path
 
 class BackupManager:
     """Manages backups for safe rollback capability."""
 
     def __init__(self, base_path: Path):
-        self.base_path = base_path
-        self.backup_dir = base_path / "scripts" / "maintenance" / "backups"
+        self.base_path = validate_path(base_path, Path.cwd(), must_exist=True)
+        self.backup_dir = validate_path(
+            self.base_path / "scripts" / "maintenance" / "backups",
+            self.base_path,
+        )
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def create_backup(self, files: List[Path]) -> str:
         """Create a backup of specified files."""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         backup_id = f"quality_fix_{timestamp}"
-        backup_path = self.backup_dir / backup_id
+        backup_path = validate_path(self.backup_dir / backup_id, self.backup_dir)
         backup_path.mkdir(exist_ok=True)
 
         backup_manifest = {"backup_id": backup_id, "timestamp": timestamp, "files": []}
 
         for file_path in files:
             if file_path.exists():
-                relative_path = file_path.relative_to(self.base_path)
-                backup_file = backup_path / relative_path
+                safe_path = validate_path(file_path, self.base_path, must_exist=True)
+                relative_path = safe_path.relative_to(self.base_path)
+                backup_file = validate_path(backup_path / relative_path, backup_path)
                 backup_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(file_path, backup_file)
+                shutil.copy2(safe_path, backup_file)
                 backup_manifest["files"].append(str(relative_path))
 
         # Save manifest
-        with open(backup_path / "manifest.json", "w") as f:
+        manifest_path = validate_path(backup_path / "manifest.json", backup_path)
+        with open(manifest_path, "w") as f:
             json.dump(backup_manifest, f, indent=2)
 
         return backup_id
 
     def restore_backup(self, backup_id: str) -> bool:
         """Restore files from backup."""
-        backup_path = self.backup_dir / backup_id
-        manifest_file = backup_path / "manifest.json"
+        backup_path = validate_path(self.backup_dir / backup_id, self.backup_dir)
+        manifest_file = validate_path(backup_path / "manifest.json", backup_path)
 
         if not manifest_file.exists():
             return False
@@ -77,8 +83,8 @@ class BackupManager:
             manifest = json.load(f)
 
         for relative_path in manifest["files"]:
-            backup_file = backup_path / relative_path
-            original_file = self.base_path / relative_path
+            backup_file = validate_path(backup_path / relative_path, backup_path)
+            original_file = validate_path(self.base_path / relative_path, self.base_path)
 
             if backup_file.exists():
                 original_file.parent.mkdir(parents=True, exist_ok=True)
@@ -90,7 +96,10 @@ class BackupManager:
         """List available backups."""
         backups = []
         for backup_dir in self.backup_dir.glob("quality_fix_*"):
-            manifest_file = backup_dir / "manifest.json"
+            manifest_file = validate_path(
+                backup_dir / "manifest.json",
+                backup_dir,
+            )
             if manifest_file.exists():
                 with open(manifest_file) as f:
                     manifest = json.load(f)
