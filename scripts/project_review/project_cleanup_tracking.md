@@ -37,7 +37,7 @@ Excluded directories: .git, .venv, .traigent, __pycache__, .mypy_cache, .ruff_ca
 | .gitignore |  |  |  | X |  | Project root file; keep unless superseded. | review |
 | .post_release_recommendation_fixes/CAPTAIN_PROTOCOL.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/START_WORKFLOW.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
-| .post_release_recommendation_fixes/TRACKING.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
+| .post_release_recommendation_fixes/v0.8.0/TRACKING.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/USER_QUESTIONS.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/automation/conflict_detector.py |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/automation/effort_estimator.py |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
@@ -54,8 +54,8 @@ Excluded directories: .git, .venv, .traigent, __pycache__, .mypy_cache, .ruff_ca
 | .post_release_recommendation_fixes/sessions/20251213_2/artifacts/008/SUMMARY.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/sessions/20251213_2/artifacts/009/SUMMARY.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
 | .post_release_recommendation_fixes/sessions/20251213_2/artifacts/README.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
-| .post_release_recommendation_fixes/sessions/TEMPLATE/PROGRESS.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
-| .post_release_recommendation_fixes/sessions/TEMPLATE/artifacts/README.md |  |  |  | X |  | Post-release protocol fixes; keep for review workflow. | review |
+| .post_release_recommendation_fixes/templates/PROGRESS.md |  |  |  | X |  | Post-release protocol templates; keep for review workflow. | review |
+| .post_release_recommendation_fixes/templates/artifacts/README.md |  |  |  | X |  | Post-release protocol templates; keep for review workflow. | review |
 | .pre-commit-config.yaml |  |  |  | X |  | Project root file; keep unless superseded. | review |
 | .release_review/CAPTAIN_PROTOCOL.md |  |  |  | X |  | Release review protocol artifacts; keep for pre-release process. | review |
 | .release_review/PRE_RELEASE_REVIEW_PLAN.md |  |  |  | X |  | Release review protocol artifacts; keep for pre-release process. | review |
