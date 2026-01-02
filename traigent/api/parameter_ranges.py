@@ -163,43 +163,43 @@ class Range(ParameterRange):
         """
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="==", value=value)
+        return Condition(_tvar=self, operator="==", value=value)
 
     def not_equals(self, value: float) -> Condition:
         """Create condition: this parameter does not equal value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="!=", value=value)
+        return Condition(_tvar=self, operator="!=", value=value)
 
     def gt(self, value: float) -> Condition:
         """Create condition: this parameter > value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">", value=value)
+        return Condition(_tvar=self, operator=">", value=value)
 
     def gte(self, value: float) -> Condition:
         """Create condition: this parameter >= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">=", value=value)
+        return Condition(_tvar=self, operator=">=", value=value)
 
     def lt(self, value: float) -> Condition:
         """Create condition: this parameter < value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<", value=value)
+        return Condition(_tvar=self, operator="<", value=value)
 
     def lte(self, value: float) -> Condition:
         """Create condition: this parameter <= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<=", value=value)
+        return Condition(_tvar=self, operator="<=", value=value)
 
     def in_range(self, low: float, high: float) -> Condition:
         """Create condition: low <= this parameter <= high."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="in_range", value=(low, high))
+        return Condition(_tvar=self, operator="in_range", value=(low, high))
 
 
 @dataclass(frozen=True, slots=True)
@@ -294,43 +294,43 @@ class IntRange(ParameterRange):
         """Create condition: this parameter equals value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="==", value=value)
+        return Condition(_tvar=self, operator="==", value=value)
 
     def not_equals(self, value: int) -> Condition:
         """Create condition: this parameter does not equal value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="!=", value=value)
+        return Condition(_tvar=self, operator="!=", value=value)
 
     def gt(self, value: int) -> Condition:
         """Create condition: this parameter > value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">", value=value)
+        return Condition(_tvar=self, operator=">", value=value)
 
     def gte(self, value: int) -> Condition:
         """Create condition: this parameter >= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">=", value=value)
+        return Condition(_tvar=self, operator=">=", value=value)
 
     def lt(self, value: int) -> Condition:
         """Create condition: this parameter < value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<", value=value)
+        return Condition(_tvar=self, operator="<", value=value)
 
     def lte(self, value: int) -> Condition:
         """Create condition: this parameter <= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<=", value=value)
+        return Condition(_tvar=self, operator="<=", value=value)
 
     def in_range(self, low: int, high: int) -> Condition:
         """Create condition: low <= this parameter <= high."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="in_range", value=(low, high))
+        return Condition(_tvar=self, operator="in_range", value=(low, high))
 
 
 @dataclass(frozen=True, slots=True)
@@ -401,43 +401,43 @@ class LogRange(ParameterRange):
         """Create condition: this parameter equals value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="==", value=value)
+        return Condition(_tvar=self, operator="==", value=value)
 
     def not_equals(self, value: float) -> Condition:
         """Create condition: this parameter does not equal value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="!=", value=value)
+        return Condition(_tvar=self, operator="!=", value=value)
 
     def gt(self, value: float) -> Condition:
         """Create condition: this parameter > value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">", value=value)
+        return Condition(_tvar=self, operator=">", value=value)
 
     def gte(self, value: float) -> Condition:
         """Create condition: this parameter >= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator=">=", value=value)
+        return Condition(_tvar=self, operator=">=", value=value)
 
     def lt(self, value: float) -> Condition:
         """Create condition: this parameter < value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<", value=value)
+        return Condition(_tvar=self, operator="<", value=value)
 
     def lte(self, value: float) -> Condition:
         """Create condition: this parameter <= value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="<=", value=value)
+        return Condition(_tvar=self, operator="<=", value=value)
 
     def in_range(self, low: float, high: float) -> Condition:
         """Create condition: low <= this parameter <= high."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="in_range", value=(low, high))
+        return Condition(_tvar=self, operator="in_range", value=(low, high))
 
 
 @dataclass(frozen=True, slots=True)
@@ -519,13 +519,13 @@ class Choices(ParameterRange, Generic[T]):
         """
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="==", value=value)
+        return Condition(_tvar=self, operator="==", value=value)
 
     def not_equals(self, value: T) -> Condition:
         """Create condition: this parameter does not equal value."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="!=", value=value)
+        return Condition(_tvar=self, operator="!=", value=value)
 
     def is_in(self, values: Sequence[T]) -> Condition:
         """Create condition: this parameter is in the given values.
@@ -536,13 +536,13 @@ class Choices(ParameterRange, Generic[T]):
         """
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="in", value=tuple(values))
+        return Condition(_tvar=self, operator="in", value=tuple(values))
 
     def not_in(self, values: Sequence[T]) -> Condition:
         """Create condition: this parameter is not in the given values."""
         from traigent.api.constraints import Condition
 
-        return Condition(tvar=self, operator="not_in", value=tuple(values))
+        return Condition(_tvar=self, operator="not_in", value=tuple(values))
 
 
 # =============================================================================

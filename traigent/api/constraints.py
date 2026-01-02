@@ -207,7 +207,7 @@ class Condition(BoolExpr):
     "temperature <= 0.7" or "model == 'gpt-4'".
 
     Attributes:
-        tvar: The ParameterRange this condition applies to
+        _tvar: The ParameterRange this condition applies to
         operator: Comparison operator ("==", ">=", "<=", etc.)
         value: The value to compare against
 
@@ -216,9 +216,14 @@ class Condition(BoolExpr):
         >>> cond = temp.lte(0.7)  # Creates Condition(temp, "<=", 0.7)
     """
 
-    tvar: ParameterRange
+    _tvar: ParameterRange
     operator: OperatorType
     value: Any
+
+    @property
+    def tvar(self) -> ParameterRange:
+        """Return the parameter range this condition applies to."""
+        return self._tvar
 
     def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert to TVL expression string.

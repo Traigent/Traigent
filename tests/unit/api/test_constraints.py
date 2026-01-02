@@ -36,7 +36,7 @@ class TestCondition:
     def test_condition_equality(self) -> None:
         """Test equality operator condition."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator="==", value=0.5)
+        cond = Condition(_tvar=temp, operator="==", value=0.5)
 
         assert cond.evaluate(0.5) is True
         assert cond.evaluate(0.7) is False
@@ -44,7 +44,7 @@ class TestCondition:
     def test_condition_not_equal(self) -> None:
         """Test not-equal operator condition."""
         model = Choices(["gpt-4", "gpt-3.5"], name="model")
-        cond = Condition(tvar=model, operator="!=", value="gpt-4")
+        cond = Condition(_tvar=model, operator="!=", value="gpt-4")
 
         assert cond.evaluate("gpt-3.5") is True
         assert cond.evaluate("gpt-4") is False
@@ -52,7 +52,7 @@ class TestCondition:
     def test_condition_greater_than(self) -> None:
         """Test greater-than operator condition."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator=">", value=0.5)
+        cond = Condition(_tvar=temp, operator=">", value=0.5)
 
         assert cond.evaluate(0.7) is True
         assert cond.evaluate(0.5) is False
@@ -61,7 +61,7 @@ class TestCondition:
     def test_condition_greater_equal(self) -> None:
         """Test greater-or-equal operator condition."""
         tokens = IntRange(100, 4096, name="max_tokens")
-        cond = Condition(tvar=tokens, operator=">=", value=1000)
+        cond = Condition(_tvar=tokens, operator=">=", value=1000)
 
         assert cond.evaluate(1000) is True
         assert cond.evaluate(2000) is True
@@ -70,7 +70,7 @@ class TestCondition:
     def test_condition_less_than(self) -> None:
         """Test less-than operator condition."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator="<", value=0.7)
+        cond = Condition(_tvar=temp, operator="<", value=0.7)
 
         assert cond.evaluate(0.5) is True
         assert cond.evaluate(0.7) is False
@@ -79,7 +79,7 @@ class TestCondition:
     def test_condition_less_equal(self) -> None:
         """Test less-or-equal operator condition."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator="<=", value=0.7)
+        cond = Condition(_tvar=temp, operator="<=", value=0.7)
 
         assert cond.evaluate(0.7) is True
         assert cond.evaluate(0.5) is True
@@ -88,7 +88,7 @@ class TestCondition:
     def test_condition_in(self) -> None:
         """Test 'in' operator condition."""
         model = Choices(["gpt-4", "gpt-3.5", "claude"], name="model")
-        cond = Condition(tvar=model, operator="in", value=("gpt-4", "claude"))
+        cond = Condition(_tvar=model, operator="in", value=("gpt-4", "claude"))
 
         assert cond.evaluate("gpt-4") is True
         assert cond.evaluate("claude") is True
@@ -97,7 +97,7 @@ class TestCondition:
     def test_condition_not_in(self) -> None:
         """Test 'not_in' operator condition."""
         model = Choices(["gpt-4", "gpt-3.5", "claude"], name="model")
-        cond = Condition(tvar=model, operator="not_in", value=("gpt-4",))
+        cond = Condition(_tvar=model, operator="not_in", value=("gpt-4",))
 
         assert cond.evaluate("gpt-3.5") is True
         assert cond.evaluate("claude") is True
@@ -106,7 +106,7 @@ class TestCondition:
     def test_condition_in_range(self) -> None:
         """Test 'in_range' operator condition."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator="in_range", value=(0.3, 0.7))
+        cond = Condition(_tvar=temp, operator="in_range", value=(0.3, 0.7))
 
         assert cond.evaluate(0.5) is True
         assert cond.evaluate(0.3) is True
@@ -118,13 +118,13 @@ class TestCondition:
         """Test expression generation."""
         temp = Range(0.0, 2.0, name="temperature")
 
-        cond_eq = Condition(tvar=temp, operator="==", value=0.5)
+        cond_eq = Condition(_tvar=temp, operator="==", value=0.5)
         assert cond_eq.to_expression("temperature") == "temperature == 0.5"
 
-        cond_lte = Condition(tvar=temp, operator="<=", value=0.7)
+        cond_lte = Condition(_tvar=temp, operator="<=", value=0.7)
         assert cond_lte.to_expression("temp") == "temp <= 0.7"
 
-        cond_range = Condition(tvar=temp, operator="in_range", value=(0.3, 0.7))
+        cond_range = Condition(_tvar=temp, operator="in_range", value=(0.3, 0.7))
         assert cond_range.to_expression("t") == "(t >= 0.3) and (t <= 0.7)"
 
 
@@ -547,7 +547,7 @@ class TestEdgeCases:
     def test_frozen_condition(self) -> None:
         """Test that Condition is immutable."""
         temp = Range(0.0, 2.0, name="temperature")
-        cond = Condition(tvar=temp, operator="<=", value=0.7)
+        cond = Condition(_tvar=temp, operator="<=", value=0.7)
 
         with pytest.raises(AttributeError):
             cond.value = 0.8  # type: ignore[misc]
