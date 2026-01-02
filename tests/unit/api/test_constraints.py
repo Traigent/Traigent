@@ -18,10 +18,14 @@ from traigent.api.constraints import (
     AndCondition,
     Condition,
     Constraint,
+    ConstraintConflict,
     OrCondition,
+    check_constraints_conflict,
     constraints_to_callables,
+    explain_constraint_violation,
     implies,
     require,
+    when,
 )
 from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
 from traigent.api.validation_protocol import (
@@ -995,3 +999,417 @@ class TestDecoratorIntegration:
             return f"Response: {text}"
 
         assert isinstance(test_func, OptimizedFunction)
+
+
+class TestConditionTvarProperty:
+    """Tests for Condition._tvar field and tvar property."""
+
+    def test_tvar_property_returns_parameter_range(self) -> None:
+        """Test that tvar property returns the underlying ParameterRange."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = temp.lte(0.7)
+
+        assert cond.tvar is temp
+        assert cond.tvar.name == "temperature"
+
+    def test_tvar_property_is_readonly(self) -> None:
+        """Test that tvar property cannot be modified (frozen dataclass)."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = temp.lte(0.7)
+
+        with pytest.raises(AttributeError):
+            cond._tvar = Range(0.0, 1.0)  # type: ignore[misc]
+
+
+class TestBoolExprImpliesMethod:
+    """Tests for BoolExpr.implies() fluent method."""
+
+    def test_implies_method_creates_constraint(self) -> None:
+        """Test that implies() method creates a Constraint."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraint = model.equals("gpt-4").implies(temp.lte(0.7))
+
+        assert isinstance(constraint, Constraint)
+        assert constraint.is_implication is True
+
+    def test_implies_method_works_with_and_condition(self) -> None:
+        """Test implies() on AndCondition."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+        tokens = IntRange(100, 4096, name="max_tokens")
+
+        and_cond = model.equals("gpt-4") & temp.lte(0.7)
+        constraint = and_cond.implies(tokens.gte(1000))
+
+        assert isinstance(constraint, Constraint)
+        assert constraint.when is and_cond
+
+
+class TestCompoundConditionToExpression:
+    """Tests for compound condition to_expression with string var_names."""
+
+    def test_and_condition_to_expression_with_string(self) -> None:
+        """Test AndCondition.to_expression with string parameter."""
+        temp = Range(0.0, 2.0, name="temperature")
+        and_cond = temp.lte(0.7) & temp.gte(0.1)
+
+        # Note: with string var_names, it uses the same name for all conditions
+        expr = and_cond.to_expression("params.temperature")
+        assert "and" in expr
+        assert "params.temperature" in expr
+
+    def test_or_condition_to_expression_with_string(self) -> None:
+        """Test OrCondition.to_expression with string parameter."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        or_cond = model.equals("gpt-4") | model.equals("gpt-3.5")
+
+        expr = or_cond.to_expression("params.model")
+        assert "or" in expr
+        assert "params.model" in expr
+
+    def test_not_condition_to_expression_with_string(self) -> None:
+        """Test NotCondition.to_expression with string parameter."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        not_cond = ~model.equals("gpt-4")
+
+        expr = not_cond.to_expression("params.model")
+        assert "not" in expr
+        assert "params.model" in expr
+
+
+class TestNotConditionEvaluation:
+    """Tests for NotCondition evaluation."""
+
+    def test_not_condition_evaluate_true(self) -> None:
+        """Test NotCondition returns True when inner condition is False."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        not_cond = ~model.equals("gpt-4")
+        var_names = {id(model): "model"}
+
+        # Inner condition is False (model is not gpt-4), so NOT returns True
+        result = not_cond.evaluate_config({"model": "gpt-3.5"}, var_names)
+        assert result is True
+
+    def test_not_condition_evaluate_false(self) -> None:
+        """Test NotCondition returns False when inner condition is True."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        not_cond = ~model.equals("gpt-4")
+        var_names = {id(model): "model"}
+
+        # Inner condition is True (model is gpt-4), so NOT returns False
+        result = not_cond.evaluate_config({"model": "gpt-4"}, var_names)
+        assert result is False
+
+    def test_not_condition_explain(self) -> None:
+        """Test NotCondition.explain() returns readable text."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        not_cond = ~model.equals("gpt-4")
+
+        explanation = not_cond.explain()
+        assert "NOT" in explanation
+        assert "model" in explanation
+
+
+class TestWhenBuilderFluent:
+    """Tests for when().then() fluent builder syntax."""
+
+    def test_when_then_creates_implication(self) -> None:
+        """Test when().then() creates an implication constraint."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraint = when(model.equals("gpt-4")).then(temp.lte(0.7))
+
+        assert isinstance(constraint, Constraint)
+        assert constraint.is_implication is True
+
+    def test_when_then_with_description(self) -> None:
+        """Test when().then() with description and id."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraint = when(model.equals("gpt-4")).then(
+            temp.lte(0.7),
+            description="GPT-4 needs low temp",
+            id="c1",
+        )
+
+        assert constraint.description == "GPT-4 needs low temp"
+        assert constraint.id == "c1"
+
+
+class TestConstraintExplain:
+    """Tests for Constraint.explain() method."""
+
+    def test_implication_explain(self) -> None:
+        """Test explain() for implication constraint."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        temp = Range(0.0, 2.0, name="temperature")
+
+        constraint = implies(model.equals("gpt-4"), temp.lte(0.7))
+        explanation = constraint.explain()
+
+        assert "IF" in explanation
+        assert "THEN" in explanation
+        assert "model" in explanation
+        assert "temperature" in explanation
+
+    def test_standalone_explain(self) -> None:
+        """Test explain() for standalone constraint."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.gte(0.1))
+
+        explanation = constraint.explain()
+        assert "REQUIRE" in explanation
+        assert "temperature" in explanation
+
+
+class TestCheckConstraintsConflict:
+    """Tests for check_constraints_conflict() function."""
+
+    def test_no_conflict_with_compatible_constraints(self) -> None:
+        """Test that compatible constraints return no conflict."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.lte(1.5))
+        c2 = require(temp.gte(0.1))
+
+        # Sample configs that satisfy both
+        result = check_constraints_conflict(
+            [c1, c2],
+            sample_configs=[{"temperature": 0.5}, {"temperature": 1.0}],
+        )
+        assert result is None
+
+    def test_no_conflict_with_empty_constraints(self) -> None:
+        """Test that empty constraints return no conflict."""
+        result = check_constraints_conflict([])
+        assert result is None
+
+    def test_no_conflict_with_no_samples(self) -> None:
+        """Test that missing samples return no conflict."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.lte(0.5))
+
+        result = check_constraints_conflict([c1], sample_configs=None)
+        assert result is None
+
+
+class TestExplainConstraintViolation:
+    """Tests for explain_constraint_violation() function."""
+
+    def test_violation_returns_explanation(self) -> None:
+        """Test that violated constraint returns explanation."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.lte(0.5))
+
+        explanation = explain_constraint_violation(constraint, {"temperature": 0.9})
+
+        assert explanation is not None
+        assert "violated" in explanation.lower()
+        assert "temperature" in explanation
+
+    def test_satisfied_returns_none(self) -> None:
+        """Test that satisfied constraint returns None."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.lte(0.5))
+
+        result = explain_constraint_violation(constraint, {"temperature": 0.3})
+        assert result is None
+
+    def test_violation_with_var_names(self) -> None:
+        """Test violation explanation with explicit var_names."""
+        temp = Range(0.0, 2.0)  # No name
+        constraint = require(temp.lte(0.5))
+        var_names = {id(temp): "temp"}
+
+        explanation = explain_constraint_violation(constraint, {"temp": 0.9}, var_names)
+
+        assert explanation is not None
+        assert "temp" in explanation
+
+
+class TestBoolExprTvarProperty:
+    """Tests for BoolExpr.tvar property on base and compound expressions."""
+
+    def test_base_boolexpr_tvar_is_none(self) -> None:
+        """Test that compound expressions return None for tvar."""
+        temp = Range(0.0, 2.0, name="temperature")
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+
+        and_cond = temp.lte(0.7) & model.equals("gpt-4")
+        assert and_cond.tvar is None
+
+        or_cond = temp.lte(0.7) | model.equals("gpt-4")
+        assert or_cond.tvar is None
+
+        not_cond = ~temp.lte(0.7)
+        assert not_cond.tvar is None
+
+
+class TestConditionEvaluateOperators:
+    """Tests for Condition.evaluate() with all operators."""
+
+    def test_evaluate_greater_than(self) -> None:
+        """Test > operator evaluation."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator=">", value=0.5)
+
+        assert cond.evaluate(0.6) is True
+        assert cond.evaluate(0.5) is False
+        assert cond.evaluate(0.4) is False
+
+    def test_evaluate_less_than(self) -> None:
+        """Test < operator evaluation."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="<", value=0.5)
+
+        assert cond.evaluate(0.4) is True
+        assert cond.evaluate(0.5) is False
+        assert cond.evaluate(0.6) is False
+
+    def test_evaluate_in_range(self) -> None:
+        """Test in_range operator evaluation."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="in_range", value=(0.3, 0.7))
+
+        assert cond.evaluate(0.5) is True
+        assert cond.evaluate(0.3) is True
+        assert cond.evaluate(0.7) is True
+        assert cond.evaluate(0.2) is False
+        assert cond.evaluate(0.8) is False
+
+    def test_evaluate_unknown_operator_raises(self) -> None:
+        """Test that unknown operator raises ValueError."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="??", value=0.5)  # type: ignore[arg-type]
+
+        with pytest.raises(ValueError, match="Unknown operator"):
+            cond.evaluate(0.5)
+
+
+class TestConditionExplainOperators:
+    """Tests for Condition.explain() with various operators."""
+
+    def test_explain_in_operator(self) -> None:
+        """Test explain for 'in' operator."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        cond = model.is_in(["gpt-4"])
+
+        explanation = cond.explain()
+        assert "is one of" in explanation
+
+    def test_explain_not_in_operator(self) -> None:
+        """Test explain for 'not_in' operator."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        cond = model.not_in(["gpt-4"])
+
+        explanation = cond.explain()
+        assert "is not one of" in explanation
+
+    def test_explain_greater_than(self) -> None:
+        """Test explain for '>' operator."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator=">", value=0.5)
+
+        explanation = cond.explain()
+        assert "greater than" in explanation
+
+    def test_explain_less_than(self) -> None:
+        """Test explain for '<' operator."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="<", value=0.5)
+
+        explanation = cond.explain()
+        assert "less than" in explanation
+
+    def test_explain_in_range(self) -> None:
+        """Test explain for 'in_range' operator."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="in_range", value=(0.3, 0.7))
+
+        explanation = cond.explain()
+        assert "between" in explanation
+
+
+class TestConditionToExpressionFormats:
+    """Tests for Condition.to_expression() with different operators."""
+
+    def test_to_expression_in_range(self) -> None:
+        """Test to_expression for 'in_range' operator."""
+        temp = Range(0.0, 2.0, name="temperature")
+        cond = Condition(_tvar=temp, operator="in_range", value=(0.3, 0.7))
+        var_names = {id(temp): "params.temperature"}
+
+        expr = cond.to_expression(var_names)
+        assert ">=" in expr
+        assert "<=" in expr
+        assert "0.3" in expr
+        assert "0.7" in expr
+
+    def test_to_expression_in_operator(self) -> None:
+        """Test to_expression for 'in' operator."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        cond = model.is_in(["gpt-4"])
+        var_names = {id(model): "params.model"}
+
+        expr = cond.to_expression(var_names)
+        assert " in " in expr
+
+    def test_to_expression_not_in_operator(self) -> None:
+        """Test to_expression for 'not_in' operator."""
+        model = Choices(["gpt-4", "gpt-3.5"], name="model")
+        cond = model.not_in(["gpt-4"])
+        var_names = {id(model): "params.model"}
+
+        expr = cond.to_expression(var_names)
+        assert "not in" in expr
+
+
+class TestConstraintToCallableMetadata:
+    """Tests for Constraint.to_callable() metadata on returned function."""
+
+    def test_callable_has_docstring(self) -> None:
+        """Test that callable has __doc__ from constraint description."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.gte(0.1), description="Min temp required")
+
+        fn = constraint.to_callable()
+        assert fn.__doc__ == "Min temp required"
+
+    def test_callable_has_name_with_id(self) -> None:
+        """Test that callable has __name__ from constraint id."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.gte(0.1), id="min_temp")
+
+        fn = constraint.to_callable()
+        assert fn.__name__ == "constraint_min_temp"
+
+    def test_callable_unnamed_constraint(self) -> None:
+        """Test callable name for unnamed constraint."""
+        temp = Range(0.0, 2.0, name="temperature")
+        constraint = require(temp.gte(0.1))
+
+        fn = constraint.to_callable()
+        assert fn.__name__ == "constraint_unnamed"
+
+
+class TestConstraintConflictStr:
+    """Tests for ConstraintConflict.__str__() representation."""
+
+    def test_conflict_str_format(self) -> None:
+        """Test ConstraintConflict string representation."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.lte(0.5))
+        c2 = require(temp.gte(0.8))
+
+        conflict = ConstraintConflict(
+            constraints=[c1, c2],
+            config={"temperature": 0.6},
+            messages=["temp too high", "temp too low"],
+        )
+
+        str_repr = str(conflict)
+        assert "conflict" in str_repr.lower()
+        assert "temperature" in str_repr
