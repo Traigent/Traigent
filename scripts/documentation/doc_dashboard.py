@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -504,8 +504,11 @@ class DocumentationDashboard:
 
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, "w") as f:
-            json.dump(data, f, indent=2, default=str)
+        safe_write_text(
+            output_path,
+            json.dumps(data, indent=2, default=str),
+            output_path.parent,
+        )
 
         print(f"✅ Dashboard exported to {output_path}")
 

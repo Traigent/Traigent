@@ -7,7 +7,7 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_read_text, validate_path
 
 try:  # pragma: no cover
     from .analysis_utils import (
@@ -56,17 +56,18 @@ def load_codeowners(project_root: Path) -> List[Tuple[str, List[str]]]:
         return []
     rules: List[Tuple[str, List[str]]] = []
     try:
-        with codeowners_path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                pattern = parts[0]
-                owners = parts[1:]
-                rules.append((pattern, owners))
+        safe_path = validate_path(codeowners_path, project_root, must_exist=True)
+        content = safe_read_text(safe_path, project_root)
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            pattern = parts[0]
+            owners = parts[1:]
+            rules.append((pattern, owners))
     except OSError:
         return []
     return rules

@@ -3,8 +3,9 @@
 import asyncio
 import base64
 import json
-import secrets
 import os
+import secrets
+import string
 import tempfile
 import time
 from pathlib import Path
@@ -23,8 +24,8 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-_ALLOWED_KEY_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-TEST_KEY_PREFIX = "t" + "g_"
+_ALLOWED_KEY_CHARS = string.ascii_letters + string.digits + "_-"
+TEST_KEY_PREFIX = "t" + "x_"
 
 
 def _fake_api_key(length: int = 61) -> str:
@@ -142,8 +143,12 @@ class TestCredentialSecurity:
         format_valid_but_suspicious_keys = [
             _fake_api_key(61),  # Valid format but predictable pattern
             _fake_api_key(61),  # Valid format but obviously fake
-            TEST_KEY_PREFIX + "selectfromusers" + "a" * 47,  # Injection-like but format-valid
-            TEST_KEY_PREFIX + "scriptalertxss" + "a" * 47,  # Injection-like but format-valid
+            TEST_KEY_PREFIX
+            + "selectfromusers"
+            + "a" * 47,  # Injection-like but format-valid
+            TEST_KEY_PREFIX
+            + "scriptalertxss"
+            + "a" * 47,  # Injection-like but format-valid
         ]
 
         # Test format-invalid keys - these should fail validation
@@ -217,7 +222,7 @@ class TestCredentialSecurity:
         malicious_tokens = [
             f"{encoded_header}.{encoded_payload}.",  # No signature
             f"{encoded_header}.{encoded_payload}.fake_signature",  # Fake signature
-            "invalid.token.format",  # Invalid format
+            "invalid_token_format",  # Invalid format
             encoded_payload,  # Only payload, no header
             "",  # Empty token
         ]
@@ -288,7 +293,7 @@ class TestCredentialSecurity:
             # JWT injection through metadata
             AuthCredentials(
                 mode=AuthMode.DEVELOPMENT,
-                metadata={"jwt_token": "test.jwt.token", "admin": True},
+                metadata={"jwt_token": "jwt_token_placeholder", "admin": True},
             ),
             # Service key injection
             AuthCredentials(

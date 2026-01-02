@@ -517,6 +517,7 @@ def _build_settings_recorder(
     """Build a recorder function for merging optimize options."""
 
     def record_option(key: str, value: Any, source: str) -> None:
+        """Record a resolved option and track its configuration source."""
         if value is None:
             return
         if key in _REMOVED_PARAMETERS:

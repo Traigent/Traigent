@@ -40,7 +40,7 @@ class TestSecureCredentialStorage:
         storage = SecureCredentialStorage()
 
         credentials = {
-            "api_key": "placeholder_key",
+            "api_token": "placeholder_token",
             "username": "testuser",
             "password": "placeholder_password",
         }
@@ -76,10 +76,13 @@ class TestSecureCredentialStorage:
         storage = SecureCredentialStorage()
 
         complex_credentials = {
-            "api_keys": {"openai": "placeholder_key", "anthropic": "placeholder_key"},
+            "service_tokens": {
+                "openai": "placeholder_token",
+                "anthropic": "placeholder_token",
+            },
             "databases": [
-                {"host": "db1.example.com", "password": "pass1"},
-                {"host": "db2.example.com", "password": "pass2"},
+                {"host": "db1.example", "password": "pass1"},
+                {"host": "db2.example", "password": "pass2"},
             ],
             "metadata": {
                 "created": "2024-01-01",
@@ -490,9 +493,12 @@ class TestIntegration:
 
             # Original credentials
             original_credentials = {
-                "api_keys": {"openai": "placeholder_key", "anthropic": "placeholder_key"},
+                "api_keys": {
+                    "openai": "placeholder_key",
+                    "anthropic": "placeholder_key",
+                },
                 "database": {
-                    "host": "db.example.com",
+                    "host": "db.example",
                     "username": "dbuser",
                     "password": "placeholder_password",
                 },

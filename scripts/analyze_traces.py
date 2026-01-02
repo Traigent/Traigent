@@ -27,7 +27,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 
 @dataclass
@@ -135,8 +140,7 @@ def load_trace_file(path: Path) -> list[dict[str, Any]]:
     Returns:
         List of span dictionaries
     """
-    with open(path) as f:
-        data = json.load(f)
+    data = json.loads(safe_read_text(path, path.parent))
 
     # Handle both single trace and list of spans
     if isinstance(data, list):
@@ -377,8 +381,9 @@ def main() -> int:
     # Output report
     if args.output:
         output_path = validate_path(args.output, base_dir)
-        with open(output_path, "w") as f:
-            json.dump(report.to_dict(), f, indent=2)
+        safe_write_text(
+            output_path, json.dumps(report.to_dict(), indent=2), base_dir
+        )
         print(f"Report written to: {output_path}")
     elif args.json:
         print(json.dumps(report.to_dict(), indent=2))

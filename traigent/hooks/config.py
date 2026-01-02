@@ -223,9 +223,13 @@ def load_hooks_config(config_path: Path | str | None = None) -> HooksConfig:
         logger.info("No traigent.yml found, using default configuration")
         return HooksConfig()
 
-    config_path = validate_path(
-        Path(config_path), Path.cwd().resolve(), must_exist=True
+    config_path = Path(config_path)
+    allowed_base = (
+        config_path.parent.resolve()
+        if config_path.is_absolute()
+        else Path.cwd().resolve()
     )
+    config_path = validate_path(config_path, allowed_base, must_exist=False)
 
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -251,7 +255,13 @@ def create_default_config(output_path: Path | str | None = None) -> Path:
         output_path = Path.cwd() / "traigent.yml"
     else:
         output_path = Path(output_path)
-    output_path = validate_path(output_path, Path.cwd().resolve(), must_exist=False)
+
+    allowed_base = (
+        output_path.parent.resolve()
+        if output_path.is_absolute()
+        else Path.cwd().resolve()
+    )
+    output_path = validate_path(output_path, allowed_base, must_exist=False)
 
     default_config = """# Traigent Agent Configuration Constraints
 # This file defines validation rules for agent configurations

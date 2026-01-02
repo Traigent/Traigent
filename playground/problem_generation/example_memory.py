@@ -13,7 +13,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 @dataclass
 class ExampleSummary:
@@ -359,14 +359,12 @@ class ExampleMemory:
         }
 
         output_path = validate_path(filepath, Path.cwd())
-        with open(output_path, "w") as f:
-            json.dump(state, f, indent=2)
+        safe_write_text(output_path, json.dumps(state, indent=2), Path.cwd())
 
     def load_from_file(self, filepath: str):
         """Load memory state from file."""
         input_path = validate_path(filepath, Path.cwd(), must_exist=True)
-        with open(input_path) as f:
-            state = json.load(f)
+        state = json.loads(safe_read_text(input_path, Path.cwd()))
 
         self.total_examples = state["total_examples"]
         self.topic_hashes = set(state["topic_hashes"])

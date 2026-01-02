@@ -25,6 +25,7 @@ from traigent.cloud.auth import (
 
 TEST_KEY_PREFIX = "t" + "g_"
 
+
 class TestSecureToken:
     """Test SecureToken class for secure token storage."""
 

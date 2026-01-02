@@ -216,7 +216,7 @@ class TestSecureJWTValidator:
     def test_validate_token_no_jwt_library(self):
         """Test token validation when PyJWT is not available."""
         validator = SecureJWTValidator(validation_mode=ValidationMode.DEVELOPMENT)
-        result = validator.validate_token("fake.jwt.token")
+        result = validator.validate_token("fake_jwt_token")
 
         assert result.valid is False
         assert "JWT validation unavailable" in result.error
@@ -417,7 +417,7 @@ class TestDevelopmentValidation:
             jwks_url="https://example.com/.well-known/jwks.json",
             validation_mode=ValidationMode.DEVELOPMENT,
         )
-        self.test_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.test.signature"
+        self.test_token = "jwt_token_placeholder"
 
     @patch("traigent.security.jwt_validator.JWT_AVAILABLE", True)
     @patch("traigent.security.jwt_validator.jwt")
@@ -641,7 +641,7 @@ class TestJWTValidatorIntegration:
             with patch.object(validator, "_get_jwks_client") as mock_get_client:
                 mock_get_client.return_value = None  # Simulate no JWKS client
 
-                result = validator.validate_token("test.jwt.token")
+                result = validator.validate_token("test_jwt_token")
 
                 assert result.valid is False
                 assert "Cannot verify signature" in result.error
@@ -659,7 +659,7 @@ class TestJWTValidatorIntegration:
                 }
                 mock_jwt.decode.return_value = payload
 
-                result = validator.validate_token("test.jwt.token")
+                result = validator.validate_token("test_jwt_token")
 
                 assert result.valid is True
                 assert result.payload == payload

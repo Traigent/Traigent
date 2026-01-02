@@ -22,7 +22,7 @@ from typing import Any, cast
 import numpy as np
 
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -409,7 +409,7 @@ class ReproducibilityMetadata:
 
         try:
             resolved_path = self._resolve_path(dataset_path, must_exist=True)
-            with open(resolved_path, "rb") as f:
+            with safe_open(resolved_path, resolved_path.parent, mode="rb") as f:
                 # Read in chunks to handle large files
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
@@ -483,7 +483,7 @@ class ReproducibilityMetadata:
 
         serializable_metadata = make_serializable(self.metadata)
 
-        with open(metadata_path, "w") as f:
+        with safe_open(metadata_path, self.run_path, mode="w") as f:
             json.dump(serializable_metadata, f, indent=2)
 
         logger.info(f"Saved reproducibility metadata to {metadata_path}")
@@ -502,7 +502,7 @@ class ReproducibilityMetadata:
         resolved_path = cls._resolve_path(
             metadata_path, base_dir=metadata_path.parent, must_exist=True
         )
-        with open(resolved_path) as f:
+        with safe_open(resolved_path, resolved_path.parent, mode="r") as f:
             return cast(dict[str, Any], json.load(f))
 
     def validate_environment(self, other_metadata: dict[str, Any]) -> dict[str, Any]:

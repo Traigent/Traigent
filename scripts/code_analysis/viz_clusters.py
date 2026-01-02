@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Sequence, Tuple
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
 
 try:  # pragma: no cover - allow direct execution
     from .dependency_graph import Canvas, layout_positions
@@ -294,7 +294,7 @@ def summarize_cluster(
         lines.append("## Top External Dependents")
         for src, dst, weight in external_dependents[:15]:
             lines.append(f"- {src} → {dst} — weight {weight:.2f}")
-    output_path.write_text("\n".join(lines), encoding="utf-8")
+    safe_write_text(output_path, "\n".join(lines), output_path.parent)
 
 
 def build_clusters(
@@ -375,9 +375,11 @@ def build_clusters(
                 "density": density,
             }
 
-    (output_dir / "clusters.json").write_text(
+    clusters_path = output_dir / "clusters.json"
+    safe_write_text(
+        clusters_path,
         json.dumps(cluster_metadata, indent=2, sort_keys=True),
-        encoding="utf-8",
+        output_dir,
     )
 
     index_lines = [
@@ -418,7 +420,8 @@ def build_clusters(
             f"  <p><a href=\"clusters/cluster_{cluster_id:02d}.md\">Summary (Markdown)</a></p>"
         )
     index_lines.extend(["</body>", "</html>"])
-    (output_dir / "index.html").write_text("\n".join(index_lines), encoding="utf-8")
+    index_path = output_dir / "index.html"
+    safe_write_text(index_path, "\n".join(index_lines), output_dir)
 
 
 def parse_args() -> argparse.Namespace:

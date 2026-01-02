@@ -17,9 +17,9 @@ import numpy as np
 import pandas as pd
 
 from traigent.utils.file_versioning import FileVersionManager
-from traigent.utils.secure_path import validate_path
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
+from traigent.utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -116,7 +116,7 @@ class OptimizationAnalyzer:
         if not file_path:
             return None
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with open(validated_path) as f:
+        with safe_open(validated_path, run_path, mode="r") as f:
             return json.load(f)
 
     @staticmethod
@@ -136,7 +136,7 @@ class OptimizationAnalyzer:
 
         entries: list[Any] = []
         validated_path = validate_path(file_path, run_path, must_exist=True)
-        with open(validated_path) as f:
+        with safe_open(validated_path, run_path, mode="r") as f:
             for line in f:
                 stripped = line.strip()
                 if stripped:
@@ -199,7 +199,8 @@ class OptimizationAnalyzer:
                 base_path, file_manager, legacy_manager
             )
 
-        with open(index_file) as f:
+        validated_index = validate_path(index_file, base_path, must_exist=True)
+        with safe_open(validated_index, base_path, mode="r") as f:
             index_data = json.load(f)
 
         # Convert to DataFrame

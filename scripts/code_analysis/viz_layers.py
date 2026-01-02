@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import math
 import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
 
 try:  # pragma: no cover
     from .dependency_graph import Canvas
@@ -193,22 +194,25 @@ def generate_layers(
     )
 
     violations_path = output_dir / "violations.csv"
-    with violations_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["source_module", "source_layer", "target_module", "target_layer", "edge_weight"])
-        for src, dst, weight in sorted(edges, key=lambda row: (-row[2], row[0], row[1])):
-            src_layer = compute_layer(src, node_paths.get(src, ""), patterns)
-            dst_layer = compute_layer(dst, node_paths.get(dst, ""), patterns)
-            if dst_layer < src_layer:
-                writer.writerow(
-                    [
-                        src,
-                        layer_name(src_layer, config),
-                        dst,
-                        layer_name(dst_layer, config),
-                        f"{weight:.2f}",
-                    ]
-                )
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(
+        ["source_module", "source_layer", "target_module", "target_layer", "edge_weight"]
+    )
+    for src, dst, weight in sorted(edges, key=lambda row: (-row[2], row[0], row[1])):
+        src_layer = compute_layer(src, node_paths.get(src, ""), patterns)
+        dst_layer = compute_layer(dst, node_paths.get(dst, ""), patterns)
+        if dst_layer < src_layer:
+            writer.writerow(
+                [
+                    src,
+                    layer_name(src_layer, config),
+                    dst,
+                    layer_name(dst_layer, config),
+                    f"{weight:.2f}",
+                ]
+            )
+    safe_write_text(violations_path, buffer.getvalue(), output_dir)
 
     index_lines = [
         "<!DOCTYPE html>",
@@ -232,7 +236,8 @@ def generate_layers(
         "</body>",
         "</html>",
     ]
-    (output_dir / "index.html").write_text("\n".join(index_lines), encoding="utf-8")
+    index_path = output_dir / "index.html"
+    safe_write_text(index_path, "\n".join(index_lines), output_dir)
 
 
 def parse_args() -> argparse.Namespace:

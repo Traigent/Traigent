@@ -12,7 +12,7 @@ import os
 import threading
 from typing import Any, cast
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_read_text, validate_path
 
 # Optional cryptography dependencies
 try:
@@ -357,8 +357,8 @@ class SecureFileManager:
                 f"File permissions too permissive: {oct(file_stat.st_mode)}"
             )
 
-        with open(file_path_obj) as f:
-            return cast(dict[str, Any], json.load(f))
+        content = safe_read_text(file_path_obj, base)
+        return cast(dict[str, Any], json.loads(content))
 
 
 class InsecureFilePermissionsError(Exception):

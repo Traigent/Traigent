@@ -16,7 +16,7 @@ from typing import Any, cast
 
 from ..api.types import OptimizationResult, OptimizationStatus, TrialResult
 from ..utils.function_identity import sanitize_identifier
-from ..utils.secure_path import validate_path
+from ..utils.secure_path import safe_open, validate_path
 
 logger = logging.getLogger(__name__)
 
@@ -172,8 +172,9 @@ class PersistenceManager:
         temp_path = validated_path.with_suffix(
             f"{validated_path.suffix}.tmp.{os.getpid()}"
         )
+        temp_path = self._resolve_path(temp_path)
         try:
-            with open(temp_path, "w") as f:
+            with safe_open(temp_path, self.base_dir, mode="w") as f:
                 json.dump(data, f, indent=2)
             temp_path.replace(validated_path)  # Atomic rename on POSIX
         finally:
@@ -191,6 +192,7 @@ class PersistenceManager:
         temp_path = validated_path.with_suffix(
             f"{validated_path.suffix}.tmp.{os.getpid()}"
         )
+        temp_path = self._resolve_path(temp_path)
         try:
             with gzip.open(temp_path, "wt") as f:
                 json.dump(data, f, indent=2)
@@ -329,11 +331,11 @@ class PersistenceManager:
             )
 
         # Load metadata
-        metadata_file = self._resolve_path(result_dir / METADATA_FILE, must_exist=True)
+        metadata_file = self._resolve_path(result_dir / METADATA_FILE)
         if not metadata_file.exists():
             raise ValueError(f"Metadata file missing for result '{name}'")
 
-        with open(metadata_file) as f:
+        with safe_open(metadata_file, self.base_dir, mode="r") as f:
             metadata = json.load(f)
 
         # Load trials using JSON instead of pickle for security
@@ -343,7 +345,10 @@ class PersistenceManager:
         # Try JSON first (secure), fall back to pickle with warning
         trials: list[TrialResult]
         if trials_file.exists():
-            with gzip.open(trials_file, "rt") as f:
+            validated_trials_file = self._resolve_path(
+                result_dir / TRIALS_JSON_FILE, must_exist=True
+            )
+            with gzip.open(validated_trials_file, "rt") as f:
                 trials_data = json.load(f)
                 # Reconstruct TrialResult objects from JSON
                 from ..api.types import TrialStatus
@@ -373,7 +378,10 @@ class PersistenceManager:
             logger.warning(
                 f"Loading legacy pickle file for '{name}' - consider re-saving in JSON format"
             )
-            with gzip.open(pkl_file, "rb") as fp:
+            validated_pkl_file = self._resolve_path(
+                result_dir / TRIALS_PKL_FILE, must_exist=True
+            )
+            with gzip.open(validated_pkl_file, "rb") as fp:
                 # Only load pickle from trusted sources with restricted imports
                 import pickle
 
@@ -431,7 +439,7 @@ class PersistenceManager:
                 metadata_file = self._resolve_path(result_dir / METADATA_FILE)
                 if metadata_file.exists():
                     try:
-                        with open(metadata_file) as f:
+                        with safe_open(metadata_file, self.base_dir, mode="r") as f:
                             metadata = json.load(f)
                         metadata["name"] = result_dir.name
                         results.append(metadata)

@@ -312,8 +312,9 @@ class AlertManager:
     def _save_alert(self, alert: Alert):
         """Save alert to file."""
         try:
-            with open(self.alert_file, "a") as f:
-                f.write(json.dumps(asdict(alert)) + "\n")
+            existing = safe_file_read(self.alert_file) or ""
+            new_line = json.dumps(asdict(alert)) + "\n"
+            safe_file_write(self.alert_file, existing + new_line, backup=False)
         except Exception as e:
             logger.error(f"Failed to save alert: {e}")
 

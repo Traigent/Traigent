@@ -13,7 +13,7 @@ from pathlib import Path
 
 from playground.problem_management.code_generator import CodeGenerator
 from playground.problem_management.intelligence import ProblemIntelligence
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .enhanced_example_generator import (
     EnhancedExampleGenerator,
@@ -294,8 +294,7 @@ class BatchProblemGenerator:
             self.output_dir,
         )
 
-        with open(code_path, "w") as f:
-            f.write(code)
+        safe_write_text(code_path, code, self.output_dir)
 
         return code_path
 
@@ -338,8 +337,7 @@ class BatchProblemGenerator:
             }
             batch_data.append(batch_dict)
 
-        with open(data_file, "w") as f:
-            json.dump(batch_data, f, indent=2)
+        safe_write_text(data_file, json.dumps(batch_data, indent=2), self.output_dir)
 
     def _generate_default_specs(self, count: int) -> list[ProblemSpecification]:
         """Generate default problem specifications."""
@@ -371,8 +369,7 @@ class BatchProblemGenerator:
             ],
         }
 
-        with open(plan_file, "w") as f:
-            json.dump(plan_data, f, indent=2)
+        safe_write_text(plan_file, json.dumps(plan_data, indent=2), self.output_dir)
 
         print(f"📋 Problem plan saved to: {plan_file}")
 
@@ -442,8 +439,9 @@ class BatchProblemGenerator:
             "coverage_analysis": report.coverage_analysis,
         }
 
-        with open(report_file, "w") as f:
-            json.dump(report_data, f, indent=2)
+        safe_write_text(
+            report_file, json.dumps(report_data, indent=2), self.output_dir
+        )
 
         print(f"\n📊 Full report saved to: {report_file}")
 

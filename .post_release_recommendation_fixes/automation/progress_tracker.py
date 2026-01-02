@@ -27,7 +27,7 @@ from versioning import (
     resolve_base_path,
     resolve_version,
 )
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 
 @dataclass
@@ -156,13 +156,13 @@ class ProgressTracker:
         """Read text from a path validated under the base path."""
         self._ensure_within_base(path)
         validated_path = validate_path(path, self.base_path, must_exist=True)
-        return validated_path.read_text()
+        return safe_read_text(validated_path, self.base_path)
 
     def _write_text(self, path: Path, content: str) -> None:
         """Write text to a path validated under the base path."""
         self._ensure_within_base(path)
         validated_path = validate_path(path, self.base_path, must_exist=False)
-        validated_path.write_text(content)
+        safe_write_text(validated_path, content, self.base_path)
 
     def _build_evidence_json(
         self,

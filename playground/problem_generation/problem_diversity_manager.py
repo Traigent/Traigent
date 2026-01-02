@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 @dataclass
 class ProblemProfile:
@@ -895,8 +895,7 @@ class ProblemDiversityManager:
         }
 
         output_path = validate_path(output_file, Path.cwd())
-        with open(output_path, "w") as f:
-            json.dump(analysis, f, indent=2)
+        safe_write_text(output_path, json.dumps(analysis, indent=2), Path.cwd())
 
     def _calculate_domain_coverage(self) -> Dict[str, float]:
         """Calculate coverage percentage for each domain."""

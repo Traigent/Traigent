@@ -6,7 +6,7 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
 
 try:  # pragma: no cover - support execution via python path/to/script.py
     from .analysis_utils import load_coverage_map, load_lint_map, write_csv
@@ -124,7 +124,11 @@ def ensure_analysis_outputs(args: argparse.Namespace) -> None:
         f"GraphML: {graphml_path}",
         f"PNG: {png_path}",
     ]
-    summary_path.write_text("\n".join(str(line) for line in summary_lines), encoding="utf-8")
+    safe_write_text(
+        summary_path,
+        "\n".join(str(line) for line in summary_lines),
+        summary_path.parent,
+    )
 
 
 def main() -> None:

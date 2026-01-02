@@ -179,7 +179,7 @@ class TestFix2SensitivePayloadLogging:
         data = {"outer": {"inner": {"api_key": "placeholder_key"}}}
         redacted = TrialOperations._redact_sensitive_fields(data)
 
-        assert "sk-very-secret" not in str(redacted)
+        assert "placeholder_key" not in str(redacted)
 
     def test_redact_sensitive_fields_prevents_recursion(self):
         """Deep nesting must not cause recursion errors."""

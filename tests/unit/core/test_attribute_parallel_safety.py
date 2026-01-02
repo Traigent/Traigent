@@ -17,6 +17,12 @@ import traigent
 EVAL_DATASET = "examples/datasets/hello-world/evaluation_set.jsonl"
 
 
+def _require(condition: bool, message: str) -> None:
+    """Fail the test with a clear message when a condition is not met."""
+    if not condition:
+        pytest.fail(message)
+
+
 @pytest.fixture
 def mock_mode_env(monkeypatch):
     """Enable mock mode for all tests."""
@@ -44,9 +50,18 @@ class TestAttributeParallelSafetyGuard:
             await my_func.optimize(max_trials=2)
 
         error_message = str(exc_info.value)
-        assert "injection_mode='attribute'" in error_message
-        assert "unsafe with parallel trials" in error_message
-        assert "allow_parallel_attribute" in error_message
+        _require(
+            "injection_mode='attribute'" in error_message,
+            "Expected injection_mode='attribute' to be mentioned in the error message.",
+        )
+        _require(
+            "unsafe with parallel trials" in error_message,
+            "Expected safety warning about parallel trials in the error message.",
+        )
+        _require(
+            "allow_parallel_attribute" in error_message,
+            "Expected allow_parallel_attribute guidance in the error message.",
+        )
 
     @pytest.mark.asyncio
     async def test_attribute_mode_parallel_with_opt_in_warns(
@@ -69,11 +84,16 @@ class TestAttributeParallelSafetyGuard:
             await my_func.optimize(max_trials=2)
 
         # Check warning was logged
-        assert any(
+        warning_found = any(
             "injection_mode='attribute' with parallel trials" in record.message
             and "not safe" in record.message
             for record in caplog.records
-        ), f"Expected warning about attribute mode parallel safety, got: {[r.message for r in caplog.records]}"
+        )
+        _require(
+            warning_found,
+            "Expected warning about attribute mode parallel safety, got: "
+            f"{[r.message for r in caplog.records]}",
+        )
 
     @pytest.mark.asyncio
     async def test_attribute_mode_parallel_with_top_level_opt_in_warns(
@@ -97,11 +117,16 @@ class TestAttributeParallelSafetyGuard:
             await my_func.optimize(max_trials=2)
 
         # Check warning was logged
-        assert any(
+        warning_found = any(
             "injection_mode='attribute' with parallel trials" in record.message
             and "not safe" in record.message
             for record in caplog.records
-        ), f"Expected warning about attribute mode parallel safety, got: {[r.message for r in caplog.records]}"
+        )
+        _require(
+            warning_found,
+            "Expected warning about attribute mode parallel safety, got: "
+            f"{[r.message for r in caplog.records]}",
+        )
 
     @pytest.mark.asyncio
     async def test_attribute_mode_sequential_no_error(self, mock_mode_env):
@@ -119,8 +144,8 @@ class TestAttributeParallelSafetyGuard:
 
         # Should not raise
         result = await my_func.optimize(max_trials=2)
-        assert result is not None
-        assert len(result.trials) > 0
+        _require(result is not None, "Expected an optimization result, got None.")
+        _require(len(result.trials) > 0, "Expected at least one trial result.")
 
     @pytest.mark.asyncio
     async def test_attribute_mode_trial_concurrency_one_auto_no_error(
@@ -139,8 +164,8 @@ class TestAttributeParallelSafetyGuard:
             return "answer"
 
         result = await my_func.optimize(max_trials=1)
-        assert result is not None
-        assert len(result.trials) == 1
+        _require(result is not None, "Expected an optimization result, got None.")
+        _require(len(result.trials) == 1, "Expected exactly one trial result.")
 
     @pytest.mark.asyncio
     async def test_context_mode_parallel_no_error(self, mock_mode_env):
@@ -158,7 +183,7 @@ class TestAttributeParallelSafetyGuard:
 
         # Should not raise
         result = await my_func.optimize(max_trials=2)
-        assert result is not None
+        _require(result is not None, "Expected an optimization result, got None.")
 
     @pytest.mark.asyncio
     async def test_parameter_mode_parallel_no_error(self, mock_mode_env):
@@ -177,7 +202,7 @@ class TestAttributeParallelSafetyGuard:
 
         # Should not raise
         result = await my_func.optimize(max_trials=2)
-        assert result is not None
+        _require(result is not None, "Expected an optimization result, got None.")
 
 
 class TestAttributeParallelSafetyUnitLevel:
@@ -188,15 +213,24 @@ class TestAttributeParallelSafetyUnitLevel:
         from traigent.api.decorators import InjectionOptions
 
         options = InjectionOptions()
-        assert hasattr(options, "allow_parallel_attribute")
-        assert options.allow_parallel_attribute is False
+        _require(
+            hasattr(options, "allow_parallel_attribute"),
+            "Expected InjectionOptions to have allow_parallel_attribute.",
+        )
+        _require(
+            options.allow_parallel_attribute is False,
+            "Expected allow_parallel_attribute to default to False.",
+        )
 
     def test_injection_options_allow_parallel_attribute_true(self):
         """InjectionOptions should accept allow_parallel_attribute=True."""
         from traigent.api.decorators import InjectionOptions
 
         options = InjectionOptions(allow_parallel_attribute=True)
-        assert options.allow_parallel_attribute is True
+        _require(
+            options.allow_parallel_attribute is True,
+            "Expected allow_parallel_attribute to be True when set.",
+        )
 
     def test_optimized_function_stores_allow_parallel_attribute(self, mock_mode_env):
         """OptimizedFunction should store allow_parallel_attribute."""
@@ -210,5 +244,11 @@ class TestAttributeParallelSafetyUnitLevel:
         def my_func(question: str) -> str:
             return "answer"
 
-        assert hasattr(my_func, "allow_parallel_attribute")
-        assert my_func.allow_parallel_attribute is True
+        _require(
+            hasattr(my_func, "allow_parallel_attribute"),
+            "Expected optimized function to expose allow_parallel_attribute.",
+        )
+        _require(
+            my_func.allow_parallel_attribute is True,
+            "Expected allow_parallel_attribute to be True on optimized function.",
+        )

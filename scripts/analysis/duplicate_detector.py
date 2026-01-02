@@ -12,7 +12,7 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_read_text, validate_path
 
 
 class DuplicationDetector:
@@ -27,6 +27,7 @@ class DuplicationDetector:
         """
         self.min_lines = min_lines
         self.code_blocks: Dict[str, List[Tuple[Path, int]]] = {}
+        self._base_dir: Path | None = None
 
     def analyze_directory(self, directory: Path) -> Dict[str, List[Tuple[Path, int]]]:
         """
@@ -38,6 +39,7 @@ class DuplicationDetector:
         Returns:
             Dictionary mapping code hashes to file locations
         """
+        self._base_dir = directory.resolve()
         python_files = list(directory.rglob("*.py"))
 
         for file_path in python_files:
@@ -62,8 +64,10 @@ class DuplicationDetector:
     def _analyze_file(self, file_path: Path) -> None:
         """Analyze a single file for code blocks."""
         try:
-            with open(file_path, encoding="utf-8") as f:
-                lines = f.readlines()
+            base_dir = self._base_dir or file_path.parent.resolve()
+            validated_path = validate_path(file_path, base_dir, must_exist=True)
+            content = safe_read_text(validated_path, base_dir)
+            lines = content.splitlines(keepends=True)
         except (OSError, UnicodeDecodeError):
             return
 

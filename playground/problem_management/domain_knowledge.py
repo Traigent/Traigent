@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 class DomainKnowledge:
     """
@@ -429,8 +429,7 @@ class DomainKnowledge:
         )
         if domain_file.exists():
             try:
-                with open(domain_file) as f:
-                    return json.load(f)
+                return json.loads(safe_read_text(domain_file, self.knowledge_dir))
             except Exception:
                 pass  # Fall back to built-in
 
@@ -453,8 +452,9 @@ class DomainKnowledge:
             self.knowledge_dir / f"{domain}.json",
             self.knowledge_dir,
         )
-        with open(domain_file, "w") as f:
-            json.dump(knowledge, f, indent=2)
+        safe_write_text(
+            domain_file, json.dumps(knowledge, indent=2), self.knowledge_dir
+        )
 
     def get_available_domains(self) -> List[str]:
         """Get list of available domains."""

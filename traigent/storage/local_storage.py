@@ -19,7 +19,7 @@ from ..api.types import OptimizationStatus
 from ..utils.exceptions import TraigentStorageError
 from ..utils.function_identity import sanitize_identifier
 from ..utils.logging import get_logger
-from ..utils.secure_path import validate_path
+from ..utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -308,7 +308,7 @@ class LocalStorageManager:
             return None
 
         try:
-            with open(session_file) as f:
+            with safe_open(session_file, self.storage_path, mode="r") as f:
                 data = json.load(f)
 
             # Convert trial data back to TrialResult objects
@@ -416,7 +416,7 @@ class LocalStorageManager:
                 must_exist=False,
             )
             try:
-                with open(temp_path, "w") as f:
+                with safe_open(temp_path, path_obj.parent, mode="w") as f:
                     json.dump(session_data, f, indent=2, default=str)
                 temp_path.replace(path_obj)  # Atomic rename on POSIX
             finally:
@@ -495,7 +495,7 @@ class LocalStorageManager:
                 must_exist=False,
             )
             try:
-                with open(temp_path, "w") as f:
+                with safe_open(temp_path, session_file.parent, mode="w") as f:
                     json.dump(session_data, f, indent=2)
                 temp_path.replace(session_file)  # Atomic rename on POSIX
             finally:

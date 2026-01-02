@@ -12,7 +12,7 @@ from typing import Any
 
 from playground.problem_management.example_generator import ExampleGenerator, GeneratedExample
 from playground.problem_management.intelligence import ProblemInsights, ProblemIntelligence
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .diversity_analyzer import DiversityAnalyzer, DiversityMetrics
 from .example_memory import ExampleMemory, ExampleSummary
@@ -449,7 +449,6 @@ class EnhancedExampleGenerator:
         }
 
         output_path = validate_path(output_file, Path.cwd())
-        with open(output_path, "w") as f:
-            json.dump(report, f, indent=2)
+        safe_write_text(output_path, json.dumps(report, indent=2), Path.cwd())
 
         print(f"📝 Generation report saved to: {output_path}")

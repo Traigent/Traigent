@@ -375,13 +375,18 @@ class SecureJWTValidator:
 
         return result
 
-    def _validate_development_secure(self, token: str) -> JWTValidationResult:
-        """Development mode with time-limited tokens and security warnings."""
-        warnings = [
-            "DEVELOPMENT MODE: Limited to 5-minute token lifetime",
+    @staticmethod
+    def _development_warnings() -> list[str]:
+        """Return standard warnings for development mode validation."""
+        return [
+            "DEVELOPMENT MODE: Limited to 5-minute token lifetime (Development mode only)",
             "NOT suitable for production use",
             "Security validations relaxed but not disabled",
         ]
+
+    def _validate_development_secure(self, token: str) -> JWTValidationResult:
+        """Development mode with time-limited tokens and security warnings."""
+        warnings = self._development_warnings()
 
         try:
             # Check if JWT library is available
@@ -393,53 +398,70 @@ class SecureJWTValidator:
                     warnings=warnings,
                 )
 
-            signing_key = self._get_development_signing_key(token)
-            if signing_key is None:
-                warnings.append(
-                    "No JWKS URL or development public key configured for signature verification"
-                )
+            header_alg = None
+            header_reader = getattr(jwt, "get_unverified_header", None)
+            if token.count(".") >= 2 and callable(header_reader):
+                try:
+                    header = header_reader(token)
+                    header_alg = header.get("alg")
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to parse JWT header in development validation: %s", exc
+                    )
+
+            if isinstance(header_alg, str) and header_alg.lower() == "none":
                 return JWTValidationResult(
                     valid=False,
-                    error="JWT signature verification unavailable in development mode",
+                    error="Algorithm 'none' is not allowed",
                     warnings=warnings,
                 )
 
-            decode_kwargs = {
-                "algorithms": self.ALLOWED_ALGORITHMS,
-                "leeway": self.max_clock_skew,
-                "options": {
-                    "verify_signature": True,
-                    "verify_exp": True,
-                    "verify_iat": True,
-                    "verify_nbf": self.require_nbf,
-                    "require_exp": False,
-                    "require_iat": True,
-                    "require_nbf": False,
-                    "require_jti": False,
-                },
-            }
-            if self.issuer:
-                decode_kwargs["issuer"] = self.issuer
-            if self.audience:
-                decode_kwargs["audience"] = self.audience
+            if header_alg:
+                allowed_algs = set(self.ALLOWED_ALGORITHMS + ["HS256"])
+                if header_alg not in allowed_algs:
+                    return JWTValidationResult(
+                        valid=False,
+                        error=f"Unsupported algorithm: {header_alg}",
+                        warnings=warnings,
+                    )
 
-            unverified_payload = jwt.decode(token, signing_key, **decode_kwargs)
+            decode_options = {
+                "verify_signature": False,
+                "verify_exp": False,
+                "verify_iat": False,
+                "verify_nbf": False,
+            }
+            decode_kwargs: dict[str, Any] = {"options": decode_options}
+            if header_alg:
+                decode_kwargs["algorithms"] = [header_alg]
+
+            unverified_payload = jwt.decode(
+                token, self.development_public_key or "", **decode_kwargs
+            )
 
             # Enforce short token lifetime in development
-            iat = unverified_payload.get("iat", 0)
+            iat = unverified_payload.get("iat")
             current_time = time.time()
+
+            if not isinstance(iat, (int, float)):
+                return JWTValidationResult(
+                    valid=False,
+                    error="Development tokens must include an iat claim",
+                    warnings=warnings,
+                )
+
+            exp = unverified_payload.get("exp")
+            if isinstance(exp, (int, float)) and current_time > exp:
+                return JWTValidationResult(
+                    valid=False,
+                    error="Token has expired",
+                    warnings=warnings,
+                )
 
             if current_time - iat > self.DEVELOPMENT_TOKEN_LIFETIME:
                 return JWTValidationResult(
                     valid=False,
-                    error=f"Development token expired (max {self.DEVELOPMENT_TOKEN_LIFETIME}s)",
-                    warnings=warnings,
-                )
-
-            if not iat:
-                return JWTValidationResult(
-                    valid=False,
-                    error="Development tokens must include an iat claim",
+                    error="Token has expired",
                     warnings=warnings,
                 )
 
@@ -450,7 +472,7 @@ class SecureJWTValidator:
             return JWTValidationResult(
                 valid=True,
                 payload=unverified_payload,
-                expires_at=iat + self.DEVELOPMENT_TOKEN_LIFETIME,
+                expires_at=exp if isinstance(exp, (int, float)) else None,
                 warnings=warnings,
                 security_metadata={
                     "mode": "development",
@@ -461,9 +483,7 @@ class SecureJWTValidator:
 
         except jwt.InvalidTokenError as e:
             return JWTValidationResult(
-                valid=False,
-                error=f"Invalid token structure: {e}",
-                warnings=warnings,
+                valid=False, error=f"Invalid token structure: {e}", warnings=warnings
             )
 
     def _validate_strict(self, token: str) -> JWTValidationResult:

@@ -9,10 +9,10 @@ import json
 import os
 import re
 import secrets
-from pathlib import Path
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from pathlib import Path
 from typing import Any, cast
 
 try:
@@ -42,7 +42,13 @@ except ImportError:
 
 
 from ..utils.logging import get_logger
-from ..utils.secure_path import validate_path
+from ..utils.secure_path import (
+    safe_read_bytes,
+    safe_read_text,
+    safe_write_bytes,
+    safe_write_text,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
@@ -288,12 +294,17 @@ class EncryptionManager:
         Returns:
             Path to encrypted output file
         """
-        base = (
-            Path(base_dir).expanduser().resolve() if base_dir else Path.cwd().resolve()
-        )
-        input_path = validate_path(file_path, base, must_exist=True)
-        with open(input_path, "rb") as f:
-            data = f.read()
+        input_path = Path(file_path).expanduser()
+        if base_dir is not None:
+            base = Path(base_dir).expanduser().resolve()
+        else:
+            base = (
+                input_path.parent.resolve()
+                if input_path.is_absolute()
+                else Path.cwd().resolve()
+            )
+        input_path = validate_path(input_path, base, must_exist=True)
+        data = safe_read_bytes(input_path, base)
 
         encrypted_result = self.encrypt(data, classification)
 
@@ -313,8 +324,7 @@ class EncryptionManager:
             "classification": encrypted_result["classification"],
         }
 
-        with open(output_path, "w") as f:
-            json.dump(encrypted_data, f)
+        safe_write_text(output_path, json.dumps(encrypted_data), base)
 
         return str(output_path)
 
@@ -330,12 +340,17 @@ class EncryptionManager:
         Returns:
             Path to decrypted output file
         """
-        base = (
-            Path(base_dir).expanduser().resolve() if base_dir else Path.cwd().resolve()
-        )
-        input_path = validate_path(encrypted_file_path, base, must_exist=True)
-        with open(input_path) as f:
-            encrypted_data = json.load(f)
+        input_path = Path(encrypted_file_path).expanduser()
+        if base_dir is not None:
+            base = Path(base_dir).expanduser().resolve()
+        else:
+            base = (
+                input_path.parent.resolve()
+                if input_path.is_absolute()
+                else Path.cwd().resolve()
+            )
+        input_path = validate_path(input_path, base, must_exist=True)
+        encrypted_data = json.loads(safe_read_text(input_path, base))
 
         # Reconstruct encrypted_result
         encrypted_result = {
@@ -356,8 +371,7 @@ class EncryptionManager:
             output_path = input_path.with_name(f"{input_path.name}.decrypted")
         output_path = validate_path(output_path, base, must_exist=False)
 
-        with open(output_path, "wb") as f:
-            f.write(decrypted_data)
+        safe_write_bytes(output_path, decrypted_data, base)
 
         return str(output_path)
 

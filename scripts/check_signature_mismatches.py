@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_read_text, validate_path
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -121,8 +121,7 @@ def extract_api_usages(file_path: Path) -> list[dict[str, Any]]:
 
     try:
         safe_path = validate_path(file_path, PROJECT_ROOT, must_exist=True)
-        with open(safe_path, encoding="utf-8") as f:
-            content = f.read()
+        content = safe_read_text(safe_path, PROJECT_ROOT)
     except (PathTraversalError, FileNotFoundError, OSError, UnicodeDecodeError):
         return usages
 
@@ -363,8 +362,8 @@ def check_dynamic_imports(file_path: Path) -> list[SignatureFinding]:
     findings = []
 
     try:
-        with open(file_path, encoding="utf-8") as f:
-            content = f.read()
+        safe_path = validate_path(file_path, PROJECT_ROOT, must_exist=True)
+        content = safe_read_text(safe_path, PROJECT_ROOT)
     except (OSError, UnicodeDecodeError):
         return findings
 
@@ -379,8 +378,8 @@ def check_dynamic_imports(file_path: Path) -> list[SignatureFinding]:
         return findings
 
     try:
-        with open(eval_file, encoding="utf-8") as f:
-            eval_content = f.read()
+        safe_eval = validate_path(eval_file, PROJECT_ROOT, must_exist=True)
+        eval_content = safe_read_text(safe_eval, PROJECT_ROOT)
     except (OSError, UnicodeDecodeError):
         return findings
 
@@ -435,8 +434,8 @@ def check_imported_evaluators(file_path: Path) -> list[SignatureFinding]:
     findings = []
 
     try:
-        with open(file_path, encoding="utf-8") as f:
-            content = f.read()
+        safe_path = validate_path(file_path, PROJECT_ROOT, must_exist=True)
+        content = safe_read_text(safe_path, PROJECT_ROOT)
     except (OSError, UnicodeDecodeError):
         return findings
 
@@ -472,8 +471,10 @@ def check_imported_evaluators(file_path: Path) -> list[SignatureFinding]:
                 ]:
                     if eval_path.exists():
                         try:
-                            with open(eval_path, encoding="utf-8") as f:
-                                eval_content = f.read()
+                            safe_eval = validate_path(
+                                eval_path, PROJECT_ROOT, must_exist=True
+                            )
+                            eval_content = safe_read_text(safe_eval, PROJECT_ROOT)
                             params = _find_class_call_params_in_file(
                                 evaluator_name, eval_content
                             )

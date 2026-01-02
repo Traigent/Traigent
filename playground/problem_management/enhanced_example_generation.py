@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 from .llm_providers import LLMProviderManager
 from .prompt_builder import build_prompt_for_problem
 
@@ -227,20 +227,20 @@ async def save_examples_to_problem(
         problem_file = validate_path(problem_file, problem_file.parent, must_exist=True)
 
         # Read the current file content
-        content = problem_file.read_text()
+        content = safe_read_text(problem_file, problem_file.parent)
 
         # Backup the original file
         backup_file = validate_path(
             problem_file.with_suffix(".py.backup"),
             problem_file.parent,
         )
-        backup_file.write_text(content)
+        safe_write_text(backup_file, content, problem_file.parent)
 
         # Parse and update the examples
         updated_content = add_examples_to_content(content, new_examples)
 
         # Write the updated content
-        problem_file.write_text(updated_content)
+        safe_write_text(problem_file, updated_content, problem_file.parent)
 
         return (
             True,

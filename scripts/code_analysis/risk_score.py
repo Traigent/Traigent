@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Sequence
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 try:  # pragma: no cover
     from .analysis_utils import load_coverage_map
@@ -49,20 +55,21 @@ def load_risk_config(path: Path) -> RiskWeights:
         return RiskWeights()
     weights: Dict[str, float] = {}
     current_section: Optional[str] = None
-    with path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
+    validated_path = validate_path(path, path.parent, must_exist=True)
+    content = safe_read_text(validated_path, path.parent)
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith(":"):
+            current_section = line[:-1].strip()
+            continue
+        if ":" in line and current_section == "weights":
+            key, value = line.split(":", 1)
+            try:
+                weights[key.strip()] = float(value.strip())
+            except ValueError:
                 continue
-            if line.endswith(":"):
-                current_section = line[:-1].strip()
-                continue
-            if ":" in line and current_section == "weights":
-                key, value = line.split(":", 1)
-                try:
-                    weights[key.strip()] = float(value.strip())
-                except ValueError:
-                    continue
     return RiskWeights(
         complexity_z=float(weights.get("complexity_z", 0.25) or 0.0),
         fan_in_z=float(weights.get("fan_in_z", 0.2) or 0.0),
@@ -78,18 +85,19 @@ def load_metrics(path: Path) -> Dict[str, ModuleSignals]:
     modules: Dict[str, ModuleSignals] = {}
     if not path.exists():
         return modules
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            module = row.get("module")
-            if not module:
-                continue
-            signals = ModuleSignals(
-                complexity=float(row.get("cyclomatic_total", 0.0) or 0.0),
-                fan_in=float(row.get("fan_in", 0.0) or 0.0),
-                fan_out=float(row.get("fan_out", 0.0) or 0.0),
-            )
-            modules[module] = signals
+    validated_path = validate_path(path, path.parent, must_exist=True)
+    content = safe_read_text(validated_path, path.parent)
+    reader = csv.DictReader(io.StringIO(content))
+    for row in reader:
+        module = row.get("module")
+        if not module:
+            continue
+        signals = ModuleSignals(
+            complexity=float(row.get("cyclomatic_total", 0.0) or 0.0),
+            fan_in=float(row.get("fan_in", 0.0) or 0.0),
+            fan_out=float(row.get("fan_out", 0.0) or 0.0),
+        )
+        modules[module] = signals
     return modules
 
 
@@ -97,8 +105,8 @@ def load_lint_counts(path: Path) -> Dict[str, int]:
     if not path.exists():
         return {}
     try:
-        with path.open("r", encoding="utf-8") as handle:
-            data = json.load(handle)
+        validated_path = validate_path(path, path.parent, must_exist=True)
+        data = json.loads(safe_read_text(validated_path, path.parent))
     except (json.JSONDecodeError, OSError):
         return {}
     counts: Dict[str, int] = {}
@@ -127,7 +135,8 @@ def load_clones(path: Path) -> Dict[str, int]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        validated_path = validate_path(path, path.parent, must_exist=True)
+        data = json.loads(safe_read_text(validated_path, path.parent))
     except (json.JSONDecodeError, OSError):
         return {}
     results: Dict[str, int] = {}
@@ -145,17 +154,18 @@ def load_churn(path: Path) -> Dict[str, float]:
     churn: Dict[str, float] = {}
     if not path.exists():
         return churn
-    with path.open("r", encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            filename = row.get("path") or row.get("file")
-            if not filename:
-                continue
-            try:
-                value = float(row.get("changes", row.get("commits", 0.0)) or 0.0)
-            except ValueError:
-                value = 0.0
-            churn[filename] = value
+    validated_path = validate_path(path, path.parent, must_exist=True)
+    content = safe_read_text(validated_path, path.parent)
+    reader = csv.DictReader(io.StringIO(content))
+    for row in reader:
+        filename = row.get("path") or row.get("file")
+        if not filename:
+            continue
+        try:
+            value = float(row.get("changes", row.get("commits", 0.0)) or 0.0)
+        except ValueError:
+            value = 0.0
+        churn[filename] = value
     return churn
 
 
@@ -163,16 +173,17 @@ def load_owners(path: Path) -> Dict[str, List[str]]:
     owners: Dict[str, List[str]] = {}
     if not path.exists():
         return owners
-    with path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            line = raw_line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) < 2:
-                continue
-            pattern = parts[0].lstrip("/")
-            owners[pattern] = parts[1:]
+    validated_path = validate_path(path, path.parent, must_exist=True)
+    content = safe_read_text(validated_path, path.parent)
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        pattern = parts[0].lstrip("/")
+        owners[pattern] = parts[1:]
     return owners
 
 
@@ -357,17 +368,25 @@ def write_heatmap_csv(path: Path, data: Mapping[str, Mapping[str, object]]) -> N
         "owner_unknown",
         "reasons",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for module, metrics in sorted(data.items(), key=lambda item: (-item[1]["risk"], item[0])):
-            writer.writerow(
-                {
-                    "module": module,
-                    **{key: metrics.get(key) for key in fieldnames if key not in {"module", "reasons"}},
-                    "reasons": "; ".join(metrics.get("reasons", [])),
-                }
-            )
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=fieldnames)
+    writer.writeheader()
+    for module, metrics in sorted(
+        data.items(), key=lambda item: (-item[1]["risk"], item[0])
+    ):
+        writer.writerow(
+            {
+                "module": module,
+                **{
+                    key: metrics.get(key)
+                    for key in fieldnames
+                    if key not in {"module", "reasons"}
+                },
+                "reasons": "; ".join(metrics.get("reasons", [])),
+            }
+        )
+    validated_path = validate_path(path, path.parent)
+    safe_write_text(validated_path, buffer.getvalue(), path.parent)
 
 
 def write_top20(path: Path, data: Mapping[str, Mapping[str, object]]) -> None:

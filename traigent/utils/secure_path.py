@@ -50,9 +50,7 @@ class SafePath:
                       Will be resolved to an absolute path.
         """
         self.base_dir = Path(base_dir).resolve()
-        if not self.base_dir.exists():
-            raise ValueError(f"Base directory does not exist: {self.base_dir}")
-        if not self.base_dir.is_dir():
+        if self.base_dir.exists() and not self.base_dir.is_dir():
             raise ValueError(f"Base path is not a directory: {self.base_dir}")
 
     def resolve(self, path: str | Path) -> Path:
