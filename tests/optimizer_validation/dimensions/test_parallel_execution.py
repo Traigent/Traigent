@@ -504,7 +504,6 @@ class TestStopConditionPriority:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify stop_reason is either timeout or max_trials
         stop_reason = getattr(result, "stop_reason", None)
         if stop_reason:
@@ -591,7 +590,6 @@ class TestTrialResultIntegrity:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         if hasattr(result, "trials"):
             for i, trial in enumerate(result.trials):
                 # Completed trials should have metrics
@@ -632,7 +630,6 @@ class TestTrialResultIntegrity:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         if hasattr(result, "trials"):
             for i, trial in enumerate(result.trials):
                 assert hasattr(trial, "config"), f"Trial {i} missing config"
@@ -667,7 +664,6 @@ class TestTrialResultIntegrity:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         if hasattr(result, "trials") and hasattr(result, "best_config"):
             if result.best_config and result.trials:

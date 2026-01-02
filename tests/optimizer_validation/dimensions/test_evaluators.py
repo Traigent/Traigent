@@ -399,11 +399,16 @@ class TestEvaluatorEdgeCases:
         # Should handle None return gracefully - either error or partial result
         if isinstance(result, Exception):
             # Error is acceptable for evaluator returning None
-            assert "none" in str(result).lower() or "evaluator" in str(result).lower() or "return" in str(result).lower(), \
-                f"Error should mention evaluator issue: {result}"
+            assert (
+                "none" in str(result).lower()
+                or "evaluator" in str(result).lower()
+                or "return" in str(result).lower()
+            ), f"Error should mention evaluator issue: {result}"
         else:
             # If it handles gracefully, verify result structure
             assert hasattr(result, "trials"), "Result should have trials attribute"
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

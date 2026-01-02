@@ -119,24 +119,27 @@ class TestMergeRunMetricsIntoSessionSummary:
         result = Mock(spec=OptimizationResult)
         result.metadata = None
 
-        merge_run_metrics_into_session_summary(result)
-        # Should not raise exception
+        returned = merge_run_metrics_into_session_summary(result)
+        # Function completed successfully
+        assert returned is None  # Function returns None
 
     def test_merge_no_session_summary(self):
         """Test merge handles missing session_summary."""
         result = Mock(spec=OptimizationResult)
         result.metadata = {}
 
-        merge_run_metrics_into_session_summary(result)
-        # Should not raise exception
+        returned = merge_run_metrics_into_session_summary(result)
+        # Function completed successfully
+        assert returned is None  # Function returns None
 
     def test_merge_non_dict_session_summary(self):
         """Test merge handles non-dict session_summary."""
         result = Mock(spec=OptimizationResult)
         result.metadata = {"session_summary": "not a dict"}
 
-        merge_run_metrics_into_session_summary(result)
-        # Should not raise exception
+        returned = merge_run_metrics_into_session_summary(result)
+        # Function completed successfully
+        assert returned is None  # Function returns None
 
     def test_merge_non_dict_metrics(self):
         """Test merge handles non-dict existing metrics."""

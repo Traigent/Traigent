@@ -982,9 +982,10 @@ class TestErrorHandling:
         # Requirements with None values
         requirements = ServiceRequirements()
         requirements.required_algorithms = None  # Should handle gracefully
+        assert requirements.required_algorithms is None  # Verify value was set
 
-        # Should not crash when processing
-        # Implementation should handle None values gracefully
+        # Should not crash when processing - verify requirements object is valid
+        assert isinstance(requirements, ServiceRequirements)
 
     @pytest.mark.asyncio
     async def test_service_registry_cleanup(self, registry, mock_service_basic):

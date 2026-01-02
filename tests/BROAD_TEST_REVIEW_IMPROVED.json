@@ -1,0 +1,1518 @@
+{
+  "total_issues": 178,
+  "by_type": {
+    "IT-NA": 159,
+    "IT-VTA": 19
+  },
+  "by_file": {
+    "tests/unit/integrations/test_framework_override_extended.py": 20,
+    "tests/unit/api/test_parameter_validator.py": 9,
+    "tests/unit/core/test_orchestrator_helpers.py": 9,
+    "tests/unit/core/test_logger_facade.py": 7,
+    "tests/integration/test_traigent_integration.py": 6,
+    "tests/unit/test_mcp_production_client.py": 5,
+    "tests/unit/test_safeguards.py": 5,
+    "tests/unit/utils/test_incentives.py": 5,
+    "tests/unit/utils/test_local_analytics.py": 5,
+    "tests/examples/test_readme_examples.py": 4,
+    "tests/integration/test_execution_modes.py": 4,
+    "tests/security/test_rate_limiter_secure.py": 3,
+    "tests/test_documentation.py": 3,
+    "tests/unit/core/test_metadata_helpers.py": 3,
+    "tests/unit/integrations/observability/test_wandb.py": 3,
+    "tests/unit/integrations/test_plugin_registry.py": 3,
+    "tests/unit/security/test_audit.py": 3,
+    "tests/unit/utils/test_batch_processing.py": 3,
+    "tests/integration/test_ctd_coverage_from_csv.py": 2,
+    "tests/integration/test_optimization_validation_integration.py": 2,
+    "tests/manual_validation/test_complete_submission.py": 2,
+    "tests/manual_validation/test_metrics_issue.py": 2,
+    "tests/security/test_seamless_security.py": 2,
+    "tests/unit/api/test_api_types.py": 2,
+    "tests/unit/api/test_types.py": 2,
+    "tests/unit/cloud/test_credential_resolver.py": 2,
+    "tests/unit/core/test_utils.py": 2,
+    "tests/unit/optimizers/test_pruners.py": 2,
+    "tests/unit/test_enhanced_framework_override.py": 2,
+    "tests/unit/utils/test_callbacks.py": 2,
+    "tests/utils/test_local_analytics.py": 2,
+    "tests/cli/test_local_commands.py": 1,
+    "tests/examples/test_auth_cli.py": 1,
+    "tests/examples/test_safeguards.py": 1,
+    "tests/integration/backend/test_backend_integration.py": 1,
+    "tests/integration/backend/test_backend_integration_flow.py": 1,
+    "tests/integration/backend/test_backend_minimal.py": 1,
+    "tests/integration/backend/test_session_finalization_integration.py": 1,
+    "tests/integration/test_custom_evaluator_fix.py": 1,
+    "tests/integration/test_metrics_fix.py": 1,
+    "tests/integration/test_plugin_ctd.py": 1,
+    "tests/integration/test_traigent_decorator_cloud_integration.py": 1,
+    "tests/manual_validation/test_backend_fix.py": 1,
+    "tests/manual_validation/test_backend_format.py": 1,
+    "tests/manual_validation/test_backend_submission.py": 1,
+    "tests/manual_validation/test_submission_fix.py": 1,
+    "tests/security/test_credentials_integration.py": 1,
+    "tests/security/test_jwt_validator_secure.py": 1,
+    "tests/test_all_demos.py": 1,
+    "tests/test_all_features.py": 1,
+    "tests/unit/analytics/test_cost_optimization_rebalance.py": 1,
+    "tests/unit/analytics/test_predictive.py": 1,
+    "tests/unit/api/decorator_tests/test_decorator_error_handling.py": 1,
+    "tests/unit/api/decorator_tests/test_decorator_injection_modes.py": 1,
+    "tests/unit/cli/test_validation_edge_cases.py": 1,
+    "tests/unit/cli/test_validation_system.py": 1,
+    "tests/unit/cloud/test_authentication_security.py": 1,
+    "tests/unit/cloud/test_cost_tracking.py": 1,
+    "tests/unit/core/optimized_function_tests/test_configuration_injection.py": 1,
+    "tests/unit/core/optimized_function_tests/test_optimization.py": 1,
+    "tests/unit/hooks/test_validator.py": 1,
+    "tests/unit/integrations/observability/test_mlflow.py": 1,
+    "tests/unit/integrations/test_discovery.py": 1,
+    "tests/unit/integrations/test_framework_override.py": 1,
+    "tests/unit/integrations/test_integration_discovery.py": 1,
+    "tests/unit/integrations/test_module_integration.py": 1,
+    "tests/unit/invokers/test_local.py": 1,
+    "tests/unit/optimizers/test_bayesian.py": 1,
+    "tests/unit/optimizers/test_optuna_ask_tell.py": 1,
+    "tests/unit/optimizers/test_remote_services.py": 1,
+    "tests/unit/optimizers/test_service_registry.py": 1,
+    "tests/unit/scripts/test_migrate_optuna.py": 1,
+    "tests/unit/security/auth/test_sms.py": 1,
+    "tests/unit/security/test_enterprise.py": 1,
+    "tests/unit/security/test_input_validation.py": 1,
+    "tests/unit/test_analytics.py": 1,
+    "tests/unit/test_coverage_improvements.py": 1,
+    "tests/unit/test_optigen_integration.py": 1,
+    "tests/unit/test_secure_auth.py": 1,
+    "tests/unit/utils/test_batch_optimizer_utils.py": 1,
+    "tests/unit/utils/test_common_validators.py": 1,
+    "tests/unit/utils/test_function_identity.py": 1,
+    "tests/utils/test_incentives.py": 1
+  },
+  "issues": [
+    {
+      "file": "tests/cli/test_local_commands.py",
+      "test_name": "test_file_permission_handling",
+      "line": 805,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_auth_cli.py",
+      "test_name": "test_auth_flow",
+      "line": 20,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_quick_example",
+      "line": 81,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_customer_support_example",
+      "line": 187,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_imports_in_examples",
+      "line": 309,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_evaluation_example",
+      "line": 364,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/examples/test_safeguards.py",
+      "test_name": "test_ci_approval",
+      "line": 173,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_integration.py",
+      "test_name": "test_submit_result_with_mock",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_integration_flow.py",
+      "test_name": "test_submit_result_with_mock",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_minimal.py",
+      "test_name": "test_backend_api",
+      "line": 31,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/backend/test_session_finalization_integration.py",
+      "test_name": "test_integration_prerequisites",
+      "line": 224,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_ctd_coverage_from_csv.py",
+      "test_name": "test_generator",
+      "line": 432,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_ctd_coverage_from_csv.py",
+      "test_name": "test_coverage_report",
+      "line": 705,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_custom_evaluator_fix.py",
+      "test_name": "test_function",
+      "line": 78,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_execution_modes.py",
+      "test_name": "test_dataset",
+      "line": 30,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_execution_modes.py",
+      "test_name": "test_dataset",
+      "line": 395,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_execution_modes.py",
+      "test_name": "test_cloud_mode_data_encryption",
+      "line": 462,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_execution_modes.py",
+      "test_name": "test_dataset",
+      "line": 485,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_metrics_fix.py",
+      "test_name": "test_function",
+      "line": 68,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_optimization_validation_integration.py",
+      "test_name": "test_module",
+      "line": 160,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_optimization_validation_integration.py",
+      "test_name": "test_function_discovery_integration",
+      "line": 185,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/integration/test_plugin_ctd.py",
+      "test_name": "test_generator",
+      "line": 589,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_traigent_decorator_cloud_integration.py",
+      "test_name": "test_decorator_with_real_cloud_client_mock",
+      "line": 439,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_langchain_integration_setup",
+      "line": 334,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_openai_sdk_integration_setup",
+      "line": 351,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_override_enable_disable_cycle",
+      "line": 380,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_context_manager_functionality",
+      "line": 390,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_integration_imports",
+      "line": 408,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/integration/test_traigent_integration.py",
+      "test_name": "test_platform_auto_detection",
+      "line": 596,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_backend_fix.py",
+      "test_name": "test_submission",
+      "line": 12,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_backend_format.py",
+      "test_name": "test_formats",
+      "line": 12,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_backend_submission.py",
+      "test_name": "test_submission",
+      "line": 17,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_complete_submission.py",
+      "test_name": "test_privacy_mode",
+      "line": 19,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_complete_submission.py",
+      "test_name": "test_cloud_mode",
+      "line": 110,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_metrics_issue.py",
+      "test_name": "test_function_with_metrics",
+      "line": 39,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_metrics_issue.py",
+      "test_name": "test_function_without_metrics",
+      "line": 53,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/manual_validation/test_submission_fix.py",
+      "test_name": "test_backend_submission",
+      "line": 20,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_credentials_integration.py",
+      "test_name": "test_secure_string_auto_cleanup",
+      "line": 258,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_jwt_validator_secure.py",
+      "test_name": "test_end_to_end_validation_flow",
+      "line": 337,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_rate_limiter_secure.py",
+      "test_name": "test_bypass_prevention_via_parameter_switching",
+      "line": 146,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_rate_limiter_secure.py",
+      "test_name": "test_multiple_dimension_rate_limiting",
+      "line": 172,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_rate_limiter_secure.py",
+      "test_name": "test_burst_pattern_detection",
+      "line": 265,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_seamless_security.py",
+      "test_name": "test_no_exec_usage",
+      "line": 19,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/security/test_seamless_security.py",
+      "test_name": "test_no_eval_usage",
+      "line": 33,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/test_all_demos.py",
+      "test_name": "test_demo",
+      "line": 215,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/test_all_features.py",
+      "test_name": "test_imports",
+      "line": 25,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_code_examples_in_readme",
+      "line": 36,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_example_imports",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_decorator_usage_examples",
+      "line": 486,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/analytics/test_cost_optimization_rebalance.py",
+      "test_name": "test_rebalance_handles_zero_budget_allocations",
+      "line": 96,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/analytics/test_predictive.py",
+      "test_name": "test_generate_comprehensive_forecast",
+      "line": 419,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/api/decorator_tests/test_decorator_error_handling.py",
+      "test_name": "test_decorator_with_property",
+      "line": 196,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/decorator_tests/test_decorator_injection_modes.py",
+      "test_name": "test_parameter_mode_validation",
+      "line": 124,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_api_types.py",
+      "test_name": "test_plot_trade_offs",
+      "line": 782,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_api_types.py",
+      "test_name": "test_validate_valid_config",
+      "line": 821,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_execution_mode_valid",
+      "line": 39,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_injection_mode_enum",
+      "line": 57,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_injection_mode_string",
+      "line": 70,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_dataset_string",
+      "line": 87,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_dataset_list",
+      "line": 95,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_dataset_sequence_with_dataset_objects",
+      "line": 119,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_objectives_valid",
+      "line": 149,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_configuration_space_valid",
+      "line": 175,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_parameter_validator.py",
+      "test_name": "test_validate_constraints_valid",
+      "line": 201,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_types.py",
+      "test_name": "test_plot_trade_offs",
+      "line": 685,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/api/test_types.py",
+      "test_name": "test_validate_valid_config",
+      "line": 724,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/cli/test_validation_edge_cases.py",
+      "test_name": "test_discover_functions_permission_denied",
+      "line": 226,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/cli/test_validation_system.py",
+      "test_name": "test_complete_validation_workflow",
+      "line": 528,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/cloud/test_authentication_security.py",
+      "test_name": "test_jwt_signature_bypass_attempts",
+      "line": 185,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/cloud/test_cost_tracking.py",
+      "test_name": "test_cache_cost_item",
+      "line": 347,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/cloud/test_credential_resolver.py",
+      "test_name": "test_cache_does_nothing_without_file",
+      "line": 351,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/cloud/test_credential_resolver.py",
+      "test_name": "test_cache_handles_errors",
+      "line": 378,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/optimized_function_tests/test_configuration_injection.py",
+      "test_name": "test_context_cleanup",
+      "line": 181,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/optimized_function_tests/test_optimization.py",
+      "test_name": "test_optimization_with_cloud_execution",
+      "line": 475,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_session_start_exception_handling",
+      "line": 169,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_trial_with_none_logger",
+      "line": 199,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_trial_exception_handling",
+      "line": 213,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_checkpoint_with_none_logger",
+      "line": 274,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_checkpoint_without_save_checkpoint_method",
+      "line": 291,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_log_checkpoint_exception_handling",
+      "line": 305,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_logger_facade.py",
+      "test_name": "test_all_methods_handle_exceptions_gracefully",
+      "line": 342,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_no_metadata",
+      "line": 117,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_no_session_summary",
+      "line": 125,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_non_dict_session_summary",
+      "line": 133,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_valid_arguments",
+      "line": 64,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_none_max_trials_allowed",
+      "line": 74,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_zero_max_trials_allowed",
+      "line": 84,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_zero_timeout_allowed",
+      "line": 174,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_valid_arguments_pass",
+      "line": 417,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_empty_constraints_does_nothing",
+      "line": 826,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_passing_constraint",
+      "line": 830,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_constraint_with_metrics",
+      "line": 848,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_orchestrator_helpers.py",
+      "test_name": "test_multiple_constraints_all_pass",
+      "line": 892,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_utils.py",
+      "test_name": "test_validate_positive_number_valid",
+      "line": 167,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/core/test_utils.py",
+      "test_name": "test_validate_range_valid",
+      "line": 187,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/hooks/test_validator.py",
+      "test_name": "test_validate_directory_accepts_path_object",
+      "line": 874,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/observability/test_mlflow.py",
+      "test_name": "test_trial_with_none_timestamp",
+      "line": 955,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/observability/test_wandb.py",
+      "test_name": "test_log_trial_handles_artifact_write_error",
+      "line": 523,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/observability/test_wandb.py",
+      "test_name": "test_log_trial_handles_log_error",
+      "line": 543,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/observability/test_wandb.py",
+      "test_name": "test_end_optimization_run_no_active_run",
+      "line": 721,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_discovery.py",
+      "test_name": "test_method_discovery_combinations",
+      "line": 773,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override.py",
+      "test_name": "test_error_handling_import_failure",
+      "line": 550,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_apply_method_override",
+      "line": 282,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_disable_framework_overrides_function",
+      "line": 541,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_register_framework_mapping_function",
+      "line": 570,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_apply_mock_overrides_function",
+      "line": 584,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_openai_sdk_function",
+      "line": 586,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_langchain_function",
+      "line": 594,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_anthropic_function",
+      "line": 602,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_cohere_function",
+      "line": 610,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_huggingface_function",
+      "line": 618,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_all_platforms_function",
+      "line": 626,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_enable_intelligent_overrides_with_string",
+      "line": 634,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_enable_intelligent_overrides_with_list",
+      "line": 642,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_enable_intelligent_overrides_with_package_pattern",
+      "line": 650,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_enable_enhanced_overrides_alias",
+      "line": 658,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_activate_overrides_import_error",
+      "line": 713,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_activate_overrides_pydantic_error",
+      "line": 722,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_deactivate_overrides_restores_constructors",
+      "line": 782,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_deactivate_overrides_restores_methods",
+      "line": 799,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_override_context_with_none",
+      "line": 845,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override_extended.py",
+      "test_name": "test_apply_method_override_missing_method",
+      "line": 1067,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'assert True' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_integration_discovery.py",
+      "test_name": "test_method_discovery_combinations",
+      "line": 751,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/integrations/test_module_integration.py",
+      "test_name": "test_concurrent_activation_state_access",
+      "line": 258,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_unregister_nonexistent_plugin_does_nothing",
+      "line": 274,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_enable_nonexistent_plugin_does_nothing",
+      "line": 419,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_disable_nonexistent_plugin_does_nothing",
+      "line": 426,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/invokers/test_local.py",
+      "test_name": "test_validate_function_parameter_injection_with_param",
+      "line": 219,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_bayesian.py",
+      "test_name": "test_import_error",
+      "line": 842,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_optuna_ask_tell.py",
+      "test_name": "test_tell_unknown_trial_id",
+      "line": 189,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_pruners.py",
+      "test_name": "test_prune_with_cost_threshold_scalar_value_below_threshold",
+      "line": 228,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_pruners.py",
+      "test_name": "test_prune_with_cost_threshold_list_too_short",
+      "line": 335,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_remote_services.py",
+      "test_name": "test_mock_service_close_nonexistent_session",
+      "line": 1209,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/optimizers/test_service_registry.py",
+      "test_name": "test_malformed_requirements",
+      "line": 980,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/scripts/test_migrate_optuna.py",
+      "test_name": "test_migration_dry_run",
+      "line": 10,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/security/auth/test_sms.py",
+      "test_name": "test_send_code_cleans_old_rate_limit_entries",
+      "line": 336,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/security/test_audit.py",
+      "test_name": "test_alert_handling",
+      "line": 292,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/security/test_audit.py",
+      "test_name": "test_get_events",
+      "line": 331,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/security/test_audit.py",
+      "test_name": "test_tenant_specific_reporting",
+      "line": 507,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/security/test_enterprise.py",
+      "test_name": "test_default_alert_handler",
+      "line": 506,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/security/test_input_validation.py",
+      "test_name": "test_valid_password",
+      "line": 104,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_analytics.py",
+      "test_name": "test_analyze_cost_patterns",
+      "line": 584,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/test_coverage_improvements.py",
+      "test_name": "test_optuna_emitter_unsubscribe_nonexistent",
+      "line": 152,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_enhanced_framework_override.py",
+      "test_name": "test_enable_disable_framework_overrides",
+      "line": 291,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_enhanced_framework_override.py",
+      "test_name": "test_override_all_platforms",
+      "line": 301,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_connection_lifecycle_mocked",
+      "line": 151,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_request_timeout_handling",
+      "line": 288,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_connection_error_recovery",
+      "line": 477,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_invalid_request_handling",
+      "line": 492,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_server_error_handling",
+      "line": 504,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_optigen_integration.py",
+      "test_name": "test_optimize_saas_invalid_poll_interval",
+      "line": 768,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_environment_approval",
+      "line": 479,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_mock_mode_skips_ci_approval",
+      "line": 502,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_token_file_approval",
+      "line": 519,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_hmac_token_validation",
+      "line": 580,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_non_ci_environment_no_approval_needed",
+      "line": 662,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/test_secure_auth.py",
+      "test_name": "test_log_auth_event",
+      "line": 191,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_batch_optimizer_utils.py",
+      "test_name": "test_progress_callback_edge_cases",
+      "line": 404,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_batch_processing.py",
+      "test_name": "test_process_single_batch",
+      "line": 298,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/utils/test_batch_processing.py",
+      "test_name": "test_process_single_batch",
+      "line": 299,
+      "issue_type": "IT-VTA",
+      "description": "Vacuous assertion: 'len(x) >= 0' always passes",
+      "severity": "major"
+    },
+    {
+      "file": "tests/unit/utils/test_batch_processing.py",
+      "test_name": "test_timeout_handling",
+      "line": 760,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_callbacks.py",
+      "test_name": "test_on_optimization_start_without_logger",
+      "line": 361,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_callbacks.py",
+      "test_name": "test_on_trial_complete_with_failed_status",
+      "line": 982,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_common_validators.py",
+      "test_name": "test_validate_or_raise_valid",
+      "line": 884,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_function_identity.py",
+      "test_name": "test_descriptor_relative_path_uses_forward_slashes",
+      "line": 342,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_incentives.py",
+      "test_name": "test_save_state_handles_io_error_gracefully",
+      "line": 225,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_incentives.py",
+      "test_name": "test_show_upgrade_hint_in_edge_analytics_mode",
+      "line": 1291,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_incentives.py",
+      "test_name": "test_show_upgrade_hint_not_in_edge_analytics_mode",
+      "line": 1307,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_incentives.py",
+      "test_name": "test_show_achievement_in_edge_analytics_mode",
+      "line": 1323,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_incentives.py",
+      "test_name": "test_show_achievement_not_in_edge_analytics_mode",
+      "line": 1339,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_local_analytics.py",
+      "test_name": "test_update_last_submission_file_write_error",
+      "line": 826,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_disabled",
+      "line": 1043,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_wrong_mode",
+      "line": 1056,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_in_async_context",
+      "line": 1069,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/unit/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_error_handling",
+      "line": 1089,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/utils/test_incentives.py",
+      "test_name": "test_state_file_permissions",
+      "line": 418,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_disabled",
+      "line": 383,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    },
+    {
+      "file": "tests/utils/test_local_analytics.py",
+      "test_name": "test_collect_and_submit_analytics_non_local",
+      "line": 392,
+      "issue_type": "IT-NA",
+      "description": "Test has no assert statements",
+      "severity": "critical"
+    }
+  ]
+}

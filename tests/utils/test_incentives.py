@@ -422,8 +422,8 @@ class TestIncentiveManager:
 
         try:
             # Should handle permission error gracefully
-            self.incentive_manager._save_state()
-            # Should not raise exception
+            result = self.incentive_manager._save_state()
+            assert result is None  # Method returns None even on error
         finally:
             # Restore permissions for cleanup
             self.incentive_manager._state_file.chmod(0o644)

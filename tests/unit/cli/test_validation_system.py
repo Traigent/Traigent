@@ -525,7 +525,9 @@ def analyze_sentiment(text: str, model: str = "default", temperature: float = 0.
         try:
             # Test function discovery
             functions = discover_optimized_functions(temp_file)
-            assert len(functions) >= 0  # May find functions or not due to mock setup
+            assert isinstance(
+                functions, list
+            )  # May find functions or not due to mock setup
 
             # Test CLI integration
             runner = CliRunner()

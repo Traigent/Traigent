@@ -463,7 +463,7 @@ class TestPrivacyCompliance:
         """Verify that SaaS mode encrypts data before transmission."""
         # This would test the DatasetStorageService encryption
         # Implementation depends on actual encryption setup
-        pass
+        pytest.skip("Requires DatasetStorageService encryption setup")
 
 
 class TestPerformanceAndScaling:

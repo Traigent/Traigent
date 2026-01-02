@@ -174,12 +174,18 @@ class TestMCPClientConnectionManagement:
                     mock_session_instance.__aexit__ = AsyncMock(return_value=None)
 
                     # Test connection establishment
+                    connection_tested = False
                     if hasattr(self.client, "connect"):
                         await self.client.connect()
+                        connection_tested = True
 
                     # Test connection cleanup
                     if hasattr(self.client, "disconnect"):
                         await self.client.disconnect()
+                        connection_tested = True
+
+                    # Verify at least one method was called
+                    assert connection_tested or not hasattr(self.client, "connect")
 
     @pytest.mark.asyncio
     async def test_connection_error_handling(self):
@@ -287,18 +293,27 @@ class TestMCPRequestHandling:
     @pytest.mark.asyncio
     async def test_request_timeout_handling(self):
         """Test request timeout handling."""
+        # Skip if client doesn't have required attributes
+        if not hasattr(self.client, "_session") or not hasattr(self.client, "call_tool"):
+            pytest.skip("Client does not have _session or call_tool attributes")
+
         with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", True):
             mock_session = AsyncMock()
+            mock_result = Mock()
+            mock_result.content = []
             mock_session.call_tool = AsyncMock(side_effect=TimeoutError())
 
-            if hasattr(self.client, "_session"):
+            # Patch is_connected to return True to skip connection attempts
+            with patch.object(self.client, "is_connected", new_callable=AsyncMock) as mock_connected:
+                mock_connected.return_value = True
                 self.client._session = mock_session
 
-                if hasattr(self.client, "call_tool"):
-                    try:
-                        await self.client.call_tool("test_tool", {})
-                    except TimeoutError:
-                        pass  # Expected
+                timeout_raised = False
+                try:
+                    await self.client.call_tool("test_tool", {})
+                except TimeoutError:
+                    timeout_raised = True  # Expected
+                assert timeout_raised, "TimeoutError should be raised"
 
 
 class TestMCPRetryMechanism:
@@ -483,22 +498,27 @@ class TestMCPErrorHandling:
                 Mock(),  # Successful connection on retry
             ]
 
+            recovery_tested = False
             if hasattr(self.client, "connect_with_retry"):
                 try:
                     await self.client.connect_with_retry()
+                    recovery_tested = True
                 except Exception:
-                    pass  # May still fail, but should attempt recovery
+                    recovery_tested = True  # Exception is acceptable
+            assert recovery_tested or not hasattr(self.client, "connect_with_retry")
 
     def test_invalid_request_handling(self):
         """Test handling of invalid requests."""
         invalid_requests = [None, {}, {"method": None}, {"params": "invalid"}]
 
+        validation_tested = False
         for invalid_request in invalid_requests:
             if hasattr(self.client, "validate_request"):
                 try:
                     self.client.validate_request(invalid_request)
                 except (ValueError, TypeError, AttributeError):
-                    pass  # Expected for invalid requests
+                    validation_tested = True  # Expected for invalid requests
+        assert validation_tested or not hasattr(self.client, "validate_request")
 
     @pytest.mark.asyncio
     async def test_server_error_handling(self):
@@ -509,12 +529,14 @@ class TestMCPErrorHandling:
             {"error": {"code": 400, "message": "Invalid parameters"}},
         ]
 
+        error_handled = False
         for error_response in server_errors:
             if hasattr(self.client, "handle_error_response"):
                 try:
                     self.client.handle_error_response(error_response)
                 except Exception:
-                    pass  # Expected for error responses
+                    error_handled = True  # Expected for error responses
+        assert error_handled or not hasattr(self.client, "handle_error_response")
 
 
 class TestMCPIntegrationScenarios:

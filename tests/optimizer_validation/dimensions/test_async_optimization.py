@@ -609,7 +609,9 @@ class TestAsyncWithAllAlgorithms:
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, f"Should complete at least one trial with {optimizer}"
+            assert (
+                len(result.trials) >= 1
+            ), f"Should complete at least one trial with {optimizer}"
             valid_models = {"gpt-3.5-turbo", "gpt-4"}
             valid_temps = {0.3, 0.7}
             for trial in result.trials:

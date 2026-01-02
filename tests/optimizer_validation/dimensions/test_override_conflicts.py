@@ -127,7 +127,6 @@ class TestTVLOverrideConflicts:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # All trials should have model locked to gpt-4
         if hasattr(result, "trials"):
             for trial in result.trials:
@@ -179,7 +178,6 @@ class TestTVLOverrideConflicts:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         if hasattr(result, "trials"):
             for trial in result.trials:

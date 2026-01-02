@@ -54,7 +54,6 @@ class TestConfigOnlyConstraints:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Note: Constraints may be checked at different stages depending on implementation
         # The optimizer may still evaluate configs and then apply constraints to results
         # We don't assert on individual trial configs here as behavior varies

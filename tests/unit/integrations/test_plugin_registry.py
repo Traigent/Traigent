@@ -275,8 +275,9 @@ class TestPluginUnregistration:
         self, isolated_registry: PluginRegistry
     ) -> None:
         """Test that unregistering non-existent plugin doesn't raise error."""
-        # Should not raise
-        isolated_registry.unregister("nonexistent_plugin")
+        # Should not raise - verify it completes
+        result = isolated_registry.unregister("nonexistent_plugin")
+        assert result is None  # Method returns None
 
     def test_unregister_cleans_empty_package_lists(
         self, isolated_registry: PluginRegistry, sample_plugin: _MinimalPlugin
@@ -420,15 +421,17 @@ class TestPluginEnableDisable:
         self, isolated_registry: PluginRegistry
     ) -> None:
         """Test enabling non-existent plugin doesn't raise error."""
-        # Should not raise
-        isolated_registry.enable_plugin("nonexistent")
+        # Should not raise - verify it completes
+        result = isolated_registry.enable_plugin("nonexistent")
+        assert result is None  # Method returns None
 
     def test_disable_nonexistent_plugin_does_nothing(
         self, isolated_registry: PluginRegistry
     ) -> None:
         """Test disabling non-existent plugin doesn't raise error."""
-        # Should not raise
-        isolated_registry.disable_plugin("nonexistent")
+        # Should not raise - verify it completes
+        result = isolated_registry.disable_plugin("nonexistent")
+        assert result is None  # Method returns None
 
 
 class TestPluginValidation:

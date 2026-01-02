@@ -68,26 +68,33 @@ class TestValidateConstructorArguments:
         max_trials = 10
         timeout = 60.0
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials, timeout)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials, timeout
+        )
+        assert result is None
 
     def test_none_max_trials_allowed(self):
         """Test that None max_trials is allowed (unlimited trials)."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
             optimizer, evaluator, max_trials=None, timeout=None
         )
+        assert result is None
 
     def test_zero_max_trials_allowed(self):
         """Test that zero max_trials is allowed (no trials)."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials=0, timeout=None)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials=0, timeout=None
+        )
+        assert result is None
 
     def test_invalid_optimizer_type(self):
         """Test that invalid optimizer type raises TypeError."""
@@ -176,8 +183,11 @@ class TestValidateConstructorArguments:
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
 
-        # Should not raise any exception
-        validate_constructor_arguments(optimizer, evaluator, max_trials=10, timeout=0.0)
+        # Should not raise any exception - returns None on success
+        result = validate_constructor_arguments(
+            optimizer, evaluator, max_trials=10, timeout=0.0
+        )
+        assert result is None
 
 
 class TestParallelTrialsNormalization:
@@ -418,8 +428,9 @@ class TestModuleValidateConstructorArguments:
         """Test that valid arguments pass without exception."""
         optimizer = MockOptimizer()
         evaluator = MockEvaluator()
-        # Should not raise
-        validate_constructor_arguments(optimizer, evaluator, 10, 100, 60.0)
+        # Should not raise - returns None on success
+        result = validate_constructor_arguments(optimizer, evaluator, 10, 100, 60.0)
+        assert result is None
 
     def test_invalid_optimizer_raises_type_error(self):
         """Test that non-BaseOptimizer raises TypeError."""
@@ -825,7 +836,8 @@ class TestEnforceConstraints:
 
     def test_empty_constraints_does_nothing(self):
         """Test that empty constraints list passes."""
-        enforce_constraints({}, {}, [], "test")  # Should not raise
+        result = enforce_constraints({}, {}, [], "test")
+        assert result is None  # Returns None on success
 
     def test_passing_constraint(self):
         """Test that passing constraint doesn't raise."""
@@ -833,7 +845,8 @@ class TestEnforceConstraints:
         def always_pass(config):
             return True
 
-        enforce_constraints({"a": 1}, None, [always_pass], "pre")
+        result = enforce_constraints({"a": 1}, None, [always_pass], "pre")
+        assert result is None  # Returns None on success
 
     def test_failing_constraint_raises_error(self):
         """Test that failing constraint raises TVLConstraintError."""
@@ -851,7 +864,10 @@ class TestEnforceConstraints:
         def metrics_constraint(config, metrics):
             return metrics.get("accuracy", 0) > 0.5
 
-        enforce_constraints({"a": 1}, {"accuracy": 0.7}, [metrics_constraint], "post")
+        result = enforce_constraints(
+            {"a": 1}, {"accuracy": 0.7}, [metrics_constraint], "post"
+        )
+        assert result is None  # Returns None on success
 
     def test_failing_metrics_constraint(self):
         """Test failing metrics constraint."""
@@ -898,7 +914,8 @@ class TestEnforceConstraints:
         def c2(config):
             return True
 
-        enforce_constraints({"a": 1}, None, [c1, c2], "pre")
+        result = enforce_constraints({"a": 1}, None, [c1, c2], "pre")
+        assert result is None  # Returns None on success
 
     def test_multiple_constraints_one_fails(self):
         """Test that first failing constraint raises."""

@@ -142,9 +142,13 @@ class TestRandomSeedReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second run should complete at least one trial"
 
         validation1 = result_validator(scenario1, result1)
         assert validation1.passed, validation1.summary()
@@ -198,9 +202,13 @@ class TestRandomSeedReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "Seed 42 run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "Seed 42 run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Seed 123 run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Seed 123 run should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -265,9 +273,13 @@ class TestRandomSeedReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First unseeded run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First unseeded run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second unseeded run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second unseeded run should complete at least one trial"
 
         # Results may or may not differ - this just verifies no crash
         # Emit evidence for both
@@ -391,9 +403,13 @@ class TestGridSearchDeterminism:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "Grid without seed should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "Grid without seed should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Grid with seed should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Grid with seed should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -534,9 +550,13 @@ class TestOptunaSeedReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First Optuna random run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First Optuna random run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second Optuna random run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second Optuna random run should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -602,9 +622,13 @@ class TestContinuousParameterReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First continuous param run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First continuous param run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second continuous param run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second continuous param run should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -678,9 +702,13 @@ class TestMixedSpaceReproducibility:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First mixed space run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First mixed space run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second mixed space run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second mixed space run should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -758,9 +786,13 @@ class TestSeedEdgeCases:
 
         # Verify trials were executed in both runs
         if hasattr(result1, "trials"):
-            assert len(result1.trials) >= 1, "First seed=0 run should complete at least one trial"
+            assert (
+                len(result1.trials) >= 1
+            ), "First seed=0 run should complete at least one trial"
         if hasattr(result2, "trials"):
-            assert len(result2.trials) >= 1, "Second seed=0 run should complete at least one trial"
+            assert (
+                len(result2.trials) >= 1
+            ), "Second seed=0 run should complete at least one trial"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -852,5 +884,8 @@ class TestSeedEdgeCases:
                 "seed" in error_msg or "negative" in error_msg
             ), f"Error should mention seed issue: {result}"
         else:
-            # If it works, that's fine too
-            result_validator(scenario, result)
+            # If it works, that's fine too - verify result structure
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, "Should have at least one trial"
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()

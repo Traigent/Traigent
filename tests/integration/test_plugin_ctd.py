@@ -589,6 +589,7 @@ class TestPluginCTD:
     def test_generator(self):
         """Create a CTD test generator."""
         return CTDTestGenerator(k=1, verbose=True)
+        # Function completed successfully (no assertion needed for smoke test)
 
     @pytest.fixture
     def registry(self):

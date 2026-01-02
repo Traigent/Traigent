@@ -71,10 +71,11 @@ class TestInvalidExecutionMode:
         if isinstance(result, Exception):
             assert "execution" in str(result).lower() or "mode" in str(result).lower()
         else:
-            # If it somehow succeeds, validate the result
+            # If it somehow succeeds (unexpected), validate the result structure
+            assert hasattr(result, "trials"), "Result should have trials attribute"
             validation = result_validator(scenario, result)
-            # This is unexpected but record it
-            assert validation.passed or not validation.passed
+            # Record the validation result - success here is unexpected but valid
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -108,13 +109,30 @@ class TestInvalidExecutionMode:
         # Either fails with error or uses default - both are acceptable
         if isinstance(result, Exception):
             # Error is acceptable - verify it mentions execution/mode
-            assert "execution" in str(result).lower() or "mode" in str(result).lower() or "invalid" in str(result).lower(), \
-                f"Error should mention execution mode issue: {result}"
+            assert (
+                "execution" in str(result).lower()
+                or "mode" in str(result).lower()
+                or "invalid" in str(result).lower()
+            ), f"Error should mention execution mode issue: {result}"
         else:
             # If it uses a default, verify the result is valid
             if hasattr(result, "trials"):
-                assert len(result.trials) >= 1, "Should complete at least one trial with default mode"
-            validation = result_validator(scenario, result)
+                assert (
+                    len(result.trials) >= 1
+                ), "Should complete at least one trial with default mode"
+            # Verify result has expected structure
+            assert hasattr(result, "best_config") or hasattr(
+                result, "trials"
+            ), "Result should have optimization data"
+            # Validate with custom scenario that expects success (fallback behavior)
+            success_scenario = TestScenario(
+                name="empty_execution_mode_fallback",
+                description="Empty mode falls back to default",
+                config_space=scenario.config_space,
+                max_trials=scenario.max_trials,
+                expected=ExpectedResult(min_trials=1),
+            )
+            validation = result_validator(success_scenario, result)
             assert validation.passed, validation.summary()
 
 

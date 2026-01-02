@@ -133,10 +133,15 @@ class TestMockModeNoCredentials:
 
             # Verify trials were executed
             if hasattr(result, "trials"):
-                assert len(result.trials) >= 1, f"{algo_name} should complete at least one trial"
+                assert (
+                    len(result.trials) >= 1
+                ), f"{algo_name} should complete at least one trial"
                 for trial in result.trials:
                     config = getattr(trial, "config", {})
                     assert config, f"Trial in {algo_name} should have config"
+
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -331,7 +336,6 @@ class TestErrorMessageClarity:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         # Result should have useful structure
         if hasattr(result, "trials"):

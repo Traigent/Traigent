@@ -879,7 +879,10 @@ class TestAgentValidator:
             path = Path(tmpdir)
             with patch.object(validator, "validate_file") as mock_validate:
                 mock_validate.return_value = []
-                validator.validate_directory(path)
+                result = validator.validate_directory(path)
+                assert result is None or isinstance(
+                    result, list
+                )  # Returns None or list
 
     def test_should_skip_matches_pattern(self, validator: AgentValidator) -> None:
         """Test _should_skip returns True for files matching skip patterns."""

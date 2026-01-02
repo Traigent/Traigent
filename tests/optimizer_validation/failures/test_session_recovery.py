@@ -228,7 +228,6 @@ class TestProgressPreservation:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Result should identify the best configuration
         if hasattr(result, "best_config"):
             assert result.best_config is not None, "Should have best config"
@@ -387,6 +386,12 @@ class TestResumptionPatterns:
         if hasattr(result1, "trials") and hasattr(result2, "trials"):
             assert len(result1.trials) >= 1
             assert len(result2.trials) >= 1
+
+        # Validate both results
+        validation1 = result_validator(scenario1, result1)
+        assert validation1.passed, validation1.summary()
+        validation2 = result_validator(scenario2, result2)
+        assert validation2.passed, validation2.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

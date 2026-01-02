@@ -105,7 +105,9 @@ class TestOptunaConfigSpaceTypes:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 if "model" in config:
-                    assert config["model"] in valid_models, f"Invalid model: {config['model']}"
+                    assert (
+                        config["model"] in valid_models
+                    ), f"Invalid model: {config['model']}"
                 if "safety_filter" in config:
                     assert config["safety_filter"] in valid_filters
                 if "response_format" in config:
@@ -160,9 +162,13 @@ class TestOptunaConfigSpaceTypes:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 if "temperature" in config:
-                    assert 0.0 <= config["temperature"] <= 2.0, f"temperature out of range: {config['temperature']}"
+                    assert (
+                        0.0 <= config["temperature"] <= 2.0
+                    ), f"temperature out of range: {config['temperature']}"
                 if "top_p" in config:
-                    assert 0.1 <= config["top_p"] <= 1.0, f"top_p out of range: {config['top_p']}"
+                    assert (
+                        0.1 <= config["top_p"] <= 1.0
+                    ), f"top_p out of range: {config['top_p']}"
                 if "frequency_penalty" in config:
                     assert -2.0 <= config["frequency_penalty"] <= 2.0
                 if "presence_penalty" in config:
@@ -346,7 +352,9 @@ class TestOptunaObjectiveConfigs:
 
         # Verify best_config exists for maximize objective
         if hasattr(result, "best_config"):
-            assert result.best_config is not None, "Should have best_config for maximize"
+            assert (
+                result.best_config is not None
+            ), "Should have best_config for maximize"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

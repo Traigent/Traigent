@@ -206,7 +206,9 @@ class TestEdgeCases(DecoratorTestBase):
                 return self._value
 
         # Properties with optimize decorator might not work as expected
-        # This tests the error handling
+        # This tests the error handling - verify class was created successfully
+        obj = TestClass()
+        assert hasattr(obj, "value")
 
     def test_multiple_decorators(self):
         """Test optimize decorator with other decorators."""

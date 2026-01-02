@@ -748,7 +748,7 @@ class TestCTDScenarios:
         params = discovery.discover_method_parameters(obj, method_path)
 
         if expected_result == "found":
-            assert len(params) >= 0  # May have parameters
+            assert isinstance(params, (list, dict))  # May have parameters
         elif expected_result == "not_found":
             assert len(params) == 0
 

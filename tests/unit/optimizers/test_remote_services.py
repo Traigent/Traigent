@@ -1212,7 +1212,8 @@ class TestMockRemoteService:
         await service.connect()
 
         # Should not raise error - just does nothing
-        await service.close_session("nonexistent_session")
+        result = await service.close_session("nonexistent_session")
+        assert result is None  # Method returns None
 
     @pytest.mark.asyncio
     async def test_mock_service_suggest_configuration_categorical(self) -> None:

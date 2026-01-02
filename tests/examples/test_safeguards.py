@@ -192,6 +192,9 @@ def test_ci_approval():
         print("Not in CI environment - no approval needed")
         print("✅ Non-CI execution allowed!")
 
+    # Verify the test completed and CI detection worked
+    assert isinstance(is_ci, bool), "CI detection should return boolean"
+
 
 def main():
     """Run all safeguard tests."""

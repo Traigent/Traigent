@@ -367,9 +367,10 @@ class TestLoggingCallback:
         algorithm = "grid"
 
         # Should not raise exception
-        callback_without_logger.on_optimization_start(
+        result = callback_without_logger.on_optimization_start(
             config_space, objectives, algorithm
         )
+        assert result is None  # Method returns None
 
     def test_on_trial_start(
         self, callback_with_logger: LoggingCallback, mock_logger: MagicMock
@@ -995,7 +996,8 @@ class TestSimpleProgressCallback:
             timestamp=datetime.now(UTC),
         )
 
-        callback_print.on_trial_complete(trial, progress_info)
+        result = callback_print.on_trial_complete(trial, progress_info)
+        assert result is None  # Method returns None
 
         # Should not print score details for failed trials
         # Output should be minimal or empty with show_details=True but no score

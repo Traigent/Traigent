@@ -253,8 +253,9 @@ class TestCeilingPruner:
 
         # Should not prune due to cost threshold
         # (but might prune due to ceiling)
-        _ = pruner.prune(study_minimize, trial)
-        # Result depends on ceiling comparison, not asserting here
+        result = pruner.prune(study_minimize, trial)
+        # Result depends on ceiling comparison - just ensure it returns a boolean
+        assert isinstance(result, bool)
 
     def test_prune_with_cost_threshold_multi_objective_with_directions(
         self, study_multi_objective: optuna.Study
@@ -373,8 +374,9 @@ class TestCeilingPruner:
 
         # Should not prune due to cost threshold (list too short)
         # Result depends on ceiling comparison
-        _ = pruner.prune(study, trial)
-        # Not asserting as it depends on study direction
+        result = pruner.prune(study, trial)
+        # Just ensure it returns a boolean
+        assert isinstance(result, bool)
 
     def test_prune_returns_false_when_insufficient_completed_trials(
         self, study_maximize: optuna.Study, pruner: CeilingPruner

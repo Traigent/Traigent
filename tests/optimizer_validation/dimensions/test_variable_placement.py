@@ -49,7 +49,16 @@ class TestVariableMultipleUsage:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -69,7 +78,16 @@ class TestVariableMultipleUsage:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -90,7 +108,16 @@ class TestVariableMultipleUsage:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestVariableInFunctionCalls:
@@ -116,7 +143,16 @@ class TestVariableInFunctionCalls:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -137,7 +173,16 @@ class TestVariableInFunctionCalls:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -158,7 +203,16 @@ class TestVariableInFunctionCalls:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestVariableInClientConstruction:
@@ -184,7 +238,16 @@ class TestVariableInClientConstruction:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -208,7 +271,16 @@ class TestVariableInClientConstruction:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestVariableInDictConstruction:
@@ -234,7 +306,16 @@ class TestVariableInDictConstruction:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -256,7 +337,16 @@ class TestVariableInDictConstruction:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestVariableInClosures:
@@ -281,7 +371,16 @@ class TestVariableInClosures:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -302,7 +401,16 @@ class TestVariableInClosures:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
 
 class TestVariableInConditionals:
@@ -327,7 +435,16 @@ class TestVariableInConditionals:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -348,4 +465,13 @@ class TestVariableInConditionals:
         )
         _, result = await scenario_runner(scenario)
         assert not isinstance(result, Exception)
-        result_validator(scenario, result)
+
+        # Verify trials executed
+        if hasattr(result, "trials"):
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()

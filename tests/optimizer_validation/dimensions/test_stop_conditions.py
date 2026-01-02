@@ -723,7 +723,6 @@ class TestStopReasonValues:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify config space was actually limited
         unique_configs = {tuple(sorted(t.config.items())) for t in result.trials}
         assert (

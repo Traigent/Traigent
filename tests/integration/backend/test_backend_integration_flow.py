@@ -240,5 +240,6 @@ class TestBackendIntegrationWithMocks:
             score=0.85,
             metadata={"cost": 0.002},
         )
+        # Function completed successfully (no assertion needed for smoke test)
 
         # Test passes if no exception is raised

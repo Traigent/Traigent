@@ -98,7 +98,6 @@ class TestOpenAIPatterns:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify configs are valid OpenAI parameters
         if hasattr(result, "trials"):
             for trial in result.trials:

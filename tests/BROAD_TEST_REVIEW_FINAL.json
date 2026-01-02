@@ -1,0 +1,400 @@
+{
+  "total_issues": 133,
+  "fixed_count": 85,
+  "remaining_count": 48,
+  "by_type": {
+    "IT-NA": 121,
+    "IT-VTA": 12
+  },
+  "fixed_files": [
+    "tests/examples/test_auth_cli.py",
+    "tests/examples/test_safeguards.py",
+    "tests/integration/test_execution_modes.py",
+    "tests/integration/test_traigent_integration.py",
+    "tests/integration/test_optimization_validation_integration.py",
+    "tests/manual_validation/test_backend_fix.py",
+    "tests/manual_validation/test_backend_format.py",
+    "tests/manual_validation/test_backend_submission.py",
+    "tests/manual_validation/test_complete_submission.py",
+    "tests/manual_validation/test_metrics_issue.py",
+    "tests/manual_validation/test_submission_fix.py",
+    "tests/security/test_credentials_integration.py",
+    "tests/security/test_jwt_validator_secure.py",
+    "tests/security/test_rate_limiter_secure.py",
+    "tests/security/test_seamless_security.py",
+    "tests/unit/analytics/test_cost_optimization_rebalance.py",
+    "tests/unit/analytics/test_predictive.py",
+    "tests/unit/api/decorator_tests/test_decorator_injection_modes.py",
+    "tests/unit/api/test_api_types.py",
+    "tests/unit/api/test_types.py",
+    "tests/unit/cli/test_validation_edge_cases.py",
+    "tests/unit/cli/test_validation_system.py",
+    "tests/unit/cloud/test_authentication_security.py",
+    "tests/unit/cloud/test_cost_tracking.py",
+    "tests/unit/cloud/test_credential_resolver.py",
+    "tests/unit/core/optimized_function_tests/test_configuration_injection.py",
+    "tests/unit/core/optimized_function_tests/test_optimization.py",
+    "tests/unit/hooks/test_validator.py",
+    "tests/unit/integrations/observability/test_mlflow.py",
+    "tests/unit/integrations/observability/test_wandb.py",
+    "tests/unit/integrations/test_discovery.py",
+    "tests/unit/integrations/test_integration_discovery.py",
+    "tests/unit/integrations/test_module_integration.py",
+    "tests/unit/invokers/test_local.py",
+    "tests/unit/optimizers/test_bayesian.py",
+    "tests/unit/optimizers/test_pruners.py",
+    "tests/unit/optimizers/test_remote_services.py",
+    "tests/unit/scripts/test_migrate_optuna.py",
+    "tests/unit/security/auth/test_sms.py",
+    "tests/unit/security/test_audit.py",
+    "tests/unit/test_analytics.py",
+    "tests/unit/test_coverage_improvements.py",
+    "tests/unit/test_optigen_integration.py",
+    "tests/unit/utils/test_batch_optimizer_utils.py",
+    "tests/unit/utils/test_batch_processing.py",
+    "tests/unit/utils/test_callbacks.py",
+    "tests/unit/utils/test_common_validators.py",
+    "tests/unit/utils/test_function_identity.py",
+    "tests/unit/utils/test_incentives.py",
+    "tests/unit/utils/test_local_analytics.py",
+    "tests/utils/test_incentives.py",
+    "tests/utils/test_local_analytics.py"
+  ],
+  "remaining_issues": [
+    {
+      "file": "tests/cli/test_local_commands.py",
+      "test_name": "test_file_permission_handling",
+      "line": 805,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_quick_example",
+      "line": 81,
+      "issue_type": "IT-NA",
+      "status": "pending",
+      "note": "Uses _run_code_safely which has assertions in subprocess"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_customer_support_example",
+      "line": 187,
+      "issue_type": "IT-NA",
+      "status": "pending",
+      "note": "Uses _run_code_safely which has assertions in subprocess"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_imports_in_examples",
+      "line": 309,
+      "issue_type": "IT-NA",
+      "status": "pending",
+      "note": "Uses _run_code_safely which has assertions in subprocess"
+    },
+    {
+      "file": "tests/examples/test_readme_examples.py",
+      "test_name": "test_evaluation_example",
+      "line": 364,
+      "issue_type": "IT-NA",
+      "status": "pending",
+      "note": "Uses _run_code_safely which has assertions in subprocess"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_integration.py",
+      "test_name": "test_submit_result_with_mock",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_integration_flow.py",
+      "test_name": "test_submit_result_with_mock",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/backend/test_backend_minimal.py",
+      "test_name": "test_backend_api",
+      "line": 31,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/backend/test_session_finalization_integration.py",
+      "test_name": "test_integration_prerequisites",
+      "line": 224,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_ctd_coverage_from_csv.py",
+      "test_name": "test_generator",
+      "line": 432,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_ctd_coverage_from_csv.py",
+      "test_name": "test_coverage_report",
+      "line": 705,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_custom_evaluator_fix.py",
+      "test_name": "test_function",
+      "line": 78,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_metrics_fix.py",
+      "test_name": "test_function",
+      "line": 68,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_plugin_ctd.py",
+      "test_name": "test_generator",
+      "line": 589,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/integration/test_traigent_decorator_cloud_integration.py",
+      "test_name": "test_decorator_with_real_cloud_client_mock",
+      "line": 439,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/test_all_demos.py",
+      "test_name": "test_demo",
+      "line": 215,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/test_all_features.py",
+      "test_name": "test_imports",
+      "line": 25,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_code_examples_in_readme",
+      "line": 36,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_example_imports",
+      "line": 204,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/test_documentation.py",
+      "test_name": "test_decorator_usage_examples",
+      "line": 486,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/api/decorator_tests/test_decorator_error_handling.py",
+      "test_name": "test_decorator_with_property",
+      "line": 196,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_no_metadata",
+      "line": 117,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_no_session_summary",
+      "line": 125,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/core/test_metadata_helpers.py",
+      "test_name": "test_merge_non_dict_session_summary",
+      "line": 133,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/core/test_utils.py",
+      "test_name": "test_validate_positive_number_valid",
+      "line": 167,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/core/test_utils.py",
+      "test_name": "test_validate_range_valid",
+      "line": 187,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/integrations/test_framework_override.py",
+      "test_name": "test_error_handling_import_failure",
+      "line": 550,
+      "issue_type": "IT-VTA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_unregister_nonexistent_plugin_does_nothing",
+      "line": 274,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_enable_nonexistent_plugin_does_nothing",
+      "line": 419,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/integrations/test_plugin_registry.py",
+      "test_name": "test_disable_nonexistent_plugin_does_nothing",
+      "line": 426,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/optimizers/test_optuna_ask_tell.py",
+      "test_name": "test_tell_unknown_trial_id",
+      "line": 189,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/optimizers/test_service_registry.py",
+      "test_name": "test_malformed_requirements",
+      "line": 980,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/security/test_enterprise.py",
+      "test_name": "test_default_alert_handler",
+      "line": 506,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/security/test_input_validation.py",
+      "test_name": "test_valid_password",
+      "line": 104,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_enhanced_framework_override.py",
+      "test_name": "test_enable_disable_framework_overrides",
+      "line": 291,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_enhanced_framework_override.py",
+      "test_name": "test_override_all_platforms",
+      "line": 301,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_connection_lifecycle_mocked",
+      "line": 151,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_request_timeout_handling",
+      "line": 288,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_connection_error_recovery",
+      "line": 477,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_invalid_request_handling",
+      "line": 492,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_mcp_production_client.py",
+      "test_name": "test_server_error_handling",
+      "line": 504,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_environment_approval",
+      "line": 479,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_mock_mode_skips_ci_approval",
+      "line": 502,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_token_file_approval",
+      "line": 519,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_hmac_token_validation",
+      "line": 580,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_safeguards.py",
+      "test_name": "test_non_ci_environment_no_approval_needed",
+      "line": 662,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    },
+    {
+      "file": "tests/unit/test_secure_auth.py",
+      "test_name": "test_log_auth_event",
+      "line": 191,
+      "issue_type": "IT-NA",
+      "status": "pending"
+    }
+  ],
+  "last_updated": "2026-01-02",
+  "summary": "Fixed 85 of 133 issues. 48 remaining issues are mostly in backend integration tests, documentation tests, MCP client tests, and safeguards tests."
+}

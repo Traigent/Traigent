@@ -190,7 +190,6 @@ class TestBayesianWithDegenerateSpace:
             "range" in error_msg or "min" in error_msg
         ), f"Error should mention range validation issue: {result}"
 
-
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
             assert len(result.trials) >= 1, "Should complete at least one trial"
@@ -257,7 +256,6 @@ class TestCMAESConstraints:
                     trial.config.get("response_format")
                     in config_space["response_format"]
                 ), f"Trial {i} has invalid response_format"
-
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
@@ -383,7 +381,6 @@ class TestGridSearchConstraints:
 
         assert isinstance(result, Exception)
 
-
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
             assert len(result.trials) >= 1, "Should complete at least one trial"
@@ -422,7 +419,6 @@ class TestGridSearchConstraints:
         _, result = await scenario_runner(scenario)
 
         assert isinstance(result, Exception)
-
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
@@ -659,13 +655,17 @@ class TestEmptyAndMinimalSpaces:
         # Should handle gracefully - either error or use defaults
         if isinstance(result, Exception):
             # Empty config space should produce a clear error
-            assert "config" in str(result).lower() or "space" in str(result).lower() or "empty" in str(result).lower(), \
-                f"Error should mention config/space issue: {result}"
+            assert (
+                "config" in str(result).lower()
+                or "space" in str(result).lower()
+                or "empty" in str(result).lower()
+            ), f"Error should mention config/space issue: {result}"
         else:
             # If it somehow succeeds (uses defaults), verify it works
-            if hasattr(result, "trials"):
-                # At least ran something
-                assert hasattr(result, "trials"), "Result should have trials attribute"
+            assert hasattr(result, "trials"), "Result should have trials attribute"
+            if len(result.trials) >= 1:
+                validation = result_validator(scenario, result)
+                assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -344,8 +344,9 @@ class TestResolveFunctionDescriptor:
         desc = resolve_function_descriptor(simple_function)
 
         # Should use POSIX-style forward slashes
-        if "\\" in desc.relative_path:
-            pytest.fail("Relative path should use forward slashes")
+        assert (
+            "\\" not in desc.relative_path
+        ), "Relative path should use forward slashes"
 
 
 class TestFunctionIdentityEdgeCases:

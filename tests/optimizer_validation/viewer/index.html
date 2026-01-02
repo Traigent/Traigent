@@ -1404,7 +1404,41 @@
                 }
                 renderTree();
                 if (initialTestId) {
-                    const match = allTests.find(t => t.id === initialTestId || t.name === initialTestId);
+                    // Try exact match first
+                    let match = allTests.find(t => t.id === initialTestId || t.name === initialTestId);
+
+                    // If no exact match, try flexible matching for parametrized tests
+                    // knowledge_graph.py may generate IDs with different param formats
+                    if (!match) {
+                        // Extract base ID and parameters from the requested test ID
+                        const bracketMatch = initialTestId.match(/^(.+?)\[(.+)\]$/);
+                        if (bracketMatch) {
+                            const baseId = bracketMatch[1];
+                            const params = bracketMatch[2];
+                            // Extract just the values (ignore keys like "key=value" vs just "value")
+                            const paramValues = params.split(/[-,]/).map(p =>
+                                p.includes('=') ? p.split('=')[1] : p
+                            ).sort();
+
+                            match = allTests.find(t => {
+                                const testBracketMatch = t.id.match(/^(.+?)\[(.+)\]$/);
+                                if (!testBracketMatch) return false;
+
+                                // Check if base IDs match
+                                if (testBracketMatch[1] !== baseId) return false;
+
+                                // Check if param values match (regardless of format)
+                                const testParams = testBracketMatch[2];
+                                const testValues = testParams.split(/[-,]/).map(p =>
+                                    p.includes('=') ? p.split('=')[1] : p
+                                ).sort();
+
+                                return paramValues.length === testValues.length &&
+                                    paramValues.every((v, i) => v === testValues[i]);
+                            });
+                        }
+                    }
+
                     if (match) {
                         selectTest(match.id);
                     }

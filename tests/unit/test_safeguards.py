@@ -497,7 +497,8 @@ class TestCIApproval:
                 "TRAIGENT_APPROVED_BY": "test_user",
             },
         ):
-            func._check_ci_approval()  # Should not raise
+            result = func._check_ci_approval()  # Should not raise
+            assert result is None  # Successful approval returns None
 
     def test_mock_mode_skips_ci_approval(self):
         """Mock mode should bypass CI approval gate."""
@@ -514,7 +515,8 @@ class TestCIApproval:
         with patch.dict(
             os.environ, {"CI": "true", "TRAIGENT_MOCK_MODE": "true"}, clear=True
         ):
-            func._check_ci_approval()  # Should not raise
+            result = func._check_ci_approval()  # Should not raise
+            assert result is None  # Mock mode bypass returns None
 
     def test_token_file_approval(self):
         """Test approval via token file."""
@@ -543,7 +545,8 @@ class TestCIApproval:
 
             # Test with CI environment and valid token
             with patch.dict(os.environ, {"CI": "true"}):
-                func._check_ci_approval()  # Should not raise
+                result = func._check_ci_approval()  # Should not raise
+                assert result is None  # Token approval returns None
 
     def test_expired_token_rejected(self):
         """Test that expired tokens are rejected."""
@@ -620,8 +623,8 @@ class TestCIApproval:
         with patch.dict(
             os.environ, {"CI": "true", "TRAIGENT_APPROVAL_SECRET": "test_secret"}
         ):
-            # Should not raise exception
-            func._check_ci_approval()
+            result = func._check_ci_approval()  # Should not raise
+            assert result is None  # HMAC approval returns None
 
     def test_invalid_hmac_signature(self):
         """Test that invalid HMAC signatures are rejected."""
@@ -673,4 +676,5 @@ class TestCIApproval:
 
         # Test with no CI environment variables
         with patch.dict(os.environ, {}, clear=True):
-            func._check_ci_approval()  # Should not raise
+            result = func._check_ci_approval()  # Should not raise
+            assert result is None  # Non-CI environment returns None

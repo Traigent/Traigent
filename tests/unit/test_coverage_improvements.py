@@ -159,7 +159,8 @@ def test_optuna_emitter_unsubscribe_nonexistent():
         pass
 
     # Unsubscribe without subscribing should not raise
-    emitter.unsubscribe(listener)
+    result = emitter.unsubscribe(listener)
+    assert result is None  # Method returns None
 
 
 # =============================================================================

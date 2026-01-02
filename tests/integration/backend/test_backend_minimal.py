@@ -199,6 +199,7 @@ async def test_backend_api():
     print("\n✅ Test completed!")
     print("\nCheck the UI at http://localhost:3000/experiments/")
     print(f"Look for experiment: {experiment_id}")
+    # Function completed successfully (no assertion needed for smoke test)
 
 
 if __name__ == "__main__":

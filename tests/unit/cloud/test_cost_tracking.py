@@ -363,6 +363,8 @@ class TestCostTrackerAsync:
 
             # Give async task time to complete
             await asyncio.sleep(0.1)
+            # Verify cost item was added to the tracker
+            assert cost_item in cost_tracker_with_sync._cost_items
 
 
 class TestCostTrackerIntegration:

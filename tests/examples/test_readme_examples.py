@@ -141,7 +141,7 @@ class TestREADMEExamples:
 
         # Remove eval_dataset for testing
         modified_example = quick_example.replace(
-            'eval_dataset="qa_samples.jsonl",  # Your evaluation dataset',
+            'eval_dataset="data/qa_samples.jsonl",  # Your evaluation dataset',
             "# eval_dataset removed for testing",
         )
         modified_example = modified_example.replace(
@@ -150,8 +150,7 @@ class TestREADMEExamples:
         )
 
         # Create a simplified test that verifies the decorator works without external deps
-        test_code = f"""
-import os
+        test_code = f"""import os
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 
@@ -258,8 +257,7 @@ if 'simple_qa_agent' in locals():
                 imports.append(line.strip())
 
         # Create a simplified test with mocks
-        test_code = f"""
-import os
+        test_code = f"""import os
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 
@@ -339,8 +337,7 @@ if 'customer_support_agent' in locals():
             # Check if this is an optional dependency import
             is_optional = any(module in import_line for module in optional_modules)
 
-            test_code = f"""
-import os
+            test_code = f"""import os
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 {import_line}
@@ -365,7 +362,7 @@ print("✅ Import successful: {import_line}")
         """Test the evaluation dataset example."""
         eval_example = None
         for example in self.examples:
-            if "eval_dataset" in example or "qa_samples.jsonl" in example:
+            if "eval_dataset" in example or "data/qa_samples.jsonl" in example:
                 eval_example = example
                 break
 
@@ -380,8 +377,7 @@ print("✅ Import successful: {import_line}")
             pytest.skip("Evaluation example not found")
 
         # Create a simple test that validates the decorator works
-        test_code = """
-import os
+        test_code = """import os
 import json
 import tempfile
 os.environ["TRAIGENT_MOCK_MODE"] = "true"

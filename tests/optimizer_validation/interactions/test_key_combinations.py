@@ -356,7 +356,6 @@ class TestComplexWorkflows:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Validate the optimization completed
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

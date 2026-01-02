@@ -338,7 +338,6 @@ class TestRandomSearchExploration:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify values are in range
         if hasattr(result, "trials") and result.trials:
             temps = []
@@ -402,7 +401,6 @@ class TestRandomSearchExploration:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         # Verify config validity
         if hasattr(result, "trials") and result.trials:
@@ -481,7 +479,6 @@ class TestAlgorithmWithSingleValueSpace:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         # All trials should have identical config
         if hasattr(result, "trials") and result.trials:

@@ -337,7 +337,6 @@ class TestDatasetEdgeCases:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Emit evidence
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -417,7 +416,6 @@ class TestDatasetEdgeCases:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         # Emit evidence
         validation = result_validator(scenario, result)

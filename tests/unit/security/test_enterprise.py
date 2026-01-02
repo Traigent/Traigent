@@ -513,8 +513,9 @@ class TestEnterpriseDeploymentManager:
             "details": {"metric": "response_time", "value": 1500},
         }
 
-        # Should not raise exception
-        manager._default_alert_handler("response_time_alert", alert_data)
+        # Should not raise exception - verify completion
+        result = manager._default_alert_handler("response_time_alert", alert_data)
+        assert result is None  # Handler returns None
 
     @patch("traigent.security.enterprise.psutil")
     def test_monitoring_with_different_intervals(self, mock_psutil):

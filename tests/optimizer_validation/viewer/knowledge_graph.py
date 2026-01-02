@@ -1299,11 +1299,17 @@ class TestParser:
         display = method_name
 
         if param_values:
-            param_parts = ",".join(
-                f"{key}={param_values[key]}" for key in sorted(param_values)
+            # pytest uses values only, joined by '-', in alphabetical key order
+            # e.g., [edge_analytics-context] not [execution_mode=edge_analytics,injection_mode=context]
+            param_parts = "-".join(
+                str(param_values[key]) for key in sorted(param_values)
             )
             base_id = f"{base_id}[{param_parts}]"
-            display = f"{display}[{param_parts}]"
+            # Display name keeps the key=value format for clarity
+            display_parts = ",".join(
+                f"{key}={param_values[key]}" for key in sorted(param_values)
+            )
+            display = f"{display}[{display_parts}]"
 
         if scenario_index:
             base_id = f"{base_id}#{scenario_index + 1}"

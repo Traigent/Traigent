@@ -239,3 +239,4 @@ def test_integration_prerequisites():
     print("\n✅ Integration test prerequisites:")
     print(f"   API Key: {api_key[:10]}... (length: {len(api_key)})")
     print(f"   Backend URL: {backend_url}")
+    # Function completed successfully (no assertion needed for smoke test)

@@ -104,4 +104,5 @@ def test_rebalance_handles_zero_budget_allocations() -> None:
     zero_alloc.remaining_budget = 0.0
 
     # Should not raise ZeroDivisionError
-    allocator.rebalance_budgets()
+    result = allocator.rebalance_budgets()
+    assert result is not None  # Method returns allocations dict

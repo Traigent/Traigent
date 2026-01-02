@@ -538,7 +538,8 @@ class TestTraigentWandBTrackerLogTrial:
         tracker.current_run = MockWandBRun()
 
         # Should not raise
-        tracker.log_trial(sample_trial, trial_number=1)
+        result = tracker.log_trial(sample_trial, trial_number=1)
+        assert result is None  # Method returns None even on error
 
     def test_log_trial_handles_log_error(
         self, mock_wandb_available: MockWandB, sample_trial: TrialResult, monkeypatch
@@ -555,7 +556,8 @@ class TestTraigentWandBTrackerLogTrial:
         tracker.current_run = MockWandBRun()
 
         # Should not raise
-        tracker.log_trial(sample_trial, trial_number=1)
+        result = tracker.log_trial(sample_trial, trial_number=1)
+        assert result is None  # Method returns None
 
 
 class TestTraigentWandBTrackerLogOptimizationResult:
@@ -725,7 +727,8 @@ class TestTraigentWandBTrackerEndRun:
         tracker = wandb_module.TraigentWandBTracker()
 
         # Should not raise
-        tracker.end_optimization_run()
+        result = tracker.end_optimization_run()
+        assert result is None  # Method returns None
 
 
 class TestTraigentWandBTrackerHyperparameterSweep:

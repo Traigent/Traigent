@@ -352,7 +352,8 @@ class TestSendVerificationCode:
             mock_datetime.now.return_value = base_time + timedelta(hours=2)
 
             # Should succeed because old entry is cleaned
-            provider.send_verification_code("+15559876543", "user123")
+            result = provider.send_verification_code("+15559876543", "user123")
+            assert result is not None  # Returns message SID on success
 
     def test_send_code_twilio_exception_wrapped(
         self, provider: SMSAuthProvider

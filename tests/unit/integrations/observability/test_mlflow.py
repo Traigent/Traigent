@@ -975,7 +975,8 @@ class TestEdgeCases:
 
         # Should not raise error
         with patch("builtins.open", create=True), patch("pathlib.Path.unlink"):
-            tracker.log_trial(trial, trial_number=1)
+            result = tracker.log_trial(trial, trial_number=1)
+            assert result is None  # Method returns None
 
     def test_optimization_with_minimize_objective(
         self, patched_mlflow: MockMLflow

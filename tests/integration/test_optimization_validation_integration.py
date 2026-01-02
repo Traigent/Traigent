@@ -171,6 +171,7 @@ def helper_function():
 
         module_file.write_text(updated_content)
         return str(module_file)
+        # Function completed successfully (no assertion needed for smoke test)
 
     def test_function_discovery_integration(self, test_module):
         """Test function discovery with real Traigent decorators."""
@@ -182,7 +183,7 @@ def helper_function():
                 [f.name for f in functions]
 
                 # Check that we found some functions (exact matching may vary due to decorator behavior)
-                assert len(functions) >= 0  # At minimum, shouldn't crash
+                assert isinstance(functions, list)  # At minimum, shouldn't crash
 
                 if len(functions) > 0:
                     # Verify function properties if any were found

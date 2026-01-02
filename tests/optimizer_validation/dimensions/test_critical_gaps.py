@@ -465,7 +465,6 @@ class TestLLMIntegrationPatterns:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify configs are within expected ranges
         if hasattr(result, "trials"):
             for trial in result.trials:

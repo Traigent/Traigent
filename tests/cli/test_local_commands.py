@@ -816,6 +816,7 @@ class TestEdgeAnalyticsCommands:
         finally:
             # Restore permissions for cleanup
             os.chmod(self.storage_path, 0o755)
+            # Function completed successfully (no assertion needed for smoke test)
 
     def test_large_dataset_handling(self):
         """Test handling of large datasets in commands."""

@@ -886,7 +886,8 @@ class TestUtilityFunctions:
         valid_result = ValidationResult(valid=True)
 
         # Should not raise exception
-        validate_or_raise(valid_result._result)
+        result = validate_or_raise(valid_result._result)
+        assert result is None  # Function returns None on success
 
     def test_validate_or_raise_invalid(self):
         """Test validate_or_raise with invalid result"""

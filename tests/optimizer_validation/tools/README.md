@@ -130,3 +130,22 @@ async def test_example(self, scenario_runner, result_validator):
 ```
 
 Tests that don't call `result_validator` will not emit evidence.
+
+## Weak Test Analyzer
+
+The `weak_test_analyzer.py` tool flags weak or vulnerable tests based on the
+meta-analysis root causes (IT-VRO, IT-CBM, IT-VTA). It runs static analysis on
+test code and optionally dynamic analysis using a pytest JSON report.
+
+### Usage
+
+```bash
+# Static analysis only
+python -m tests.optimizer_validation.tools.weak_test_analyzer
+
+# Static + dynamic analysis (use a pytest JSON report)
+python -m tests.optimizer_validation.tools.weak_test_analyzer --report report.json
+
+# Emit JSON output to a file
+python -m tests.optimizer_validation.tools.weak_test_analyzer --json --output weak_test_report.json
+```

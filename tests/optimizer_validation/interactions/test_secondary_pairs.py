@@ -90,7 +90,12 @@ class TestParallelModeStopConditionPairs:
 
         # Verify stop_reason if available (should be config_exhaustion or max_trials)
         if hasattr(result, "stop_reason") and result.stop_reason is not None:
-            valid_stop_reasons = {"config_exhaustion", "max_trials", "optimizer", "converged"}
+            valid_stop_reasons = {
+                "config_exhaustion",
+                "max_trials",
+                "optimizer",
+                "converged",
+            }
             assert (
                 result.stop_reason in valid_stop_reasons
             ), f"Unexpected stop_reason: {result.stop_reason}"
@@ -311,7 +316,9 @@ class TestAlgorithmFailureModePairs:
             # All failure modes (function_raises, evaluator_bug, invalid_config)
             # should be caught or propagated consistently
             assert failure_mode in {
-                "function_raises", "evaluator_bug", "invalid_config"
+                "function_raises",
+                "evaluator_bug",
+                "invalid_config",
             }, f"Unexpected failure mode {failure_mode}"
         else:
             # If no exception, verify partial success handling

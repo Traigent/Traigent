@@ -227,8 +227,9 @@ class TestIncentiveManagerStateManagement:
     ) -> None:
         """Test saving state handles IO errors gracefully."""
         with patch("builtins.open", side_effect=OSError("Permission denied")):
-            # Should not raise exception
-            manager._save_state()
+            # Should not raise exception - verify it completes
+            result = manager._save_state()
+            assert result is None  # Method returns None on success or failure
 
     def test_state_persists_across_instances(
         self, edge_analytics_config: TraigentConfig
@@ -1301,8 +1302,9 @@ class TestGlobalFunctions:
             )
             mock_config.return_value = config
 
-            # Should not raise exception
-            show_upgrade_hint("general")
+            # Should not raise exception - verify it completes
+            result = show_upgrade_hint("general")
+            assert result is None  # Function returns None
 
     def test_show_upgrade_hint_not_in_edge_analytics_mode(
         self, temp_storage_path: str
@@ -1317,8 +1319,9 @@ class TestGlobalFunctions:
             )
             mock_config.return_value = config
 
-            # Should not raise exception
-            show_upgrade_hint("general")
+            # Should not raise exception - verify it completes
+            result = show_upgrade_hint("general")
+            assert result is None  # Function returns None
 
     def test_show_achievement_in_edge_analytics_mode(
         self, temp_storage_path: str
@@ -1333,8 +1336,9 @@ class TestGlobalFunctions:
             )
             mock_config.return_value = config
 
-            # Should not raise exception
-            show_achievement("first_optimization")
+            # Should not raise exception - verify it completes
+            result = show_achievement("first_optimization")
+            assert result is None  # Function returns None
 
     def test_show_achievement_not_in_edge_analytics_mode(
         self, temp_storage_path: str
@@ -1349,8 +1353,9 @@ class TestGlobalFunctions:
             )
             mock_config.return_value = config
 
-            # Should not raise exception
-            show_achievement("first_optimization")
+            # Should not raise exception - verify it completes
+            result = show_achievement("first_optimization")
+            assert result is None  # Function returns None
 
 
 class TestEdgeCases:

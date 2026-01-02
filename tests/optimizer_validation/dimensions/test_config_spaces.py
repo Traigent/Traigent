@@ -469,7 +469,6 @@ class TestConfigSpaceEdgeCases:
 
         assert isinstance(result, Exception)
 
-
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
             assert len(result.trials) >= 1, "Should complete at least one trial"

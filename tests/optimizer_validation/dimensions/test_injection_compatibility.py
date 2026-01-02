@@ -68,9 +68,19 @@ class TestSeamlessInjectionKeyValidation:
         else:
             # Mock mode doesn't enforce seamless restrictions - just verify it ran
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
-            # Scenario expects failure, but mock mode may succeed
-            # This documents the mock mode behavior
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, "Should have at least one trial"
+            # Use a success scenario for validation since mock mode succeeded
+            success_scenario = TestScenario(
+                name="seamless_dotted_key_mock_success",
+                description="Mock mode doesn't enforce seamless restrictions",
+                injection_mode="seamless",
+                config_space=config_space,
+                max_trials=2,
+                expected=ExpectedResult(min_trials=1),
+            )
+            validation = result_validator(success_scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -109,7 +119,19 @@ class TestSeamlessInjectionKeyValidation:
         else:
             # Mock mode doesn't enforce seamless restrictions
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
+            if hasattr(result, "trials"):
+                assert len(result.trials) >= 1, "Should have at least one trial"
+            # Use a success scenario for validation since mock mode succeeded
+            success_scenario = TestScenario(
+                name="seamless_hyphenated_key_mock_success",
+                description="Mock mode doesn't enforce seamless restrictions",
+                injection_mode="seamless",
+                config_space=config_space,
+                max_trials=2,
+                expected=ExpectedResult(min_trials=1),
+            )
+            validation = result_validator(success_scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -273,7 +295,8 @@ class TestNestedConfigCompatibility:
                 llm_config = trial.config["llm"]
                 assert isinstance(llm_config, dict), "Nested config should be a dict"
 
-            result_validator(scenario, result)
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -313,7 +336,8 @@ class TestNestedConfigCompatibility:
         else:
             # Mock mode may accept nested config
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
 
 class TestConfigKeyEdgeCases:
@@ -353,7 +377,8 @@ class TestConfigKeyEdgeCases:
         else:
             # Mock mode doesn't enforce seamless restrictions
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -385,7 +410,8 @@ class TestConfigKeyEdgeCases:
         else:
             # Context mode may handle keys with spaces
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -449,4 +475,5 @@ class TestConfigKeyEdgeCases:
         else:
             # Mock mode doesn't enforce seamless restrictions
             assert hasattr(result, "trials"), "Result should have trials"
-            result_validator(scenario, result)
+            validation = result_validator(scenario, result)
+            assert validation.passed, validation.summary()

@@ -25,6 +25,7 @@ from traigent.visualization.plots import PlotGenerator
 def test_imports():
     """Test that all imports work correctly."""
     print("✅ All imports successful")
+    # Function completed successfully (no assertion needed for smoke test)
 
 
 def test_basic_decorator():

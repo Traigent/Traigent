@@ -102,7 +102,6 @@ class TestInjectionExecutionPairwise:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Validate result
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -252,7 +251,6 @@ class TestInjectionExecutionWithMultiObjective:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -317,7 +315,6 @@ class TestInjectionExecutionWithContinuousSpace:
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
 
         # Verify continuous values are within range
         self._validate_continuous_values(result)

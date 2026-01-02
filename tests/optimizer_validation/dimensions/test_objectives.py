@@ -128,7 +128,6 @@ class TestBoundedObjective:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
 
-
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
             assert len(result.trials) >= 1, "Should complete at least one trial"

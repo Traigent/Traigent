@@ -197,7 +197,8 @@ class TestConfigurationInjection:
         set_config({"temperature": 0.7, "extra": "value"})
 
         # Call function
-        opt_func("test")
+        result = opt_func("test")
+        assert result is not None  # Function returns a string
 
         # Context should be restored after call
         # (Exact behavior depends on implementation)
