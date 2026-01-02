@@ -7,9 +7,16 @@ Detects potential conflicts between fixes that might be assigned in parallel.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import resolve_base_path, resolve_version
 
 
 @dataclass
@@ -42,13 +49,20 @@ class ConflictDetector:
     def __init__(
         self,
         tracking_path: str | Path = ".post_release_recommendation_fixes/TRACKING.md",
+        version: str | None = None,
     ) -> None:
         """Initialize detector.
 
         Args:
             tracking_path: Path to TRACKING.md
+            version: Release version override
         """
-        self.tracking_path = Path(tracking_path)
+        resolved_version = resolve_version(version)
+        if tracking_path == ".post_release_recommendation_fixes/TRACKING.md":
+            base = resolve_base_path(".post_release_recommendation_fixes", resolved_version)
+            self.tracking_path = base / "TRACKING.md"
+        else:
+            self.tracking_path = Path(tracking_path)
 
     def get_fix_scopes(self) -> dict[str, FileScope]:
         """Extract file scopes for all fixes from TRACKING.md.
@@ -114,17 +128,25 @@ class ConflictDetector:
         link_pattern = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
         for match in link_pattern.finditer(location):
             path = match.group(2)
-            if path.endswith(".py"):
+            if self._is_supported_path(path):
                 files.append(path)
 
         # Match bare file paths
-        path_pattern = re.compile(r"[\w/]+\.py")
+        path_pattern = re.compile(
+            r"[\w./-]+\.(py|md|yaml|yml|json|toml|ini|cfg|txt|sql|sh)"
+        )
         for match in path_pattern.finditer(location):
             path = match.group(0)
             if path not in files:
                 files.append(path)
 
         return files
+
+    def _is_supported_path(self, path: str) -> bool:
+        """Check if a path looks like a tracked file type."""
+        return bool(
+            re.search(r"\.(py|md|yaml|yml|json|toml|ini|cfg|txt|sql|sh)$", path)
+        )
 
     def _extract_directories(self, files: list[str]) -> list[str]:
         """Extract directory paths from file list.

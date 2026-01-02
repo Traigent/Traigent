@@ -38,6 +38,7 @@ mkdir -p artifacts/<issue-id>/<model>
 **Agent**: <Model Name>
 **Branch**: fix/<issue-id>/<description>
 **Timestamp**: <ISO-8601>
+**Release Version**: <version>
 
 ## Changes Made
 
@@ -54,6 +55,10 @@ mkdir -p artifacts/<issue-id>/<model>
 - **Command**: `pytest tests/...`
 - **Exit code**: 0
 - **Summary**: X passed, 0 failed
+
+## Evidence (JSON)
+
+- Copy the JSON evidence recorded in TRACKING.md for this fix.
 
 ## Verification Checklist
 

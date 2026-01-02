@@ -10,11 +10,18 @@ import fcntl
 import json
 import os
 import re
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import read_tracking_version, resolve_base_path, resolve_version
 
 
 @dataclass
@@ -81,16 +88,21 @@ class ProgressTracker:
     def __init__(
         self,
         base_path: str | Path = ".post_release_recommendation_fixes",
+        version: str | None = None,
     ) -> None:
         """Initialize tracker.
 
         Args:
             base_path: Base path for fix workflow
+            version: Release version override
         """
-        self.base_path = Path(base_path)
+        self.root_path = Path(base_path)
+        self.version = resolve_version(version)
+        self.base_path = resolve_base_path(self.root_path, self.version)
         self.tracking_path = self.base_path / "TRACKING.md"
         self.history_path = self.base_path / "progress_history.json"
         self.lock_path = self.base_path / ".tracking.lock"
+        self.tracking_version = read_tracking_version(self.tracking_path)
 
     @contextmanager
     def _file_lock(self, timeout: float = 30.0) -> Iterator[None]:
@@ -127,6 +139,109 @@ class ProgressTracker:
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
+
+    def _build_evidence_json(
+        self,
+        commits: list[str],
+        tests_command: str | None,
+        tests_status: str,
+        tests_passed: int | None,
+        tests_total: int | None,
+        models: str,
+        reviewer: str,
+        timestamp: str,
+        followups: str = "None",
+        accepted_risks: str = "None",
+        fmt: str = "standard",
+        legacy_summary: str | None = None,
+    ) -> str:
+        """Build machine-validated evidence JSON."""
+        payload: dict[str, Any] = {
+            "format": fmt,
+            "commits": commits,
+            "tests": {
+                "command": tests_command,
+                "status": tests_status,
+                "passed": tests_passed,
+                "total": tests_total,
+            },
+            "models": models,
+            "reviewer": reviewer,
+            "timestamp": timestamp,
+            "followups": followups,
+            "accepted_risks": accepted_risks,
+        }
+        if legacy_summary is not None:
+            payload["legacy_summary"] = legacy_summary
+        return json.dumps(payload, separators=(",", ":"))
+
+    def _parse_tests_summary(self, summary: str) -> tuple[int | None, int | None]:
+        """Parse pytest-style summary for pass/total counts."""
+        counts: dict[str, int] = {}
+        for match in re.finditer(
+            r"(\d+)\s+(passed|failed|errors?|skipped|xfailed|xpassed|deselected)",
+            summary,
+            re.IGNORECASE,
+        ):
+            label = match.group(2).lower()
+            if label.endswith("s"):
+                label = label[:-1]
+            counts[label] = counts.get(label, 0) + int(match.group(1))
+
+        if not counts:
+            return None, None
+
+        passed = counts.get("passed", 0)
+        total = sum(counts.values())
+        return passed, total
+
+    def _infer_tests_status(self, summary: str) -> str:
+        """Infer PASS/FAIL from test summary text."""
+        lowered = summary.lower()
+        if "failed" in lowered or "error" in lowered:
+            return "FAIL"
+        if "passed" in lowered:
+            return "PASS"
+        return "UNKNOWN"
+
+    def _update_item_details(
+        self,
+        lines: list[str],
+        fix_id: str,
+        status: str,
+        evidence: str | None,
+    ) -> None:
+        """Update status/evidence in Item Details section."""
+        in_item = False
+        header_pattern = re.compile(rf"^###\s+{re.escape(fix_id)}\b")
+        for idx, line in enumerate(lines):
+            if header_pattern.match(line.strip()):
+                in_item = True
+                continue
+            if in_item and line.strip().startswith("### "):
+                break
+            if in_item and line.startswith("- **Status**:"):
+                lines[idx] = f"- **Status**: {status}"
+                continue
+            if in_item and line.strip() == "**Evidence**:" and evidence:
+                if idx + 1 < len(lines):
+                    next_line = lines[idx + 1].strip()
+                    if next_line.startswith("(") or next_line.startswith("{"):
+                        lines[idx + 1] = evidence
+
+    def _split_table_row(
+        self,
+        line: str,
+        expected_columns: int | None = None,
+    ) -> list[str]:
+        """Split a markdown table row, preserving pipes in the last column."""
+        stripped = line.strip().strip("|")
+        parts = [p.strip() for p in stripped.split("|")]
+        if expected_columns and len(parts) > expected_columns:
+            head = parts[: expected_columns - 1]
+            tail = "|".join(parts[expected_columns - 1:]).strip()
+            parts = head + [tail]
+        return parts
 
     def start_session(self, targeted_fixes: list[str]) -> SessionProgress:
         """Start a new fix session.
@@ -179,30 +294,49 @@ class ProgressTracker:
         with self._file_lock():
             content = self.tracking_path.read_text()
             lines = content.split("\n")
-            updated_lines = []
+            updated_lines: list[str] = []
             found = False
-
-            # More robust pattern matching for fix ID
-            fix_pattern = re.compile(rf"^\|\s*{re.escape(fix_id)}\s*\|")
+            current_columns: dict[str, int] | None = None
 
             for line in lines:
-                # Find and update the row for this fix ID
-                if fix_pattern.match(line):
-                    found = True
-                    # Parse existing row
-                    parts = line.split("|")
-                    if len(parts) >= 7:
-                        parts[4] = f" {status} "
-                        if owner:
-                            parts[5] = f" {owner} "
-                        if evidence:
-                            parts[6] = f" {evidence} "
-                        line = "|".join(parts)
+                if line.startswith("|") and "Evidence" in line and "Status" in line:
+                    headers = self._split_table_row(line)
+                    current_columns = {
+                        name: idx for idx, name in enumerate(headers)
+                    }
+                    updated_lines.append(line)
+                    continue
+
+                if current_columns and line.startswith("|") and line.strip().startswith("|---"):
+                    updated_lines.append(line)
+                    continue
+
+                if current_columns and line.startswith("|"):
+                    cells = self._split_table_row(
+                        line,
+                        expected_columns=len(current_columns),
+                    )
+                    if cells and cells[0] == fix_id:
+                        found = True
+                        if "Status" in current_columns:
+                            cells[current_columns["Status"]] = status
+                        if owner and "Owner" in current_columns:
+                            cells[current_columns["Owner"]] = owner
+                        if evidence and "Evidence" in current_columns:
+                            cells[current_columns["Evidence"]] = evidence
+                        line = "| " + " | ".join(cells) + " |"
+                    updated_lines.append(line)
+                    continue
+
+                if not line.startswith("|"):
+                    current_columns = None
+
                 updated_lines.append(line)
 
             if not found:
                 raise ValueError(f"Fix ID {fix_id} not found in tracking file")
 
+            self._update_item_details(updated_lines, fix_id, status, evidence or None)
             self.tracking_path.write_text("\n".join(updated_lines))
 
     def mark_fix_complete(
@@ -211,6 +345,8 @@ class ProgressTracker:
         commit_sha: str,
         tests_run: str,
         owner: str,
+        reviewer: str = "captain",
+        tests_command: str | None = None,
     ) -> None:
         """Mark a fix as complete with evidence.
 
@@ -221,7 +357,34 @@ class ProgressTracker:
             owner: Agent that completed the fix
         """
         timestamp = datetime.now().isoformat() + "Z"
-        evidence = f"Commit: {commit_sha[:7]} | Tests: {tests_run} | {timestamp}"
+        tests_passed, tests_total = self._parse_tests_summary(tests_run)
+        tests_status = self._infer_tests_status(tests_run)
+
+        if tests_passed is not None and tests_total is not None:
+            evidence = self._build_evidence_json(
+                commits=[commit_sha],
+                tests_command=tests_command or "UNKNOWN",
+                tests_status=tests_status,
+                tests_passed=tests_passed,
+                tests_total=tests_total,
+                models=owner or "UNKNOWN",
+                reviewer=reviewer,
+                timestamp=timestamp,
+                fmt="standard",
+            )
+        else:
+            evidence = self._build_evidence_json(
+                commits=[commit_sha] if commit_sha else [],
+                tests_command=None,
+                tests_status="UNKNOWN",
+                tests_passed=None,
+                tests_total=None,
+                models=owner or "UNKNOWN",
+                reviewer=reviewer,
+                timestamp=timestamp,
+                fmt="legacy",
+                legacy_summary=f"Tests: {tests_run}",
+            )
 
         self.update_fix_status(
             fix_id=fix_id,
@@ -471,9 +634,19 @@ def main() -> None:
     """CLI entry point."""
     import sys
 
-    tracker = ProgressTracker()
+    args = sys.argv[1:]
+    version = None
+    if "--version" in args:
+        idx = args.index("--version")
+        if idx + 1 >= len(args):
+            print("Usage: progress_tracker.py --version <version> <command>")
+            sys.exit(1)
+        version = args[idx + 1]
+        del args[idx:idx + 2]
 
-    if len(sys.argv) < 2:
+    tracker = ProgressTracker(version=version)
+
+    if len(args) < 1:
         print("Usage: progress_tracker.py <command>")
         print("Commands:")
         print("  stats     - Show progress statistics")
@@ -481,7 +654,7 @@ def main() -> None:
         print("  pending   - List pending fixes")
         sys.exit(1)
 
-    command = sys.argv[1]
+    command = args[0]
 
     if command == "stats":
         stats = tracker.get_stats()

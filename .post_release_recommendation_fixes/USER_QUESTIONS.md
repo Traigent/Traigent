@@ -1,6 +1,7 @@
 # User Questions: Post-Release Fixes
 
-This file is used for asynchronous communication between the captain and the user during fix sessions.
+This file is a template. For active work, copy it to:
+`.post_release_recommendation_fixes/<version>/USER_QUESTIONS.md`
 
 **How it works**:
 1. Captain writes questions here when user input is needed
@@ -20,6 +21,7 @@ Copy this template when adding new questions:
 **Status**: PENDING
 **Blocking**: Yes/No
 **Issue ID**: <affected fix ID>
+**Release Version**: <version>
 **Question**: <clear, specific question>
 **Context**: <relevant background>
 **Options**:
@@ -39,7 +41,8 @@ Copy this template when adding new questions:
 
 To watch for new questions:
 ```bash
-watch -n 30 'cat .post_release_recommendation_fixes/USER_QUESTIONS.md | grep -A 20 "Status: PENDING"'
+export RR_VERSION=v0.8.0
+watch -n 30 'cat .post_release_recommendation_fixes/$RR_VERSION/USER_QUESTIONS.md | grep -A 20 "Status: PENDING"'
 ```
 
 To answer: Edit this file directly and save.

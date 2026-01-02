@@ -1,9 +1,12 @@
 # Session Progress: {SESSION_ID}
 
 **Session ID**: {YYYYMMDD} or {YYYYMMDD_N}
+**Release Version**: {version}
 **Started**: {ISO-8601 timestamp}
 **Ended**: (In progress)
 **Tracking File**: [TRACKING.md](../../TRACKING.md)
+**Source TODO**: {source path}
+**Release Review Tracking**: .release_review/{version}/PRE_RELEASE_REVIEW_TRACKING.md
 
 ## Scope
 
@@ -38,6 +41,7 @@
 | **Branch** | (not created) |
 | **Started** | - |
 | **Completed** | - |
+| **Evidence** | (pending JSON) |
 
 **Location**: {file paths}
 

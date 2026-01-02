@@ -488,6 +488,16 @@ def main() -> None:
 
     validator = EvidenceValidator()
 
+    def split_table_row(line: str, expected_columns: int | None = None) -> list[str]:
+        """Split a markdown table row, preserving pipes in the last column."""
+        stripped = line.strip().strip("|")
+        parts = [p.strip() for p in stripped.split("|")]
+        if expected_columns and len(parts) > expected_columns:
+            head = parts[: expected_columns - 1]
+            tail = "|".join(parts[expected_columns - 1:]).strip()
+            parts = head + [tail]
+        return parts
+
     if sys.argv[1] == "--file":
         if len(sys.argv) < 3:
             print("Usage: evidence_validator.py --file <tracking.md>")
@@ -499,10 +509,12 @@ def main() -> None:
 
         in_table = False
         evidence_idx = None
+        expected_columns = None
         for line_num, line in enumerate(lines, 1):
             if line.startswith("|") and "Component" in line and "Evidence" in line:
-                headers = [h.strip() for h in line.strip().strip("|").split("|")]
+                headers = split_table_row(line)
                 evidence_idx = headers.index("Evidence") if "Evidence" in headers else None
+                expected_columns = len(headers)
                 in_table = True
                 continue
             if in_table and line.startswith("|") and line.strip().startswith("|---"):
@@ -510,7 +522,7 @@ def main() -> None:
             if in_table and line.startswith("|"):
                 if evidence_idx is None:
                     continue
-                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                cells = split_table_row(line, expected_columns)
                 if len(cells) <= evidence_idx:
                     continue
                 evidence_text = cells[evidence_idx]
@@ -524,6 +536,7 @@ def main() -> None:
             if in_table and not line.startswith("|"):
                 in_table = False
                 evidence_idx = None
+                expected_columns = None
 
         if errors:
             print("❌ Evidence validation failed:")

@@ -7,9 +7,16 @@ Estimates implementation effort based on fix characteristics.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.append(str(SCRIPT_DIR))
+
+from versioning import resolve_base_path, resolve_version
 
 
 @dataclass
@@ -98,17 +105,18 @@ class EffortEstimator:
         "Low": "Gemini 3.0",
     }
 
-    def __init__(self, tracking_path: str | Path | None = None) -> None:
+    def __init__(self, tracking_path: str | Path | None = None, version: str | None = None) -> None:
         """Initialize estimator.
 
         Args:
             tracking_path: Path to TRACKING.md
+            version: Release version override
         """
-        self.tracking_path = (
-            Path(tracking_path)
-            if tracking_path
-            else Path(".post_release_recommendation_fixes/TRACKING.md")
-        )
+        if tracking_path:
+            self.tracking_path = Path(tracking_path)
+        else:
+            base = resolve_base_path(".post_release_recommendation_fixes", resolve_version(version))
+            self.tracking_path = base / "TRACKING.md"
 
     def estimate_fix(
         self,
@@ -348,17 +356,27 @@ def main() -> None:
     """CLI entry point."""
     import sys
 
-    if len(sys.argv) < 2:
+    args = sys.argv[1:]
+    version = None
+    if "--version" in args:
+        idx = args.index("--version")
+        if idx + 1 >= len(args):
+            print("Usage: effort_estimator.py --version <version> <command> [tracking_path]")
+            sys.exit(1)
+        version = args[idx + 1]
+        del args[idx:idx + 2]
+
+    if len(args) < 1:
         print("Usage: effort_estimator.py <command> [tracking_path]")
         print("Commands:")
         print("  report  - Generate effort estimation report")
         print("  total   - Show total estimated effort")
         sys.exit(1)
 
-    command = sys.argv[1]
-    tracking_path = sys.argv[2] if len(sys.argv) > 2 else None
+    command = args[0]
+    tracking_path = args[1] if len(args) > 1 else None
 
-    estimator = EffortEstimator(tracking_path)
+    estimator = EffortEstimator(tracking_path, version=version)
 
     if command == "report":
         print(estimator.generate_report())
