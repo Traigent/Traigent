@@ -12,7 +12,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,8 @@ class MockAdapter:
     This keeps mock logic separate from main plugin code.
     """
 
+    _pending_tasks: ClassVar[set[asyncio.Task]] = set()
+
     @classmethod
     def is_mock_enabled(cls, provider: str) -> bool:
         """Check if mock mode is enabled for a provider.
@@ -125,10 +127,12 @@ class MockAdapter:
 
         # Check if we're in an async context
         try:
-            asyncio.get_running_loop()
+            loop = asyncio.get_running_loop()
             # We're in an async context - schedule async sleep
             # This won't block synchronous callers
-            asyncio.ensure_future(asyncio.sleep(delay_sec))
+            task = loop.create_task(asyncio.sleep(delay_sec))
+            cls._pending_tasks.add(task)
+            task.add_done_callback(cls._pending_tasks.discard)
             # Also do a minimal sync sleep to ensure some delay is visible
             time.sleep(delay_sec)
         except RuntimeError:

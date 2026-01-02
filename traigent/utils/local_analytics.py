@@ -380,7 +380,6 @@ class LocalAnalytics:
         total_sessions = stats.get("total_sessions", 0)
         avg_trials = stats.get("avg_trials_per_session", 0)
         avg_config_space = stats.get("avg_config_space_size", 0)
-        stats.get("days_since_first_use", 0)
 
         # Estimate time investment
         estimated_time_per_trial = 2  # minutes (conservative estimate)

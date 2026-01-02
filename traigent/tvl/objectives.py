@@ -127,7 +127,6 @@ def _compute_p_value_one_sided_greater(t_stat: float, df: int) -> float:
     Returns:
         P-value for the test.
     """
-    # P-value = P(T > t_stat) = 1 - CDF(t_stat)
     return 1.0 - _t_cdf_approx(t_stat, df)
 
 
@@ -141,7 +140,6 @@ def _compute_p_value_one_sided_less(t_stat: float, df: int) -> float:
     Returns:
         P-value for the test.
     """
-    # P-value = P(T < t_stat) = CDF(t_stat)
     return _t_cdf_approx(t_stat, df)
 
 
@@ -175,7 +173,11 @@ def _compute_confidence_interval(
     # Approximation for t-critical
     if df > 100:
         # Normal approximation
-        t_crit = 1.645 if alpha == 0.05 else _inverse_normal_cdf(1 - alpha)
+        t_crit = (
+            1.645
+            if math.isclose(alpha, 0.05, rel_tol=0.0, abs_tol=1e-12)
+            else _inverse_normal_cdf(1 - alpha)
+        )
     else:
         # Approximation for small df
         t_crit = _approximate_t_critical(1 - alpha, df)
@@ -382,6 +384,9 @@ def compare_banded_with_tost(
     Returns:
         Tuple of (winner, tost_a, tost_b) where winner is "a", "b", or "tie".
     """
+    if target.low is None or target.high is None:
+        raise ValueError("BandTarget must have defined low and high bounds")
+
     tost_a = tost_equivalence_test(samples_a, target, alpha)
     tost_b = tost_equivalence_test(samples_b, target, alpha)
 
@@ -392,19 +397,16 @@ def compare_banded_with_tost(
         return ("b", tost_a, tost_b)
 
     # If both are equivalent or both are not, compare by deviation from band center
-    if target.low is not None and target.high is not None:
-        band_center = (target.low + target.high) / 2
-        a_dist = abs(tost_a.sample_mean - band_center)
-        b_dist = abs(tost_b.sample_mean - band_center)
+    band_center = (target.low + target.high) / 2
+    a_dist = abs(tost_a.sample_mean - band_center)
+    b_dist = abs(tost_b.sample_mean - band_center)
 
-        if abs(a_dist - b_dist) < 1e-10:
-            return ("tie", tost_a, tost_b)
-        elif a_dist < b_dist:
-            return ("a", tost_a, tost_b)
-        else:
-            return ("b", tost_a, tost_b)
-
-    return ("tie", tost_a, tost_b)
+    if abs(a_dist - b_dist) < 1e-10:
+        return ("tie", tost_a, tost_b)
+    elif a_dist < b_dist:
+        return ("a", tost_a, tost_b)
+    else:
+        return ("b", tost_a, tost_b)
 
 
 @dataclass(slots=True)
