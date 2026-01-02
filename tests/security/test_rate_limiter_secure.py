@@ -166,7 +166,7 @@ class TestMultipleIdentifierChecking:
 
         # Should still be blocked because IP is rate limited
         # (when check_multiple_identifiers is enabled)
-        assert isinstance(result, bool)  # Method returns a boolean
+        assert not result.allowed  # Request should be blocked
 
     def test_multiple_dimension_rate_limiting(self):
         """Test rate limiting across multiple dimensions."""
@@ -185,8 +185,7 @@ class TestMultipleIdentifierChecking:
         result = limiter.check_rate_limit(username="user1")
 
         # User should be rate limited
-        # Result is a boolean indicating if request is allowed
-        assert isinstance(result, bool)
+        assert not result.allowed  # Request should be blocked
 
 
 class TestProgressiveDelay:
