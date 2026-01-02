@@ -1,1 +1,0 @@
-{"id":"chatcmpl-18b8492f-0448-4fa6-b237-ae5687b1c709","choices":[{"index":0,"message":{"role":"assistant","content":" Hi there! How can I assist you today?","tool_calls":null},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":11,"total_tokens":22},"meta":{"requestDurationMillis":190},"model":"jamba-1.5-mini"}
