@@ -379,3 +379,4 @@ tests/optimizer_validation/GIST_*.md
 tests/optimizer_validation/GPT_*.md
 tests/optimizer_validation/*_TEMPLATE*.md
 tests/optimizer_validation/TEST_REVIEW_CHECKLIST.md
+metrics/
