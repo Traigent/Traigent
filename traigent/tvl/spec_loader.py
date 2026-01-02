@@ -172,6 +172,85 @@ class TVLSpecArtifact:
         return overrides
 
 
+def _load_and_parse_yaml(path: Path) -> dict:
+    """Load and parse YAML file, returning the raw dictionary."""
+    if not path.is_file():
+        raise TVLValidationError(f"TVL spec not found: {path}")
+
+    try:
+        raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:  # pragma: no cover - defensive guard
+        raise TVLValidationError(f"Failed to parse TVL spec: {exc}") from exc
+
+    if not isinstance(raw_data, dict):
+        raise TVLValidationError("TVL specification must be a mapping")
+    return raw_data
+
+
+def _parse_config_space_format(
+    resolved: dict,
+    registry_resolver: RegistryResolver | None,
+) -> tuple[list | None, dict, dict, dict]:
+    """Parse configuration space in either TVL 0.9 (tvars) or legacy format."""
+    has_tvars = "tvars" in resolved
+    has_config_space = "configuration_space" in resolved
+
+    if has_tvars and has_config_space:
+        raise TVLValidationError(
+            "TVL spec contains both 'tvars' (TVL 0.9) and 'configuration_space' "
+            "(legacy). Please remove 'configuration_space' to use the new format."
+        )
+
+    if has_tvars:
+        tvars, config_space, defaults, units = _parse_tvars(
+            resolved, registry_resolver=registry_resolver
+        )
+        return tvars, config_space, defaults, units
+
+    if has_config_space:
+        warnings.warn(
+            "TVL spec uses legacy 'configuration_space' format. "
+            "This format is deprecated in TVL 0.9; migrate to 'tvars'.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        config_space, defaults, units = _parse_configuration_space(resolved)
+        return None, config_space, defaults, units
+
+    # Empty spec - no configuration space defined
+    return None, {}, {}, {}
+
+
+def _parse_exploration_section(
+    resolved: dict,
+) -> tuple[TVLBudget, str | None, ConvergenceCriteria | None, ExplorationBudgets | None, int | None]:
+    """Parse exploration/optimization section, handling legacy format."""
+    has_exploration = "exploration" in resolved
+    has_optimization = "optimization" in resolved
+
+    if has_exploration and has_optimization:
+        raise TVLValidationError(
+            "TVL spec contains both 'exploration' and 'optimization' sections. "
+            "Use only 'exploration' (TVL 0.9) or 'optimization' (legacy), not both."
+        )
+
+    if has_optimization and not has_exploration:
+        warnings.warn(
+            "TVL spec uses legacy 'optimization' section. "
+            "This format is deprecated in TVL 0.9; migrate to 'exploration'.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    exploration_section = resolved.get("exploration") or resolved.get("optimization")
+    budget = _parse_budget(exploration_section)
+    algorithm = _resolve_algorithm(exploration_section)
+    convergence = _parse_convergence(exploration_section)
+    exploration_budgets = _parse_exploration_budgets(exploration_section)
+    exploration_parallelism = _parse_exploration_parallelism(exploration_section)
+    return budget, algorithm, convergence, exploration_budgets, exploration_parallelism
+
+
 def load_tvl_spec(
     *,
     spec_path: str | Path,
@@ -192,19 +271,8 @@ def load_tvl_spec(
             into concrete configuration values. If a spec contains a registry
             domain and no resolver is provided, spec loading fails fast.
     """
-
     path = Path(spec_path).expanduser()
-    if not path.is_file():
-        raise TVLValidationError(f"TVL spec not found: {path}")
-
-    try:
-        raw_data = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:  # pragma: no cover - defensive guard
-        raise TVLValidationError(f"Failed to parse TVL spec: {exc}") from exc
-
-    if not isinstance(raw_data, dict):
-        raise TVLValidationError("TVL specification must be a mapping")
-
+    raw_data = _load_and_parse_yaml(path)
     resolved = _apply_environment(raw_data, environment)
 
     # Parse TVL 0.9 header (tvl section)
@@ -213,41 +281,18 @@ def load_tvl_spec(
     if isinstance(tvl_version, (int, float)):
         tvl_version = str(tvl_version)
 
-    # Parse TVL 0.9 environment snapshot
+    # Parse TVL 0.9 environment snapshot and evaluation set
     environment_snapshot = _parse_environment_snapshot(resolved.get("environment"))
-
-    # Parse TVL 0.9 evaluation set
     evaluation_set = _parse_evaluation_set(resolved.get("evaluation_set"))
 
-    # Detect format: TVL 0.9 uses 'tvars', legacy uses 'configuration_space'
-    has_tvars = "tvars" in resolved
-    has_config_space = "configuration_space" in resolved
-
-    if has_tvars and has_config_space:
-        raise TVLValidationError(
-            "TVL spec contains both 'tvars' (TVL 0.9) and 'configuration_space' "
-            "(legacy). Please remove 'configuration_space' to use the new format."
-        )
-
-    tvars: list[TVarDecl] | None = None
-    if has_tvars:
-        tvars, config_space, defaults, units = _parse_tvars(
-            resolved, registry_resolver=registry_resolver
-        )
-    elif has_config_space:
-        warnings.warn(
-            "TVL spec uses legacy 'configuration_space' format. "
-            "This format is deprecated in TVL 0.9; migrate to 'tvars'.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        config_space, defaults, units = _parse_configuration_space(resolved)
-    else:
-        # Fallback or empty spec - handled by validation inside parsers if needed
-        config_space, defaults, units = {}, {}, {}
+    # Parse configuration space (tvars or legacy)
+    tvars, config_space, defaults, units = _parse_config_space_format(
+        resolved, registry_resolver
+    )
 
     objective_schema = _parse_objectives(resolved)
 
+    # Warn about legacy constraints format
     constraints_section = resolved.get("constraints")
     if isinstance(constraints_section, list) and constraints_section:
         warnings.warn(
@@ -265,31 +310,10 @@ def load_tvl_spec(
         constraint.to_callable() for constraint in compiled_constraints
     ]
 
-    has_exploration = "exploration" in resolved
-    has_optimization = "optimization" in resolved
-
-    # Error if both exploration and optimization are present
-    if has_exploration and has_optimization:
-        raise TVLValidationError(
-            "TVL spec contains both 'exploration' and 'optimization' sections. "
-            "Use only 'exploration' (TVL 0.9) or 'optimization' (legacy), not both."
-        )
-
-    if has_optimization and not has_exploration:
-        warnings.warn(
-            "TVL spec uses legacy 'optimization' section. "
-            "This format is deprecated in TVL 0.9; migrate to 'exploration'.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    # Parse exploration section (supports both 'optimization' and 'exploration')
-    exploration_section = resolved.get("exploration") or resolved.get("optimization")
-    budget = _parse_budget(exploration_section)
-    algorithm = _resolve_algorithm(exploration_section)
-    convergence = _parse_convergence(exploration_section)
-    exploration_budgets = _parse_exploration_budgets(exploration_section)
-    exploration_parallelism = _parse_exploration_parallelism(exploration_section)
+    # Parse exploration section
+    budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (
+        _parse_exploration_section(resolved)
+    )
 
     # Parse promotion policy (TVL 0.9)
     promotion_policy = _parse_promotion_policy(resolved.get("promotion_policy"))

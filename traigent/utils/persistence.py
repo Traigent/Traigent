@@ -94,6 +94,43 @@ def _serialize_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     return cast(dict[str, Any], _safe_json_value(metadata))
 
 
+def _rehydrate_evaluation_result(value: dict) -> Any:
+    """Rehydrate an EvaluationResult from its dict representation."""
+    from ..evaluators.base import EvaluationResult
+
+    return EvaluationResult.from_dict(value)
+
+
+def _rehydrate_example_results(value: list) -> list:
+    """Rehydrate a list of ExampleResult from their dict representations."""
+    from ..api.types import ExampleResult
+
+    return [
+        (
+            ExampleResult.from_dict(item)
+            if isinstance(item, dict) and "example_id" in item
+            else item
+        )
+        for item in value
+    ]
+
+
+def _rehydrate_value(key: str, value: Any) -> Any:
+    """Rehydrate a single value based on its key and type."""
+    if key == "evaluation_result" and isinstance(value, dict):
+        return _rehydrate_evaluation_result(value)
+    if key == "example_results" and isinstance(value, list):
+        return _rehydrate_example_results(value)
+    if isinstance(value, dict):
+        return _rehydrate_metadata(value)
+    if isinstance(value, list):
+        return [
+            _rehydrate_metadata(item) if isinstance(item, dict) else item
+            for item in value
+        ]
+    return value
+
+
 def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Rehydrate metadata dict, converting dicts back to typed objects where possible.
 
@@ -103,39 +140,7 @@ def _rehydrate_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     if not metadata:
         return metadata
 
-    result: dict[str, Any] = {}
-
-    for key, value in metadata.items():
-        if key == "evaluation_result" and isinstance(value, dict):
-            # Rehydrate EvaluationResult
-            from ..evaluators.base import EvaluationResult
-
-            result[key] = EvaluationResult.from_dict(value)
-        elif key == "example_results" and isinstance(value, list):
-            # Rehydrate list of ExampleResult
-            from ..api.types import ExampleResult
-
-            result[key] = [
-                (
-                    ExampleResult.from_dict(item)
-                    if isinstance(item, dict) and "example_id" in item
-                    else item
-                )
-                for item in value
-            ]
-        elif isinstance(value, dict):
-            # Recursively process nested dicts
-            result[key] = _rehydrate_metadata(value)
-        elif isinstance(value, list):
-            # Process lists that might contain rehydratable objects
-            result[key] = [
-                _rehydrate_metadata(item) if isinstance(item, dict) else item
-                for item in value
-            ]
-        else:
-            result[key] = value
-
-    return result
+    return {key: _rehydrate_value(key, value) for key, value in metadata.items()}
 
 
 class PersistenceManager:

@@ -1685,6 +1685,70 @@ class BaseEvaluator(ABC):
         ) as span:
             yield span
 
+    def _create_failure_result(
+        self,
+        example_id: str,
+        example: EvaluationExample,
+        execution_time: float,
+        error: Exception,
+    ) -> ExampleResult:
+        """Create an ExampleResult for a failed evaluation."""
+        return ExampleResult(
+            example_id=example_id,
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=None,
+            metrics=dict.fromkeys(self.metrics, 0.0),
+            execution_time=execution_time,
+            success=False,
+            error_message=str(error),
+            metadata=example.metadata.copy() if example.metadata else {},
+        )
+
+    async def _try_custom_evaluator(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        example_id: str,
+        start_time: float,
+        span: Any,
+        example_index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> ExampleResult:
+        """Try running the custom evaluator, handling exceptions appropriately."""
+        # Exceptions that should be re-raised without handling
+        passthrough_exceptions = (
+            TrialPrunedError,
+            asyncio.CancelledError,
+            APIKeyError,
+            FriendlyTraigentError,
+            CoreTraigentError,
+            ConfigurationError,
+        )
+        try:
+            result = await self._run_custom_evaluator(func, config, example, example_id)
+            self._record_example_trace(span, result)
+            if progress_callback:
+                progress_callback(
+                    example_index,
+                    {
+                        "success": result.success,
+                        "error": result.error_message,
+                        "metrics": result.metrics,
+                        "output": result.actual_output,
+                    },
+                )
+            return result
+        except passthrough_exceptions:
+            raise
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.warning(f"Custom evaluation failed for example {example_id}: {e}")
+            result = self._create_failure_result(example_id, example, execution_time, e)
+            self._record_example_trace(span, result)
+            return result
+
     async def _evaluate_single_detailed(
         self,
         func: Callable[..., Any],
@@ -1721,51 +1785,16 @@ class BaseEvaluator(ABC):
         with self._example_trace_context(example_id, example_index, example) as span:
             # Use custom evaluator if available
             if self.custom_eval_func:
-                try:
-                    result = await self._run_custom_evaluator(
-                        func, config, example, example_id
-                    )
-                    self._record_example_trace(span, result)
-                    if progress_callback:
-                        progress_callback(
-                            example_index,
-                            {
-                                "success": result.success,
-                                "error": result.error_message,
-                                "metrics": result.metrics,
-                                "output": result.actual_output,
-                            },
-                        )
-                    return result
-                except TrialPrunedError:
-                    raise
-                except asyncio.CancelledError:
-                    raise
-                except (
-                    APIKeyError,
-                    FriendlyTraigentError,
-                    CoreTraigentError,
-                    ConfigurationError,
-                ):
-                    raise
-                except Exception as e:
-                    execution_time = time.time() - start_time
-                    logger.warning(
-                        f"Custom evaluation failed for example {example_id}: {e}"
-                    )
-                    result = ExampleResult(
-                        example_id=example_id,
-                        input_data=example.input_data,
-                        expected_output=example.expected_output,
-                        actual_output=None,
-                        metrics=dict.fromkeys(self.metrics, 0.0),
-                        execution_time=execution_time,
-                        success=False,
-                        error_message=str(e),
-                        metadata=example.metadata.copy() if example.metadata else {},
-                    )
-                    self._record_example_trace(span, result)
-                    return result
+                return await self._try_custom_evaluator(
+                    func,
+                    config,
+                    example,
+                    example_id,
+                    start_time,
+                    span,
+                    example_index,
+                    progress_callback,
+                )
 
             # Default evaluation with correlation key
             capture_key = self._get_capture_key_context()

@@ -1025,6 +1025,105 @@ class OptimizationOrchestrator:
                 raise
         return trial_count
 
+    def _apply_cap_and_prevent_excess(
+        self,
+        configs: list[dict[str, Any]],
+        slice_cap: int,
+    ) -> list[dict[str, Any]]:
+        """Apply cap to configs and mark prevented trials as pruned.
+
+        Args:
+            configs: List of trial configurations
+            slice_cap: Maximum number of configs to keep
+
+        Returns:
+            Capped list of configurations
+        """
+        original_count = len(configs)
+        prevented_configs = configs[slice_cap:]
+        capped_configs = configs[:slice_cap]
+
+        if original_count > len(capped_configs):
+            prevented_count = original_count - len(capped_configs)
+            self._trials_prevented += prevented_count
+            logger.info("Prevented %s trials due to cap", prevented_count)
+            for cfg in prevented_configs:
+                optuna_id = (
+                    cfg.get("_optuna_trial_id") if isinstance(cfg, dict) else None
+                )
+                self._abandon_optuna_trial(
+                    optuna_id,
+                    reason="trial_prevented_by_cap",
+                    config=cfg,
+                    status=TrialStatus.PRUNED,
+                    pruned_step=0,
+                )
+        return capped_configs
+
+    def _apply_cache_policy_and_prune(
+        self,
+        configs: list[dict[str, Any]],
+        function_name: str | None,
+        dataset: Dataset,
+    ) -> list[dict[str, Any]]:
+        """Apply cache policy and mark filtered trials as pruned.
+
+        Args:
+            configs: List of trial configurations
+            function_name: Name of the function being optimized
+            dataset: The dataset being used
+
+        Returns:
+            Filtered list of configurations
+        """
+        cache_policy = self.config.get("cache_policy", "allow_repeats")
+        if cache_policy == "allow_repeats":
+            return configs
+
+        dataset_name = getattr(dataset, "name", "unnamed_dataset")
+        # Build a map from optuna_trial_id to config before filtering
+        id_to_config: dict[int, dict[str, Any]] = {
+            cast(int, cfg.get("_optuna_trial_id")): cfg
+            for cfg in configs
+            if isinstance(cfg, dict) and isinstance(cfg.get("_optuna_trial_id"), int)
+        }
+        before_ids = set(id_to_config.keys())
+
+        filtered_configs: list[dict[str, Any]] = self.cache_policy_handler.apply_policy(
+            configs, cache_policy, function_name or "unknown_function", dataset_name
+        )
+
+        after_ids = {
+            cfg.get("_optuna_trial_id")
+            for cfg in filtered_configs
+            if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
+        }
+        dropped_ids = before_ids - after_ids
+        if dropped_ids:
+            self._trials_prevented += len(dropped_ids)
+            for optuna_id in dropped_ids:
+                if isinstance(optuna_id, int):
+                    self._abandon_optuna_trial(
+                        optuna_id,
+                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
+                        config=id_to_config.get(optuna_id),
+                        status=TrialStatus.PRUNED,
+                        pruned_step=0,
+                    )
+        return filtered_configs
+
+    def _maybe_log_checkpoint(self, trial_count: int) -> None:
+        """Log a checkpoint if the trial count is at a logging interval."""
+        if trial_count % PROGRESS_LOG_INTERVAL == 0:
+            optimizer_state = {}
+            if hasattr(self.optimizer, "get_state"):
+                optimizer_state = self.optimizer.get_state()
+            self._log_checkpoint(
+                optimizer_state=optimizer_state,
+                trials_history=self._trials,
+                trial_count=trial_count,
+            )
+
     async def _run_parallel_batch(
         self,
         func: Callable[..., Any],
@@ -1052,58 +1151,11 @@ class OptimizationOrchestrator:
         configs, _ = await self._generate_parallel_configs(dataset, target_batch_size)
 
         # Phase 3: Apply caps and prevent excess trials
-        original_count = len(configs)
         slice_cap = self.parallel_trials if infinite_budget else remaining_cap
-        prevented_configs = configs[slice_cap:]
-        configs = configs[:slice_cap]
-        if original_count > len(configs):
-            self._trials_prevented += original_count - len(configs)
-            logger.info("Prevented %s trials due to cap", original_count - len(configs))
-            for cfg in prevented_configs:
-                optuna_id = (
-                    cfg.get("_optuna_trial_id") if isinstance(cfg, dict) else None
-                )
-                self._abandon_optuna_trial(
-                    optuna_id,
-                    reason="trial_prevented_by_cap",
-                    config=cfg,
-                    status=TrialStatus.PRUNED,
-                    pruned_step=0,
-                )
+        configs = self._apply_cap_and_prevent_excess(configs, slice_cap)
 
         # Phase 4: Apply cache policy
-        cache_policy = self.config.get("cache_policy", "allow_repeats")
-        if cache_policy != "allow_repeats":
-            dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            # Build a map from optuna_trial_id to config before filtering
-            id_to_config: dict[int, dict[str, Any]] = {
-                cast(int, cfg.get("_optuna_trial_id")): cfg
-                for cfg in configs
-                if isinstance(cfg, dict)
-                and isinstance(cfg.get("_optuna_trial_id"), int)
-            }
-            before_ids = set(id_to_config.keys())
-            configs = self.cache_policy_handler.apply_policy(
-                configs, cache_policy, function_name or "unknown_function", dataset_name
-            )
-            after_ids = {
-                cfg.get("_optuna_trial_id")
-                for cfg in configs
-                if isinstance(cfg, dict) and cfg.get("_optuna_trial_id") is not None
-            }
-            dropped_ids = before_ids - after_ids
-            if dropped_ids:
-                self._trials_prevented += len(dropped_ids)
-                for optuna_id in dropped_ids:
-                    if not isinstance(optuna_id, int):
-                        continue
-                    self._abandon_optuna_trial(
-                        optuna_id,
-                        reason=f"trial_filtered_by_cache_policy:{cache_policy}",
-                        config=id_to_config.get(optuna_id),
-                        status=TrialStatus.PRUNED,
-                        pruned_step=0,
-                    )
+        configs = self._apply_cache_policy_and_prune(configs, function_name, dataset)
 
         if not configs:
             return trial_count, "break"
@@ -1133,15 +1185,7 @@ class OptimizationOrchestrator:
         )
 
         # Phase 9: Checkpoint logging
-        if trial_count % PROGRESS_LOG_INTERVAL == 0:
-            optimizer_state = {}
-            if hasattr(self.optimizer, "get_state"):
-                optimizer_state = self.optimizer.get_state()
-            self._log_checkpoint(
-                optimizer_state=optimizer_state,
-                trials_history=self._trials,
-                trial_count=trial_count,
-            )
+        self._maybe_log_checkpoint(trial_count)
 
         return trial_count, "continue"
 

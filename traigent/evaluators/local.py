@@ -1014,6 +1014,72 @@ class LocalEvaluator(BaseEvaluator):
 
         return result
 
+    def _compute_mock_accuracy(
+        self, actual_output: Any, base_accuracy: float, variance: float
+    ) -> float:
+        """Compute simulated accuracy for mock mode.
+
+        Args:
+            actual_output: Output from function
+            base_accuracy: Base accuracy value (e.g., 0.75)
+            variance: Variance range for randomization
+
+        Returns:
+            Simulated accuracy value between 0.0 and 1.0
+        """
+        if actual_output is None:
+            return 0.0
+
+        adjusted_accuracy = base_accuracy
+        # Simulate better accuracy for certain outputs
+        if isinstance(actual_output, str):
+            if len(actual_output) > 20:  # Longer outputs generally better
+                adjusted_accuracy += 0.05
+            sentiment_words = ["positive", "negative", "neutral"]
+            if any(word in actual_output.lower() for word in sentiment_words):
+                adjusted_accuracy += 0.03  # Sentiment-like outputs
+
+        # Add random variance (using seeded random for reproducibility)
+        half_variance = variance / 2
+        raw_accuracy = adjusted_accuracy + self._mock_random.uniform(
+            -half_variance, half_variance
+        )
+        return min(1.0, max(0.0, raw_accuracy))
+
+    def _compute_real_accuracy(self, actual_output: Any, expected_output: Any) -> float:
+        """Compute real accuracy by comparing actual vs expected output.
+
+        Args:
+            actual_output: Output from function
+            expected_output: Expected output
+
+        Returns:
+            Accuracy value (1.0 for match, 0.0 otherwise)
+        """
+        # Check for missing expected output
+        if expected_output is None:
+            return 0.0
+        if isinstance(expected_output, str) and not expected_output.strip():
+            return 0.0
+
+        # If actual_output is dict, use its 'text' for accuracy comparison
+        actual_to_compare = (
+            actual_output.get("text")
+            if isinstance(actual_output, dict)
+            else actual_output
+        )
+
+        # Exact match
+        if actual_to_compare == expected_output:
+            return 1.0
+
+        # Try case-insensitive comparison for string outputs
+        if isinstance(actual_to_compare, str) and isinstance(expected_output, str):
+            if actual_to_compare.lower().strip() == expected_output.lower().strip():
+                return 1.0
+
+        return 0.0
+
     def _compute_example_metrics(
         self, actual_output: Any, expected_output: Any
     ) -> dict[str, float]:
@@ -1034,103 +1100,44 @@ class LocalEvaluator(BaseEvaluator):
         mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
 
         # Check configuration for mock mode settings
-        mock_enabled = self.mock_mode_config.get(
-            "enabled", True
-        )  # Default: allow mock mode
-        override_evaluator = self.mock_mode_config.get(
-            "override_evaluator", True
-        )  # Default: override in mock
+        mock_enabled = self.mock_mode_config.get("enabled", True)
+        override_evaluator = self.mock_mode_config.get("override_evaluator", True)
         base_accuracy_config = self.mock_mode_config.get("base_accuracy", 0.75)
         variance_config = self.mock_mode_config.get("variance", 0.25)
 
         # Determine if we should actually use mock mode
-        # Mock mode is used only if:
-        # 1. Environment variable is set to true AND
-        # 2. Mock mode is enabled in config AND
-        # 3. We should override the evaluator (if custom evaluator exists)
         use_mock = mock_mode_env and mock_enabled and override_evaluator
 
         # Accuracy (exact match or mock)
         if "accuracy" in self.metrics:
             if use_mock:
-                # Log a one-time warning about mock mode accuracy
-                if not self._mock_mode_warning_shown:
-                    logger.warning(
-                        "MOCK MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
-                        "not computed from actual vs expected outputs. These metrics do not "
-                        "reflect real model performance. Set TRAIGENT_MOCK_MODE=false for "
-                        "real evaluations.",
-                        base_accuracy_config,
-                        variance_config / 2,
-                    )
-                    self._mock_mode_warning_shown = True
-                # IMPORTANT: In mock mode, accuracy is SIMULATED, not computed from
-                # actual vs expected outputs. This is for testing optimization flows
-                # without incurring LLM API costs. The simulated accuracy does NOT
-                # reflect real model performance and should not be used to evaluate
-                # model quality. Set TRAIGENT_MOCK_MODE=false for real evaluations.
-                #
-                # Default base_accuracy=0.75 with variance=0.25 gives range ~0.625-0.875
-                base_accuracy = base_accuracy_config
-                # Add some variance based on actual output presence
-                if actual_output is not None:
-                    # Simulate better accuracy for certain outputs
-                    if isinstance(actual_output, str):
-                        if len(actual_output) > 20:  # Longer outputs generally better
-                            base_accuracy += 0.05
-                        if any(
-                            word in actual_output.lower()
-                            for word in ["positive", "negative", "neutral"]
-                        ):
-                            base_accuracy += 0.03  # Sentiment-like outputs
-                    # Add random variance (using seeded random for reproducibility)
-                    half_variance = variance_config / 2
-                    metrics["accuracy"] = min(
-                        1.0,
-                        max(
-                            0.0,
-                            base_accuracy
-                            + self._mock_random.uniform(-half_variance, half_variance),
-                        ),
-                    )
-                else:
-                    metrics["accuracy"] = 0.0
-            elif expected_output is not None and not (
-                isinstance(expected_output, str) and not expected_output.strip()
-            ):
-                # If actual_output is dict, use its 'text' for accuracy comparison
-                actual_to_compare = (
-                    actual_output.get("text")
-                    if isinstance(actual_output, dict)
-                    else actual_output
+                self._log_mock_mode_warning(base_accuracy_config, variance_config)
+                metrics["accuracy"] = self._compute_mock_accuracy(
+                    actual_output, base_accuracy_config, variance_config
                 )
-                # Compare actual output with expected output
-                if actual_to_compare == expected_output:
-                    metrics["accuracy"] = 1.0
-                elif isinstance(actual_to_compare, str) and isinstance(
-                    expected_output, str
-                ):
-                    # Try case-insensitive comparison for string outputs
-                    if (
-                        actual_to_compare.lower().strip()
-                        == expected_output.lower().strip()
-                    ):
-                        metrics["accuracy"] = 1.0
-                    else:
-                        metrics["accuracy"] = 0.0
-                else:
-                    metrics["accuracy"] = 0.0
             else:
-                # No expected output available (None or empty string) - cannot compute accuracy
-                metrics["accuracy"] = 0.0
+                metrics["accuracy"] = self._compute_real_accuracy(
+                    actual_output, expected_output
+                )
 
         # Success (whether function completed without error)
         if "success_rate" in self.metrics:
             metrics["success"] = 1.0 if actual_output is not None else 0.0
 
-        # Additional metrics can be added here based on output types
-
         return metrics
+
+    def _log_mock_mode_warning(self, base_accuracy: float, variance: float) -> None:
+        """Log a one-time warning about mock mode accuracy."""
+        if not self._mock_mode_warning_shown:
+            logger.warning(
+                "MOCK MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
+                "not computed from actual vs expected outputs. These metrics do not "
+                "reflect real model performance. Set TRAIGENT_MOCK_MODE=false for "
+                "real evaluations.",
+                base_accuracy,
+                variance / 2,
+            )
+            self._mock_mode_warning_shown = True
 
     def compute_metrics(
         self,
