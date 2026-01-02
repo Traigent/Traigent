@@ -15,6 +15,12 @@ from traigent.cloud.backend_client import BackendClientConfig, BackendIntegrated
 from traigent.cloud.client import CloudServiceError, TraigentCloudClient
 
 
+def require(condition: bool, message: str = "Assertion failed") -> None:
+    """Raise AssertionError when condition is false."""
+    if not condition:
+        raise AssertionError(message)
+
+
 class TestSessionExpiryAndRefresh:
     """Test session expiry detection and token refresh scenarios."""
 
@@ -53,18 +59,20 @@ class TestSessionExpiryAndRefresh:
 
                     # First request creates session
                     await client.check_service_status()
-                    assert len(session_creations) == 1
+                    require(len(session_creations) == 1)
 
                     # Simulate session expiry by clearing it
                     client._session = None
 
                     # Next request should create new session
                     await client.check_service_status()
-                    assert len(session_creations) == 2
+                    require(len(session_creations) == 2)
 
                     # Verify both sessions had proper headers
                     for headers in session_creations:
-                        assert "X-API-Key" in headers or "Authorization" in headers
+                        require(
+                            "X-API-Key" in headers or "Authorization" in headers
+                        )
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):
@@ -78,7 +86,9 @@ class TestSessionExpiryAndRefresh:
         async def mock_get_headers():
             token_refresh_attempts.append(time.time())
             return {
-                "Authorization": f"Bearer {api_key}_refreshed_{len(token_refresh_attempts)}",
+                "Authorization": (
+                    f"Bearer {api_key}_refreshed_{len(token_refresh_attempts)}"
+                ),
                 "X-Traigent-Client": "test",
             }
 
@@ -132,10 +142,10 @@ class TestSessionExpiryAndRefresh:
                         await client.check_service_status()
 
                         # Verify token refresh was attempted
-                        assert len(token_refresh_attempts) >= 1
+                        require(len(token_refresh_attempts) >= 1)
 
                         # Verify requests were made
-                        assert request_count >= 1
+                        require(request_count >= 1)
 
     @pytest.mark.asyncio
     async def test_session_invalidation_recovery(self):
@@ -198,7 +208,8 @@ class TestSessionExpiryAndRefresh:
 
                         client = TraigentCloudClient(api_key=api_key)
 
-                        # First attempt fails due to invalid session - suppress expected error
+                        # First attempt fails due to invalid session - suppress expected
+                        # error
                         with suppress(CloudServiceError, Exception):
                             await client.check_service_status()
 
@@ -212,8 +223,8 @@ class TestSessionExpiryAndRefresh:
                         await client.check_service_status()  # Should succeed
 
                         # Verify session was recreated multiple times
-                        assert session_recreations >= 2
-                        assert request_attempts >= 3
+                        require(session_recreations >= 2)
+                        require(request_attempts >= 3)
 
     @pytest.mark.asyncio
     async def test_concurrent_token_refresh(self):
@@ -271,10 +282,12 @@ class TestSessionExpiryAndRefresh:
                         await asyncio.gather(*tasks, return_exceptions=True)
 
                         # Verify refresh was called appropriate number of times
-                        # Due to our session sharing, should be fewer than total requests
-                        assert len(refresh_operations) >= 1
-                        # The exact number depends on concurrency and timing, just verify not excessive
-                        assert (
+                        # Due to our session sharing, should be fewer than total
+                        # requests
+                        require(len(refresh_operations) >= 1)
+                        # The exact number depends on concurrency and timing, just
+                        # verify not excessive
+                        require(
                             len(refresh_operations) <= 20
                         )  # Allow for some concurrent refreshes
 
@@ -354,8 +367,8 @@ class TestAuthenticationErrorRecovery:
                         await client.check_service_status()
 
                         # Verify we had both error and success responses
-                        assert "invalid_key" in error_responses
-                        assert "success" in error_responses
+                        require("invalid_key" in error_responses)
+                        require("success" in error_responses)
 
     @pytest.mark.asyncio
     async def test_auth_service_outage_recovery(self):
@@ -403,7 +416,7 @@ class TestAuthenticationErrorRecovery:
                     await client._ensure_session()
 
                     # Verify auth was attempted multiple times
-                    assert auth_attempts >= 3
+                    require(auth_attempts >= 3)
 
     @pytest.mark.asyncio
     async def test_corrupted_token_recovery(self):
@@ -484,7 +497,7 @@ class TestAuthenticationErrorRecovery:
                     await client.check_service_status()
 
                     # Verify multiple token generation attempts
-                    assert token_generation_attempts >= 3
+                    require(token_generation_attempts >= 3)
 
 
 class TestBackendClientAuthLifecycle:
@@ -606,10 +619,13 @@ class TestBackendClientAuthLifecycle:
                         await client.create_hybrid_session("test problem", {}, {})
 
                         # Verify headers were used (either style is acceptable)
-                        assert len(session_creations) == 1
+                        require(len(session_creations) == 1)
                         headers_1 = session_creations[0]
                         # Either X-API-Key or Authorization should be present
-                        assert "X-API-Key" in headers_1 or "Authorization" in headers_1
+                        require(
+                            "X-API-Key" in headers_1
+                            or "Authorization" in headers_1
+                        )
 
                         # Reset session for second attempt
                         client._session = None
@@ -618,9 +634,12 @@ class TestBackendClientAuthLifecycle:
                         await client.get_hybrid_session_status("session-123")
 
                         # Verify still using some auth
-                        assert len(session_creations) == 2
+                        require(len(session_creations) == 2)
                         headers_2 = session_creations[1]
-                        assert "X-API-Key" in headers_2 or "Authorization" in headers_2
+                        require(
+                            "X-API-Key" in headers_2
+                            or "Authorization" in headers_2
+                        )
 
                         # Reset session for third attempt
                         client._session = None
@@ -629,13 +648,15 @@ class TestBackendClientAuthLifecycle:
                         await client.finalize_hybrid_session("session-123")
 
                         # Verify primary auth is now working
-                        assert len(session_creations) == 3
+                        require(len(session_creations) == 3)
                         headers_3 = session_creations[2]
-                        assert "Authorization" in headers_3
-                        assert "Bearer primary-auth-token" in headers_3["Authorization"]
+                        require("Authorization" in headers_3)
+                        require(
+                            "Bearer primary-auth-token" in headers_3["Authorization"]
+                        )
 
                         # Verify auth was attempted multiple times
-                        assert len(auth_attempts) >= 3
+                        require(len(auth_attempts) >= 3)
 
     @pytest.mark.asyncio
     async def test_mixed_auth_states_across_clients(self):
@@ -717,21 +738,23 @@ class TestBackendClientAuthLifecycle:
                         await asyncio.gather(task_1, task_2, return_exceptions=True)
 
                         # Verify both clients handled auth appropriately
-                        assert len(session_data) == 2
+                        require(len(session_data) == 2)
 
                         # Client 1 should have primary auth
                         headers_1 = session_data[0]["headers"]
-                        assert "Authorization" in headers_1
-                        assert "Bearer client-1-token" in headers_1["Authorization"]
+                        require("Authorization" in headers_1)
+                        require(
+                            "Bearer client-1-token" in headers_1["Authorization"]
+                        )
 
                         # Client 2 should have fallback auth
                         headers_2 = session_data[1]["headers"]
-                        assert "Content-Type" in headers_2
-                        assert "X-API-Key" not in headers_2
+                        require("Content-Type" in headers_2)
+                        require("X-API-Key" not in headers_2)
 
                         # Verify appropriate auth calls were made
-                        assert "client_1_auth" in auth_calls
-                        assert "client_2_auth" in auth_calls
+                        require("client_1_auth" in auth_calls)
+                        require("client_2_auth" in auth_calls)
 
 
 class TestAdvancedAuthScenarios:
@@ -808,7 +831,7 @@ class TestAdvancedAuthScenarios:
                         await client.check_service_status()
 
                         # Verify we made enough attempts
-                        assert request_count >= success_threshold
+                        require(request_count >= success_threshold)
 
     @pytest.mark.asyncio
     async def test_authentication_under_memory_pressure(self):
@@ -863,9 +886,9 @@ class TestAdvancedAuthScenarios:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
                     # Verify operations completed despite memory usage
-                    assert len(large_objects_created) >= 20
+                    require(len(large_objects_created) >= 20)
                     total_memory_simulated = sum(large_objects_created)
-                    assert total_memory_simulated > 100000  # >100KB allocated
+                    require(total_memory_simulated > 100000)  # >100KB allocated
 
     @pytest.mark.asyncio
     async def test_auth_header_encoding_edge_cases(self):
@@ -925,8 +948,8 @@ class TestAdvancedAuthScenarios:
                             await client.check_service_status()
 
                         # Verify all headers were properly encoded and received
-                        assert len(headers_received) == len(encoding_scenarios)
+                        require(len(headers_received) == len(encoding_scenarios))
                         for header in headers_received:
-                            assert header is not None
-                            assert header.startswith("Bearer ")
-                            assert api_key in header
+                            require(header is not None)
+                            require(header.startswith("Bearer "))
+                            require(api_key in header)

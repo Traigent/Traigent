@@ -21,7 +21,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.append(str(SCRIPT_DIR))
 
-from versioning import read_tracking_version, resolve_base_path, resolve_version
+from versioning import (
+    ensure_within_base,
+    read_tracking_version,
+    resolve_base_path,
+    resolve_version,
+)
 
 
 @dataclass
@@ -102,7 +107,9 @@ class ProgressTracker:
         self.tracking_path = self.base_path / "TRACKING.md"
         self.history_path = self.base_path / "progress_history.json"
         self.lock_path = self.base_path / ".tracking.lock"
-        self.tracking_version = read_tracking_version(self.tracking_path)
+        self.tracking_version = read_tracking_version(
+            self.tracking_path, self.base_path
+        )
 
     @contextmanager
     def _file_lock(self, timeout: float = 30.0) -> Iterator[None]:
@@ -139,6 +146,20 @@ class ProgressTracker:
         finally:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
             os.close(lock_fd)
+
+    def _ensure_within_base(self, path: Path) -> None:
+        """Ensure file operations remain within the base path."""
+        ensure_within_base(self.base_path, path)
+
+    def _read_text(self, path: Path) -> str:
+        """Read text from a path validated under the base path."""
+        self._ensure_within_base(path)
+        return path.read_text()
+
+    def _write_text(self, path: Path, content: str) -> None:
+        """Write text to a path validated under the base path."""
+        self._ensure_within_base(path)
+        path.write_text(content)
 
     def _build_evidence_json(
         self,
@@ -292,7 +313,7 @@ class ProgressTracker:
             raise FileNotFoundError(f"Tracking file not found: {self.tracking_path}")
 
         with self._file_lock():
-            content = self.tracking_path.read_text()
+            content = self._read_text(self.tracking_path)
             lines = content.split("\n")
             updated_lines: list[str] = []
             found = False
@@ -337,7 +358,7 @@ class ProgressTracker:
                 raise ValueError(f"Fix ID {fix_id} not found in tracking file")
 
             self._update_item_details(updated_lines, fix_id, status, evidence or None)
-            self.tracking_path.write_text("\n".join(updated_lines))
+            self._write_text(self.tracking_path, "\n".join(updated_lines))
 
     def mark_fix_complete(
         self,
@@ -428,7 +449,7 @@ class ProgressTracker:
         if not self.tracking_path.exists():
             return []
 
-        content = self.tracking_path.read_text()
+        content = self._read_text(self.tracking_path)
         pending = []
 
         for line in content.split("\n"):
@@ -448,7 +469,7 @@ class ProgressTracker:
         if not self.tracking_path.exists():
             return {"error": "Tracking file not found"}
 
-        content = self.tracking_path.read_text()
+        content = self._read_text(self.tracking_path)
 
         stats = {
             "total": 0,
@@ -585,7 +606,7 @@ class ProgressTracker:
             for blocker in session.blockers:
                 lines.append(f"- {blocker}")
 
-        progress_file.write_text("\n".join(lines))
+        self._write_text(progress_file, "\n".join(lines))
 
     def _add_to_history(self, fix_id: str, status: str, evidence: str) -> None:
         """Add entry to progress history."""
@@ -620,14 +641,14 @@ class ProgressTracker:
             return {}
 
         try:
-            return json.loads(self.history_path.read_text())
+            return json.loads(self._read_text(self.history_path))
         except json.JSONDecodeError:
             return {}
 
     def _save_history(self, history: dict[str, Any]) -> None:
         """Save progress history."""
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
-        self.history_path.write_text(json.dumps(history, indent=2))
+        self._write_text(self.history_path, json.dumps(history, indent=2))
 
 
 def main() -> None:

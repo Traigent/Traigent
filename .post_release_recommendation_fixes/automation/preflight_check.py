@@ -18,7 +18,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.append(str(SCRIPT_DIR))
 
-from versioning import read_tracking_version, resolve_base_path, resolve_version
+from versioning import (
+    ensure_within_base,
+    read_tracking_version,
+    resolve_base_path,
+    resolve_version,
+)
 
 
 @dataclass
@@ -55,6 +60,11 @@ class PreflightChecker:
         self.version = resolve_version(version)
         self.base_path = resolve_base_path(self.root_path, self.version)
         self.source_todo = Path(source_todo) if source_todo else None
+
+    def _read_text_in_base(self, path: Path) -> str:
+        """Read text from a path validated under the base path."""
+        ensure_within_base(self.base_path, path)
+        return path.read_text()
 
     def run_all_checks(self) -> list[CheckResult]:
         """Run all pre-flight checks.
@@ -327,7 +337,7 @@ class PreflightChecker:
                 message="TRACKING.md not found. Run todo_importer.py first.",
             )
 
-        content = tracking_path.read_text()
+        content = self._read_text_in_base(tracking_path)
 
         # Check if it has actual items (not just template)
         if "| Pending |" in content or "| Complete |" in content:
@@ -347,7 +357,7 @@ class PreflightChecker:
     def check_release_version(self) -> CheckResult:
         """Check release version alignment between env and tracking file."""
         tracking_path = self.base_path / "TRACKING.md"
-        tracking_version = read_tracking_version(tracking_path)
+        tracking_version = read_tracking_version(tracking_path, self.base_path)
         env_version = self.version
 
         if not env_version and not tracking_version:
@@ -524,7 +534,7 @@ class PreflightChecker:
 
             progress_file = session_dir / "PROGRESS.md"
             if progress_file.exists():
-                content = progress_file.read_text()
+                content = self._read_text_in_base(progress_file)
                 if "**Ended**: (In progress)" in content:
                     active_sessions.append(session_dir.name)
 
