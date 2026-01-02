@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal, cast
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -340,57 +341,78 @@ class OptimizationResult:
         return float(sum(times) / len(times))
 
     @staticmethod
-    def _extract_response_time(entry: Any) -> float | None:
-        """Extract response time (seconds) from dict-like metadata or trial/example objects."""
+    def _coerce_seconds(value: Any) -> float | None:
+        """Convert a value to seconds if possible."""
+        return OptimizationResult._coerce_float(value)
 
-        def _to_seconds(value: Any) -> float | None:
-            if value is None:
+    @staticmethod
+    def _coerce_millis(value: Any) -> float | None:
+        """Convert a millisecond value to seconds if possible."""
+        seconds = OptimizationResult._coerce_float(value)
+        return None if seconds is None else seconds / 1000.0
+
+    @staticmethod
+    def _extract_response_time_from_metrics(
+        metrics: Any,
+        *,
+        parent: Mapping[str, Any] | None = None,
+    ) -> float | None:
+        if isinstance(metrics, Mapping):
+            if parent is not None and metrics is parent:
                 return None
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return None
+            return OptimizationResult._extract_response_time_from_mapping(metrics)
 
-        def _from_ms(value: Any) -> float | None:
-            converted = _to_seconds(value)
-            return None if converted is None else converted / 1000.0
-
-        def _from_mapping(mapping: Mapping[str, Any] | None) -> float | None:
-            if not isinstance(mapping, Mapping):
-                return None
-
-            direct = _to_seconds(mapping.get("response_time"))
-            if direct is not None:
-                return direct
-
-            millis = _from_ms(mapping.get("response_time_ms"))
-            if millis is not None:
-                return millis
-
-            metrics = mapping.get("metrics")
-            if isinstance(metrics, Mapping) and metrics is not mapping:
-                nested = _from_mapping(metrics)
-                if nested is not None:
-                    return nested
-            elif isinstance(metrics, (list, tuple)):
-                for item in metrics:
-                    nested = _from_mapping(item)
+        if isinstance(metrics, (list, tuple)):
+            for item in metrics:
+                if isinstance(item, Mapping):
+                    nested = OptimizationResult._extract_response_time_from_mapping(
+                        item
+                    )
                     if nested is not None:
                         return nested
 
-            return _to_seconds(mapping.get("execution_time"))
+        return None
+
+    @staticmethod
+    def _extract_response_time_from_mapping(
+        mapping: Mapping[str, Any],
+    ) -> float | None:
+        direct = OptimizationResult._coerce_seconds(mapping.get("response_time"))
+        if direct is not None:
+            return direct
+
+        millis = OptimizationResult._coerce_millis(mapping.get("response_time_ms"))
+        if millis is not None:
+            return millis
+
+        nested = OptimizationResult._extract_response_time_from_metrics(
+            mapping.get("metrics"),
+            parent=mapping,
+        )
+        if nested is not None:
+            return nested
+
+        return OptimizationResult._coerce_seconds(mapping.get("execution_time"))
+
+    @staticmethod
+    def _extract_response_time(entry: Any) -> float | None:
+        """Extract response time (seconds) from dict-like metadata or trial/example objects."""
 
         if entry is None:
             return None
 
         if isinstance(entry, Mapping):
-            return _from_mapping(entry)
+            return OptimizationResult._extract_response_time_from_mapping(entry)
 
-        candidate = _from_mapping(getattr(entry, "metrics", None))
+        candidate = OptimizationResult._extract_response_time_from_metrics(
+            getattr(entry, "metrics", None)
+        )
         if candidate is not None:
             return candidate
 
-        return _to_seconds(getattr(entry, "execution_time", None))
+        return OptimizationResult._coerce_seconds(
+            getattr(entry, "execution_time", None)
+        )
 
     @staticmethod
     def _generate_config_hash(config: dict[str, Any]) -> str:
@@ -401,7 +423,8 @@ class OptimizationResult:
                 generate_config_hash as _generate_config_hash,
             )
 
-            return _generate_config_hash(config)
+            generate_hash = cast(Callable[[dict[str, Any]], str], _generate_config_hash)
+            return generate_hash(config)
         except Exception:
             logger.debug("generate_config_hash unavailable, using fallback SHA256 hash")
             sorted_config = json.dumps(config or {}, sort_keys=True)
@@ -493,58 +516,72 @@ class OptimizationResult:
         except (TypeError, ValueError):
             return 0.0
 
+    @staticmethod
+    def _is_known_status(status: TrialStatus) -> bool:
+        return status in (
+            TrialStatus.COMPLETED,
+            TrialStatus.FAILED,
+            TrialStatus.CANCELLED,
+            TrialStatus.RUNNING,
+            TrialStatus.PENDING,
+            TrialStatus.NOT_STARTED,
+        )
+
+    def _record_trial_config(
+        self, trial: TrialResult, unique_configs: set[str]
+    ) -> None:
+        if trial.config is None:
+            return
+        unique_configs.add(self._generate_config_hash(trial.config))
+
+    def _record_trial_duration(
+        self, trial: TrialResult, aggregation: _TrialAggregation
+    ) -> None:
+        trial_duration = self._coerce_float(trial.duration)
+        if trial_duration is None:
+            return
+        aggregation.sum_duration += trial_duration
+        aggregation.counted_durations += 1
+
+    @staticmethod
+    def _has_trial_exception(trial: TrialResult) -> bool:
+        if trial.status != TrialStatus.FAILED:
+            return False
+        if trial.error_message:
+            return True
+        return isinstance(trial.metadata, dict) and bool(trial.metadata.get("failed"))
+
+    def _resolve_trial_cost(self, trial: TrialResult) -> float:
+        trial_cost = self._extract_trial_cost(trial)
+        return trial_cost if trial_cost is not None else 0.0
+
     def _aggregate_trial_data(
         self, initial_counts: dict[str, int], include_cost: bool
     ) -> _TrialAggregation:
         """Aggregate trial metrics used for experiment statistics."""
 
-        unique_configs: set[str] = set()
-        sum_trial_duration = 0.0
-        counted_durations = 0
-        other_status = 0
-        exceptions = 0
-        computed_total_cost = 0.0
+        aggregation = self._TrialAggregation(
+            counts=initial_counts,
+            unique_configs=set(),
+            sum_duration=0.0,
+            counted_durations=0,
+            other_status=0,
+            exceptions=0,
+            computed_total_cost=0.0,
+        )
 
         for trial in self.trials:
-            if trial.config is not None:
-                unique_configs.add(self._generate_config_hash(trial.config))
-
-            trial_duration = self._coerce_float(trial.duration)
-            if trial_duration is not None:
-                sum_trial_duration += trial_duration
-                counted_durations += 1
-
-            self._increment_status_count(trial, initial_counts)
-            if trial.status not in (
-                TrialStatus.COMPLETED,
-                TrialStatus.FAILED,
-                TrialStatus.CANCELLED,
-                TrialStatus.RUNNING,
-                TrialStatus.PENDING,
-                TrialStatus.NOT_STARTED,
-            ):
-                other_status += 1
-
-            if trial.status == TrialStatus.FAILED and (
-                trial.error_message
-                or (isinstance(trial.metadata, dict) and trial.metadata.get("failed"))
-            ):
-                exceptions += 1
-
+            self._record_trial_config(trial, aggregation.unique_configs)
+            self._record_trial_duration(trial, aggregation)
+            self._increment_status_count(trial, aggregation.counts)
+            if not self._is_known_status(trial.status):
+                aggregation.other_status += 1
+            if self._has_trial_exception(trial):
+                aggregation.exceptions += 1
             if include_cost:
-                trial_cost = self._extract_trial_cost(trial)
-                if trial_cost is not None:
-                    computed_total_cost += trial_cost
+                aggregation.computed_total_cost += self._resolve_trial_cost(trial)
 
-        return self._TrialAggregation(
-            counts=initial_counts,
-            unique_configs=unique_configs,
-            sum_duration=sum_trial_duration,
-            counted_durations=counted_durations,
-            other_status=other_status,
-            exceptions=exceptions,
-            computed_total_cost=computed_total_cost,
-        )
+        return aggregation
 
     @staticmethod
     def _coerce_float(value: Any) -> float | None:
@@ -616,6 +653,39 @@ class OptimizationResult:
                 detected.append(obj)
         return detected
 
+    def _resolve_schema_preferences(
+        self, objective_schema: ObjectiveSchema | None
+    ) -> tuple[dict[str, float] | None, list[str] | None, Any | None]:
+        if objective_schema is None:
+            return None, None, None
+
+        # Import here to avoid circular dependency during module load
+        from traigent.core.objectives import ObjectiveSchema as _ObjectiveSchema
+
+        if isinstance(objective_schema, _ObjectiveSchema):
+            weights = {
+                obj_def.name: obj_def.weight for obj_def in objective_schema.objectives
+            }
+            minimize = [
+                obj_def.name
+                for obj_def in objective_schema.objectives
+                if obj_def.orientation == "minimize"
+            ]
+            return weights, minimize, objective_schema
+
+        return None, None, objective_schema
+
+    def _ensure_objective_weights(
+        self, weights: dict[str, float] | None
+    ) -> dict[str, float]:
+        if weights is None:
+            return dict.fromkeys(self.objectives, 1.0)
+
+        normalized = dict(weights)
+        for obj in self.objectives:
+            normalized.setdefault(obj, 1.0)
+        return normalized
+
     def _prepare_objective_preferences(
         self,
         objective_weights: dict[str, float] | None,
@@ -628,30 +698,18 @@ class OptimizationResult:
         minimize = (
             list(minimize_objectives) if minimize_objectives is not None else None
         )
-        schema: Any | None = objective_schema
 
-        if objective_schema is not None:
-            # Import here to avoid circular dependency during module load
-            from traigent.core.objectives import ObjectiveSchema as _ObjectiveSchema
-
-            if isinstance(objective_schema, _ObjectiveSchema):
-                schema = objective_schema
-                weights = {}
-                minimize = []
-                for obj_def in schema.objectives:
-                    weights[obj_def.name] = obj_def.weight
-                    if obj_def.orientation == "minimize":
-                        minimize.append(obj_def.name)
+        schema_weights, schema_minimize, schema = self._resolve_schema_preferences(
+            objective_schema
+        )
+        if schema_weights is not None or schema_minimize is not None:
+            weights = schema_weights
+            minimize = schema_minimize
 
         if minimize is None:
             minimize = self._auto_detect_minimize_objectives()
 
-        if weights is None:
-            weights = dict.fromkeys(self.objectives, 1.0)
-        else:
-            weights = dict(weights)  # Ensure we do not mutate caller input
-            for obj in self.objectives:
-                weights.setdefault(obj, 1.0)
+        weights = self._ensure_objective_weights(weights)
 
         return weights, minimize, schema
 
@@ -868,6 +926,91 @@ class OptimizationResult:
             data.append(row)
         return pd.DataFrame(data)
 
+    @staticmethod
+    def _initialize_aggregation_group(config: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "config": config,
+            "samples_count": 0,
+            "metrics_sum": {},
+            "metrics_count": {},
+            "duration_sum": 0.0,
+        }
+
+    def _accumulate_trial_metrics(
+        self, trial: TrialResult, group: dict[str, Any]
+    ) -> None:
+        for key, value in (trial.metrics or {}).items():
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError) as exc:
+                logger.debug(f"Skipping non-numeric metric '{key}': {exc}")
+                continue
+            group["metrics_sum"][key] = group["metrics_sum"].get(key, 0.0) + numeric
+            group["metrics_count"][key] = group["metrics_count"].get(key, 0) + 1
+
+    def _group_trials_for_aggregation(self) -> dict[str, dict[str, Any]]:
+        groups: dict[str, dict[str, Any]] = {}
+
+        for trial in self.trials:
+            cfg = trial.config or {}
+            cfg_hash = self._generate_config_hash(cfg)
+
+            group = groups.setdefault(cfg_hash, self._initialize_aggregation_group(cfg))
+            group["samples_count"] += 1
+            group["duration_sum"] += float(trial.duration or 0.0)
+
+            avg_response_time = self._compute_average_response_time(trial.metadata)
+            if avg_response_time is not None:
+                group["response_time_sum"] = (
+                    group.get("response_time_sum", 0.0) + avg_response_time
+                )
+                group["response_time_count"] = group.get("response_time_count", 0) + 1
+
+            self._accumulate_trial_metrics(trial, group)
+
+        return groups
+
+    @staticmethod
+    def _build_aggregated_rows(
+        groups: dict[str, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        rows: list[dict[str, Any]] = []
+        for cfg_hash, group in groups.items():
+            row: dict[str, Any] = {
+                "config_hash": cfg_hash,
+                "samples_count": group["samples_count"],
+            }
+            for ck, cv in (group["config"] or {}).items():
+                row[ck] = cv
+            for mk, total in group["metrics_sum"].items():
+                count = max(1, group["metrics_count"].get(mk, 1))
+                row[f"{mk}"] = total / count
+            row["duration"] = (
+                (group["duration_sum"] / group["samples_count"])
+                if group["samples_count"] > 0
+                else 0.0
+            )
+            if group.get("response_time_count"):
+                row["avg_response_time"] = (
+                    group["response_time_sum"] / group["response_time_count"]
+                )
+            rows.append(row)
+        return rows
+
+    @staticmethod
+    def _sort_aggregated_dataframe(
+        df: pd.DataFrame, primary_objective: str | None
+    ) -> pd.DataFrame:
+        if not primary_objective or primary_objective not in df.columns:
+            return df
+        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+        ascending = any(
+            pattern in primary_objective.lower() for pattern in minimize_patterns
+        )
+        return df.sort_values(
+            by=[primary_objective], ascending=ascending, na_position="last"
+        )
+
     def to_aggregated_dataframe(
         self, primary_objective: str | None = None
     ) -> pd.DataFrame:
@@ -889,80 +1032,58 @@ class OptimizationResult:
         if not self.trials:
             return pd.DataFrame()
 
-        groups: dict[str, dict[str, Any]] = {}
-
-        for tr in self.trials:
-            # Use deterministic hash for grouping by configuration
-            cfg = tr.config or {}
-            cfg_hash = self._generate_config_hash(cfg)
-
-            g = groups.setdefault(
-                cfg_hash,
-                {
-                    "config": cfg,
-                    "samples_count": 0,
-                    "metrics_sum": {},
-                    "metrics_count": {},
-                    "duration_sum": 0.0,
-                },
-            )
-
-            g["samples_count"] += 1
-            g["duration_sum"] += float(tr.duration or 0.0)
-
-            avg_response_time = self._compute_average_response_time(tr.metadata)
-            if avg_response_time is not None:
-                g["response_time_sum"] = (
-                    g.get("response_time_sum", 0.0) + avg_response_time
-                )
-                g["response_time_count"] = g.get("response_time_count", 0) + 1
-
-            # Sum metrics (numeric only)
-            for k, v in (tr.metrics or {}).items():
-                try:
-                    val = float(v)
-                except Exception as e:
-                    logger.debug(f"Skipping non-numeric metric '{k}': {e}")
-                    continue
-                g["metrics_sum"][k] = g["metrics_sum"].get(k, 0.0) + val
-                g["metrics_count"][k] = g["metrics_count"].get(k, 0) + 1
-
-        # Build rows
-        rows: list[dict[str, Any]] = []
-        for cfg_hash, g in groups.items():
-            row: dict[str, Any] = {
-                "config_hash": cfg_hash,
-                "samples_count": g["samples_count"],
-            }
-            # Flatten config into columns
-            for ck, cv in (g["config"] or {}).items():
-                row[ck] = cv
-            # Means for metrics
-            for mk, s in g["metrics_sum"].items():
-                cnt = max(1, g["metrics_count"].get(mk, 1))
-                row[f"{mk}"] = s / cnt
-            # Duration mean
-            row["duration"] = (
-                (g["duration_sum"] / g["samples_count"])
-                if g["samples_count"] > 0
-                else 0.0
-            )
-            if g.get("response_time_count"):
-                row["avg_response_time"] = (
-                    g["response_time_sum"] / g["response_time_count"]
-                )
-            rows.append(row)
-
+        groups = self._group_trials_for_aggregation()
+        rows = self._build_aggregated_rows(groups)
         df = pd.DataFrame(rows)
-        # If primary_objective provided and present, order sensibly
-        if primary_objective and primary_objective in df.columns:
-            # Heuristic: minimize for common names
-            minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-            asc = any(p in primary_objective.lower() for p in minimize_patterns)
-            df = df.sort_values(
-                by=[primary_objective], ascending=asc, na_position="last"
-            )
-        return df
+        return self._sort_aggregated_dataframe(df, primary_objective)
+
+    def _extract_examples_attempted(self, trial: TrialResult) -> int | None:
+        metadata = trial.metadata or {}
+        examples_attempted = metadata.get("examples_attempted")
+        if examples_attempted is None and hasattr(trial, "example_results"):
+            example_results = trial.example_results or []
+            examples_attempted = len(example_results)
+        if examples_attempted is None:
+            return None
+        try:
+            return int(examples_attempted)
+        except (TypeError, ValueError):
+            return None
+
+    def _extract_summary_cost(self, trial: TrialResult) -> float | None:
+        cost_value = trial.metrics.get("total_cost") if trial.metrics else None
+        if cost_value is None:
+            cost_value = (trial.metadata or {}).get("total_example_cost")
+        return self._coerce_float(cost_value)
+
+    @staticmethod
+    def _extract_model_name(trial: TrialResult) -> str | None:
+        if not trial.config:
+            return None
+        return trial.config.get("model")
+
+    def _aggregate_summary_data(
+        self,
+    ) -> tuple[float, float, int, Counter[str]]:
+        total_duration = sum(float(trial.duration or 0.0) for trial in self.trials)
+        total_cost = 0.0
+        total_examples = 0
+        trials_per_model: Counter[str] = Counter()
+
+        for trial in self.trials:
+            examples_attempted = self._extract_examples_attempted(trial)
+            if examples_attempted is not None:
+                total_examples += examples_attempted
+
+            cost_value = self._extract_summary_cost(trial)
+            if cost_value is not None:
+                total_cost += cost_value
+
+            model_name = self._extract_model_name(trial)
+            if model_name:
+                trials_per_model[model_name] += 1
+
+        return total_duration, total_cost, total_examples, trials_per_model
 
     def get_summary(self) -> dict[str, Any]:
         """Compute high-level summary statistics about the optimization run."""
@@ -970,35 +1091,12 @@ class OptimizationResult:
         total_trials = len(self.trials)
         status_counter = Counter(trial.status for trial in self.trials)
 
-        total_duration = sum(float(trial.duration or 0.0) for trial in self.trials)
-        total_cost = 0.0
-        total_examples = 0
-        trials_per_model: Counter[str] = Counter()
-
-        for trial in self.trials:
-            metadata = trial.metadata or {}
-            examples_attempted = metadata.get("examples_attempted")
-            if examples_attempted is None and hasattr(trial, "example_results"):
-                example_results = trial.example_results or []
-                examples_attempted = len(example_results)
-            if examples_attempted:
-                try:
-                    total_examples += int(examples_attempted)
-                except (TypeError, ValueError):
-                    pass
-
-            cost_value = trial.metrics.get("total_cost") if trial.metrics else None
-            if cost_value is None:
-                cost_value = metadata.get("total_example_cost")
-            if cost_value is not None:
-                try:
-                    total_cost += float(cost_value)
-                except (TypeError, ValueError):
-                    pass
-
-            model_name = (trial.config or {}).get("model") if trial.config else None
-            if model_name:
-                trials_per_model[model_name] += 1
+        (
+            total_duration,
+            total_cost,
+            total_examples,
+            trials_per_model,
+        ) = self._aggregate_summary_data()
 
         summary = {
             "total_trials": total_trials,

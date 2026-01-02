@@ -977,7 +977,7 @@ class ConstraintConflict:
     def __str__(self) -> str:
         lines = ["Constraint conflict detected:"]
         for i, (c, msg) in enumerate(zip(self.constraints, self.messages, strict=True)):
-            lines.append(f"  [{i+1}] {c.explain()}")
+            lines.append(f"  [{i + 1}] {c.explain()}")
             lines.append(f"      Violated: {msg}")
         lines.append(f"  Sample config: {self.config}")
         return "\n".join(lines)

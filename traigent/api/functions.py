@@ -6,13 +6,12 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
-from traigent.config.context import get_applied_config
+from traigent.config.context import get_applied_config, get_trial_context
 from traigent.config.context import get_config as _get_context_config
-from traigent.config.context import get_trial_context
 from traigent.config.feature_flags import flag_registry
 from traigent.config.parallel import (
     ParallelConfig,
@@ -85,17 +84,13 @@ def configure(
 
     if cache_policy is not None:
         valid_policies = ["memory", "disk", "distributed"]
-        result = Validators.validate_choices(
-            cache_policy, "cache_policy", valid_policies
-        )
+        result = Validators.validate_choices(cache_policy, "cache_policy", valid_policies)
         validate_or_raise(result)
         _GLOBAL_CONFIG["cache_policy"] = cache_policy
 
     if logging_level is not None:
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        result = Validators.validate_choices(
-            logging_level, "logging_level", valid_levels
-        )
+        result = Validators.validate_choices(logging_level, "logging_level", valid_levels)
         validate_or_raise(result)
         _GLOBAL_CONFIG["logging_level"] = logging_level
         setup_logging(level=logging_level)
@@ -113,41 +108,52 @@ def configure(
         validate_or_raise(result)
         flag_registry.apply_config(feature_flags)
 
-    if parallel_config is not None:
-        coerced = coerce_parallel_config(parallel_config)
-        if coerced is None:
-            logger.debug(
-                "parallel_config explicitly set to None; leaving existing value unchanged"
-            )
-        else:
-            existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
-            merged_config, _ = merge_parallel_configs(
-                [
-                    (existing_config, "global-default"),
-                    (coerced, "configure"),
-                ]
-            )
-            _GLOBAL_CONFIG["parallel_config"] = merged_config
-            if coerced.thread_workers is not None and parallel_workers is None:
-                # Keep legacy parallel_workers in sync for components still reading it
-                result = Validators.validate_positive_int(
-                    coerced.thread_workers, "parallel_config.thread_workers"
-                )
-                validate_or_raise(result)
-                _GLOBAL_CONFIG["parallel_workers"] = coerced.thread_workers
-
-    if objectives is not None:
-        from traigent.core.objectives import (
-            normalize_objectives,
-            schema_to_objective_names,
-        )
-
-        schema = normalize_objectives(objectives)
-        _GLOBAL_CONFIG["objective_schema"] = schema
-        _GLOBAL_CONFIG["objectives"] = schema_to_objective_names(schema)
+    _apply_parallel_config(parallel_config, parallel_workers=parallel_workers)
+    _apply_objectives(objectives)
 
     logger.info("Updated global configuration")
     return True
+
+
+def _apply_parallel_config(
+    parallel_config: ParallelConfig | dict[str, Any] | None,
+    *,
+    parallel_workers: int | None,
+) -> None:
+    if parallel_config is None:
+        return
+
+    coerced = coerce_parallel_config(parallel_config)
+    if coerced is None:
+        logger.debug("parallel_config explicitly set to None; leaving existing value unchanged")
+        return
+
+    existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
+    merged_config, _ = merge_parallel_configs(
+        [
+            (existing_config, "global-default"),
+            (coerced, "configure"),
+        ]
+    )
+    _GLOBAL_CONFIG["parallel_config"] = merged_config
+    if coerced.thread_workers is not None and parallel_workers is None:
+        # Keep legacy parallel_workers in sync for components still reading it
+        result = Validators.validate_positive_int(
+            coerced.thread_workers, "parallel_config.thread_workers"
+        )
+        validate_or_raise(result)
+        _GLOBAL_CONFIG["parallel_workers"] = coerced.thread_workers
+
+
+def _apply_objectives(objectives: ObjectiveSchema | Sequence[str] | None) -> None:
+    if objectives is None:
+        return
+
+    from traigent.core.objectives import normalize_objectives, schema_to_objective_names
+
+    schema = normalize_objectives(objectives)
+    _GLOBAL_CONFIG["objective_schema"] = schema
+    _GLOBAL_CONFIG["objectives"] = schema_to_objective_names(schema)
 
 
 def initialize(  # noqa: C901
@@ -223,9 +229,7 @@ def _configure_backend_url(api_url: str | None, backend_config: Any) -> None:
     if api_url:
         origin, path = backend_config.split_api_url(api_url)
         if origin:
-            resolved_api_url = (
-                f"{origin}{path or backend_config.get_default_api_path()}"
-            )
+            resolved_api_url = f"{origin}{path or backend_config.get_default_api_path()}"
         else:
             resolved_api_url = api_url.rstrip("/")
         _GLOBAL_CONFIG["traigent_api_url"] = resolved_api_url
@@ -294,11 +298,11 @@ def get_api_key(provider: str) -> str | None:
     Returns:
         The API key if found, None otherwise
     """
-    return _API_KEY_MANAGER.get_api_key(provider)
+    return cast(str | None, _API_KEY_MANAGER.get_api_key(provider))
 
 
 def _coerce_config_dict(
-    config: Any,
+    config: object,
     *,
     source: str,
     current_state: str,
@@ -357,7 +361,7 @@ def get_config() -> dict[str, Any]:
         )
 
     # Fall back to context config (set by ConfigurationContext in wrappers)
-    context_config = _get_context_config()
+    context_config = cast(object, _get_context_config())
     if isinstance(context_config, dict) and context_config:
         return _coerce_config_dict(
             context_config,
@@ -420,8 +424,7 @@ def get_trial_config() -> dict[str, Any]:
     # Validate trial context has required fields
     if not isinstance(trial_ctx, dict):
         raise OptimizationStateError(
-            "Trial context is corrupted - expected dict but got "
-            f"{type(trial_ctx).__name__}.",
+            f"Trial context is corrupted - expected dict but got {type(trial_ctx).__name__}.",
             current_state="INVALID_TRIAL_CONTEXT",
             expected_states=["OPTIMIZING"],
         )
@@ -435,7 +438,7 @@ def get_trial_config() -> dict[str, Any]:
         )
 
     # Get the actual config from context
-    config = _get_context_config()
+    config = cast(object, _get_context_config())
     return _coerce_config_dict(
         config,
         source="Trial",
@@ -765,7 +768,7 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         >>> for i, config in enumerate(insights['top_configurations'][:3]):
         ...     print(f"{i+1}. {config['config']} → {config['score']:.2%} accuracy, ${config.get('cost_analysis', {}).get('cost_per_query', 0):.3f}/1K queries")
     """
-    return _get_optimization_insights(results)
+    return cast(dict[str, Any], _get_optimization_insights(results))
 
 
 def get_global_parallel_config() -> ParallelConfig:
