@@ -27,9 +27,7 @@ from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 # Path to dataset
-DATASET_PATH = (
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
-)
+DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "qa_samples.jsonl"
 
 # Define custom objectives with explicit weights and orientations
 custom_objectives = ObjectiveSchema.from_objectives(

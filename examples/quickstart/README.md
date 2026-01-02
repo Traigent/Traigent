@@ -57,10 +57,9 @@ python examples/quickstart/01_simple_qa.py
 
 ## Dataset
 
-These examples use `qa_samples.jsonl` located at:
+These examples use `data/qa_samples.jsonl` located at:
 
-- `examples/datasets/quickstart/qa_samples.jsonl`
-- Also symlinked at repo root as `qa_samples.jsonl`
+- `data/qa_samples.jsonl`
 
 ## Next Steps
 

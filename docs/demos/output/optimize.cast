@@ -114,7 +114,7 @@
 [10.009999999999991, "o", "    objectives=[\u001b[0;32m\"accuracy\"\u001b[0m, \u001b[0;32m\"cost\"\u001b[0m],\r\n"]
 [10.159999999999991, "o", "\r\n"]
 [10.259999999999991, "o", "    \u001b[2m# Evaluation dataset for testing\u001b[0m\r\n"]
-[10.409999999999991, "o", "    eval_dataset=\u001b[0;32m\"qa_samples.jsonl\"\u001b[0m\r\n"]
+[10.409999999999991, "o", "    eval_dataset=\u001b[0;32m\"data/qa_samples.jsonl\"\u001b[0m\r\n"]
 [10.559999999999992, "o", ")\r\n"]
 [10.709999999999992, "o", "\u001b[0;34mdef\u001b[0m \u001b[1;33mqa_agent\u001b[0m(question: str) -> str:\r\n"]
 [10.859999999999992, "o", "    \u001b[2m\"\"\"Q&A agent with tunable parameters\"\"\"\u001b[0m\r\n"]

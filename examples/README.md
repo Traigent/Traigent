@@ -125,7 +125,7 @@ examples/
 
 **Available datasets:**
 
-- `quickstart/` - Q&A samples for README examples (also symlinked at repo root as `qa_samples.jsonl`)
+- `data/qa_samples.jsonl` - Q&A samples for README examples
 - `simple-prompt/` - Basic summarization examples
 - `hello-world/` - Simple Q&A examples
 - `few-shot-classification/` - Classification with examples

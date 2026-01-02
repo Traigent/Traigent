@@ -21,7 +21,7 @@ data = [
     {"input": {"question": "What is 2+2?"}, "output": "4"},
     {"input": {"question": "Capital of France?"}, "output": "Paris"},
 ]
-with open("qa_samples.jsonl", "w") as f:
+with open("data/qa_samples.jsonl", "w") as f:
     for row in data:
         f.write(json.dumps(row) + "\n")
 ```
@@ -38,7 +38,7 @@ import traigent
 from langchain_openai import ChatOpenAI
 
 @traigent.optimize(
-    eval_dataset="qa_samples.jsonl",
+    eval_dataset="data/qa_samples.jsonl",
     objectives=["accuracy", "cost"],
 )
 def qa_agent(question: str) -> str:
@@ -202,7 +202,7 @@ Best accuracy: 0.00
    import json
 
    # Check first line of dataset
-   with open("qa_samples.jsonl", "r") as f:
+   with open("data/qa_samples.jsonl", "r") as f:
        first_line = f.readline()
        data = json.loads(first_line)
        print(f"Keys: {data.keys()}")

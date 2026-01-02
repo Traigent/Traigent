@@ -64,7 +64,7 @@ from traigent.api.decorators import EvaluationOptions, ExecutionOptions
         "temperature": [0.1, 0.7],
     },
     objectives=["accuracy", "cost", "response_time"],
-    evaluation=EvaluationOptions(eval_dataset="examples/datasets/quickstart/qa_samples.jsonl"),
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def my_agent(question: str) -> str:

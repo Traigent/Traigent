@@ -1,8 +1,0 @@
-{"input": {"question": "What is the capital of France?"}, "output": "Paris"}
-{"input": {"question": "What is 2 + 2?"}, "output": "4"}
-{"input": {"question": "Who wrote Romeo and Juliet?"}, "output": "William Shakespeare"}
-{"input": {"question": "What is the largest planet in our solar system?"}, "output": "Jupiter"}
-{"input": {"question": "What year did World War II end?"}, "output": "1945"}
-{"input": {"question": "What is the chemical symbol for water?"}, "output": "H2O"}
-{"input": {"question": "Who painted the Mona Lisa?"}, "output": "Leonardo da Vinci"}
-{"input": {"question": "What is the speed of light?"}, "output": "299,792,458 meters per second"}

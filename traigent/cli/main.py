@@ -707,7 +707,7 @@ import traigent
 
 # Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
 # Use the example dataset or create your own:
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+DATASET = "data/qa_samples.jsonl"
 
 
 @traigent.optimize(
@@ -764,7 +764,7 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 # Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
 # Use the example dataset or create your own:
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+DATASET = "data/qa_samples.jsonl"
 
 # Define custom objectives with weights
 custom_objectives = ObjectiveSchema.from_objectives([
@@ -836,7 +836,7 @@ except ImportError:
 
 # Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
 # Use the example dataset or create your own:
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+DATASET = "data/qa_samples.jsonl"
 
 
 @traigent.optimize(
@@ -901,7 +901,7 @@ enable_openai_optimization()
 
 # Dataset format (JSONL): {"input": {"question": "..."}, "output": "expected_result"}
 # Use the example dataset or create your own:
-DATASET = "examples/datasets/quickstart/qa_samples.jsonl"
+DATASET = "data/qa_samples.jsonl"
 
 
 @traigent.optimize(

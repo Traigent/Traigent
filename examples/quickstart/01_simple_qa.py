@@ -25,9 +25,7 @@ import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 # Path to dataset (relative to this file)
-DATASET_PATH = (
-    Path(__file__).parent.parent / "datasets" / "quickstart" / "qa_samples.jsonl"
-)
+DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "qa_samples.jsonl"
 
 
 @traigent.optimize(

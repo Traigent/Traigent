@@ -74,7 +74,7 @@ from langchain_openai import ChatOpenAI
     objectives=["accuracy", "cost"],
 
     # Evaluation dataset for testing
-    eval_dataset="qa_samples.jsonl"
+    eval_dataset="data/qa_samples.jsonl"
 )
 def qa_agent(question: str) -> str:
     """Q&A agent with tunable parameters"""
@@ -87,7 +87,7 @@ PYTHON
 sleep 3
 
 echo ""
-echo "# Step 2: Prepare evaluation dataset (qa_samples.jsonl)"
+echo "# Step 2: Prepare evaluation dataset (data/qa_samples.jsonl)"
 echo ""
 sleep 0.5
 

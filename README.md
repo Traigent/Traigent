@@ -67,7 +67,7 @@ load_dotenv()
     },
     objectives=["accuracy", "cost"],    # What to optimize for
     # Dataset file path (relative to examples/datasets/quickstart/)
-    evaluation=EvaluationOptions(eval_dataset="examples/datasets/quickstart/qa_samples.jsonl"),
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def simple_qa_agent(question: str) -> str:
@@ -176,7 +176,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         "top_p": (0.1, 1.0),        # Continuous range
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],  # Categorical
     },
-    eval_dataset="qa_samples.jsonl",
+    eval_dataset="data/qa_samples.jsonl",
 )
 def weighted_agent(question: str) -> str:
     ...
@@ -327,7 +327,7 @@ import traigent
         "temperature": [0.1, 0.5, 0.9]
     },
     objectives=["accuracy", "cost"],
-    eval_dataset="qa_samples.jsonl"
+    eval_dataset="data/qa_samples.jsonl"
 )
 def multi_provider_agent(question: str) -> str:
     config = traigent.get_config()
@@ -429,7 +429,7 @@ Traigent evaluates your AI agent's performance by comparing outputs to expected 
         "temperature": [0.1, 0.5, 0.9],
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"]
     },
-    eval_dataset="qa_samples.jsonl",  # JSONL format
+    eval_dataset="data/qa_samples.jsonl",  # JSONL format
     objectives=["accuracy", "cost"]
 )
 def my_agent(question: str) -> str:
@@ -1233,12 +1233,12 @@ The `@traigent.optimize` decorator **requires** a `configuration_space` paramete
 
 #### Dataset Paths
 
-Some dataset files have symlinks in the repo root for convenience:
+Common datasets in the repo:
 
-- `qa_samples.jsonl` → `examples/datasets/quickstart/qa_samples.jsonl`
-- `rag_feedback.jsonl` → `examples/quickstart/rag_feedback.jsonl`
+- `data/qa_samples.jsonl`
+- `examples/quickstart/rag_feedback.jsonl`
 
-For other datasets, use the full path or create your own symlink.
+For other datasets, use the full path or create your own local copy.
 
 #### Mock Mode and API Keys
 
