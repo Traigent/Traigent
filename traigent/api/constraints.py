@@ -77,8 +77,17 @@ class BoolExpr(ABC):
         Always use parentheses for clarity.
     """
 
+    @property
+    def tvar(self) -> ParameterRange | None:
+        """Return the parameter range this expression refers to.
+
+        For atomic Condition expressions, returns the ParameterRange.
+        For composite expressions (And, Or, Not), returns None.
+        """
+        return None
+
     @abstractmethod
-    def to_expression(self, var_names: dict[int, str]) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert to TVL expression string.
 
         Args:
@@ -344,11 +353,12 @@ class AndCondition(BoolExpr):
         if len(self.conditions) < 2:
             raise ValueError("AndCondition requires at least 2 conditions")
 
-    def to_expression(self, var_names: dict[int, str]) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert this conjunction to a TVL expression string.
 
         Args:
-            var_names: Mapping from ParameterRange id() to variable name.
+            var_names: Mapping from ParameterRange id() to variable name,
+                or a single variable name string.
 
         Returns:
             A string expression with all conditions joined by 'and'.
@@ -390,11 +400,12 @@ class OrCondition(BoolExpr):
         if len(self.conditions) < 2:
             raise ValueError("OrCondition requires at least 2 conditions")
 
-    def to_expression(self, var_names: dict[int, str]) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert this disjunction to a TVL expression string.
 
         Args:
-            var_names: Mapping from ParameterRange id() to variable name.
+            var_names: Mapping from ParameterRange id() to variable name,
+                or a single variable name string.
 
         Returns:
             A string expression with all conditions joined by 'or'.
@@ -432,11 +443,12 @@ class NotCondition(BoolExpr):
 
     condition: BoolExpr
 
-    def to_expression(self, var_names: dict[int, str]) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert this negation to a TVL expression string.
 
         Args:
-            var_names: Mapping from ParameterRange id() to variable name.
+            var_names: Mapping from ParameterRange id() to variable name,
+                or a single variable name string.
 
         Returns:
             A string expression with 'not' prefix.
@@ -527,11 +539,12 @@ class Constraint:
         """Return True if this is an implication constraint."""
         return self.when is not None and self.then is not None
 
-    def to_expression(self, var_names: dict[int, str]) -> str:
+    def to_expression(self, var_names: dict[int, str] | str) -> str:
         """Convert to TVL expression string.
 
         Args:
-            var_names: Mapping from ParameterRange id() to variable name.
+            var_names: Mapping from ParameterRange id() to variable name,
+                or a single variable name string.
                 Uses id() for identity-based lookup to avoid collision when
                 two ParameterRange instances have identical values.
 

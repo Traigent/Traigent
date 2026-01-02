@@ -49,6 +49,9 @@ class ParameterRange(ABC):
     and provide a common interface for normalization.
     """
 
+    # Name attribute - set by subclasses or assigned from decorator kwarg
+    name: str | None
+
     @abstractmethod
     def to_config_value(self) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
         """Convert to the internal configuration space format.
@@ -580,7 +583,9 @@ def is_inline_param_definition(value: Any) -> bool:
     return False
 
 
-def normalize_config_value(value: Any) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
+def normalize_config_value(
+    value: ParameterRange | tuple[Any, ...] | list[Any] | dict[str, Any],
+) -> tuple[Any, ...] | list[Any] | dict[str, Any]:
     """Convert a ParameterRange to its primitive format.
 
     If value is already a primitive (tuple/list/dict), returns it unchanged.
@@ -593,7 +598,7 @@ def normalize_config_value(value: Any) -> tuple[Any, ...] | list[Any] | dict[str
     """
     if isinstance(value, ParameterRange):
         return value.to_config_value()
-    return value
+    return value  # type: ignore[return-value]
 
 
 def normalize_parameter_value(

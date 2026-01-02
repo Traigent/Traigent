@@ -47,7 +47,10 @@ import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+if TYPE_CHECKING:
+    from traigent.api.constraints import BoolExpr, Constraint
 
 from pydantic import BaseModel, ConfigDict
 
@@ -174,7 +177,8 @@ def _validate_custom_evaluator_signature(evaluator: Callable[..., Any]) -> None:
     # Get the callable to inspect (handle both functions and class instances)
     if callable(evaluator) and not inspect.isfunction(evaluator):
         # It's a class instance with __call__, inspect the __call__ method
-        callable_to_check = evaluator.__call__
+        # Note: We're accessing __call__ for signature inspection, not testing callability
+        callable_to_check = getattr(evaluator, "__call__", evaluator)  # noqa: B004
     else:
         callable_to_check = evaluator
 
@@ -443,13 +447,13 @@ def _apply_tvl_artifact(
     options: TVLOptions,
     configuration_space: dict[str, Any] | None,
     objectives: list[str] | ObjectiveSchema | None,
-    constraints: list[Callable[..., Any]] | None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
     default_config: dict[str, Any] | None,
     runtime_overrides: dict[str, Any],
 ) -> tuple[
     dict[str, Any] | None,
     list[str] | ObjectiveSchema | None,
-    list[Callable[..., Any]] | None,
+    list[Constraint | BoolExpr | Callable[..., Any]] | None,
     dict[str, Any] | None,
 ]:
     if options.apply_configuration_space:
@@ -463,7 +467,11 @@ def _apply_tvl_artifact(
         objectives = artifact.objective_schema
 
     if options.apply_constraints and artifact.constraints:
-        constraints = list(constraints or []) + artifact.constraints
+        # artifact.constraints are already callables from TVL; cast for type compatibility
+        tvl_constraints: list[Constraint | BoolExpr | Callable[..., Any]] = cast(
+            list[Constraint | BoolExpr | Callable[..., Any]], artifact.constraints
+        )
+        constraints = list(constraints or []) + tvl_constraints
 
     if options.apply_budget:
         overrides = artifact.runtime_overrides()
@@ -481,7 +489,7 @@ def optimize(
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Callable[..., Any]] | None = None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
@@ -779,10 +787,9 @@ def optimize(
     config_space_constraints = None
     config_space_var_names = None
     if config_space_has_constraints:
-        config_space_constraints = original_config_space.constraints
+        config_space_constraints = getattr(original_config_space, "constraints", None)
         # Build var_names mapping from ConfigSpace tvars for constraint normalization
-        if hasattr(original_config_space, "var_names"):
-            config_space_var_names = original_config_space.var_names
+        config_space_var_names = getattr(original_config_space, "var_names", None)
 
     # Normalize configuration_space and merge inline params (inline takes precedence)
     # Also extract defaults from Range/Choices objects
@@ -798,12 +805,8 @@ def optimize(
     if config_space_constraints and not constraints:
         constraints = config_space_constraints
 
-    # Normalize Constraint/BoolExpr objects to callables for the optimizer
-    # This allows users to pass DSL constraints directly to @optimize
-    if constraints:
-        from traigent.api.constraints import normalize_constraints
-
-        constraints = normalize_constraints(constraints, config_space_var_names)
+    # Note: Constraint normalization is deferred until after TVL artifact application
+    # to allow merging of user constraints with TVL constraints
     injection_mode = combined_settings["injection_mode"]
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
@@ -1112,13 +1115,23 @@ def optimize(
                 "Decorator parallel configuration sources: %s", parallel_sources
             )
 
+        # Normalize Constraint/BoolExpr objects to callables for the optimizer
+        # This is done after TVL artifact application to include all constraints
+        normalized_constraints: list[Callable[..., bool]] | None = None
+        if constraints:
+            from traigent.api.constraints import normalize_constraints
+
+            normalized_constraints = normalize_constraints(
+                constraints, config_space_var_names
+            )
+
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
             objectives=resolved_schema,
             configuration_space=configuration_space,
             default_config=default_config,
-            constraints=constraints,
+            constraints=normalized_constraints,
             injection_mode=actual_injection_mode,
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,

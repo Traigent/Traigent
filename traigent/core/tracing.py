@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from opentelemetry.trace import Span, Tracer
 
 
-class SecureIdGenerator(IdGenerator if IdGenerator else object):
+class SecureIdGenerator(IdGenerator if IdGenerator else object):  # type: ignore[misc]
     """ID generator using os.urandom for cryptographically secure random IDs.
 
     This generator is immune to random.seed() calls that could cause

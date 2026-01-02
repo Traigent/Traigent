@@ -355,10 +355,11 @@ class ConfigSpace:
             domain = self._tvar_to_domain(tvar)
 
             tvardecls.append(
-                TVarDecl(
+                TVarDecl(  # type: ignore[call-arg]
                     name=name,
-                    type=tvar_type,
-                    domain=domain,
+                    type=tvar_type,  # type: ignore[arg-type]
+                    raw_type=tvar_type,
+                    domain=domain,  # type: ignore[arg-type]
                     unit=getattr(tvar, "unit", None),
                     default=getattr(tvar, "default", None),
                 )
@@ -399,8 +400,10 @@ class ConfigSpace:
         for idx, c in enumerate(self.constraints):
             if c.expr is not None:
                 # Use params.<name> prefix for TVL expression format
+                expr_tvar = c.expr.tvar
                 base_name = self.var_names.get(
-                    id(c.expr.tvar), c.expr.tvar.name or "unknown"
+                    id(expr_tvar),
+                    (expr_tvar.name if expr_tvar else None) or "unknown",
                 )
                 var_name = f"params.{base_name}"
                 constraint_dict: dict[str, Any] = {
@@ -411,11 +414,15 @@ class ConfigSpace:
                 constraints_list.append(constraint_dict)
             elif c.when is not None and c.then is not None:
                 # Use params.<name> prefix for TVL expression format
+                when_tvar = c.when.tvar
+                then_tvar = c.then.tvar
                 when_base = self.var_names.get(
-                    id(c.when.tvar), c.when.tvar.name or "unknown"
+                    id(when_tvar),
+                    (when_tvar.name if when_tvar else None) or "unknown",
                 )
                 then_base = self.var_names.get(
-                    id(c.then.tvar), c.then.tvar.name or "unknown"
+                    id(then_tvar),
+                    (then_tvar.name if then_tvar else None) or "unknown",
                 )
                 when_var = f"params.{when_base}"
                 then_var = f"params.{then_base}"

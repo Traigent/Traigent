@@ -1344,7 +1344,7 @@ class OptimizationOrchestrator:
         self,
         func: Callable[..., Any],
         dataset: Dataset,
-        session_id: str,
+        session_id: str | None,
         function_identifier: str | None,
         session_span: Any,
     ) -> OptimizationResult:
