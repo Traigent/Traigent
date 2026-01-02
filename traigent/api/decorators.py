@@ -468,8 +468,9 @@ def _apply_tvl_artifact(
 
     if options.apply_constraints and artifact.constraints:
         # artifact.constraints are already callables from TVL; cast for type compatibility
+        # Use string annotation since Constraint/BoolExpr are TYPE_CHECKING imports
         tvl_constraints: list[Constraint | BoolExpr | Callable[..., Any]] = cast(
-            list[Constraint | BoolExpr | Callable[..., Any]], artifact.constraints
+            "list[Constraint | BoolExpr | Callable[..., Any]]", artifact.constraints
         )
         constraints = list(constraints or []) + tvl_constraints
 
