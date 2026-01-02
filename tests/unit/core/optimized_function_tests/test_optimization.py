@@ -453,11 +453,14 @@ class TestOptimization:
         # Apply best config
         result = opt_func.apply_best_config()
         require(result is True)
-        require(opt_func._current_config == {
-            "temperature": 0.5,
-            "max_tokens": 200,
-            "model": "gpt-4",
-        })
+        require(
+            opt_func._current_config
+            == {
+                "temperature": 0.5,
+                "max_tokens": 200,
+                "model": "gpt-4",
+            }
+        )
 
     def test_apply_best_config_no_results(
         self, simple_function, sample_config_space, sample_objectives

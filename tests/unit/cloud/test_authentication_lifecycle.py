@@ -70,9 +70,7 @@ class TestSessionExpiryAndRefresh:
 
                     # Verify both sessions had proper headers
                     for headers in session_creations:
-                        require(
-                            "X-API-Key" in headers or "Authorization" in headers
-                        )
+                        require("X-API-Key" in headers or "Authorization" in headers)
 
     @pytest.mark.asyncio
     async def test_token_refresh_on_401_error(self):
@@ -623,8 +621,7 @@ class TestBackendClientAuthLifecycle:
                         headers_1 = session_creations[0]
                         # Either X-API-Key or Authorization should be present
                         require(
-                            "X-API-Key" in headers_1
-                            or "Authorization" in headers_1
+                            "X-API-Key" in headers_1 or "Authorization" in headers_1
                         )
 
                         # Reset session for second attempt
@@ -637,8 +634,7 @@ class TestBackendClientAuthLifecycle:
                         require(len(session_creations) == 2)
                         headers_2 = session_creations[1]
                         require(
-                            "X-API-Key" in headers_2
-                            or "Authorization" in headers_2
+                            "X-API-Key" in headers_2 or "Authorization" in headers_2
                         )
 
                         # Reset session for third attempt
@@ -743,9 +739,7 @@ class TestBackendClientAuthLifecycle:
                         # Client 1 should have primary auth
                         headers_1 = session_data[0]["headers"]
                         require("Authorization" in headers_1)
-                        require(
-                            "Bearer client-1-token" in headers_1["Authorization"]
-                        )
+                        require("Bearer client-1-token" in headers_1["Authorization"])
 
                         # Client 2 should have fallback auth
                         headers_2 = session_data[1]["headers"]

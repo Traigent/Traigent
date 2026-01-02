@@ -236,7 +236,6 @@ def _print_results(result: OptimizationResult) -> None:
         "temperature": TEMPERATURE_CHOICES,
     },
     execution_mode="edge_analytics",
-    algorithm="grid",
     parallel_config=GLOBAL_PARALLEL_CONFIG,
 )
 def qa_with_variant(question: str) -> str:
@@ -273,7 +272,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 12 if not MOCK else 4
-        r = await qa_with_variant.optimize(max_trials=trials)
+        r = await qa_with_variant.optimize(algorithm="grid", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

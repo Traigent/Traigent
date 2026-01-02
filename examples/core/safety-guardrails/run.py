@@ -174,7 +174,6 @@ def safety_accuracy_metric(
     },
     metric_functions={"safety_accuracy": safety_accuracy_metric},
     execution_mode="edge_analytics",
-    algorithm="random",
 )
 def respond_safely(prompt_input: str) -> str:
     if MOCK:
@@ -207,7 +206,7 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 8 if not MOCK else 4
-        r = await respond_safely.optimize(max_trials=trials)
+        r = await respond_safely.optimize(algorithm="random", max_trials=trials)
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 

@@ -10,8 +10,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import OptimizationResult, StrategyConfig
 from traigent.config.api_keys import _API_KEY_MANAGER
-from traigent.config.context import get_applied_config, get_trial_context
+from traigent.config.context import get_applied_config
 from traigent.config.context import get_config as _get_context_config
+from traigent.config.context import get_trial_context
 from traigent.config.feature_flags import flag_registry
 from traigent.config.parallel import (
     ParallelConfig,
@@ -84,13 +85,17 @@ def configure(
 
     if cache_policy is not None:
         valid_policies = ["memory", "disk", "distributed"]
-        result = Validators.validate_choices(cache_policy, "cache_policy", valid_policies)
+        result = Validators.validate_choices(
+            cache_policy, "cache_policy", valid_policies
+        )
         validate_or_raise(result)
         _GLOBAL_CONFIG["cache_policy"] = cache_policy
 
     if logging_level is not None:
         valid_levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
-        result = Validators.validate_choices(logging_level, "logging_level", valid_levels)
+        result = Validators.validate_choices(
+            logging_level, "logging_level", valid_levels
+        )
         validate_or_raise(result)
         _GLOBAL_CONFIG["logging_level"] = logging_level
         setup_logging(level=logging_level)
@@ -125,7 +130,9 @@ def _apply_parallel_config(
 
     coerced = coerce_parallel_config(parallel_config)
     if coerced is None:
-        logger.debug("parallel_config explicitly set to None; leaving existing value unchanged")
+        logger.debug(
+            "parallel_config explicitly set to None; leaving existing value unchanged"
+        )
         return
 
     existing_config = _GLOBAL_CONFIG.get("parallel_config", ParallelConfig())
@@ -229,7 +236,9 @@ def _configure_backend_url(api_url: str | None, backend_config: Any) -> None:
     if api_url:
         origin, path = backend_config.split_api_url(api_url)
         if origin:
-            resolved_api_url = f"{origin}{path or backend_config.get_default_api_path()}"
+            resolved_api_url = (
+                f"{origin}{path or backend_config.get_default_api_path()}"
+            )
         else:
             resolved_api_url = api_url.rstrip("/")
         _GLOBAL_CONFIG["traigent_api_url"] = resolved_api_url
