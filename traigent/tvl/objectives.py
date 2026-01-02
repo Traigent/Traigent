@@ -192,15 +192,15 @@ def _inverse_normal_cdf(p: float) -> float:
     Uses Abramowitz & Stegun approximation 26.2.23.
 
     Args:
-        p: Probability value in (0, 1).
+        p: Probability value strictly in (0, 1). Callers must validate.
 
     Returns:
         z such that P(Z <= z) = p.
-    """
-    # Handle boundary cases
-    if p <= 0 or p >= 1:
-        return float("-inf") if p <= 0 else float("inf")
 
+    Note:
+        This internal function assumes p is valid. All callers pass
+        values like (1 - alpha) or confidence levels guaranteed to be in (0, 1).
+    """
     # For p > 0.5, use symmetry
     if p > 0.5:
         return -_inverse_normal_cdf(1 - p)

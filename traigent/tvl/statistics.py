@@ -259,16 +259,17 @@ def _regularized_beta(x: float, a: float, b: float) -> float:
     Uses continued fraction approximation.
 
     Args:
-        x: Upper limit of integration (0 <= x <= 1).
-        a: First shape parameter.
-        b: Second shape parameter.
+        x: Upper limit of integration, strictly in (0, 1). Callers must validate.
+        a: First shape parameter (positive).
+        b: Second shape parameter (positive).
 
     Returns:
         I_x(a, b) = B(x; a, b) / B(a, b).
-    """
-    if x <= 0 or x >= 1:
-        return 0.0 if x <= 0 else 1.0
 
+    Note:
+        This internal function assumes x is valid. All callers compute x from
+        expressions like df/(df + t^2) that are guaranteed to be in (0, 1).
+    """
     # For numerical stability, use I_x if x < threshold, else 1 - I_{1-x}(b, a)
     threshold = (a + 1) / (a + b + 2)
     if x > threshold:

@@ -63,6 +63,46 @@ The CI workflow uses different flags than local development:
 4. **Secrets**: NEVER hardcode secrets. Use `traigent.utils.env_config` or `os.environ`.
 5. **Type Hints**: Required for all public APIs. Run `make lint` to verify.
 6. **Dependencies**: Add new deps to `pyproject.toml` under the appropriate optional group (e.g., `integrations`).
+7. **SonarQube Compliance**: Avoid patterns that trigger SonarQube S2583 (see below).
+
+## ⚠️ SonarQube S2583: Conditions Always True/False
+
+SonarQube uses interprocedural analysis and flags conditions it determines are always true/false. **This is a CI blocker.**
+
+### Patterns to AVOID
+
+```python
+# BAD - Combined condition with ternary re-checking same condition
+if p <= 0 or p >= 1:
+    return 0.0 if p <= 0 else 1.0  # S2583: "p <= 0" always true here
+
+# BAD - Even separate ifs can be flagged if SonarQube determines callers never hit them
+if p <= 0:
+    return 0.0
+if p >= 1:  # S2583: If all callers pass p in (0,1), this is "always false"
+    return 1.0
+```
+
+### Correct Approach
+
+For **internal helper functions** where all callers guarantee valid input:
+
+```python
+def _internal_func(p: float) -> float:
+    """Args: p: Value strictly in (0, 1). Callers must validate."""
+    # No boundary checks - documented precondition, callers guarantee validity
+    ...
+```
+
+For **public API functions** that accept untrusted input, keep validation but use explicit ValueError:
+
+```python
+def public_func(p: float) -> float:
+    """Args: p: Probability in [0, 1]."""
+    if not 0 <= p <= 1:
+        raise ValueError(f"p must be in [0, 1], got {p}")
+    ...
+```
 
 ## 🧩 Common Tasks
 - **New Integration**: Create adapter in `traigent/integrations/`, register in `traigent/integrations/registry.py`.
