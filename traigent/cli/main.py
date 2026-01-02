@@ -27,6 +27,9 @@ from traigent.visualization.plots import create_quick_plot
 console = Console()
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
+# Style constant for table headers
+_TABLE_HEADER_STYLE = "bold magenta"
+
 
 def _resolve_workspace_path(
     path: Path,
@@ -165,7 +168,7 @@ def _display_optimization_summary(
     if not results:
         return
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     table.add_column("Function", style="cyan")
     table.add_column("Best Score", justify="right")
     table.add_column("Best Config", style="green")
@@ -370,7 +373,7 @@ def info() -> None:
 
     # Features table
     console.print("\n[bold]Features:[/bold]")
-    features_table = Table(show_header=True, header_style="bold magenta")
+    features_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     features_table.add_column("Feature")
     features_table.add_column("Status")
 
@@ -382,7 +385,7 @@ def info() -> None:
 
     # Integrations table
     console.print("\n[bold]Integrations:[/bold]")
-    integrations_table = Table(show_header=True, header_style="bold magenta")
+    integrations_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     integrations_table.add_column("Framework")
     integrations_table.add_column("Status")
 
@@ -628,7 +631,7 @@ def results(storage_dir: str) -> None:
         return
 
     # Create results table with no_wrap to prevent truncation
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     table.add_column("Name", style="cyan", no_wrap=True, min_width=20)
     table.add_column("Function", style="green", no_wrap=True, min_width=15)
     table.add_column("Algorithm", no_wrap=True)
