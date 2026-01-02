@@ -1,3 +1,6 @@
+# Internal documentation (private feature planning)
+docs/internal/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
