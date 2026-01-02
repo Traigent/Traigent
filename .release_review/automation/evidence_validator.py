@@ -476,6 +476,7 @@ def main() -> None:
 
     if len(sys.argv) < 2:
         print("Usage: evidence_validator.py '<evidence_string>'")
+        print("   or: evidence_validator.py --file <tracking.md>")
         print(
             'Example: evidence_validator.py '
             '\'{"format":"standard","commits":["abc123"],'
@@ -485,8 +486,54 @@ def main() -> None:
         )
         sys.exit(1)
 
-    evidence = " ".join(sys.argv[1:])
     validator = EvidenceValidator()
+
+    if sys.argv[1] == "--file":
+        if len(sys.argv) < 3:
+            print("Usage: evidence_validator.py --file <tracking.md>")
+            sys.exit(1)
+        tracking_path = sys.argv[2]
+        errors: list[str] = []
+        with open(tracking_path, "r", encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+
+        in_table = False
+        evidence_idx = None
+        for line_num, line in enumerate(lines, 1):
+            if line.startswith("|") and "Component" in line and "Evidence" in line:
+                headers = [h.strip() for h in line.strip().strip("|").split("|")]
+                evidence_idx = headers.index("Evidence") if "Evidence" in headers else None
+                in_table = True
+                continue
+            if in_table and line.startswith("|") and line.strip().startswith("|---"):
+                continue
+            if in_table and line.startswith("|"):
+                if evidence_idx is None:
+                    continue
+                cells = [c.strip() for c in line.strip().strip("|").split("|")]
+                if len(cells) <= evidence_idx:
+                    continue
+                evidence_text = cells[evidence_idx]
+                result = validator.validate(evidence_text)
+                if not result["valid"]:
+                    component = cells[0] if cells else "UNKNOWN"
+                    errors.append(
+                        f"{tracking_path}:{line_num}: {component}: {result['error']}"
+                    )
+                continue
+            if in_table and not line.startswith("|"):
+                in_table = False
+                evidence_idx = None
+
+        if errors:
+            print("❌ Evidence validation failed:")
+            for err in errors:
+                print(f"  - {err}")
+            sys.exit(1)
+        print("✅ All evidence entries are valid JSON")
+        return
+
+    evidence = " ".join(sys.argv[1:])
     result = validator.validate(evidence)
 
     if result["valid"]:

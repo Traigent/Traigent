@@ -59,6 +59,9 @@ evidence = (
 parsed = validator.validate(evidence)
 if not parsed["valid"]:
     print(f"Invalid evidence: {parsed['error']}")
+
+# Validate evidence across the tracking file
+# python evidence_validator.py --file .release_review/PRE_RELEASE_REVIEW_TRACKING.md
 ```
 
 ### For Agents
