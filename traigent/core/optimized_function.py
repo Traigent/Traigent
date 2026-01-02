@@ -88,6 +88,12 @@ logger = get_logger(__name__)
 # Module-level flag to ensure cost warning is emitted only once per process
 _COST_WARNING_EMITTED = False
 
+# ISO 8601 timezone suffix for UTC (used in token validation)
+_UTC_TIMEZONE_SUFFIX = "+00:00"
+
+# Error message for invalid configuration space type
+_CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
+
 
 def _emit_cost_warning_once() -> None:
     """Emit cost warning once per process when optimization starts.
@@ -202,7 +208,9 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         return False
     try:
         expires_str = token_data["expires_at"]
-        expires_at = datetime.fromisoformat(expires_str.replace("Z", "+00:00"))
+        expires_at = datetime.fromisoformat(
+            expires_str.replace("Z", _UTC_TIMEZONE_SUFFIX)
+        )
         now = datetime.now()
         if expires_at.tzinfo:
             now = now.replace(tzinfo=UTC)
@@ -230,7 +238,7 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
         # Check expiry without signature validation
         try:
             expires_at = datetime.fromisoformat(
-                token_data["expires_iso"].replace("Z", "+00:00")
+                token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
             )
             now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
             if expires_at > now:
@@ -256,7 +264,7 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
     # Check expiration
     try:
         expires_at = datetime.fromisoformat(
-            token_data["expires_iso"].replace("Z", "+00:00")
+            token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
         )
         now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
 
@@ -476,17 +484,67 @@ class OptimizedFunction:
             try:
                 self.configuration_space = config_space
             except ValidationError as e:
-                if "Configuration space must be a dictionary" in str(e):
+                if _CONFIG_SPACE_TYPE_ERROR in str(e):
                     raise TypeError(str(e)) from None
                 raise
         else:
             try:
                 self.configuration_space = configuration_space or {}
             except ValidationError as e:
-                if "Configuration space must be a dictionary" in str(e):
+                if _CONFIG_SPACE_TYPE_ERROR in str(e):
                     raise TypeError(str(e)) from None
                 else:
                     raise
+
+    def _store_callbacks(self, kwargs: dict[str, Any], sentinel: object) -> None:
+        """Store callbacks parameter, normalizing to a list."""
+        callbacks_value = kwargs.pop("callbacks", sentinel)
+        if callbacks_value is sentinel or callbacks_value is None:
+            self.callbacks = None
+            return
+
+        if isinstance(callbacks_value, list):
+            self.callbacks = callbacks_value
+            kwargs["callbacks"] = list(callbacks_value)
+        elif isinstance(callbacks_value, tuple):
+            normalized_callbacks = list(callbacks_value)
+            self.callbacks = normalized_callbacks
+            kwargs["callbacks"] = list(normalized_callbacks)
+        else:
+            normalized_callbacks = [callbacks_value]
+            self.callbacks = normalized_callbacks
+            kwargs["callbacks"] = list(normalized_callbacks)
+
+    def _store_optional_param(
+        self,
+        kwargs: dict[str, Any],
+        sentinel: object,
+        key: str,
+        default: Any,
+        as_bool: bool = False,
+    ) -> Any:
+        """Store an optional parameter with sentinel-based defaults.
+
+        Args:
+            kwargs: The kwargs dict to read from and update.
+            sentinel: Sentinel object for detecting missing values.
+            key: The parameter key name.
+            default: Default value when sentinel is detected.
+            as_bool: If True, coerce the value to bool.
+
+        Returns:
+            The resolved value.
+        """
+        value = kwargs.pop(key, sentinel)
+        if value is sentinel:
+            resolved = default
+        elif as_bool:
+            resolved = bool(value)
+            kwargs[key] = resolved
+        else:
+            resolved = value
+            kwargs[key] = value
+        return resolved
 
     def _store_additional_parameters(self, kwargs) -> None:
         """Store additional parameters from kwargs."""
@@ -511,41 +569,19 @@ class OptimizedFunction:
         if self.save_to is not None:
             kwargs["save_to"] = self.save_to
 
-        callbacks_value = kwargs.pop("callbacks", sentinel)
-        if callbacks_value is sentinel or callbacks_value is None:
-            self.callbacks = None
-        elif isinstance(callbacks_value, list):
-            self.callbacks = callbacks_value
-            kwargs["callbacks"] = list(callbacks_value)
-        elif isinstance(callbacks_value, tuple):
-            normalized_callbacks = list(callbacks_value)
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
-        else:
-            normalized_callbacks = [callbacks_value]
-            self.callbacks = normalized_callbacks
-            kwargs["callbacks"] = list(normalized_callbacks)
+        self._store_callbacks(kwargs, sentinel)
 
-        use_cloud_service_value = kwargs.pop("use_cloud_service", sentinel)
-        if use_cloud_service_value is sentinel:
-            self.use_cloud_service = False
-        else:
-            self.use_cloud_service = bool(use_cloud_service_value)
-            kwargs["use_cloud_service"] = self.use_cloud_service
-
-        framework_target_value = kwargs.pop("framework_target", sentinel)
-        if framework_target_value is sentinel:
-            self.framework_target = None
-        else:
-            self.framework_target = framework_target_value
-            kwargs["framework_target"] = framework_target_value
+        self.use_cloud_service = self._store_optional_param(
+            kwargs, sentinel, "use_cloud_service", False, as_bool=True
+        )
+        self.framework_target = self._store_optional_param(
+            kwargs, sentinel, "framework_target", None
+        )
 
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
         combined_parallel, sources = merge_parallel_configs(
-            [
-                (provided_parallel, "decorator"),
-            ]
+            [(provided_parallel, "decorator")]
         )
         self.parallel_config = combined_parallel
         self.parallel_config_sources = sources
@@ -553,45 +589,27 @@ class OptimizedFunction:
         if sources:
             kwargs["_parallel_config_sources"] = sources
 
-        privacy_enabled_value = kwargs.pop("privacy_enabled", sentinel)
-        if privacy_enabled_value is sentinel:
-            self.privacy_enabled = False
-        else:
-            self.privacy_enabled = bool(privacy_enabled_value)
-            kwargs["privacy_enabled"] = self.privacy_enabled
+        self.privacy_enabled = self._store_optional_param(
+            kwargs, sentinel, "privacy_enabled", False, as_bool=True
+        )
         if getattr(self, "_privacy_alias_requested", False):
             self.privacy_enabled = True
             kwargs["privacy_enabled"] = True
             self._privacy_alias_requested = False
 
         # Mock mode configuration
-        mock_mode_config_value = kwargs.pop("mock_mode_config", sentinel)
-        if mock_mode_config_value is sentinel:
-            self.mock_mode_config = None
-        else:
-            self.mock_mode_config = mock_mode_config_value
-            kwargs["mock_mode_config"] = mock_mode_config_value
-
-        max_examples_value = kwargs.pop("max_examples", sentinel)
-        if max_examples_value is sentinel:
-            self.max_examples = None
-        else:
-            self.max_examples = max_examples_value
-            kwargs["max_examples"] = max_examples_value
-
-        max_total_examples_value = kwargs.pop("max_total_examples", sentinel)
-        if max_total_examples_value is sentinel:
-            self.max_total_examples = None
-        else:
-            self.max_total_examples = max_total_examples_value
-            kwargs["max_total_examples"] = max_total_examples_value
-
-        samples_include_pruned_value = kwargs.pop("samples_include_pruned", sentinel)
-        if samples_include_pruned_value is sentinel:
-            self.samples_include_pruned = True
-        else:
-            self.samples_include_pruned = bool(samples_include_pruned_value)
-            kwargs["samples_include_pruned"] = self.samples_include_pruned
+        self.mock_mode_config = self._store_optional_param(
+            kwargs, sentinel, "mock_mode_config", None
+        )
+        self.max_examples = self._store_optional_param(
+            kwargs, sentinel, "max_examples", None
+        )
+        self.max_total_examples = self._store_optional_param(
+            kwargs, sentinel, "max_total_examples", None
+        )
+        self.samples_include_pruned = self._store_optional_param(
+            kwargs, sentinel, "samples_include_pruned", True, as_bool=True
+        )
 
         self.kwargs = kwargs
         excluded_runtime_keys = {
@@ -637,8 +655,6 @@ class OptimizedFunction:
         except ConfigurationError as e:
             # Normalize provider/config errors to ValueError for decorator tests
             raise ValueError(str(e)) from None
-        except Exception:
-            raise
 
         # Validate inputs
         self._validate_configuration()
@@ -725,7 +741,7 @@ class OptimizedFunction:
             try:
                 validate_config_space(self.configuration_space)
             except ValidationError as e:
-                if "Configuration space must be a dictionary" in str(e):
+                if _CONFIG_SPACE_TYPE_ERROR in str(e):
                     raise TypeError(str(e)) from None
                 else:
                     raise
@@ -766,7 +782,124 @@ class OptimizedFunction:
         else:
             return self._wrapped_func(*args, **kwargs)
 
-    async def optimize(  # noqa: C901
+    def _prepare_algorithm_kwargs(
+        self, algorithm_kwargs: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Merge decorator overrides into algorithm kwargs and validate."""
+        decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
+        if decorator_overrides:
+            merged = {**decorator_overrides, **algorithm_kwargs}
+        else:
+            merged = dict(algorithm_kwargs)
+
+        if "parallel_trials" in merged:
+            raise ValueError(
+                "parallel_trials is not a valid parameter for optimize(). "
+                "Use parallel_config={'trial_concurrency': N} instead."
+            )
+        return merged
+
+    def _validate_objectives_input(
+        self,
+        objectives: ObjectiveSchema | Sequence[str] | None,
+        algorithm_kwargs: dict[str, Any],
+    ) -> tuple[
+        ObjectiveSchema | Sequence[str] | None, ObjectiveSchema | Sequence[str] | None
+    ]:
+        """Validate and extract objectives from inputs.
+
+        Returns:
+            Tuple of (objectives, legacy_objectives) after validation.
+        """
+        legacy_objectives = algorithm_kwargs.pop("objectives", None)
+        legacy_orientations = algorithm_kwargs.pop("objective_orientations", None)
+        legacy_weights = algorithm_kwargs.pop("objective_weights", None)
+
+        if legacy_orientations is not None or legacy_weights is not None:
+            raise ValueError(
+                "objective_orientations/objective_weights are no longer supported. "
+                "Provide an ObjectiveSchema instead."
+            )
+        if objectives is not None and legacy_objectives is not None:
+            raise ValueError(
+                "objectives provided both via parameter and inside algorithm_kwargs"
+            )
+        return objectives, legacy_objectives
+
+    def _process_tvl_options(
+        self,
+        tvl_spec: str | Path | None,
+        tvl_environment: str | None,
+        tvl: TVLOptions | dict[str, Any] | None,
+        algorithm_kwargs: dict[str, Any],
+        algorithm: str | None,
+        max_trials: int | None,
+        timeout: float | None,
+        configuration_space: dict[str, Any] | None,
+        objectives: ObjectiveSchema | Sequence[str] | None,
+    ) -> tuple[
+        str | None,
+        int | None,
+        float | None,
+        dict[str, Any] | None,
+        ObjectiveSchema | Sequence[str] | None,
+        dict[str, Any] | None,
+    ]:
+        """Process TVL options and return updated values.
+
+        Returns:
+            Tuple of (algorithm, max_trials, timeout, configuration_space, objectives, tvl_state)
+        """
+        runtime_tvl_spec_kw = algorithm_kwargs.pop("tvl_spec", None)
+        runtime_tvl_env_kw = algorithm_kwargs.pop("tvl_environment", None)
+        runtime_tvl_bundle_kw = algorithm_kwargs.pop("tvl", None)
+
+        tvl_options_runtime = self._resolve_runtime_tvl_options(
+            tvl_spec if tvl_spec is not None else runtime_tvl_spec_kw,
+            tvl_environment if tvl_environment is not None else runtime_tvl_env_kw,
+            tvl if tvl is not None else runtime_tvl_bundle_kw,
+        )
+
+        if not tvl_options_runtime:
+            return algorithm, max_trials, timeout, configuration_space, objectives, None
+
+        try:
+            tvl_artifact = load_tvl_spec(**tvl_options_runtime.to_kwargs())  # type: ignore[arg-type]
+        except TVLValidationError as exc:
+            raise ValidationError(exc.message) from exc
+
+        if configuration_space is None:
+            configuration_space = tvl_artifact.configuration_space
+        if objectives is None and tvl_artifact.objective_schema is not None:
+            objectives = tvl_artifact.objective_schema
+
+        tvl_state = self._apply_runtime_tvl_artifact(tvl_artifact)
+        algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+            algorithm,
+            max_trials,
+            timeout,
+            algorithm_kwargs,
+            tvl_artifact.runtime_overrides(),
+        )
+        return (
+            algorithm,
+            max_trials,
+            timeout,
+            configuration_space,
+            objectives,
+            tvl_state,
+        )
+
+    def _restore_tvl_state(self, tvl_state: dict[str, Any] | None) -> None:
+        """Restore state modified by TVL processing."""
+        if not tvl_state:
+            return
+        if "constraints" in tvl_state:
+            self.constraints = tvl_state["constraints"]
+        if "default_config" in tvl_state:
+            self.default_config = tvl_state["default_config"]
+
+    async def optimize(
         self,
         algorithm: str | None = None,
         max_trials: int | None = None,
@@ -806,69 +939,30 @@ class OptimizedFunction:
         Raises:
             OptimizationError: If optimization fails
         """
-
         logger.info(f"Starting optimization of {self.func.__name__}")
-
-        # Emit cost warning once per process (suppressed in mock mode)
         _emit_cost_warning_once()
 
-        # Merge decorator-provided runtime overrides with call-time overrides
-        decorator_overrides = getattr(self, "_decorator_runtime_overrides", {})
-        if decorator_overrides:
-            algorithm_kwargs = {**decorator_overrides, **algorithm_kwargs}
-        else:
-            algorithm_kwargs = dict(algorithm_kwargs)
-
-        # Fail fast on invalid parallel_trials usage - users must use parallel_config
-        if "parallel_trials" in algorithm_kwargs:
-            raise ValueError(
-                "parallel_trials is not a valid parameter for optimize(). "
-                "Use parallel_config={'trial_concurrency': N} instead."
-            )
-
-        runtime_tvl_spec_kw = algorithm_kwargs.pop("tvl_spec", None)
-        runtime_tvl_env_kw = algorithm_kwargs.pop("tvl_environment", None)
-        runtime_tvl_bundle_kw = algorithm_kwargs.pop("tvl", None)
-
-        legacy_objectives = algorithm_kwargs.pop("objectives", None)
-        legacy_orientations = algorithm_kwargs.pop("objective_orientations", None)
-        legacy_weights = algorithm_kwargs.pop("objective_weights", None)
-        if legacy_orientations is not None or legacy_weights is not None:
-            raise ValueError(
-                "objective_orientations/objective_weights are no longer supported. "
-                "Provide an ObjectiveSchema instead."
-            )
-        if objectives is not None and legacy_objectives is not None:
-            raise ValueError(
-                "objectives provided both via parameter and inside algorithm_kwargs"
-            )
-
-        tvl_options_runtime = self._resolve_runtime_tvl_options(
-            tvl_spec if tvl_spec is not None else runtime_tvl_spec_kw,
-            tvl_environment if tvl_environment is not None else runtime_tvl_env_kw,
-            tvl if tvl is not None else runtime_tvl_bundle_kw,
+        algorithm_kwargs = self._prepare_algorithm_kwargs(algorithm_kwargs)
+        objectives, legacy_objectives = self._validate_objectives_input(
+            objectives, algorithm_kwargs
         )
-        tvl_state: dict[str, Any] | None = None
-        if tvl_options_runtime:
-            try:
-                tvl_artifact = load_tvl_spec(**tvl_options_runtime.to_kwargs())  # type: ignore[arg-type]
-            except TVLValidationError as exc:
-                raise ValidationError(exc.message) from exc
-            if configuration_space is None:
-                configuration_space = tvl_artifact.configuration_space
-            if objectives is None and tvl_artifact.objective_schema is not None:
-                objectives = tvl_artifact.objective_schema
-            tvl_state = self._apply_runtime_tvl_artifact(tvl_artifact)
-            algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+
+        # Process TVL options
+        algorithm, max_trials, timeout, configuration_space, objectives, tvl_state = (
+            self._process_tvl_options(
+                tvl_spec,
+                tvl_environment,
+                tvl,
+                algorithm_kwargs,
                 algorithm,
                 max_trials,
                 timeout,
-                algorithm_kwargs,
-                tvl_artifact.runtime_overrides(),
+                configuration_space,
+                objectives,
             )
+        )
 
         # Normalize configuration_space to handle Range/IntRange/LogRange/Choices objects
-        # This must happen after TVL processing but before validation
         if configuration_space is not None:
             from traigent.api.parameter_ranges import normalize_configuration_space
 
@@ -886,12 +980,11 @@ class OptimizedFunction:
         if runtime_schema is not None:
             self.objective_schema = runtime_schema
 
-        if timeout is None:
-            timeout = getattr(self, "timeout", None)
-        if save_to is None:
-            save_to = getattr(self, "save_to", None)
-        if callbacks is None:
-            callbacks = getattr(self, "callbacks", None)
+        timeout = timeout if timeout is not None else getattr(self, "timeout", None)
+        save_to = save_to if save_to is not None else getattr(self, "save_to", None)
+        callbacks = (
+            callbacks if callbacks is not None else getattr(self, "callbacks", None)
+        )
 
         try:
             validate_objectives(self.objectives)
@@ -908,11 +1001,7 @@ class OptimizedFunction:
         finally:
             if runtime_schema is not None:
                 self.objective_schema = original_schema
-            if tvl_state:
-                if "constraints" in tvl_state:
-                    self.constraints = tvl_state["constraints"]
-                if "default_config" in tvl_state:
-                    self.default_config = tvl_state["default_config"]
+            self._restore_tvl_state(tvl_state)
 
         return result
 
@@ -1148,22 +1237,22 @@ class OptimizedFunction:
             max_examples is not None
             and isinstance(max_examples, int)
             and max_examples > 0
+            and len(dataset.examples) > max_examples
         ):
-            if len(dataset.examples) > max_examples:
-                capped_dataset = Dataset(
-                    examples=dataset.examples[:max_examples],
-                    name=dataset.name if hasattr(dataset, "name") else "dataset",
-                    description=f"{dataset.description if hasattr(dataset, 'description') else 'Dataset'} (capped to {max_examples} examples)",
-                    metadata={
-                        **getattr(dataset, "metadata", {}),
-                        "original_count": len(dataset.examples),
-                        "capped_count": max_examples,
-                    },
-                )
-                logger.info(
-                    f"Dataset capped from {len(dataset.examples)} to {max_examples} examples"
-                )
-                dataset = capped_dataset
+            capped_dataset = Dataset(
+                examples=dataset.examples[:max_examples],
+                name=dataset.name if hasattr(dataset, "name") else "dataset",
+                description=f"{dataset.description if hasattr(dataset, 'description') else 'Dataset'} (capped to {max_examples} examples)",
+                metadata={
+                    **getattr(dataset, "metadata", {}),
+                    "original_count": len(dataset.examples),
+                    "capped_count": max_examples,
+                },
+            )
+            logger.info(
+                f"Dataset capped from {len(dataset.examples)} to {max_examples} examples"
+            )
+            dataset = capped_dataset
 
         max_total_examples_value = algorithm_kwargs.pop("max_total_examples", None)
         if max_total_examples_value is None:
@@ -1268,6 +1357,69 @@ class OptimizedFunction:
             resolved_parallel.thread_workers,
         )
 
+    def _resolve_custom_evaluator(
+        self,
+        custom_evaluator: Callable[..., Any] | None,
+    ) -> Callable[..., Any] | None:
+        """Resolve the effective custom evaluator based on mock mode settings.
+
+        Returns:
+            The custom evaluator to use, or None if LocalEvaluator should be used.
+        """
+        mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
+        mock_config = self.mock_mode_config or {}
+        mock_enabled = mock_config.get("enabled", True)
+        override_evaluator = mock_config.get("override_evaluator", True)
+
+        provided_custom_evaluator = custom_evaluator or self.custom_evaluator
+        has_custom = provided_custom_evaluator is not None
+
+        # Mock mode can override custom evaluators
+        if mock_mode_env and mock_enabled and override_evaluator and has_custom:
+            logger.info(
+                "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
+            )
+            return None
+
+        return provided_custom_evaluator if has_custom else None
+
+    def _build_metric_functions(self) -> dict[str, Callable[..., Any]]:
+        """Build the effective metric functions dictionary."""
+        effective_metric_functions: dict[str, Callable[..., Any]] = dict(
+            self.metric_functions or {}
+        )
+
+        if self.scoring_function is None:
+            return effective_metric_functions
+
+        # Determine target metric for scoring function
+        target_metric: str | None = None
+        if "accuracy" in self.objectives:
+            target_metric = "accuracy"
+        elif "score" in self.objectives:
+            target_metric = "score"
+
+        if target_metric and target_metric not in effective_metric_functions:
+            effective_metric_functions[target_metric] = self.scoring_function
+
+        return effective_metric_functions
+
+    def _resolve_effective_workers(
+        self,
+        effective_batch_size: int | None,
+        effective_thread_workers: int | None,
+    ) -> int:
+        """Resolve the effective number of workers, applying thread limit."""
+        effective_workers = max(1, int(effective_batch_size or 1))
+        if effective_thread_workers and effective_workers > effective_thread_workers:
+            logger.debug(
+                "Clamping example concurrency from %s to thread worker limit %s",
+                effective_workers,
+                effective_thread_workers,
+            )
+            effective_workers = effective_thread_workers
+        return effective_workers
+
     def _create_effective_evaluator(
         self,
         timeout: float | None,
@@ -1277,29 +1429,7 @@ class OptimizedFunction:
         effective_privacy_enabled: bool,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator for the optimization run."""
-        # Check if mock mode should override custom evaluator
-        mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
-        mock_config = self.mock_mode_config or {}
-        mock_enabled = mock_config.get("enabled", True)
-        override_evaluator = mock_config.get("override_evaluator", True)
-
-        effective_evaluator = None
-        provided_custom_evaluator = custom_evaluator or self.custom_evaluator
-        has_custom = provided_custom_evaluator is not None
-        has_scoring = self.scoring_function or self.metric_functions
-
-        if has_custom:
-            effective_evaluator = provided_custom_evaluator
-        elif has_scoring and override_evaluator:
-            effective_evaluator = (
-                None  # Will be handled by LocalEvaluator with scoring function
-            )
-
-        if mock_mode_env and mock_enabled and override_evaluator and has_custom:
-            logger.info(
-                "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
-            )
-            effective_evaluator = None
+        effective_evaluator = self._resolve_custom_evaluator(custom_evaluator)
 
         if effective_evaluator:
             if not callable(effective_evaluator):
@@ -1311,30 +1441,10 @@ class OptimizedFunction:
                 capture_llm_metrics=True,
             )
 
-        effective_metric_functions: dict[str, Callable[..., Any]] = dict(
-            self.metric_functions or {}
+        effective_metric_functions = self._build_metric_functions()
+        effective_workers = self._resolve_effective_workers(
+            effective_batch_size, effective_thread_workers
         )
-
-        if self.scoring_function is not None:
-            target_metric: str | None = None
-            if "accuracy" in self.objectives:
-                target_metric = "accuracy"
-            elif "score" in self.objectives:
-                target_metric = "score"
-
-            if target_metric and target_metric not in effective_metric_functions:
-                effective_metric_functions[target_metric] = self.scoring_function
-
-        effective_workers = int(effective_batch_size or 1)
-        if effective_workers < 1:
-            effective_workers = 1
-        if effective_thread_workers and effective_workers > effective_thread_workers:
-            logger.debug(
-                "Clamping example concurrency from %s to thread worker limit %s",
-                effective_workers,
-                effective_thread_workers,
-            )
-            effective_workers = effective_thread_workers
 
         return LocalEvaluator(
             metrics=self.objectives,
