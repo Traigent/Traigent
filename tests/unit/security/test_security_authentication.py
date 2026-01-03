@@ -116,7 +116,9 @@ class TestAPIKeyManager(TestIsolationMixin):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")  # Suppress warnings for test
                 self.key_manager.set_api_key("openai", "key-test-123", "code")
-                self.key_manager.set_api_key("anthropic", "key-anthropic-456", "env")  # noqa: S106 - test credential
+                self.key_manager.set_api_key(
+                    "anthropic", "key-anthropic-456", "env"
+                )  # noqa: S106 - test credential
 
             # Get API keys
             openai_key = self.key_manager.get_api_key("openai")

@@ -38,7 +38,7 @@ def test_base_invoker_rejects_invalid_timeout(timeout) -> None:
         DummyInvoker(timeout=timeout)
 
 
-@pytest.mark.parametrize("retries", [-1, 1.5, BaseInvoker.MAX_RETRIES + 1])
+@pytest.mark.parametrize("retries", [-1, 1.5, BaseInvoker.MAX_RETRIES_LIMIT + 1])
 def test_base_invoker_rejects_invalid_retry_count(retries) -> None:
     with pytest.raises(InvocationError):
         DummyInvoker(max_retries=retries)
