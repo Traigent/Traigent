@@ -77,7 +77,7 @@ cat examples/README.md              # Should show professional README
 cat examples/docs/START_HERE.md     # Should show clear navigation
 
 # 2. Test quick start (2 minutes!)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/hello-world/run.py
 
 # 3. Verify all paths exist

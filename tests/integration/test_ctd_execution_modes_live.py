@@ -31,7 +31,7 @@ async def test_ctd_execution_behavior_live(case: dict, monkeypatch) -> None:
     combo = dict(case["combo"])  # shallow copy for safety
 
     # Ensure we are not in mock mode
-    for key in ("TRAIGENT_MOCK_MODE", "TRAIGENT_USE_MOCK", "TRAIGENT_GENERATE_MOCKS"):
+    for key in ("TRAIGENT_MOCK_LLM", "TRAIGENT_USE_MOCK", "TRAIGENT_GENERATE_MOCKS"):
         monkeypatch.delenv(key, raising=False)
 
     # Apply force flags from combo

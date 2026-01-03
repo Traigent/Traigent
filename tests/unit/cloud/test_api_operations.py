@@ -183,7 +183,7 @@ class TestSanitizeErrorMessage:
 
     def test_token_redacted(self):
         """Test tokens are redacted."""
-        msg = "Invalid token: eyJhbGciOiJIUzI1NiJ9"
+        msg = "Invalid token: eyJhbGciOiJIUzI1NiJ9"  # noqa: S105 - test JWT fragment
         result = self.ops.sanitize_error_message(msg)
         assert "[REDACTED]" in result
 
@@ -240,8 +240,10 @@ class TestCreateTraigentSessionViaApi:
 
     @pytest.mark.asyncio
     async def test_mock_mode_returns_local_ids(self):
-        """Test mock mode returns local session IDs."""
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=True):
+        """Test offline mode returns local session IDs."""
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=True
+        ):
             request = SessionCreationRequest(
                 function_name="test_func",
                 configuration_space={"param": [1, 2, 3]},
@@ -698,7 +700,9 @@ class TestAiohttpNotAvailable:
         """Test session creation returns fallback IDs when aiohttp not available."""
         with (
             patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", False),
-            patch("traigent.cloud.api_operations.is_mock_mode", return_value=False),
+            patch(
+                "traigent.cloud.api_operations.is_backend_offline", return_value=False
+            ),
         ):
             request = SessionCreationRequest(
                 function_name="test_func",
@@ -722,12 +726,14 @@ class TestHandleConnectorError:
         mock_client = Mock()
         self.ops = ApiOperations(mock_client)
 
-    def test_mock_mode_logs_debug(self):
-        """Test mock mode logs debug message."""
+    def test_offline_mode_logs_debug(self):
+        """Test offline mode logs debug message."""
         import traigent.cloud.api_operations as api_ops
 
         api_ops._backend_unavailable_warned = False
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=True):
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=True
+        ):
             error = RuntimeError("Connection failed")
             with pytest.raises(CloudServiceError, match="Backend unavailable"):
                 self.ops._handle_connector_error(error)
@@ -737,7 +743,9 @@ class TestHandleConnectorError:
         import traigent.cloud.api_operations as api_ops
 
         api_ops._backend_unavailable_warned = False
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=False
+        ):
             error = RuntimeError("Connection failed to api.example.com")
             with pytest.raises(CloudServiceError, match="Backend unavailable"):
                 self.ops._handle_connector_error(error)
@@ -748,7 +756,9 @@ class TestHandleConnectorError:
         import traigent.cloud.api_operations as api_ops
 
         api_ops._backend_unavailable_warned = False
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=False
+        ):
             error = RuntimeError("Connection failed to localhost:8000")
             with pytest.raises(CloudServiceError, match="Backend unavailable"):
                 self.ops._handle_connector_error(error)
@@ -758,7 +768,9 @@ class TestHandleConnectorError:
         import traigent.cloud.api_operations as api_ops
 
         api_ops._backend_unavailable_warned = False
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=False
+        ):
             error = RuntimeError("Connection failed to 127.0.0.1:8000")
             with pytest.raises(CloudServiceError, match="Backend unavailable"):
                 self.ops._handle_connector_error(error)
@@ -768,7 +780,9 @@ class TestHandleConnectorError:
         import traigent.cloud.api_operations as api_ops
 
         api_ops._backend_unavailable_warned = True
-        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+        with patch(
+            "traigent.cloud.api_operations.is_backend_offline", return_value=False
+        ):
             error = RuntimeError("Connection failed again")
             with pytest.raises(CloudServiceError, match="Backend unavailable"):
                 self.ops._handle_connector_error(error)

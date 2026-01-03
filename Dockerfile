@@ -36,7 +36,7 @@ RUN uv pip install --system -e ".[dev,integrations,analytics,security,test]"
 COPY . .
 
 # Set default environment for development
-ENV TRAIGENT_MOCK_MODE=true \
+ENV TRAIGENT_MOCK_LLM=true \
     TRAIGENT_LOG_LEVEL=DEBUG
 
 # Run as non-root user
@@ -54,7 +54,7 @@ RUN pip install -e ".[test]"
 
 COPY . .
 
-ENV TRAIGENT_MOCK_MODE=true
+ENV TRAIGENT_MOCK_LLM=true
 
 # Run as non-root user
 USER traigent
@@ -69,7 +69,7 @@ RUN pip install -e "."
 
 COPY traigent/ ./traigent/
 
-ENV TRAIGENT_MOCK_MODE=false
+ENV TRAIGENT_MOCK_LLM=false
 
 # Run as non-root user
 USER traigent

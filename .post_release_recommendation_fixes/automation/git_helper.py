@@ -343,7 +343,7 @@ class GitHelper:
         )
 
     def run_tests(self, test_path: str = "tests/") -> tuple[bool, str]:
-        """Run tests with TRAIGENT_MOCK_MODE.
+        """Run tests with TRAIGENT_MOCK_LLM.
 
         Args:
             test_path: Path to tests
@@ -354,7 +354,7 @@ class GitHelper:
         import os
 
         env = os.environ.copy()
-        env["TRAIGENT_MOCK_MODE"] = "true"
+        env["TRAIGENT_MOCK_LLM"] = "true"
         test_command = env.get("RR_TEST_COMMAND")
 
         if test_command:

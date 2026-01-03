@@ -28,7 +28,7 @@ echo "Agent claimed: $CLAIMED_PASSED/$CLAIMED_TOTAL passed"
 echo ""
 
 # Set mock mode for safety
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Run tests and capture output
 echo "Running tests..."

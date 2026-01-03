@@ -41,10 +41,10 @@ chmod +x .git/hooks/pre-*
 cd examples/integrations/ci-cd/math-qa
 
 # Evaluate current configuration
-TRAIGENT_MOCK_MODE=true MODE=eval python run.py
+TRAIGENT_MOCK_LLM=true MODE=eval python run.py
 
 # Run optimization to find better config
-TRAIGENT_MOCK_MODE=true MODE=tune MAX_TRIALS=10 python run.py
+TRAIGENT_MOCK_LLM=true MODE=tune MAX_TRIALS=10 python run.py
 ```
 
 ### 3. GitHub Actions
@@ -106,7 +106,7 @@ Default tracked metrics:
 |----------|---------|-------------|
 | `MODE` | `eval` | `eval` = evaluate config, `tune` = optimize |
 | `MAX_TRIALS` | `10` | Maximum optimization trials |
-| `TRAIGENT_MOCK_MODE` | `false` | Use mock LLM for testing |
+| `TRAIGENT_MOCK_LLM` | `false` | Use mock LLM for testing |
 | `REGRESSION_THRESHOLD` | `-0.01` | Max allowed degradation (1%) |
 | `IMPROVEMENT_MIN_PCT` | `0.03` | Min improvement to trigger alert (3%) |
 
@@ -145,12 +145,12 @@ If potential ≥ `IMPROVEMENT_MIN_PCT` and configs differ, **warn or fail**.
 
 ## 🎭 Mock Mode
 
-All CI runs use `TRAIGENT_MOCK_MODE=true` by default:
+All CI runs use `TRAIGENT_MOCK_LLM=true` by default:
 - Zero API costs
 - Fast execution (~1 second)
 - Deterministic results for testing
 
-For production validation, set `TRAIGENT_MOCK_MODE=false` in protected branch workflows.
+For production validation, set `TRAIGENT_MOCK_LLM=false` in protected branch workflows.
 
 ## 📝 Adding New Examples
 

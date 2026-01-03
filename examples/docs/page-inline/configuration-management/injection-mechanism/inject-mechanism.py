@@ -47,7 +47,7 @@ def my_function():
     # Check for mock mode
     import os
 
-    if os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+    if os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true":
         return "Mock response"
     # 1. Traigent intercepts the ChatOpenAI constructor
     # 2. Gets optimal parameters from configuration space

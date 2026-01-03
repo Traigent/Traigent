@@ -11,7 +11,7 @@ Shows how to [PRIMARY USE CASE].
 """
 
 # [REQUIRED] Enable mock mode for safe testing
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 import traigent
 

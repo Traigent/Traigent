@@ -26,7 +26,7 @@ def _require(condition: bool, message: str) -> None:
 @pytest.fixture
 def mock_mode_env(monkeypatch):
     """Enable mock mode for all tests."""
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "true")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
 
 class TestAttributeParallelSafetyGuard:

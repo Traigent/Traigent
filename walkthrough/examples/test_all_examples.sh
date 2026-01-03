@@ -157,7 +157,7 @@ case "$MODE" in
         echo -e "${GREEN}Mock mode: No API keys needed, instant results${NC}"
         echo ""
 
-        export TRAIGENT_MOCK_MODE=true
+        export TRAIGENT_MOCK_LLM=true
         EXAMPLE_DIR="mock"
         TIMEOUT=60
 

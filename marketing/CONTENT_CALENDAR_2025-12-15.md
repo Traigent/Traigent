@@ -6,7 +6,7 @@ Start date: **2025-12-15** (adjust freely).
 
 **Available at launch (OSS):**
 - Traigent SDK (current repo) + local execution (`edge_analytics`)
-- Mock mode (`TRAIGENT_MOCK_MODE=true`) for zero-cost dry runs
+- Mock mode (`TRAIGENT_MOCK_LLM=true`) for zero-cost dry runs
 - CI/CD example and docs paths you can point people to (`examples/integrations/ci-cd/README.md`, `docs/api-reference/*`)
 
 **Not promised unless provisioned:**

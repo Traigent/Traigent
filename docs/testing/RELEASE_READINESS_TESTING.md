@@ -26,7 +26,7 @@ ls ~/.traigent 2>/dev/null   # Note if this exists (prior state)
 
 **Environment variables to set for ALL testing:**
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_LOG_LEVEL=INFO  # See what's happening
 ```
 
@@ -70,7 +70,7 @@ python -c "import traigent; print(traigent.__version__)"
 Run each in order, noting any issues:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Example 1
 python examples/quickstart/01_simple_qa.py
@@ -200,7 +200,7 @@ if __name__ == "__main__":
 
 **Run and verify:**
 ```bash
-TRAIGENT_MOCK_MODE=true python my_experiment.py
+TRAIGENT_MOCK_LLM=true python my_experiment.py
 ```
 
 - [ ] Optimization completes
@@ -404,7 +404,7 @@ traigent generate -t langchain -o test_langchain.py
 traigent generate -t openai -o test_openai.py
 
 # Try to run the generated templates
-TRAIGENT_MOCK_MODE=true python test_basic.py
+TRAIGENT_MOCK_LLM=true python test_basic.py
 ```
 
 **For each template:**
@@ -431,7 +431,7 @@ def my_func(question: str) -> str:
 EOF
 
 # Run via CLI
-TRAIGENT_MOCK_MODE=true traigent optimize cli_test.py --algorithm random --max-trials 5
+TRAIGENT_MOCK_LLM=true traigent optimize cli_test.py --algorithm random --max-trials 5
 ```
 
 **Checklist:**
@@ -637,7 +637,7 @@ Traigent is **release-ready** when:
 2. **Document confusion** — If something isn't clear from docs, that's a gap
 3. **Try to break it** — Edge cases reveal real issues
 4. **Fresh environment** — No cached packages or prior Traigent state
-5. **Mock mode only** — Use `TRAIGENT_MOCK_MODE=true` for all experiments
+5. **Mock mode only** — Use `TRAIGENT_MOCK_LLM=true` for all experiments
 6. **Be creative** — Try combinations the developers might not have tested
 7. **Report everything** — Even minor friction points matter for release readiness
 8. **Time yourself** — Note how long each section takes

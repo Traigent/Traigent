@@ -125,7 +125,7 @@ class TestTokencostIntegration:
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
-                if key in ["TRAIGENT_MOCK_MODE", "TRAIGENT_GENERATE_MOCKS"]
+                if key in ["TRAIGENT_MOCK_LLM", "TRAIGENT_GENERATE_MOCKS"]
                 else default
             )
 
@@ -246,7 +246,7 @@ class TestTokencostIntegration:
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
-                if key in ["TRAIGENT_MOCK_MODE", "TRAIGENT_GENERATE_MOCKS"]
+                if key in ["TRAIGENT_MOCK_LLM", "TRAIGENT_GENERATE_MOCKS"]
                 else default
             )
 
@@ -357,7 +357,7 @@ class TestLocalEvaluatorWithTokencost:
             # Make os.environ.get return False for mock mode checks
             mock_env.side_effect = lambda key, default="": (
                 ""
-                if key in ["TRAIGENT_MOCK_MODE", "TRAIGENT_GENERATE_MOCKS"]
+                if key in ["TRAIGENT_MOCK_LLM", "TRAIGENT_GENERATE_MOCKS"]
                 else default
             )
 
@@ -518,7 +518,7 @@ async def test_cost_from_token_counts_anthropic_alias_fields(monkeypatch):
         input_rate = 0.00000025
         output_rate = 0.00000075
 
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
     # Response with alias fields
@@ -545,7 +545,7 @@ def test_cost_from_token_counts_openai(monkeypatch):
     from traigent.evaluators.metrics_tracker import extract_llm_metrics
 
     # Disable mock mode for this test
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
     # Pricing for gpt-4o-mini
@@ -578,7 +578,7 @@ def test_fallback_cost_from_prompt_response_when_no_tokens(monkeypatch):
     from traigent.utils import cost_calculator as cc
 
     # Disable mock mode for this test
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
     # Provide tokencost functions
@@ -616,7 +616,7 @@ async def test_local_evaluator_async_function_with_sdk_response_dict(monkeypatch
     from traigent.evaluators.local import LocalEvaluator
 
     # Disable mock mode for this test
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
     # Patch tokencost

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import UTC
 from typing import Any
 
@@ -13,6 +12,7 @@ from rich.console import Console
 from traigent.api.types import TrialResult, TrialStatus
 from traigent.cli.validation_types import OptimizedFunction, ValidationResult
 from traigent.evaluators.local import LocalEvaluator
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.logging import get_logger
 from traigent.utils.multi_objective import ParetoFrontCalculator, ParetoPoint
 
@@ -250,7 +250,7 @@ class OptimizationValidator:
                 f"Failed to load evaluation dataset for {func_info.name}: {exc}"
             ) from exc
 
-        is_mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
+        is_mock_mode = is_mock_llm()
         effective_config = (config or {}).copy()
 
         provider = func_info.func._provider

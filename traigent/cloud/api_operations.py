@@ -26,7 +26,7 @@ from traigent.cloud.models import (
     TrialSuggestion,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_mock_mode
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
 # Optional aiohttp dependency handling
@@ -213,9 +213,10 @@ class ApiOperations:
         Returns:
             Tuple of (session_id, experiment_id, experiment_run_id)
         """
-        # Skip cloud session creation in mock mode - run fully offline
-        if is_mock_mode():
-            logger.debug("Mock mode: using local session IDs")
+        # Skip cloud session creation if backend is offline
+        # Note: is_backend_offline() returns True if TRAIGENT_OFFLINE_MODE=true
+        if is_backend_offline():
+            logger.debug("Backend offline: using local session IDs")
             return (
                 f"mock_session_{int(time.time())}",
                 f"mock_exp_{int(time.time())}",
@@ -383,9 +384,9 @@ class ApiOperations:
         """Handle aiohttp connector errors with contextual logging."""
         global _backend_unavailable_warned
 
-        # Skip warnings entirely in mock mode
-        if is_mock_mode():
-            logger.debug(f"Backend connection failed (mock mode): {error}")
+        # Skip warnings entirely in offline mode (expected behavior)
+        if is_backend_offline():
+            logger.debug(f"Backend connection failed (offline mode): {error}")
         # Only show full warning once per session to reduce log noise
         elif not _backend_unavailable_warned:
             logger.warning(f"⚡ Cloud backend unavailable (connection failed): {error}")

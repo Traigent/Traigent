@@ -14,7 +14,7 @@ Assignments and sign-offs live in `.release_review/PRE_RELEASE_REVIEW_TRACKING.m
 - [ ] All items in `RELEASE_BLOCKERS_TODO.md` resolved (or explicitly accepted risk + documented).
 - [ ] Tests: `pytest` passes (unit + integration + e2e + security as configured).
 - [ ] Lint/type: `ruff check` passes; `mypy` passes for its configured scope.
-- [ ] Mock mode works fully offline (`TRAIGENT_MOCK_MODE=true`) for quickstarts.
+- [ ] Mock mode works fully offline (`TRAIGENT_MOCK_LLM=true`) for quickstarts.
 - [ ] Version consistency: `pyproject.toml`, `traigent.__version__`, and CLI show the same version.
 - [ ] Packaging smoke: build + install + CLI entrypoint works.
 
@@ -263,7 +263,7 @@ Checklist:
 - [ ] Walkthrough scripts and demos still run or are clearly marked optional.
 
 Suggested smoke runs:
-- `export TRAIGENT_MOCK_MODE=true`
+- `export TRAIGENT_MOCK_LLM=true`
 - `python examples/quickstart/01_simple_qa.py`
 - `python examples/quickstart/02_customer_support_rag.py`
 - `python examples/quickstart/03_custom_objectives.py`

@@ -188,7 +188,7 @@ class ErrorHandler:
             raise TraigentError(
                 message="Cannot connect to Traigent backend",
                 fix="1. Start backend: cd backend && python app.py\n"
-                "   2. Or use mock mode: TRAIGENT_MOCK_MODE=true",
+                "   2. Or use offline mode: TRAIGENT_OFFLINE_MODE=true",
                 docs_link="https://github.com/Traigent/Traigent#backend-setup",
             ) from error
         else:
@@ -214,7 +214,7 @@ class ErrorHandler:
         """Handle zero accuracy issues."""
         raise TraigentError(
             message="Optimization showing 0.0% accuracy",
-            fix="1. Enable mock mode: TRAIGENT_MOCK_MODE=true\n"
+            fix="1. Enable mock mode: TRAIGENT_MOCK_LLM=true\n"
             "   2. Check evaluation dataset format\n"
             "   3. Verify API keys for embedding evaluation\n"
             "   4. Use custom evaluator for specific metrics",
@@ -228,7 +228,7 @@ class ErrorHandler:
             message=f"Unexpected error: {str(error)}",
             fix="1. Check the stack trace above\n"
             "   2. Verify all dependencies: python scripts/verify_installation.py\n"
-            "   3. Try mock mode: TRAIGENT_MOCK_MODE=true\n"
+            "   3. Try mock mode: TRAIGENT_MOCK_LLM=true\n"
             "   4. Report issue: https://github.com/Traigent/Traigent/issues",
             docs_link="https://github.com/Traigent/Traigent#troubleshooting",
         ) from error

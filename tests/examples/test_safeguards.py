@@ -82,7 +82,7 @@ def test_trial_caps():
         return -(x**2 + y**2)  # Minimize distance from origin
 
     # Run optimization (in mock mode to avoid real evaluation)
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     print("Running optimization with max_trials=5...")
     result = asyncio.run(optimize_with_trial_cap.optimize(max_trials=5))
@@ -124,7 +124,7 @@ def test_example_caps():
         examples=large_examples, name="large_dataset", description="Large test dataset"
     )
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     print(f"Original dataset size: {len(large_dataset.examples)}")
     print("Running optimization with max_examples=10...")

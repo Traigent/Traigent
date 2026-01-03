@@ -23,7 +23,7 @@ from typing import Any
 import pytest
 
 # Ensure we're in mock mode for testing
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 os.environ["TRAIGENT_GENERATE_MOCKS"] = "true"
 
 
@@ -319,7 +319,7 @@ class CTDTestGenerator:
                     else:
                         return str(case[left]) == right
                 elif left == "mock_mode":
-                    return os.environ.get("TRAIGENT_MOCK_MODE") == "true"
+                    return os.environ.get("TRAIGENT_MOCK_LLM") == "true"
 
             # Handle inequality checks
             elif ">" in condition:
@@ -600,14 +600,14 @@ class TestCTDCoverage:
     def test_mock_mode_execution(self, test_generator, mock_traigent):
         """Test that tests execute correctly in mock mode."""
         # Ensure mock mode is set
-        assert os.environ.get("TRAIGENT_MOCK_MODE") == "true"
+        assert os.environ.get("TRAIGENT_MOCK_LLM") == "true"
 
         test_suite = test_generator.generate_test_suite()
 
         # Execute a subset of test cases in mock mode
         executed = 0
         for spec, config in test_suite[:5]:  # Test first 5 cases
-            if spec.mock_mode or os.environ.get("TRAIGENT_MOCK_MODE") == "true":
+            if spec.mock_mode or os.environ.get("TRAIGENT_MOCK_LLM") == "true":
                 # Simulate test execution
                 result = mock_traigent.run_optimization(
                     config=config, objectives=spec.objectives, algorithm=spec.algorithm

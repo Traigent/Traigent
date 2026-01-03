@@ -418,10 +418,10 @@ class TestBackendSessionManagerFinalization:
 class TestBackendSessionManagerWarningSuppression:
     """Test warning suppression logic."""
 
-    def test_suppress_warnings_in_mock_mode(
+    def test_suppress_warnings_in_offline_mode(
         self, mock_backend_client, traigent_config, objective_schema, mock_optimizer
     ):
-        """Test warnings are suppressed when TRAIGENT_MOCK_MODE is set."""
+        """Test warnings are suppressed when TRAIGENT_OFFLINE_MODE is set."""
         import os
         from unittest.mock import patch
 
@@ -435,7 +435,7 @@ class TestBackendSessionManagerWarningSuppression:
             optimization_status=OptimizationStatus.RUNNING,
         )
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": "true"}):
             assert manager._should_suppress_backend_warnings() is True
 
     def test_suppress_warnings_without_api_key(
@@ -481,8 +481,9 @@ class TestBackendSessionManagerWarningSuppression:
             optimization_status=OptimizationStatus.RUNNING,
         )
 
-        # Ensure mock mode is off
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        # Ensure offline mode is off
+        with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": "false"}, clear=False):
+            # Clear cache to ensure fresh check
             assert manager._should_suppress_backend_warnings() is False
 
     def test_suppress_warnings_no_backend_client(
@@ -502,8 +503,8 @@ class TestBackendSessionManagerWarningSuppression:
             optimization_status=OptimizationStatus.RUNNING,
         )
 
-        # With no backend client and mock mode off, should return False
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        # With no backend client and offline mode off, should return False
+        with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": "false"}, clear=False):
             assert manager._should_suppress_backend_warnings() is False
 
     def test_suppress_warnings_client_without_auth_attr(
@@ -527,7 +528,7 @@ class TestBackendSessionManagerWarningSuppression:
         )
 
         # No auth attribute means no API key, should suppress
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_OFFLINE_MODE": "false"}, clear=False):
             assert manager._should_suppress_backend_warnings() is True
 
     @pytest.mark.asyncio
@@ -583,7 +584,7 @@ class TestBackendSessionManagerWarningSuppression:
         )
         result.metadata = {}
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             update_count = await manager.update_weighted_scores(
                 result=result, session_id="test-session"
             )
@@ -646,7 +647,7 @@ class TestBackendSessionManagerWarningSuppression:
         )
         result.metadata = {}
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             update_count = await manager.update_weighted_scores(
                 result=result, session_id="test-session"
             )

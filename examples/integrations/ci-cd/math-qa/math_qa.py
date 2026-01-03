@@ -63,7 +63,7 @@ def solve_arithmetic(expression: str) -> str:
     prompt_template = prompt_styles.get(config.get("prompt_style", "direct"))
 
     # In mock mode, return calculated answer
-    if os.environ.get("TRAIGENT_MOCK_MODE") == "true":
+    if os.environ.get("TRAIGENT_MOCK_LLM") == "true":
         try:
             # Safe evaluation for simple arithmetic
             import ast

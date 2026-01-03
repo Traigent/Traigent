@@ -39,7 +39,7 @@ These are the exact examples from the main README, ready to run immediately:
 
 ```bash
 pip install -e ".[examples]"          # Ensure example deps
-export TRAIGENT_MOCK_MODE=true        # No API keys needed
+export TRAIGENT_MOCK_LLM=true        # No API keys needed
 python examples/quickstart/01_simple_qa.py           # Basic Q&A optimization
 python examples/quickstart/02_customer_support_rag.py # RAG with customer support
 python examples/quickstart/03_custom_objectives.py    # Custom weighted objectives
@@ -153,7 +153,7 @@ cd Traigent
 pip install -e .
 
 # Run any example in mock mode (no API keys)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 
@@ -204,7 +204,7 @@ Follow these best practices when contributing new examples:
 
    ```bash
    # Test in mock mode
-   TRAIGENT_MOCK_MODE=true python examples/core/<YOUR_EXAMPLE>/run.py
+   TRAIGENT_MOCK_LLM=true python examples/core/<YOUR_EXAMPLE>/run.py
 
    # Test with real APIs
    python examples/core/<YOUR_EXAMPLE>/run.py
@@ -227,7 +227,7 @@ Follow these best practices when contributing new examples:
 **For Beginners:**
 
 - Start with `core/simple-prompt/` to verify your setup
-- Use `TRAIGENT_MOCK_MODE=true` to learn without API costs
+- Use `TRAIGENT_MOCK_LLM=true` to learn without API costs
 - Read inline comments in examples - they explain key concepts
 - Follow the recommended learning path above
 
@@ -252,7 +252,7 @@ Follow these best practices when contributing new examples:
 | Problem | Solution |
 | ------- | -------- |
 | `ModuleNotFoundError: No module named 'traigent'` | Run `pip install -e .` from repository root |
-| `API key not found` | Export your API key or use `TRAIGENT_MOCK_MODE=true` |
+| `API key not found` | Export your API key or use `TRAIGENT_MOCK_LLM=true` |
 | `Example doesn't run` | Check example's inline comments for prerequisites |
 | `0.0% accuracy` | Use mock mode or provide valid API keys |
 
@@ -283,7 +283,7 @@ See our [Contributing Guide](../docs/guides/CONTRIBUTING.md) for more details.
 **Ready to get started?** Run your first example:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 

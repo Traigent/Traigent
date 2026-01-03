@@ -6,7 +6,7 @@ This example shows how to define custom objective weights and orientations.
 Based on the README.md custom objectives example.
 
 Run with:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python examples/quickstart/03_custom_objectives.py
 """
 
@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 
 # Ensure mock mode for testing without API keys
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Set results folder to local directory
 os.environ.setdefault(
@@ -87,7 +87,7 @@ async def main():
     print()
 
     print(f"Dataset: {DATASET_PATH}")
-    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_MODE', 'false')}")
+    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
     print()
 
     # Run optimization

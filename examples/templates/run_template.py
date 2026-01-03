@@ -312,13 +312,13 @@ def _setup_environment(mock_mode: bool) -> None:
         )
 
     if mock_mode:
-        os.environ["TRAIGENT_MOCK_MODE"] = "true"
-        print("[INFO] Mock mode enabled (TRAIGENT_MOCK_MODE=true)")
+        os.environ["TRAIGENT_MOCK_LLM"] = "true"
+        print("[INFO] Mock mode enabled (TRAIGENT_MOCK_LLM=true)")
     else:
-        previous = os.environ.pop("TRAIGENT_MOCK_MODE", None)
+        previous = os.environ.pop("TRAIGENT_MOCK_LLM", None)
         if previous is not None:
             print(
-                f"[INFO] Mock mode disabled (TRAIGENT_MOCK_MODE cleared, was '{previous}')"
+                f"[INFO] Mock mode disabled (TRAIGENT_MOCK_LLM cleared, was '{previous}')"
             )
         else:
             print("[INFO] Mock mode not set (real execution mode)")
@@ -335,7 +335,7 @@ def _define_target(
         from anthropic import AsyncAnthropic
 
         # Check if we're in mock mode
-        is_mock_mode = os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+        is_mock_mode = os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
         # Validate API key before proceeding (unless in mock mode)
         if is_mock_mode:
