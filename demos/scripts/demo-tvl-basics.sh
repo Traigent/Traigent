@@ -97,7 +97,7 @@ echo "# Step 3: Run optimization"
 echo ""
 sleep 0.5
 
-echo '$ TRAIGENT_MOCK_MODE=true python optimize.py'
+echo '$ TRAIGENT_MOCK_LLM=true python optimize.py'
 sleep 0.5
 echo ""
 echo "Loading TVL spec: chatbot.tvl.yml"

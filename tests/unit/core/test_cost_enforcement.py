@@ -63,7 +63,7 @@ class TestCostEnforcerBasic:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_initialization_default(self) -> None:
@@ -166,7 +166,7 @@ class TestCostEnforcerMockMode:
 
     def test_mock_mode_bypasses_tracking(self) -> None:
         """Mock mode bypasses all tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             enforcer = CostEnforcer()
             enforcer.track_cost(
                 100.0, permit=_create_mock_permit()
@@ -177,7 +177,7 @@ class TestCostEnforcerMockMode:
 
     def test_mock_mode_always_permits(self) -> None:
         """Mock mode always grants permits."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             config = CostEnforcerConfig(limit=0.01)  # Very low limit
             enforcer = CostEnforcer(config=config)
 
@@ -187,7 +187,7 @@ class TestCostEnforcerMockMode:
 
     def test_mock_mode_approves_any_cost(self) -> None:
         """Mock mode approves any estimated cost."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             enforcer = CostEnforcer()
             assert enforcer.check_and_approve(1000.0) is True
 
@@ -198,7 +198,7 @@ class TestCostEnforcerUnknownCost:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_unknown_cost_triggers_fallback(self) -> None:
@@ -244,7 +244,7 @@ class TestCostEnforcerThreadSafety:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_concurrent_track_cost(self) -> None:
@@ -276,7 +276,7 @@ class TestCostEnforcerAsync:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     @pytest.mark.asyncio
@@ -325,7 +325,7 @@ class TestCostEnforcerApproval:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_pre_approved_via_config(self) -> None:
@@ -359,7 +359,7 @@ class TestCostStatus:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_get_status_structure(self) -> None:
@@ -397,7 +397,7 @@ class TestCostLimitStopCondition:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def _make_trial(self, trial_id: str = "test") -> TrialResult:
@@ -494,7 +494,7 @@ class TestCostEnforcerRepr:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_repr_format(self) -> None:
@@ -534,7 +534,7 @@ class TestCostEnforcerInFlightReservation:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_acquire_permit_reserves_budget(self) -> None:
@@ -837,7 +837,7 @@ class TestCostEnforcerInternals:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_init_state(self) -> None:
@@ -860,24 +860,24 @@ class TestCostEnforcerInternals:
     def test_check_mock_mode(self) -> None:
         """Verify _check_mock_mode handles env vars correctly."""
         # Test "true"
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             enforcer = CostEnforcer()
             assert enforcer._check_mock_mode() is True
 
         # Test "True" (case insensitive)
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "True"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "True"}):
             enforcer = CostEnforcer()
             assert enforcer._check_mock_mode() is True
 
         # Test "false"
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             enforcer = CostEnforcer()
             assert enforcer._check_mock_mode() is False
 
         # Test missing (default false)
         with patch.dict(os.environ):
-            if "TRAIGENT_MOCK_MODE" in os.environ:
-                del os.environ["TRAIGENT_MOCK_MODE"]
+            if "TRAIGENT_MOCK_LLM" in os.environ:
+                del os.environ["TRAIGENT_MOCK_LLM"]
             enforcer = CostEnforcer()
             assert enforcer._check_mock_mode() is False
 
@@ -903,7 +903,7 @@ class TestCostEnforcerMixing:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_check_mixing_logging(self) -> None:
@@ -942,7 +942,7 @@ class TestCostEnforcerConfigLoading:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     @patch("traigent.core.cost_enforcement.logger")
@@ -970,7 +970,7 @@ class TestCostEnforcerApprovalToken:
     @pytest.fixture(autouse=True)
     def clear_mock_mode(self) -> Generator[None, None, None]:
         """Ensure mock mode is disabled for tests that need real tracking."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
             yield
 
     def test_check_approval_token_valid(self, tmp_path) -> None:

@@ -23,7 +23,7 @@ except ImportError:
     # Fallback if running from different directory
     class TestIsolationMixin:
         def setup_method(self, method):
-            pass
+            """No-op fallback when isolation module unavailable."""
 
 
 class TestAPIKey:
@@ -116,7 +116,7 @@ class TestAPIKeyManager(TestIsolationMixin):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")  # Suppress warnings for test
                 self.key_manager.set_api_key("openai", "key-test-123", "code")
-                self.key_manager.set_api_key("anthropic", "key-anthropic-456", "env")
+                self.key_manager.set_api_key("anthropic", "key-anthropic-456", "env")  # noqa: S106 - test credential
 
             # Get API keys
             openai_key = self.key_manager.get_api_key("openai")

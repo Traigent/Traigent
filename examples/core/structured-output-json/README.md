@@ -5,7 +5,7 @@ Optimize JSON extraction from unstructured text with custom validation.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/structured-output-json/run.py
 ```
 

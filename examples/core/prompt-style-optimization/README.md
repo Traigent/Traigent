@@ -5,7 +5,7 @@ Optimize email drafting style and tone parameters.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/prompt-style-optimization/run.py
 ```
 

@@ -121,7 +121,7 @@ See: `docs/api-reference/telemetry.md`
 
 Traigent includes mock mode so you can test the workflow without provider calls:
 
-- `export TRAIGENT_MOCK_MODE=true`
+- `export TRAIGENT_MOCK_LLM=true`
 - `python examples/quickstart/01_simple_qa.py`
 
 Repo: https://github.com/Traigent/Traigent

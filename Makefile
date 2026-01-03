@@ -41,16 +41,16 @@ test-integration:  ## Run integration tests only
 	$(PYTEST) $(TEST_DIR)/integration -v
 
 test-validation:  ## Run optimizer validation tests
-	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v
+	TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v
 
 test-validation-unit:  ## Run optimizer validation unit tests only
-	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v -m "unit"
+	TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v -m "unit"
 
 test-validation-failures:  ## Run optimizer validation failure tests
-	TRAIGENT_MOCK_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation/failures -v
+	TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation/failures -v
 
 test-validation-traced:  ## Run validation tests with OpenTelemetry tracing (requires Jaeger)
-	TRAIGENT_MOCK_MODE=true \
+	TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true \
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 	TRAIGENT_TRACE_ENABLED=true \
 	$(PYTEST) $(TEST_DIR)/optimizer_validation -v

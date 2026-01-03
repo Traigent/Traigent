@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 # Set mock mode for testing
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Check for optional dependencies
 try:
@@ -151,7 +151,7 @@ class TestREADMEExamples:
 
         # Create a simplified test that verifies the decorator works without external deps
         test_code = f"""import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 
 import traigent
@@ -258,7 +258,7 @@ if 'simple_qa_agent' in locals():
 
         # Create a simplified test with mocks
         test_code = f"""import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 
 import traigent
@@ -338,7 +338,7 @@ if 'customer_support_agent' in locals():
             is_optional = any(module in import_line for module in optional_modules)
 
             test_code = f"""import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
 {import_line}
 print("✅ Import successful: {import_line}")
@@ -380,7 +380,7 @@ print("✅ Import successful: {import_line}")
         test_code = """import os
 import json
 import tempfile
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 import traigent
 
@@ -425,7 +425,7 @@ os.unlink(dataset_path)
             # Set up environment for subprocess
             env = os.environ.copy()
             env["PYTHONPATH"] = str(self.project_root)
-            env["TRAIGENT_MOCK_MODE"] = "true"
+            env["TRAIGENT_MOCK_LLM"] = "true"
 
             # Run in subprocess to isolate
             result = subprocess.run(
@@ -455,7 +455,7 @@ os.unlink(dataset_path)
                 # This should work with mock mode
                 test_code = """
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Simplified version of example
 import traigent

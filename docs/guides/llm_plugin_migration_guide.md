@@ -227,11 +227,11 @@ Traigent ships LLM plugins for:
 Run the plugin tests after migration:
 
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_<plugin>_plugin.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/test_<plugin>_plugin.py -v
 ```
 
 Run the full integration test suite:
 
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/ -v
 ```

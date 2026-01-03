@@ -8,10 +8,10 @@ A concise path from first run to production-ready evaluations.
 - Researcher (3-4 hours): advanced playbooks, metrics, RAG evaluation.
 
 ## Week 1: Foundations (beginner)
-1. Sanity check: `TRAIGENT_MOCK_MODE=true python examples/core/simple-prompt/run.py`
-2. RAG toggle: `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py`
-3. Few-shot prompts: `TRAIGENT_MOCK_MODE=true python examples/core/few-shot-classification/run.py`
-4. Trade-offs: `TRAIGENT_MOCK_MODE=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
+1. Sanity check: `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py`
+2. RAG toggle: `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
+3. Few-shot prompts: `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py`
+4. Trade-offs: `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
 
 Outcome: you can run examples, read metrics, and tweak configuration spaces.
 
@@ -35,7 +35,7 @@ Outcome: you can experiment with new metrics, evaluate RAG systems, and integrat
 ## Running and debugging
 ```bash
 pip install -e ".[examples]"
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 ls examples/datasets/<example-name>
 rg "optimize(" examples
 ```

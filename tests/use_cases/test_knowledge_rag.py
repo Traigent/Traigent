@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 # Set mock mode for all tests
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Add project root to path
 PROJECT_ROOT = Path(__file__).parent.parent.parent

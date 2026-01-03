@@ -498,8 +498,9 @@ def emit_test_evidence(
 # Ensure mock mode is enabled for all tests in this module
 @pytest.fixture(autouse=True)
 def ensure_mock_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Ensure mock mode is enabled for all optimizer validation tests."""
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "true")
+    """Ensure mock LLM and offline mode are enabled for all optimizer validation tests."""
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
 
 

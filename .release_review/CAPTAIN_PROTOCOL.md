@@ -323,7 +323,7 @@ Rules:
 - `format=legacy` is only for backfilled historical entries; it may use `UNKNOWN` values.
 
 Example (single line is required in the Evidence column):
-`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.2/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
+`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.2/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
 
 ## Iteration Limits and Escalation
 
@@ -637,7 +637,7 @@ Agents must use this structure for `findings.md`:
 
 - Terminal output hash: sha256:...
 - Git state at review: <commit SHA>
-- Environment: TRAIGENT_MOCK_MODE=true, Python 3.11.x
+- Environment: TRAIGENT_MOCK_LLM=true, Python 3.11.x
 ```
 
 ### Trace Log
@@ -780,12 +780,12 @@ Agents must provide:
 ```markdown
 ## Test Evidence (REQUIRED)
 
-- **Command**: `TRAIGENT_MOCK_MODE=true pytest tests/unit/test_X.py -v`
+- **Command**: `TRAIGENT_MOCK_LLM=true pytest tests/unit/test_X.py -v`
 - **Exit code**: 0
 - **Summary**: 47 passed, 0 failed, 2 skipped
 - **Duration**: 12.3s
 - **Git state**: abc123 (HEAD at time of test)
-- **Environment**: Python 3.11.5, TRAIGENT_MOCK_MODE=true
+- **Environment**: Python 3.11.5, TRAIGENT_MOCK_LLM=true
 ```
 
 ### Captain Spot-Checks

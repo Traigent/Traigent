@@ -21,7 +21,7 @@ We want to summarize short text snippets. We are optimizing:
 
 ```bash
 # Run in mock mode (no API key needed)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 

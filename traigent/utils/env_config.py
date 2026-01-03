@@ -15,6 +15,19 @@ from dotenv import load_dotenv
 
 from .logging import get_logger
 
+# ============================================================================
+# MIGRATION GUARD: Reject deprecated TRAIGENT_MOCK_MODE at import time
+# ============================================================================
+# This must be checked BEFORE any other code runs to ensure a clean break.
+if os.environ.get("TRAIGENT_MOCK_MODE"):
+    raise OSError(
+        "TRAIGENT_MOCK_MODE is deprecated and no longer supported.\n"
+        "Please migrate to:\n"
+        "  - TRAIGENT_MOCK_LLM=true (to mock LLM API calls)\n"
+        "  - TRAIGENT_OFFLINE_MODE=true (to skip backend communication)\n"
+        "For local testing, set both: TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true"
+    )
+
 # Load environment variables from .env file if it exists
 env_file = Path(__file__).parent.parent.parent / ".env"
 if env_file.exists():
@@ -28,12 +41,13 @@ else:
         / ".env.local.template"
     )
     if template_file.exists():
-        # Suppress warning in mock mode or when running examples/tests
-        mock_mode = os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+        # Suppress warning in mock LLM mode or when running examples/tests
+        # (When mocking LLMs, you don't need real API keys)
+        mock_llm = os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
         suppress_warning = (
             os.getenv("TRAIGENT_SUPPRESS_ENV_WARNING", "false").lower() == "true"
         )
-        if not mock_mode and not suppress_warning:
+        if not mock_llm and not suppress_warning:
             # Only warn for non-demo usage - check if running interactively
             import sys
 
@@ -178,7 +192,7 @@ def get_jwt_secret() -> str:
             )
         return secret
 
-    if is_mock_mode() or is_development():
+    if is_mock_llm() or is_development():
         # Allow overriding the fallback for integration tests while keeping it stable.
         override = _normalize_str(os.getenv("TRAIGENT_DEV_JWT_SECRET"))
         if override:
@@ -204,9 +218,45 @@ def get_jwt_secret() -> str:
     )
 
 
-def is_mock_mode() -> bool:
-    """Check if running in mock mode."""
-    return get_env_var("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+def is_mock_llm() -> bool:
+    """Check if LLM API calls should be mocked with simulated responses.
+
+    When TRAIGENT_MOCK_LLM=true, LLM provider calls (OpenAI, Anthropic, etc.)
+    are intercepted and return simulated responses instead of making real API calls.
+
+    This is separate from backend communication - use is_backend_offline() to
+    control whether Traigent backend calls are skipped.
+
+    Returns:
+        True if LLM calls should be mocked, False for real LLM API calls.
+
+    See also:
+        - is_backend_offline(): Check if Traigent backend calls should be skipped
+    """
+    return get_env_var("TRAIGENT_MOCK_LLM", "false").lower() == "true"
+
+
+def is_backend_offline() -> bool:
+    """Check if Traigent backend calls should be skipped.
+
+    When TRAIGENT_OFFLINE_MODE=true, all communication with the Traigent backend
+    is skipped. This is useful for:
+    - Air-gapped environments without network access
+    - Local development without backend setup
+    - Testing scenarios where backend is not needed
+
+    This is independent of LLM mocking - you can:
+    - Mock LLMs but still send to backend (MOCK_LLM=true, OFFLINE=false)
+    - Use real LLMs but skip backend (MOCK_LLM=false, OFFLINE=true)
+    - Both mock and offline (MOCK_LLM=true, OFFLINE=true) for local testing
+
+    Returns:
+        True if backend calls should be skipped, False for normal backend communication.
+
+    See also:
+        - is_mock_llm(): Check if LLM API calls should be mocked
+    """
+    return get_env_var("TRAIGENT_OFFLINE_MODE", "false").lower() == "true"
 
 
 def is_development() -> bool:

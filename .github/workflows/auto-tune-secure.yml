@@ -248,13 +248,14 @@ jobs:
           pytest tests/auto_tune/test_security_utils.py -v || true
 
           # Test performance check hook
-          TRAIGENT_MOCK_MODE=true python scripts/hooks/performance_check.py
+          TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python scripts/hooks/performance_check.py
 
       - name: Run auto-tuning pipeline
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TRAIGENT_MOCK_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+          TRAIGENT_MOCK_LLM: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+          TRAIGENT_OFFLINE_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
           MAX_BUDGET: ${{ steps.params.outputs.budget }}
         run: |
           # Update DVC params

@@ -76,7 +76,7 @@ The comprehensive test suite covers:
 ✅ **Mock Mode Integration**
 - Baseline execution in mock mode
 - Optimization execution in mock mode
-- Integration with `TRAIGENT_MOCK_MODE=true`
+- Integration with `TRAIGENT_MOCK_LLM=true`
 
 ## Test Quality Standards
 

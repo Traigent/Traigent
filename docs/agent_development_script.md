@@ -246,4 +246,4 @@ Once you have an eval set and scoring in place, Traigent’s SDK helps you explo
 Next steps:
 - Review the TVL spec reference for syntax and examples: `api-reference/complete-function-specification.md`
 - Explore runnable examples in `../examples/`
-- For local testing, set `TRAIGENT_MOCK_MODE=true` to avoid real API calls
+- For local testing, set `TRAIGENT_MOCK_LLM=true` to avoid real API calls

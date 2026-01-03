@@ -632,7 +632,7 @@ def my_llm_call(temperature: float, model: str):
 ### Run Constraint Tests
 
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/unit/api/test_constraints.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/api/test_constraints.py -v
 ```
 
 ### Test Coverage Areas

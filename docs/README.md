@@ -93,10 +93,10 @@ Traigent is a **zero-code optimization platform** that automatically finds the b
 
 ## 🧪 Mock Mode (No API Keys)
 
-- Enable: `TRAIGENT_MOCK_MODE=true` (no API keys needed)
+- Enable: `TRAIGENT_MOCK_LLM=true` (no API keys needed)
 - Benefits: realistic scores, zero cost, quick iteration
 - Example:
-  - `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py`
+  - `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
   - Or copy a command from the Examples Navigator "Run" icon
 
 ---

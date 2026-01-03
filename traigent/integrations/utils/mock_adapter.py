@@ -49,7 +49,7 @@ MOCK_ENV_VARS = {
     "huggingface": "HUGGINGFACE_MOCK",
     "bedrock": "BEDROCK_MOCK",
     # Global override
-    "traigent": "TRAIGENT_MOCK_MODE",
+    "traigent": "TRAIGENT_MOCK_LLM",
 }
 
 
@@ -94,8 +94,8 @@ class MockAdapter:
         Returns:
             True if mock mode is enabled.
         """
-        # Check global mock mode first
-        global_mock = os.getenv("TRAIGENT_MOCK_MODE", "").lower()
+        # Check global mock LLM mode first
+        global_mock = os.getenv("TRAIGENT_MOCK_LLM", "").lower()
         if global_mock in ("true", "1", "yes"):
             return True
 

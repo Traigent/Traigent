@@ -64,20 +64,20 @@ class TestMockAdapterIsMockEnabled:
     """Tests for MockAdapter.is_mock_enabled method."""
 
     def test_global_mock_mode_true(self) -> None:
-        """Test global TRAIGENT_MOCK_MODE=true enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        """Test global TRAIGENT_MOCK_LLM=true enables mock."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             assert MockAdapter.is_mock_enabled("openai") is True
             assert MockAdapter.is_mock_enabled("anthropic") is True
             assert MockAdapter.is_mock_enabled("unknown") is True
 
     def test_global_mock_mode_1(self) -> None:
-        """Test global TRAIGENT_MOCK_MODE=1 enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "1"}, clear=True):
+        """Test global TRAIGENT_MOCK_LLM=1 enables mock."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "1"}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is True
 
     def test_global_mock_mode_yes(self) -> None:
-        """Test global TRAIGENT_MOCK_MODE=yes enables mock."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "yes"}, clear=True):
+        """Test global TRAIGENT_MOCK_LLM=yes enables mock."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "yes"}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is True
 
     def test_provider_specific_mock(self) -> None:
@@ -100,7 +100,7 @@ class TestMockAdapterIsMockEnabled:
 
     def test_mock_disabled_with_false(self) -> None:
         """Test mock is disabled with false value."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "false"}, clear=True):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}, clear=True):
             assert MockAdapter.is_mock_enabled("openai") is False
 
     def test_case_insensitive_provider(self) -> None:
@@ -264,7 +264,7 @@ class TestWithMockSupportDecorator:
         def real_function(**kwargs):
             return "real response"
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             result = real_function(model="gpt-4")
 
         assert isinstance(result, dict)

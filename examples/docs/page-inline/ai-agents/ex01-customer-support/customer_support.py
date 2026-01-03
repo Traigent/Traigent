@@ -144,7 +144,7 @@ Category:""",
     prompt = prompt_styles.get(prompt_key, prompt_styles["direct"])
 
     # In mock mode, return deterministic result based on keywords
-    if os.environ.get("TRAIGENT_MOCK_MODE") == "true":
+    if os.environ.get("TRAIGENT_MOCK_LLM") == "true":
         message_lower = message.lower()
         if any(word in message_lower for word in ["charge", "bill", "invoice", "pay"]):
             intent = "billing"
