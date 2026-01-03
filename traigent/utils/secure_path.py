@@ -101,6 +101,38 @@ class SafePath:
             return False
 
 
+def _resolve_base_dir(base_dir: str | Path, must_exist: bool = True) -> Path:
+    """Resolve and validate the base directory for safe file operations."""
+    resolved = Path(base_dir).expanduser().resolve()
+    if resolved.exists():
+        if not resolved.is_dir():
+            raise ValueError(f"Base path is not a directory: {resolved}")
+    elif must_exist:
+        raise FileNotFoundError(f"Base directory does not exist: {resolved}")
+    return resolved
+
+
+def _resolve_path_in_base(
+    path: str | Path,
+    base_dir: Path,
+    must_exist: bool = False,
+) -> Path:
+    """Resolve a target path and ensure it stays within the base directory."""
+    target = Path(path)
+    if not target.is_absolute():
+        target = base_dir / target
+    resolved = target.resolve()
+    try:
+        resolved.relative_to(base_dir)
+    except ValueError as e:
+        raise PathTraversalError(
+            f"Path traversal detected: '{path}' resolves outside base directory"
+        ) from e
+    if must_exist and not resolved.exists():
+        raise FileNotFoundError(f"Path does not exist: {resolved}")
+    return resolved
+
+
 def validate_path(
     path: str | Path,
     allowed_base: str | Path,
@@ -152,7 +184,8 @@ def safe_open(
         PathTraversalError: If path escapes base_dir
         Other exceptions from open() as normal
     """
-    validated_path = validate_path(path, base_dir)
+    resolved_base = _resolve_base_dir(base_dir, must_exist=False)
+    validated_path = _resolve_path_in_base(path, resolved_base)
     return open(validated_path, mode, **kwargs)
 
 
@@ -174,7 +207,8 @@ def safe_read_text(
     Raises:
         PathTraversalError: If path escapes base_dir
     """
-    validated_path = validate_path(path, base_dir, must_exist=True)
+    resolved_base = _resolve_base_dir(base_dir, must_exist=False)
+    validated_path = _resolve_path_in_base(path, resolved_base, must_exist=True)
     return validated_path.read_text(encoding=encoding)
 
 
@@ -194,7 +228,8 @@ def safe_read_bytes(
     Raises:
         PathTraversalError: If path escapes base_dir
     """
-    validated_path = validate_path(path, base_dir, must_exist=True)
+    resolved_base = _resolve_base_dir(base_dir)
+    validated_path = _resolve_path_in_base(path, resolved_base, must_exist=True)
     return validated_path.read_bytes()
 
 
@@ -215,7 +250,8 @@ def safe_write_text(
     Raises:
         PathTraversalError: If path escapes base_dir
     """
-    validated_path = validate_path(path, base_dir)
+    resolved_base = _resolve_base_dir(base_dir)
+    validated_path = _resolve_path_in_base(path, resolved_base)
     # Ensure parent directory exists
     validated_path.parent.mkdir(parents=True, exist_ok=True)
     validated_path.write_text(content, encoding=encoding)
@@ -236,7 +272,8 @@ def safe_write_bytes(
     Raises:
         PathTraversalError: If path escapes base_dir
     """
-    validated_path = validate_path(path, base_dir)
+    resolved_base = _resolve_base_dir(base_dir)
+    validated_path = _resolve_path_in_base(path, resolved_base)
     # Ensure parent directory exists
     validated_path.parent.mkdir(parents=True, exist_ok=True)
     validated_path.write_bytes(content)

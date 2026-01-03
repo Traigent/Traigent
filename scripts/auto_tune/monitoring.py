@@ -374,8 +374,25 @@ class AlertManager:
             return False
         if not parsed.hostname:
             return False
+        if parsed.username or parsed.password:
+            return False
+        if parsed.port not in (None, 443):
+            return False
 
         hostname = parsed.hostname.lower()
+        allowlist_raw = os.environ.get("ALERT_WEBHOOK_ALLOWLIST", "").strip()
+        allow_unlisted = os.environ.get("ALERT_WEBHOOK_ALLOW_UNLISTED", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if allowlist_raw:
+            allowlist = [entry.strip().lower() for entry in allowlist_raw.split(",")]
+            if not AlertManager._host_allowed(hostname, allowlist):
+                return False
+        elif not allow_unlisted:
+            return False
+
         if hostname in {"localhost", "127.0.0.1"} or hostname.endswith(".local"):
             return False
 
@@ -412,6 +429,20 @@ class AlertManager:
                 return False
 
         return True
+
+    @staticmethod
+    def _host_allowed(hostname: str, allowlist: List[str]) -> bool:
+        """Check hostname against allowlist entries, including wildcard suffixes."""
+        for entry in allowlist:
+            if not entry:
+                continue
+            if entry.startswith("*."):
+                suffix = entry[1:]
+                if hostname.endswith(suffix) and hostname != suffix.lstrip("."):
+                    return True
+            elif hostname == entry:
+                return True
+        return False
 
     def _get_alert_color(self, severity: AlertSeverity) -> str:
         """Get color for alert severity."""
