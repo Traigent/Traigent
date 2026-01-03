@@ -27,7 +27,7 @@ jobs:
       fail-fast: true  # Stop on first failure to save minutes
       matrix:
         # Test on supported Python versions (>=3.11 per pyproject.toml)
-        python-version: ['3.11', '3.12']
+        python-version: ['3.11', '3.12', '3.13']
 
     steps:
     - uses: actions/checkout@v4
