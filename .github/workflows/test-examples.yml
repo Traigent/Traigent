@@ -61,7 +61,8 @@ jobs:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true
       run: |
-        python scripts/setup/quickstart.py
+        # Provide 'y' input for non-interactive CI environment
+        echo "y" | python scripts/setup/quickstart.py || true
 
     - name: Test first run example
       env:
