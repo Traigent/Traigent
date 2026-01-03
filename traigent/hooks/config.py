@@ -15,7 +15,11 @@ from typing import Any
 import yaml
 
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import (
+    safe_open,
+    safe_write_text,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
@@ -236,7 +240,7 @@ def load_hooks_config(config_path: Path | str | None = None) -> HooksConfig:
 
     logger.info(f"Loading hooks configuration from {config_path}")
 
-    with open(config_path, encoding="utf-8") as f:
+    with safe_open(config_path, allowed_base, mode="r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     return HooksConfig.from_dict(data)
@@ -308,8 +312,7 @@ environments:
       min_accuracy: 0.90        # Higher accuracy required
 """
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(default_config)
+    safe_write_text(output_path, default_config, allowed_base, encoding="utf-8")
 
     logger.info(f"Created default configuration at {output_path}")
     return output_path

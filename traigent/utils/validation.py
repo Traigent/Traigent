@@ -23,6 +23,7 @@ from typing import Any
 
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import safe_open
 
 logger = get_logger(__name__)
 
@@ -903,7 +904,12 @@ class Validators:
             if path_result.is_valid:
                 try:
                     path = Path(dataset_path)
-                    with open(path) as f:
+                    with safe_open(
+                        path,
+                        resolved_dataset_path.resolve().parent,
+                        mode="r",
+                        encoding="utf-8",
+                    ) as f:
                         line_count = 0
                         for line_num, line in enumerate(f, 1):
                             line_count += 1

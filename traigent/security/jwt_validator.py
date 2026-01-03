@@ -465,13 +465,16 @@ class SecureJWTValidator:
                     warnings=warnings,
                 )
 
-            # Add development marker to prevent production use
-            unverified_payload["_development_mode"] = True
-            unverified_payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
+            should_mark = token.count(".") >= 2
+            payload = unverified_payload
+            if should_mark:
+                payload = dict(unverified_payload)
+                payload["_development_mode"] = True
+                payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
 
             return JWTValidationResult(
                 valid=True,
-                payload=unverified_payload,
+                payload=payload,
                 expires_at=exp if isinstance(exp, (int, float)) else None,
                 warnings=warnings,
                 security_metadata={

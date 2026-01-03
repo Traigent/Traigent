@@ -35,7 +35,7 @@ except ImportError:
 
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 logger = get_logger(__name__)
 
@@ -410,7 +410,7 @@ class DatasetConverter:
                 else Path.cwd().resolve()
             )
             validated_path = validate_path(output_path, base_dir, must_exist=False)
-            validated_path.write_text(jsonl_content)
+            safe_write_text(validated_path, jsonl_content, base_dir)
             logger.info(f"Saved JSONL to {validated_path}")
 
         return jsonl_content

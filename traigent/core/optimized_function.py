@@ -76,7 +76,7 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_open, validate_path
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -283,13 +283,13 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
     return False
 
 
-def _check_token_file_approval(token_file: Path) -> bool:
+def _check_token_file_approval(token_file: Path, base_dir: Path) -> bool:
     """Check if CI run is approved via token file."""
     if not token_file.exists():
         return False
 
     try:
-        with open(token_file) as f:
+        with safe_open(token_file, base_dir, mode="r", encoding="utf-8") as f:
             token_data = json.load(f)
 
         # Try HMAC token first, then legacy format
@@ -1949,7 +1949,7 @@ class OptimizedFunction:
         token_file = validate_path(
             storage_root / "approval.token", storage_root, must_exist=False
         )
-        if _check_token_file_approval(token_file):
+        if _check_token_file_approval(token_file, storage_root):
             return
 
         # No valid approval found
@@ -2038,7 +2038,7 @@ To approve, use one of these methods:
             output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
         )
         output_path = validate_path(output_path, base_dir, must_exist=False)
-        with open(output_path, "w") as f:
+        with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
             json.dump(result_dict, f, indent=2, default=str)
 
         logger.info(f"Saved optimization results to {output_path}")
@@ -2058,7 +2058,7 @@ To approve, use one of these methods:
                 input_path.parent if input_path.is_absolute() else Path.cwd().resolve()
             )
             input_path = validate_path(input_path, base_dir, must_exist=True)
-            with open(input_path) as f:
+            with safe_open(input_path, base_dir, mode="r", encoding="utf-8") as f:
                 result_dict = json.load(f)
 
             # Manual reconstruction since OptimizationResult is a dataclass

@@ -20,7 +20,12 @@ from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
 from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_open,
+    safe_write_text,
+    validate_path,
+)
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
@@ -699,7 +704,7 @@ def validate_config(config_file: str) -> None:
             "Config file",
             must_exist=True,
         )
-        with open(config_path) as f:
+        with safe_open(config_path, WORKSPACE_ROOT, mode="r", encoding="utf-8") as f:
             config = json.load(f)
 
         # Extract configuration components
@@ -762,8 +767,7 @@ def generate(template: str, output: str) -> None:
             return
 
     # Write template to file
-    with open(output_path, "w") as f:
-        f.write(template_code)
+    safe_write_text(output_path, template_code, WORKSPACE_ROOT, encoding="utf-8")
 
     console.print(f"✅ [green]Template generated: {output}[/green]")
 
