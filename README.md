@@ -211,7 +211,14 @@ and an optional `--tvl-environment staging` flag.
 
 ## 📦 Quick Installation
 
-**Requirements**: Python 3.11+
+### Requirements
+
+| Requirement  | Supported                                |
+|--------------|------------------------------------------|
+| **Python**   | 3.11, 3.12, 3.13, 3.14                   |
+| **Platform** | Linux (tested on Ubuntu), macOS, Windows |
+
+> **Note:** CI testing runs on Ubuntu Linux. macOS and Windows are expected to work but are not continuously tested.
 
 **Recommended (pip):**
 
