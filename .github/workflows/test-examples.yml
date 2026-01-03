@@ -130,8 +130,9 @@ jobs:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true
       run: |
-        # Minimal installation
+        # Install with analytics (pandas/numpy required by core types)
         pip install -r requirements/requirements.txt
+        pip install -r requirements/requirements-analytics.txt
         pip install -e .
 
         # Quick smoke test
