@@ -176,9 +176,9 @@ class TestSanitizeErrorMessage:
 
     def test_api_key_redacted(self):
         """Test API keys are redacted."""
-        msg = "Error with api_key=sk-1234abc"
+        msg = "Error with api_key=example-key-1234"
         result = self.ops.sanitize_error_message(msg)
-        assert "sk-1234abc" not in result
+        assert "example-key-1234" not in result
         assert "[REDACTED]" in result
 
     def test_token_redacted(self):
@@ -677,3 +677,715 @@ class TestConstants:
     def test_local_fallback_msg(self):
         """Test local fallback message constant."""
         assert "fall back" in _LOCAL_FALLBACK_MSG.lower()
+
+
+class TestAiohttpNotAvailable:
+    """Test behavior when aiohttp is not available."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_create_session_without_aiohttp_returns_fallback_ids(self):
+        """Test session creation returns fallback IDs when aiohttp not available."""
+        with (
+            patch("traigent.cloud.api_operations.AIOHTTP_AVAILABLE", False),
+            patch("traigent.cloud.api_operations.is_mock_mode", return_value=False),
+        ):
+            request = SessionCreationRequest(
+                function_name="test_func",
+                configuration_space={"param": [1, 2, 3]},
+                objectives=["maximize"],
+                max_trials=10,
+            )
+            session_id, exp_id, run_id = await self.ops.create_traigent_session_via_api(
+                request
+            )
+            assert "session_" in session_id
+            assert "exp_" in exp_id
+            assert "run_" in run_id
+
+
+class TestHandleConnectorError:
+    """Test _handle_connector_error method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        self.ops = ApiOperations(mock_client)
+
+    def test_mock_mode_logs_debug(self):
+        """Test mock mode logs debug message."""
+        import traigent.cloud.api_operations as api_ops
+
+        api_ops._backend_unavailable_warned = False
+        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=True):
+            error = RuntimeError("Connection failed")
+            with pytest.raises(CloudServiceError, match="Backend unavailable"):
+                self.ops._handle_connector_error(error)
+
+    def test_first_warning_shows_full_message(self):
+        """Test first warning shows full message."""
+        import traigent.cloud.api_operations as api_ops
+
+        api_ops._backend_unavailable_warned = False
+        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+            error = RuntimeError("Connection failed to api.example.com")
+            with pytest.raises(CloudServiceError, match="Backend unavailable"):
+                self.ops._handle_connector_error(error)
+            assert api_ops._backend_unavailable_warned is True
+
+    def test_localhost_shows_development_hint(self):
+        """Test localhost error shows development hint."""
+        import traigent.cloud.api_operations as api_ops
+
+        api_ops._backend_unavailable_warned = False
+        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+            error = RuntimeError("Connection failed to localhost:8000")
+            with pytest.raises(CloudServiceError, match="Backend unavailable"):
+                self.ops._handle_connector_error(error)
+
+    def test_127_0_0_1_shows_development_hint(self):
+        """Test 127.0.0.1 error shows development hint."""
+        import traigent.cloud.api_operations as api_ops
+
+        api_ops._backend_unavailable_warned = False
+        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+            error = RuntimeError("Connection failed to 127.0.0.1:8000")
+            with pytest.raises(CloudServiceError, match="Backend unavailable"):
+                self.ops._handle_connector_error(error)
+
+    def test_second_warning_logs_debug_only(self):
+        """Test subsequent warnings only log debug."""
+        import traigent.cloud.api_operations as api_ops
+
+        api_ops._backend_unavailable_warned = True
+        with patch("traigent.cloud.api_operations.is_mock_mode", return_value=False):
+            error = RuntimeError("Connection failed again")
+            with pytest.raises(CloudServiceError, match="Backend unavailable"):
+                self.ops._handle_connector_error(error)
+
+
+class TestPostSessionCreation:
+    """Test _post_session_creation method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_successful_session_creation(self):
+        """Test successful session creation returns IDs."""
+        mock_response = AsyncMock()
+        mock_response.status = 201
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session_123",
+                "metadata": {
+                    "experiment_id": "exp_123",
+                    "experiment_run_id": "run_123",
+                },
+            }
+        )
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            session_id, exp_id, run_id = await self.ops._post_session_creation(
+                payload={"test": "data"},
+                headers={"Content-Type": "application/json"},
+                connector=None,
+            )
+            assert session_id == "session_123"
+            assert exp_id == "exp_123"
+            assert run_id == "run_123"
+
+
+class TestParseSessionResponse:
+    """Test _parse_session_response method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_parse_response_with_all_ids(self):
+        """Test parsing response with all IDs present."""
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session_123",
+                "metadata": {
+                    "experiment_id": "exp_123",
+                    "experiment_run_id": "run_123",
+                },
+            }
+        )
+        session_id, exp_id, run_id = await self.ops._parse_session_response(
+            mock_response
+        )
+        assert session_id == "session_123"
+        assert exp_id == "exp_123"
+        assert run_id == "run_123"
+
+    @pytest.mark.asyncio
+    async def test_parse_response_with_fallback_ids(self):
+        """Test parsing response with missing experiment IDs falls back to session ID."""
+        mock_response = AsyncMock()
+        mock_response.json = AsyncMock(
+            return_value={
+                "session_id": "session_456",
+                "metadata": {},
+            }
+        )
+        session_id, exp_id, run_id = await self.ops._parse_session_response(
+            mock_response
+        )
+        assert session_id == "session_456"
+        assert exp_id == "session_456"
+        assert run_id == "session_456"
+
+
+class TestUpdateConfigRunStatusSuccess:
+    """Test update_config_run_status with successful responses."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_successful_status_update_200(self):
+        """Test successful status update returns True."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.text = AsyncMock(return_value="OK")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status("config_123", "COMPLETED")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_successful_status_update_204(self):
+        """Test successful status update with 204 returns True."""
+        mock_response = AsyncMock()
+        mock_response.status = 204
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status("config_123", "COMPLETED")
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_failed_status_update_returns_false(self):
+        """Test failed status update returns False."""
+        mock_response = AsyncMock()
+        mock_response.status = 400
+        mock_response.text = AsyncMock(return_value="Bad Request")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_status("config_123", "COMPLETED")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_false(self):
+        """Test exception during update returns False."""
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                side_effect=Exception("Connection failed")
+            )
+
+            result = await self.ops.update_config_run_status("config_123", "COMPLETED")
+            assert result is False
+
+
+class TestUpdateConfigRunMeasuresSuccess:
+    """Test update_config_run_measures with various metric mappings."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_successful_measures_update(self):
+        """Test successful measures update returns True."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95, "score": 0.9}
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_with_execution_time(self):
+        """Test measures update with execution time."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95}, execution_time=1.5
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_with_all_standard_metrics(self):
+        """Test measures update with all standard OptiGen metrics."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_measures(
+                "config_123",
+                {
+                    "accuracy": 0.95,
+                    "faithfulness": 0.9,
+                    "relevance": 0.85,
+                    "latency": 100.0,
+                    "cost": 0.01,
+                    "context_precision": 0.88,
+                    "context_recall": 0.92,
+                    "custom_metric": 0.75,
+                },
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_uses_accuracy_as_score_fallback(self):
+        """Test measures update uses accuracy as score when no explicit score."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            # Only accuracy, no score - should use accuracy as score
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95}
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_handles_none_values(self):
+        """Test measures update handles None values gracefully."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95, "score": None, "latency": None}
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_handles_invalid_values(self):
+        """Test measures update converts invalid values to 0.0."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            # Test with non-numeric value
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95, "custom": "invalid"}
+            )
+            assert result is True
+
+    @pytest.mark.asyncio
+    async def test_measures_update_failure_returns_false(self):
+        """Test measures update failure returns False."""
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text = AsyncMock(return_value="Internal Server Error")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95}
+            )
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_measures_update_exception_returns_false(self):
+        """Test measures update exception returns False."""
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(side_effect=Exception("Network error"))
+
+            result = await self.ops.update_config_run_measures(
+                "config_123", {"accuracy": 0.95}
+            )
+            assert result is False
+
+
+class TestUpdateExperimentRunStatusSuccess:
+    """Test update_experiment_run_status_on_completion with various scenarios."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        mock_client = Mock()
+        mock_client.auth_manager = Mock()
+        mock_client.auth_manager.augment_headers = AsyncMock(
+            return_value={"Content-Type": _JSON_CONTENT_TYPE}
+        )
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        self.ops = ApiOperations(mock_client)
+
+    @pytest.mark.asyncio
+    async def test_successful_status_update(self):
+        """Test successful experiment run status update."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            # Should not raise
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "completed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_status_update_with_204(self):
+        """Test status update with 204 response."""
+        mock_response = AsyncMock()
+        mock_response.status = 204
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "failed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_invalid_status_uses_completed_default(self):
+        """Test invalid status defaults to COMPLETED."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "unknown_status"
+            )
+
+    @pytest.mark.asyncio
+    async def test_failed_update_logs_warning(self):
+        """Test failed update logs warning."""
+        mock_response = AsyncMock()
+        mock_response.status = 500
+        mock_response.text = AsyncMock(return_value="Internal Server Error")
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            # Should not raise, just log warning
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "completed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_exception_logs_warning(self):
+        """Test exception logs warning."""
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(side_effect=Exception("Network error"))
+
+            # Should not raise, just log warning
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "completed"
+            )
+
+    @pytest.mark.asyncio
+    async def test_pruned_status_accepted(self):
+        """Test pruned status is accepted."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "pruned"
+            )
+
+    @pytest.mark.asyncio
+    async def test_cancelled_status_accepted(self):
+        """Test cancelled status is accepted."""
+        mock_response = AsyncMock()
+        mock_response.status = 200
+
+        mock_session = AsyncMock()
+        mock_session.put = Mock(
+            return_value=AsyncMock(
+                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
+            )
+        )
+
+        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
+            mock_aiohttp.ClientSession = Mock(
+                return_value=AsyncMock(
+                    __aenter__=AsyncMock(return_value=mock_session),
+                    __aexit__=AsyncMock(),
+                )
+            )
+            mock_aiohttp.ClientTimeout = Mock()
+
+            await self.ops.update_experiment_run_status_on_completion(
+                "run_123", "cancelled"
+            )
