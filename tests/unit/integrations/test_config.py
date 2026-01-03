@@ -695,16 +695,8 @@ class TestRegisterIntegrationConfigSubscribers:
 
         # Mock the stack to return a frame where getmodule returns None
         # but _should_register_module would return True
-        mock_frame_info = type(
-            "FrameInfo",
-            (),
-            {"frame": type("Frame", (), {"f_globals": {"__name__": "test"}})()},
-        )()
-
-        def mock_stack():
-            return [mock_frame_info]
-
-        def mock_getmodule(frame):
+        mock_frame_info = Mock()
+        mock_frame_info.frame.f_globals = {"__name__": "test"}
             return None
 
         def mock_should_register(module):
