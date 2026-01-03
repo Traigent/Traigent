@@ -149,7 +149,7 @@ class BaseInvoker(ABC):
     """
 
     MAX_TIMEOUT_SECONDS = 60 * 60  # 1 hour upper bound for a single invocation
-    MAX_RETRIES = 10
+    MAX_RETRIES_LIMIT = 10  # Upper bound for retry configuration
 
     def __init__(
         self, timeout: float | None = None, max_retries: int = 0, **kwargs: Any
@@ -385,9 +385,9 @@ class BaseInvoker(ABC):
         if max_retries < 0:
             raise InvocationError("max_retries cannot be negative")
 
-        if max_retries > cls.MAX_RETRIES:
+        if max_retries > cls.MAX_RETRIES_LIMIT:
             raise InvocationError(
-                f"max_retries {max_retries} exceeds maximum allowed {cls.MAX_RETRIES}"
+                f"max_retries {max_retries} exceeds maximum allowed {cls.MAX_RETRIES_LIMIT}"
             )
 
         return max_retries
