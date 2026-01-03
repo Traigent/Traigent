@@ -85,10 +85,10 @@ integrations/ci-cd/
                 <code>cd examples/integrations/ci-cd/math-qa
 
 # Evaluate current configuration
-TRAIGENT_MOCK_MODE=true MODE=eval python run.py
+TRAIGENT_MOCK_LLM=true MODE=eval python run.py
 
 # Run optimization to find better config
-TRAIGENT_MOCK_MODE=true MODE=tune MAX_TRIALS=10 python run.py</code>
+TRAIGENT_MOCK_LLM=true MODE=tune MAX_TRIALS=10 python run.py</code>
             </div>
         </section>
 
@@ -97,7 +97,7 @@ TRAIGENT_MOCK_MODE=true MODE=tune MAX_TRIALS=10 python run.py</code>
             <ul>
                 <li><code>MODE</code>: <code>eval</code> (evaluate config) or <code>tune</code> (optimize)</li>
                 <li><code>MAX_TRIALS</code>: Maximum optimization trials (default: 10)</li>
-                <li><code>TRAIGENT_MOCK_MODE</code>: Use mock LLM for testing</li>
+                <li><code>TRAIGENT_MOCK_LLM</code>: Use mock LLM for testing</li>
                 <li><code>REGRESSION_THRESHOLD</code>: Max allowed degradation (default: -0.01 = 1%)</li>
                 <li><code>IMPROVEMENT_MIN_PCT</code>: Min improvement to trigger alert (default: 0.03 = 3%)</li>
             </ul>

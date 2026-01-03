@@ -131,8 +131,11 @@ class TestSummaryStatsIntegration:
         assert evaluator.execution_mode == "edge_analytics"
 
     @pytest.mark.asyncio
-    async def test_backend_client_submits_summary_stats(self):
+    async def test_backend_client_submits_summary_stats(self, monkeypatch):
         """Test that backend client correctly submits summary_stats in privacy mode."""
+        # Disable offline mode so backend calls are actually made
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+
         # Create backend client
         backend_config = BackendClientConfig(
             backend_base_url="http://localhost:5000", enable_session_sync=True

@@ -59,7 +59,7 @@ class ExampleRunner:
         try:
             # Ensure mock mode is enabled
             env = os.environ.copy()
-            env["TRAIGENT_MOCK_MODE"] = "true"
+            env["TRAIGENT_MOCK_LLM"] = "true"
 
             # Run the example
             process = subprocess.run(
@@ -98,7 +98,7 @@ class ExampleRunner:
                 content = f.read()
 
             # Check for required elements
-            if "TRAIGENT_MOCK_MODE" not in content:
+            if "TRAIGENT_MOCK_LLM" not in content:
                 issues.append("Missing mock mode setup")
 
             if 'if __name__ == "__main__":' not in content:

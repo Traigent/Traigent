@@ -86,7 +86,7 @@ async def test_integration():
 
     # Test 8: Test mock authentication (if in dev mode)
     print("\n8. Testing mock authentication flow...")
-    if os.environ.get("TRAIGENT_MOCK_MODE") == "true":
+    if os.environ.get("TRAIGENT_MOCK_LLM") == "true":
         # Create test credentials
         test_creds = {"email": "test@example.com", "password": "Test123456!"}
 

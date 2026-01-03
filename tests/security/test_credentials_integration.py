@@ -103,7 +103,7 @@ class TestCredentialStoreHighSecurityMode:
         """Test high security mode initialization."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="strong-passphrase-123!@#",
+            master_password="strong-passphrase-123!@#",  # noqa: S106 - test credential
             security_level=SecurityLevel.HIGH,
         )
 

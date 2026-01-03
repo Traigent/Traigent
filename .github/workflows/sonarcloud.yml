@@ -33,7 +33,8 @@ jobs:
         run: |
           pytest tests/unit/ --cov=traigent --cov-report=xml --cov-report=term -q
         env:
-          TRAIGENT_MOCK_MODE: "true"
+          TRAIGENT_MOCK_LLM: "true"
+          TRAIGENT_OFFLINE_MODE: "true"
         continue-on-error: true  # Don't fail the workflow if some tests fail
 
       - name: SonarCloud Scan

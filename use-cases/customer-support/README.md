@@ -29,7 +29,7 @@ It optimizes for:
 cd /path/to/Traigent
 
 # Enable mock mode (recommended for testing)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Run the agent optimization
 python use-cases/customer-support/agent/support_agent.py

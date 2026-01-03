@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 # Always enable mock mode for examples
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 
 class BaseExample(ABC):
@@ -117,7 +117,7 @@ def safe_run_example(example_func, *args, **kwargs):
     except Exception as e:
         print(f"⚠️ Example encountered an issue: {e}")
         print("💡 Try running with mock mode enabled:")
-        print("   export TRAIGENT_MOCK_MODE=true")
+        print("   export TRAIGENT_MOCK_LLM=true")
         return None
 
 

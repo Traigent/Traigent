@@ -51,7 +51,7 @@ class ArtifactManager:
 
 - Terminal output hash: sha256:...
 - Git state at review: (commit SHA)
-- Environment: TRAIGENT_MOCK_MODE=true, Python 3.x
+- Environment: TRAIGENT_MOCK_LLM=true, Python 3.x
 '''
 
     def __init__(

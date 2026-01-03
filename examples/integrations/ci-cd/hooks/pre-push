@@ -7,7 +7,7 @@ echo "🚀 Traigent: Running pre-push optimization check..."
 cd examples/ci-cd-integration/math-qa || exit 0
 
 # Set environment
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # First, evaluate current config
 echo "📊 Evaluating current configuration..."

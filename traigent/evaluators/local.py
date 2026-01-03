@@ -19,6 +19,7 @@ from traigent.evaluators.metrics_tracker import (
     MetricsTracker,
     extract_llm_metrics,
 )
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import EvaluationError
 from traigent.utils.langchain_interceptor import (
     clear_captured_responses,
@@ -1092,12 +1093,10 @@ class LocalEvaluator(BaseEvaluator):
         Returns:
             Dictionary of metric names to values for this example
         """
-        import os
-
         metrics = {}
 
-        # Check if we're in mock mode and if it should be applied
-        mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
+        # Check if we're in mock LLM mode and if it should be applied
+        mock_mode_env = is_mock_llm()
 
         # Check configuration for mock mode settings
         mock_enabled = self.mock_mode_config.get("enabled", True)
@@ -1130,9 +1129,9 @@ class LocalEvaluator(BaseEvaluator):
         """Log a one-time warning about mock mode accuracy."""
         if not self._mock_mode_warning_shown:
             logger.warning(
-                "MOCK MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
+                "MOCK LLM MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
                 "not computed from actual vs expected outputs. These metrics do not "
-                "reflect real model performance. Set TRAIGENT_MOCK_MODE=false for "
+                "reflect real model performance. Set TRAIGENT_MOCK_LLM=false for "
                 "real evaluations.",
                 base_accuracy,
                 variance / 2,

@@ -58,42 +58,47 @@ jobs:
 
     - name: Run quickstart
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
       run: |
         python scripts/quickstart.py
 
     - name: Test first run example
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
       run: |
         python examples/quickstart/first_run.py
 
     - name: Test README examples
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
       run: |
         python -m pytest tests/examples/test_readme_examples.py -v
 
     - name: Test mock mode
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
       run: |
         python -c "
-import os
-os.environ['TRAIGENT_MOCK_MODE'] = 'true'
-import traigent
+        import os
+        os.environ['TRAIGENT_MOCK_LLM'] = 'true'
+        os.environ['TRAIGENT_OFFLINE_MODE'] = 'true'
+        import traigent
 
-@traigent.optimize(
-    configuration_space={'temperature': [0.1, 0.5]},
-    objectives=['accuracy']
-)
-def test_func(x):
-    return x
+        @traigent.optimize(
+            configuration_space={'temperature': [0.1, 0.5]},
+            objectives=['accuracy']
+        )
+        def test_func(x):
+            return x
 
-result = test_func('test')
-assert result == 'test'
-print('✅ Mock mode works!')
-"
+        result = test_func('test')
+        assert result == 'test'
+        print('✅ Mock mode works!')
+        "
 
     - name: Run diagnostics
       run: |
@@ -122,7 +127,8 @@ print('✅ Mock mode works!')
 
     - name: Quick install and test
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
       run: |
         # Minimal installation
         pip install -r requirements/requirements.txt

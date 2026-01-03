@@ -27,7 +27,7 @@ python -m tests.optimizer_validation.tools.validate_evidence --viewer-data
 To generate a pytest JSON report for validation:
 
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/optimizer_validation/ \
+TRAIGENT_MOCK_LLM=true pytest tests/optimizer_validation/ \
     --json-report \
     --json-report-file=report.json
 ```

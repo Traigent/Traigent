@@ -3,10 +3,10 @@
 Pick an example in under a minute.
 
 ## Quick picks
-- 2 min: `TRAIGENT_MOCK_MODE=true python examples/core/simple-prompt/run.py`
-- 5 min: `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py`
-- 8 min: `TRAIGENT_MOCK_MODE=true python examples/core/few-shot-classification/run.py`
-- 10 min: `TRAIGENT_MOCK_MODE=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
+- 2 min: `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py`
+- 5 min: `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py`
+- 8 min: `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py`
+- 10 min: `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py`
 - 30+ min: browse `examples/advanced/` playbooks
 
 ## Choose by goal
@@ -64,7 +64,7 @@ examples/
 ```bash
 cd /path/to/Traigent
 pip install -e ".[examples]"
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 

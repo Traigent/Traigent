@@ -13,7 +13,7 @@ from pathlib import Path
 
 def is_mock_mode() -> bool:
     """Check if running in mock mode."""
-    return os.getenv("TRAIGENT_MOCK_MODE", "").lower() in {"1", "true", "yes", "y"}
+    return os.getenv("TRAIGENT_MOCK_LLM", "").lower() in {"1", "true", "yes", "y"}
 
 
 def setup_mock_environment(base_path: Path) -> None:

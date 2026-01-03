@@ -24,7 +24,7 @@ from traigent.cloud.models import (
     SessionCreationRequest,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_mock_mode
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
@@ -271,9 +271,12 @@ class SessionOperations:
 
             except Exception as e:
                 await self._reset_client_session("create_session fallback")
-                # Only warn once per function and skip in mock mode
+                # Only warn once per function; suppress in offline mode (expected)
                 warn_key = function_name
-                if warn_key not in _warned_backend_unavailable and not is_mock_mode():
+                if (
+                    warn_key not in _warned_backend_unavailable
+                    and not is_backend_offline()
+                ):
                     if isinstance(e, CloudServiceError):
                         logger.warning(
                             "Backend tracking unavailable for function '%s' (%s). "

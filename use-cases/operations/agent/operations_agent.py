@@ -7,7 +7,7 @@ action sequences for workflow automation. It optimizes for action accuracy
 and correct escalation decisions.
 
 Usage:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python use-cases/operations/agent/operations_agent.py
 """
 
@@ -87,7 +87,7 @@ Respond with only the JSON object:"""
 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled via environment variable."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("true", "1", "yes")
 
 
 def _parse_json_response(content: str) -> dict[str, Any] | None:
@@ -196,7 +196,7 @@ def operations_workflow_agent(
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
         raise ImportError(
-            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "langchain-openai is required when TRAIGENT_MOCK_LLM is disabled. "
             "Install it with: pip install langchain-openai"
         ) from exc
 
@@ -343,7 +343,7 @@ async def run_optimization():
 
     if not mock_mode:
         print("\nWARNING: Running without mock mode will incur API costs!")
-        print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
+        print("Set TRAIGENT_MOCK_LLM=true for testing.\n")
 
     print("\nStarting optimization...")
     print("Configuration Space:")

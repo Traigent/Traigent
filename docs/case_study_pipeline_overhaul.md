@@ -13,7 +13,7 @@ This document describes a comprehensive overhaul of the Traigent paper experimen
 - **Telemetry-driven metrics** capturing token/cost/latency from real LLM calls
 - **Simulator safeguards** preventing production leakage
 
-**Impact**: Custom evaluators in this pipeline were deprecated in favor of the `metric_functions` interface. Set `TRAIGENT_MOCK_MODE=true` for automated tests to avoid API spend.
+**Impact**: Custom evaluators in this pipeline were deprecated in favor of the `metric_functions` interface. Set `TRAIGENT_MOCK_LLM=true` for automated tests to avoid API spend.
 
 **Timeline**: Keep mock mode on by default; enable real providers only for intentional benchmarking.
 
@@ -43,7 +43,7 @@ This document describes a comprehensive overhaul of the Traigent paper experimen
 
 | Breaking Change | Impact | Action Required | Priority |
 |----------------|---------|-----------------|----------|
-| **TRAIGENT_MOCK_MODE** now mandatory | Automated tests will make real API calls without this flag | Set `export TRAIGENT_MOCK_MODE=true` in all CI/test environments | 🔴 **CRITICAL** |
+| **TRAIGENT_MOCK_LLM** now mandatory | Automated tests will make real API calls without this flag | Set `export TRAIGENT_MOCK_LLM=true` in all CI/test environments | 🔴 **CRITICAL** |
 | **Custom evaluators deprecated** | Scenario-specific evaluators no longer function | Migrate to `metric_functions` interface | 🔴 **HIGH** |
 | **Telemetry format changes** | New trial histories include additional fields | Update analysis scripts to handle new schema | 🟡 **MEDIUM** |
 | **SDK version requirements** | Requires `openai>=1.0.0`, `anthropic>=0.18.0` | Update `requirements.txt` or `pyproject.toml` | 🟡 **MEDIUM** |
@@ -52,14 +52,14 @@ This document describes a comprehensive overhaul of the Traigent paper experimen
 
 ```bash
 # Mandatory for all automated tests
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Required for real LLM calls (when mock mode is disabled)
 export OPENAI_API_KEY="<OPENAI_API_KEY>"        # For GPT models
 export ANTHROPIC_API_KEY="<ANTHROPIC_API_KEY>"  # For Claude models
 ```
 
-**⚠️ Warning**: Forgetting `TRAIGENT_MOCK_MODE=true` will trigger real API calls and incur costs during CI/QA runs.
+**⚠️ Warning**: Forgetting `TRAIGENT_MOCK_LLM=true` will trigger real API calls and incur costs during CI/QA runs.
 
 ---
 
@@ -104,7 +104,7 @@ Each case study simulates a real-world NLP workflow to evaluate quality/cost/lat
 ### Primary Objectives
 
 1. **🛡️ Prevent Accidental API Costs**
-   - Enforce `TRAIGENT_MOCK_MODE` for all automated testing
+   - Enforce `TRAIGENT_MOCK_LLM` for all automated testing
    - Add credential validation before real LLM calls
    - Fail fast if simulators are invoked incorrectly
 
@@ -179,7 +179,7 @@ Each case study simulates a real-world NLP workflow to evaluate quality/cost/lat
 ```text
 User Request
     │
-    ├─> Check TRAIGENT_MOCK_MODE=true
+    ├─> Check TRAIGENT_MOCK_LLM=true
     │
     ├─> Route to Simulator
     │   ├─> Validate model identifier
@@ -197,7 +197,7 @@ User Request
 ```text
 User Request
     │
-    ├─> Check TRAIGENT_MOCK_MODE=false/unset
+    ├─> Check TRAIGENT_MOCK_LLM=false/unset
     │
     ├─> Validate API Credentials
     │   ├─> OpenAI key for gpt-* models
@@ -475,7 +475,7 @@ def build_fever_metric_functions(
 
 # Usage in experiment (automatic wiring via pipeline)
 optimized_func = build_fever_optimized_function(
-    mock_mode=os.getenv("TRAIGENT_MOCK_MODE", "").lower() == "true"
+    mock_mode=os.getenv("TRAIGENT_MOCK_LLM", "").lower() == "true"
 )
 # LocalEvaluator automatically wired with metric_functions
 ```
@@ -504,7 +504,7 @@ optimized_func = build_fever_optimized_function(
 ```bash
 # .github/workflows/test.yml or similar
 env:
-  TRAIGENT_MOCK_MODE: "true"  # CRITICAL: Prevent API costs
+  TRAIGENT_MOCK_LLM: "true"  # CRITICAL: Prevent API costs
   TRAIGENT_LOG_LEVEL: "INFO"
 ```
 
@@ -512,10 +512,10 @@ env:
 
 ```bash
 # .env.test or test-specific configuration
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # .env.production (when intentionally running real experiments)
-export TRAIGENT_MOCK_MODE=false
+export TRAIGENT_MOCK_LLM=false
 export OPENAI_API_KEY="<OPENAI_API_KEY>"
 export ANTHROPIC_API_KEY="<ANTHROPIC_API_KEY>"
 ```
@@ -551,7 +551,7 @@ optimized_func = traigent.optimize(
 from paper_experiments.case_study_fever.pipeline import build_fever_optimized_function
 
 optimized_func = build_fever_optimized_function(
-    mock_mode=os.getenv("TRAIGENT_MOCK_MODE", "").lower() == "true"
+    mock_mode=os.getenv("TRAIGENT_MOCK_LLM", "").lower() == "true"
 )
 # Evaluator automatically configured
 ```
@@ -669,13 +669,13 @@ git checkout tags/v1.0.0-pre-migration
 
 ```python
 def test_simulator_requires_mock_mode():
-    """Simulator should reject execution when TRAIGENT_MOCK_MODE is unset."""
+    """Simulator should reject execution when TRAIGENT_MOCK_LLM is unset."""
 
     # Clear environment
-    if "TRAIGENT_MOCK_MODE" in os.environ:
-        del os.environ["TRAIGENT_MOCK_MODE"]
+    if "TRAIGENT_MOCK_LLM" in os.environ:
+        del os.environ["TRAIGENT_MOCK_LLM"]
 
-    with pytest.raises(RuntimeError, match="TRAIGENT_MOCK_MODE must be 'true'"):
+    with pytest.raises(RuntimeError, match="TRAIGENT_MOCK_LLM must be 'true'"):
         simulate_case_study_execution(
             claim="Test claim",
             config={"model": "gpt-4o"}
@@ -684,7 +684,7 @@ def test_simulator_requires_mock_mode():
 def test_simulator_rejects_unknown_model():
     """Simulator should reject unknown model identifiers."""
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     with pytest.raises(ValueError, match="Unknown model"):
         simulate_case_study_execution(
@@ -704,7 +704,7 @@ def test_real_pipeline_requires_api_key():
         if key in os.environ:
             del os.environ[key]
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "false"
+    os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
     with pytest.raises(RuntimeError, match="API key required"):
         build_fever_optimized_function(mock_mode=False)
@@ -716,7 +716,7 @@ def test_real_pipeline_requires_api_key():
 def test_metric_functions_return_float():
     """Each metric function should return a float value."""
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     metrics = build_fever_metric_functions(mock_mode=True)
 
@@ -747,7 +747,7 @@ def test_metric_functions_return_float():
 
 ```bash
 # Run complete optimization in mock mode
-TRAIGENT_MOCK_MODE=true python paper_experiments/cli.py optimize \
+TRAIGENT_MOCK_LLM=true python paper_experiments/cli.py optimize \
     --scenario fever \
     --mock-mode on \
     --trials 2 \
@@ -772,7 +772,7 @@ for trial in trials:
 
 ```bash
 # Run with real LLM calls (manual verification only)
-TRAIGENT_MOCK_MODE=false \
+TRAIGENT_MOCK_LLM=false \
 OPENAI_API_KEY="<OPENAI_API_KEY>" \
 python paper_experiments/cli.py optimize \
     --scenario fever \
@@ -804,7 +804,7 @@ def test_fever_mock_baseline_quality():
     HISTORICAL_BASELINE = 0.75  # From previous version
     TOLERANCE = 0.05
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     # Run optimization
     result = run_optimization(
@@ -828,7 +828,7 @@ def test_fever_mock_baseline_quality():
 def test_spider_latency_benchmark():
     """Verify gpt-3.5-turbo is faster than gpt-4o-mini (Spider scenario)."""
 
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     latency_35 = get_average_latency(model="gpt-3.5-turbo", trials=5)
     latency_4o = get_average_latency(model="gpt-4o-mini", trials=5)
@@ -845,11 +845,11 @@ def test_spider_latency_benchmark():
 
 #### Risk 1: Environment Sensitivity
 
-**Risk**: Simulator gating relies on `TRAIGENT_MOCK_MODE`; misconfigured environments may incur real API charges.
+**Risk**: Simulator gating relies on `TRAIGENT_MOCK_LLM`; misconfigured environments may incur real API charges.
 
 **Mitigation:**
 
-- ✅ Add `TRAIGENT_MOCK_MODE` validation in CI/CD pipeline entry points
+- ✅ Add `TRAIGENT_MOCK_LLM` validation in CI/CD pipeline entry points
 - ✅ Implement `TRAIGENT_FAIL_ON_REAL_MODE` toggle for strict enforcement
 - ✅ Add cost estimation warnings before real mode execution
 - ✅ Document environment setup in all quickstart guides
@@ -859,10 +859,10 @@ def test_spider_latency_benchmark():
 ```python
 # Pipeline entry point
 if os.getenv("CI") == "true":  # Running in CI
-    if os.getenv("TRAIGENT_MOCK_MODE", "").lower() != "true":
+    if os.getenv("TRAIGENT_MOCK_LLM", "").lower() != "true":
         raise EnvironmentError(
-            "TRAIGENT_MOCK_MODE must be 'true' in CI environments. "
-            "Set 'export TRAIGENT_MOCK_MODE=true' to prevent API costs."
+            "TRAIGENT_MOCK_LLM must be 'true' in CI environments. "
+            "Set 'export TRAIGENT_MOCK_LLM=true' to prevent API costs."
         )
 ```
 
@@ -980,7 +980,7 @@ anthropic==0.18.1
 ### Immediate Actions (Week 1)
 
 1. **Update CI/CD Pipelines**
-   - Add `TRAIGENT_MOCK_MODE=true` to all test environments
+   - Add `TRAIGENT_MOCK_LLM=true` to all test environments
    - Implement pre-flight checks for environment configuration
    - Add telemetry validation to deployment gates
 
@@ -1118,11 +1118,11 @@ def simulate_case_study_execution(
     Deterministic simulator for case study execution.
 
     Requirements:
-        - os.getenv("TRAIGENT_MOCK_MODE") must equal "true"
+        - os.getenv("TRAIGENT_MOCK_LLM") must equal "true"
         - config["model"] must be in approved list
 
     Raises:
-        RuntimeError: If TRAIGENT_MOCK_MODE is not set
+        RuntimeError: If TRAIGENT_MOCK_LLM is not set
         ValueError: If model identifier is unknown
 
     Returns:
@@ -1174,7 +1174,7 @@ This pipeline overhaul represents a significant improvement in the Traigent pape
 
 **Next Steps for Teams:**
 
-1. Set `TRAIGENT_MOCK_MODE=true` in all CI/CD pipelines **today**
+1. Set `TRAIGENT_MOCK_LLM=true` in all CI/CD pipelines **today**
 2. Update dependencies to required SDK versions
 3. Remove custom evaluator imports and migrate to new pipelines
 4. Validate telemetry output in trial histories

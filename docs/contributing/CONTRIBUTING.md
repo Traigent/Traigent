@@ -40,7 +40,7 @@ Thank you for your interest in contributing to Traigent SDK! We welcome contribu
 
 3. **Run tests locally**:
    ```bash
-   export TRAIGENT_MOCK_MODE=true
+   export TRAIGENT_MOCK_LLM=true
 
    # Run unit tests
    python -m pytest tests/unit/ -v

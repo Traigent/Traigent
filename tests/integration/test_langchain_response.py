@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Mock mode to avoid API calls
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 try:
     from langchain_anthropic import ChatAnthropic

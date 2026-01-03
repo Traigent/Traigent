@@ -183,7 +183,7 @@ Implement fix for issue 001: Add atomic file writes to storage module.
 **Requirements**:
 1. Modify write_file() to use tempfile + os.replace()
 2. Add test for interrupted write scenario
-3. Run tests: TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/unit/test_storage.py
+3. Run tests: TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/unit/test_storage.py
 4. Report test results
 
 **Constraints**:
@@ -377,7 +377,7 @@ Optional fields:
 
 Example (standard):
 ```json
-{"format":"standard","commits":["def5678"],"tests":{"command":"TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/unit/test_storage.py -q","status":"PASS","passed":12,"total":12},"models":"Claude Opus 4.5","reviewer":"captain","timestamp":"2025-12-14T10:30:00Z","followups":"None","accepted_risks":"None"}
+{"format":"standard","commits":["def5678"],"tests":{"command":"TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/unit/test_storage.py -q","status":"PASS","passed":12,"total":12},"models":"Claude Opus 4.5","reviewer":"captain","timestamp":"2025-12-14T10:30:00Z","followups":"None","accepted_risks":"None"}
 ```
 Record before/after details in fix artifacts or Notes (not inside evidence JSON).
 
@@ -584,8 +584,8 @@ export RR_BASE_BRANCH=main
 .venv/bin/python .post_release_recommendation_fixes/automation/git_helper.py branch 001 "atomic-writes"
 
 # Run tests (use mock mode!)
-export RR_TEST_COMMAND="TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -q"
-TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
+export RR_TEST_COMMAND="TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/ -q"
+TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/ -v
 
 # Format and lint
 make format && make lint
@@ -634,7 +634,7 @@ git checkout -b fix/<issue-id>/<description> "$RR_BASE_BRANCH"
 
 ### Run Tests
 ```bash
-TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
+TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/ -v
 ```
 
 ### Format and Lint
@@ -679,7 +679,7 @@ export TMPDIR=$PWD/.post_release_recommendation_fixes/$RR_VERSION/tmp
 
 Then re-run tests (still in mock mode):
 ```bash
-TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
+TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/ -v
 ```
 
 ### 3. Interactive Prompts in Automation
@@ -707,9 +707,9 @@ TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
 
 **Problem**: Tests fail or make real API calls without mock mode.
 
-**Solution**: Always prefix test commands with `TRAIGENT_MOCK_MODE=true`:
+**Solution**: Always prefix test commands with `TRAIGENT_MOCK_LLM=true`:
 ```bash
-TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
+TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/ -v
 ```
 
 ### 6. Not Running Pre-flight Checks
@@ -745,11 +745,11 @@ TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/ -v
 ```bash
 # WRONG (shebang may be broken)
 .venv/bin/pytest tests/
-TRAIGENT_MOCK_MODE=true .venv/bin/pytest tests/
+TRAIGENT_MOCK_LLM=true .venv/bin/pytest tests/
 
 # CORRECT
 .venv/bin/python -m pytest tests/
-TRAIGENT_MOCK_MODE=true .venv/bin/python -m pytest tests/
+TRAIGENT_MOCK_LLM=true .venv/bin/python -m pytest tests/
 ```
 
 ### 10. Skipping Conflict Check Before Parallel Dispatch

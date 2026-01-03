@@ -7,7 +7,7 @@ retrieval-augmented generation. It optimizes for answer accuracy,
 grounding (faithfulness to sources), and appropriate abstention.
 
 Usage:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python use-cases/knowledge-rag/agent/rag_agent.py
 """
 
@@ -117,7 +117,7 @@ Provide a helpful answer based on the documentation above. If you cannot find th
 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled via environment variable."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("true", "1", "yes")
 
 
 @traigent.optimize(
@@ -195,7 +195,7 @@ def rag_qa_agent(question: str) -> dict[str, Any]:
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
         raise ImportError(
-            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "langchain-openai is required when TRAIGENT_MOCK_LLM is disabled. "
             "Install it with: pip install langchain-openai"
         ) from exc
 
@@ -284,7 +284,7 @@ async def run_optimization():
 
     if not mock_mode:
         print("\nWARNING: Running without mock mode will incur API costs!")
-        print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
+        print("Set TRAIGENT_MOCK_LLM=true for testing.\n")
 
     print("\nStarting optimization...")
     print("Configuration Space:")

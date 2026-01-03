@@ -48,7 +48,7 @@ def patch_examples(root_dir):
                             # Check if next lines already have mock check
                             has_mock_check = False
                             for k in range(i+1, min(len(lines), i+10)):
-                                if "TRAIGENT_MOCK_MODE" in lines[k]:
+                                if "TRAIGENT_MOCK_LLM" in lines[k]:
                                     has_mock_check = True
                                     break
                             
@@ -59,7 +59,7 @@ def patch_examples(root_dir):
                                 # Add mock check
                                 new_lines.append(f'\n{indent}# Check for mock mode\n')
                                 new_lines.append(f'{indent}import os\n')
-                                new_lines.append(f'{indent}if os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true":\n')
+                                new_lines.append(f'{indent}if os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true":\n')
                                 new_lines.append(f'{indent}    return "Mock response"\n')
                                 modified = True
                     
