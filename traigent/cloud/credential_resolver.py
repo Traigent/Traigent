@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -164,7 +165,10 @@ class CredentialResolver:
             from traigent.security.crypto_utils import SecureFileManager
 
             # Use secure file reading with permission checks
-            data = SecureFileManager.read_secure_file(self.config.credentials_file)
+            creds_path = Path(self.config.credentials_file).expanduser().resolve()
+            data = SecureFileManager.read_secure_file(
+                str(creds_path), base_dir=creds_path.parent
+            )
 
             # Decrypt credentials
             decrypted_data = self.decrypt(data)
@@ -299,8 +303,11 @@ class CredentialResolver:
             encrypted_data = self.encrypt(credentials)
 
             # Write with secure permissions from the start
+            creds_path = Path(self.config.credentials_file).expanduser().resolve()
             SecureFileManager.write_secure_file(
-                self.config.credentials_file, encrypted_data
+                str(creds_path),
+                encrypted_data,
+                base_dir=creds_path.parent,
             )
 
         except Exception as e:

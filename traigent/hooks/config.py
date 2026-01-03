@@ -15,6 +15,11 @@ from typing import Any
 import yaml
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import (
+    safe_open,
+    safe_write_text,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
@@ -223,13 +228,19 @@ def load_hooks_config(config_path: Path | str | None = None) -> HooksConfig:
         return HooksConfig()
 
     config_path = Path(config_path)
+    allowed_base = (
+        config_path.parent.resolve()
+        if config_path.is_absolute()
+        else Path.cwd().resolve()
+    )
+    config_path = validate_path(config_path, allowed_base, must_exist=False)
 
     if not config_path.exists():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
 
     logger.info(f"Loading hooks configuration from {config_path}")
 
-    with open(config_path, encoding="utf-8") as f:
+    with safe_open(config_path, allowed_base, mode="r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     return HooksConfig.from_dict(data)
@@ -248,6 +259,13 @@ def create_default_config(output_path: Path | str | None = None) -> Path:
         output_path = Path.cwd() / "traigent.yml"
     else:
         output_path = Path(output_path)
+
+    allowed_base = (
+        output_path.parent.resolve()
+        if output_path.is_absolute()
+        else Path.cwd().resolve()
+    )
+    output_path = validate_path(output_path, allowed_base, must_exist=False)
 
     default_config = """# Traigent Agent Configuration Constraints
 # This file defines validation rules for agent configurations
@@ -294,8 +312,7 @@ environments:
       min_accuracy: 0.90        # Higher accuracy required
 """
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(default_config)
+    safe_write_text(output_path, default_config, allowed_base, encoding="utf-8")
 
     logger.info(f"Created default configuration at {output_path}")
     return output_path

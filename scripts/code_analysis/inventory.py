@@ -7,6 +7,13 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
+
 try:  # pragma: no cover
     from .analysis_utils import (
         count_sloc,
@@ -54,17 +61,18 @@ def load_codeowners(project_root: Path) -> List[Tuple[str, List[str]]]:
         return []
     rules: List[Tuple[str, List[str]]] = []
     try:
-        with codeowners_path.open("r", encoding="utf-8") as handle:
-            for raw_line in handle:
-                line = raw_line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                pattern = parts[0]
-                owners = parts[1:]
-                rules.append((pattern, owners))
+        safe_path = validate_path(codeowners_path, project_root, must_exist=True)
+        content = safe_read_text(safe_path, project_root)
+        for raw_line in content.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            pattern = parts[0]
+            owners = parts[1:]
+            rules.append((pattern, owners))
     except OSError:
         return []
     return rules
@@ -128,10 +136,12 @@ def run_lint(project_root: Path, lint_output: Path) -> None:
         project_root,
     )
     if result.stdout:
-        lint_output.write_text(result.stdout, encoding="utf-8")
+        safe_write_text(lint_output, result.stdout, project_root, encoding="utf-8")
     elif result.returncode != 0:
-        lint_output.write_text(
+        safe_write_text(
+            lint_output,
             f"{{\n  \"error\": \"ruff command failed with code {result.returncode}\"\n}}\n",
+            project_root,
             encoding="utf-8",
         )
 
@@ -147,8 +157,10 @@ def run_coverage(project_root: Path, coverage_output: Path) -> None:
     if result.returncode != 0:
         # Persist stdout/stderr for troubleshooting and fall back to empty coverage map.
         failure_log = coverage_output.with_suffix(".log")
-        failure_log.write_text(
+        safe_write_text(
+            failure_log,
             f"Command: {' '.join(cmd)}\nReturn code: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+            project_root,
             encoding="utf-8",
         )
 
@@ -163,15 +175,26 @@ def main() -> None:
     parser.add_argument("--skip-owners", action="store_true")
     args = parser.parse_args()
 
-    project_root = args.project_root.resolve()
-    source_root = (args.project_root / args.source_root).resolve()
+    base_dir = Path.cwd()
+    try:
+        project_root = validate_path(args.project_root, base_dir, must_exist=True)
+        source_root = validate_path(
+            project_root / args.source_root,
+            project_root,
+            must_exist=True,
+        )
+        coverage_xml = validate_path(args.coverage_xml, project_root, must_exist=True)
+        lint_json = validate_path(args.lint_json, project_root, must_exist=True)
+        output_path = validate_path(args.output, project_root)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
     codeowners_rules: Sequence[Tuple[str, List[str]]] = []
     if not args.skip_owners:
         codeowners_rules = load_codeowners(project_root)
 
-    coverage_map = load_coverage_map(args.coverage_xml, project_root)
-    lint_map = load_lint_map(args.lint_json, project_root)
+    coverage_map = load_coverage_map(coverage_xml, project_root)
+    lint_map = load_lint_map(lint_json, project_root)
 
     rows = gather_inventory(project_root, source_root, coverage_map, lint_map, codeowners_rules)
     header = [
@@ -185,7 +208,7 @@ def main() -> None:
         "test_coverage_percent",
         "lint_error_count",
     ]
-    write_csv(args.output, header, rows)
+    write_csv(output_path, header, rows)
 
 
 if __name__ == "__main__":  # pragma: no cover

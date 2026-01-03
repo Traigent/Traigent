@@ -22,6 +22,12 @@ from libcst.codemod import CodemodContext
 from libcst.codemod.visitors import AddImportsVisitor
 from libcst.metadata import ParentNodeProvider
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 _CONTAINER_ANNOTATIONS = {
     "list": "list[Any]",
@@ -128,8 +134,9 @@ def iter_python_files(paths: Iterable[pathlib.Path]) -> Iterable[pathlib.Path]:
             yield path
 
 
-def process_file(path: pathlib.Path) -> bool:
-    source = path.read_text()
+def process_file(path: pathlib.Path, base_dir: pathlib.Path) -> bool:
+    safe_path = validate_path(path, base_dir, must_exist=True)
+    source = safe_read_text(safe_path, base_dir)
     module = cst.parse_module(source)
     context = CodemodContext()
     wrapper = cst.MetadataWrapper(module)
@@ -138,7 +145,7 @@ def process_file(path: pathlib.Path) -> bool:
     if not transformer.changed:
         return False
     updated = AddImportsVisitor(context).transform_module(updated)
-    path.write_text(updated.code)
+    safe_write_text(safe_path, updated.code, base_dir)
     return True
 
 
@@ -153,9 +160,17 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    base_dir = pathlib.Path.cwd()
+    safe_paths: list[pathlib.Path] = []
+    for path in args.paths:
+        try:
+            safe_paths.append(validate_path(path, base_dir, must_exist=True))
+        except (PathTraversalError, FileNotFoundError) as exc:
+            raise SystemExit(f"Error: {exc}") from exc
+
     changed_files: list[pathlib.Path] = []
-    for file in iter_python_files(args.paths):
-        if process_file(file):
+    for file in iter_python_files(safe_paths):
+        if process_file(file, base_dir):
             changed_files.append(file)
 
     if changed_files:

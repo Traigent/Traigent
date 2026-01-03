@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -196,7 +197,7 @@ class FileVersionManager:
 
             if absolute_path.suffix == ".json":
                 try:
-                    with open(absolute_path, "rb") as f:
+                    with safe_open(absolute_path, base_path, mode="rb") as f:
                         file_info["sha256"] = hashlib.sha256(f.read()).hexdigest()
                 except OSError as exc:
                     logger.warning(
@@ -266,7 +267,10 @@ class FileVersionManager:
 
                 if "sha256" in file_info and absolute_path.suffix == ".json":
                     try:
-                        with open(absolute_path, "rb") as f:
+                        validated_path = validate_path(
+                            absolute_path, base_path, must_exist=True
+                        )
+                        with safe_open(validated_path, base_path, mode="rb") as f:
                             actual_checksum = hashlib.sha256(f.read()).hexdigest()
                     except OSError as exc:
                         logger.warning(
@@ -394,7 +398,10 @@ class RunVersionInfo:
 
         # Save version info
         self.version_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.version_file, "w") as f:
+        validated_version_file = validate_path(
+            self.version_file, self.version_file.parent, must_exist=False
+        )
+        with safe_open(validated_version_file, self.version_file.parent, mode="w") as f:
             json.dump(version_info, f, indent=2)
 
         return version_info
@@ -408,7 +415,10 @@ class RunVersionInfo:
         if not self.version_file.exists():
             return None
 
-        with open(self.version_file) as f:
+        validated_version_file = validate_path(
+            self.version_file, self.version_file.parent, must_exist=True
+        )
+        with safe_open(validated_version_file, self.version_file.parent, mode="r") as f:
             return cast(dict[str, Any] | None, json.load(f))
 
     def check_compatibility(self, current_version: str) -> dict[str, Any]:

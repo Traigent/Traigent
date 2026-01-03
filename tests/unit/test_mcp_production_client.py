@@ -662,6 +662,574 @@ class TestMCPIntegrationScenarios:
                         assert result is not None
 
 
+class TestMCPServerConfigValidation:
+    """Test MCPServerConfig validation."""
+
+    def test_server_config_empty_server_path_raises(self):
+        """Test that empty server_path raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError):
+            MCPServerConfig(server_path="")
+
+    def test_server_config_invalid_server_args_type(self):
+        """Test that invalid server_args type raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError, match="server_args must be a list"):
+            MCPServerConfig(server_path="python", server_args="not-a-list")
+
+    def test_server_config_empty_string_in_server_args(self):
+        """Test that empty string in server_args raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError):
+            MCPServerConfig(server_path="python", server_args=["-m", ""])
+
+    def test_server_config_negative_timeout(self):
+        """Test that negative timeout raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError, match="timeout must be a positive value"):
+            MCPServerConfig(server_path="python", timeout=-1.0)
+
+    def test_server_config_zero_timeout(self):
+        """Test that zero timeout raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError, match="timeout must be a positive value"):
+            MCPServerConfig(server_path="python", timeout=0)
+
+    def test_server_config_negative_retry_delay(self):
+        """Test that negative retry_delay raises ValidationError."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        with pytest.raises(ValidationError, match="retry_delay must be non-negative"):
+            MCPServerConfig(server_path="python", retry_delay=-1.0)
+
+
+class TestMCPResponseDataclass:
+    """Test MCPResponse dataclass."""
+
+    def test_mcp_response_success(self):
+        """Test successful MCPResponse creation."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        response = MCPResponse(
+            success=True,
+            data={"result": "test"},
+            request_id="req-123",
+        )
+        assert response.success is True
+        assert response.data == {"result": "test"}
+        assert response.request_id == "req-123"
+        assert response.error_message is None
+
+    def test_mcp_response_failure(self):
+        """Test failed MCPResponse creation."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        response = MCPResponse(
+            success=False,
+            error_message="Test error",
+            request_id="req-456",
+        )
+        assert response.success is False
+        assert response.error_message == "Test error"
+        assert response.data is None
+
+
+class TestProductionMCPClientValidationMethods:
+    """Test ProductionMCPClient static validation methods."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    def test_validate_identifier_valid(self):
+        """Test _validate_identifier with valid input."""
+        # Should not raise
+        self.client._validate_identifier("valid-id", "test_field")
+
+    def test_validate_identifier_empty(self):
+        """Test _validate_identifier with empty string."""
+        with pytest.raises(ValidationError):
+            self.client._validate_identifier("", "test_field")
+
+    def test_validate_mapping_valid(self):
+        """Test _validate_mapping with valid input."""
+        # Should not raise
+        self.client._validate_mapping({"key": "value"}, "test_field")
+
+    def test_validate_mapping_invalid(self):
+        """Test _validate_mapping with non-dict input."""
+        with pytest.raises(ValidationError):
+            self.client._validate_mapping("not-a-dict", "test_field")
+
+    def test_validate_positive_int_valid(self):
+        """Test _validate_positive_int with valid input."""
+        # Should not raise
+        self.client._validate_positive_int(5, "test_field")
+
+    def test_validate_positive_int_invalid(self):
+        """Test _validate_positive_int with non-positive input."""
+        with pytest.raises(ValidationError):
+            self.client._validate_positive_int(0, "test_field")
+
+    def test_validate_tool_call_inputs_valid(self):
+        """Test _validate_tool_call_inputs with valid inputs."""
+        result = self.client._validate_tool_call_inputs(
+            "test_tool", {"arg": "value"}, "op-123"
+        )
+        assert result is None
+
+    def test_validate_tool_call_inputs_empty_tool_name(self):
+        """Test _validate_tool_call_inputs with empty tool name."""
+        result = self.client._validate_tool_call_inputs("", {"arg": "value"}, "op-123")
+        assert result is not None
+        assert result.success is False
+
+    def test_validate_tool_call_inputs_invalid_arguments_type(self):
+        """Test _validate_tool_call_inputs with invalid arguments type."""
+        result = self.client._validate_tool_call_inputs(
+            "test_tool", "not-dict", "op-123"
+        )
+        assert result is not None
+        assert result.success is False
+        assert "dictionary" in result.error_message
+
+
+class TestProductionMCPClientContextManager:
+    """Test ProductionMCPClient async context manager."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        self.server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_async_context_manager(self):
+        """Test async context manager entry and exit."""
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = ProductionMCPClient(self.server_config)
+
+                with patch.object(
+                    client, "connect", new_callable=AsyncMock
+                ) as mock_connect:
+                    with patch.object(
+                        client, "disconnect", new_callable=AsyncMock
+                    ) as mock_disconnect:
+                        mock_connect.return_value = True
+
+                        async with client as c:
+                            assert c is client
+
+                        mock_connect.assert_called_once()
+                        mock_disconnect.assert_called_once()
+
+
+class TestProductionMCPClientStatistics:
+    """Test ProductionMCPClient statistics methods."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    def test_get_statistics(self):
+        """Test get_statistics method."""
+        stats = self.client.get_statistics()
+        assert "total_requests" in stats
+        assert "successful_requests" in stats
+        assert "failed_requests" in stats
+        assert "connection_attempts" in stats
+        assert "connected" in stats
+        assert "active_operations" in stats
+        assert "cached_results" in stats
+
+    def test_get_active_operations(self):
+        """Test get_active_operations method."""
+        # Initially empty
+        ops = self.client.get_active_operations()
+        assert ops == {}
+
+        # Add some operations
+        self.client._active_operations["op1"] = {"tool": "test"}
+        ops = self.client.get_active_operations()
+        assert len(ops) == 1
+        assert "op1" in ops
+
+
+class TestProductionMCPClientFallback:
+    """Test ProductionMCPClient fallback operations."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_fallback_create_experiment(self):
+        """Test fallback for create_experiment tool."""
+        response = await self.client._fallback_operation("create_experiment", {})
+        assert response.success is True
+        assert "experiment_id" in response.data
+        assert "fallback_exp_" in response.data["experiment_id"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_start_experiment_run(self):
+        """Test fallback for start_experiment_run tool."""
+        response = await self.client._fallback_operation("start_experiment_run", {})
+        assert response.success is True
+        assert "experiment_run_id" in response.data
+
+    @pytest.mark.asyncio
+    async def test_fallback_create_configuration_run(self):
+        """Test fallback for create_configuration_run tool."""
+        response = await self.client._fallback_operation("create_configuration_run", {})
+        assert response.success is True
+        assert "config_run_id" in response.data
+
+    @pytest.mark.asyncio
+    async def test_fallback_create_agent(self):
+        """Test fallback for create_agent tool."""
+        response = await self.client._fallback_operation("create_agent", {})
+        assert response.success is True
+        assert "agent_id" in response.data
+
+    @pytest.mark.asyncio
+    async def test_fallback_upload_example_set(self):
+        """Test fallback for upload_example_set tool."""
+        response = await self.client._fallback_operation("upload_example_set", {})
+        assert response.success is True
+        assert "example_set_id" in response.data
+
+    @pytest.mark.asyncio
+    async def test_fallback_unknown_tool(self):
+        """Test fallback for unknown tool."""
+        response = await self.client._fallback_operation("unknown_tool", {})
+        assert response.success is False
+        assert "No fallback available" in response.error_message
+
+
+class TestProductionMCPClientHealthCheck:
+    """Test ProductionMCPClient health check."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_health_check_not_connected(self):
+        """Test health check when not connected."""
+        response = await self.client.health_check()
+        assert response.success is False
+        assert "Not connected" in response.error_message
+
+    @pytest.mark.asyncio
+    async def test_health_check_connected_success(self):
+        """Test health check when connected and healthy."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        self.client._connected = True
+        self.client._session = Mock()
+
+        with patch.object(
+            self.client, "list_resources", new_callable=AsyncMock
+        ) as mock_list:
+            mock_list.return_value = MCPResponse(success=True, data={"resources": []})
+
+            response = await self.client.health_check()
+            assert response.success is True
+            assert response.data["status"] == "healthy"
+
+    @pytest.mark.asyncio
+    async def test_health_check_connected_failure(self):
+        """Test health check when connected but list_resources fails."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        self.client._connected = True
+        self.client._session = Mock()
+
+        with patch.object(
+            self.client, "list_resources", new_callable=AsyncMock
+        ) as mock_list:
+            mock_list.return_value = MCPResponse(success=False, error_message="Failed")
+
+            response = await self.client.health_check()
+            assert response.success is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_exception(self):
+        """Test health check when an exception occurs."""
+        self.client._connected = True
+        self.client._session = Mock()
+
+        with patch.object(
+            self.client, "list_resources", new_callable=AsyncMock
+        ) as mock_list:
+            mock_list.side_effect = Exception("Unexpected error")
+
+            response = await self.client.health_check()
+            assert response.success is False
+            assert "Health check error" in response.error_message
+
+
+class TestProductionMCPClientConnectionMethods:
+    """Test ProductionMCPClient connection methods."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        self.server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_connect_mcp_not_available(self):
+        """Test connect when MCP library is not available."""
+        with patch("traigent.cloud.production_mcp_client.MCP_AVAILABLE", False):
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryConfig"
+            ) as mock_retry_config:
+                with patch(
+                    "traigent.cloud.production_mcp_client.RetryHandler"
+                ) as mock_retry_handler:
+                    mock_retry_config.return_value = Mock()
+                    mock_retry_handler.return_value = Mock()
+
+                    client = ProductionMCPClient(self.server_config)
+                    result = await client.connect()
+                    assert result is False
+
+    @pytest.mark.asyncio
+    async def test_is_connected_true(self):
+        """Test is_connected when connected."""
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = ProductionMCPClient(self.server_config)
+                client._connected = True
+                client._session = Mock()
+
+                result = await client.is_connected()
+                assert result is True
+
+    @pytest.mark.asyncio
+    async def test_is_connected_false_no_session(self):
+        """Test is_connected when no session."""
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = ProductionMCPClient(self.server_config)
+                client._connected = True
+                client._session = None
+
+                result = await client.is_connected()
+                assert result is False
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connection_with_errors(self):
+        """Test _cleanup_connection handles errors gracefully."""
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = ProductionMCPClient(self.server_config)
+                client._connected = True
+                client._session = AsyncMock()
+                client._transport = AsyncMock()
+                client._session.close.side_effect = Exception("Close error")
+
+                # Should not raise
+                await client._cleanup_connection()
+
+                assert client._session is None
+                assert client._transport is None
+                assert client._connected is False
+
+
+class TestGlobalMCPClientFunctions:
+    """Test global MCP client functions."""
+
+    def teardown_method(self):
+        """Clean up global state."""
+        from traigent.cloud import production_mcp_client
+
+        production_mcp_client._production_client = None
+
+    def test_get_production_mcp_client_creates_new(self):
+        """Test get_production_mcp_client creates new client."""
+        from traigent.cloud import production_mcp_client
+        from traigent.cloud.production_mcp_client import (
+            _production_client,
+            get_production_mcp_client,
+        )
+
+        # Ensure no client exists
+        production_mcp_client._production_client = None
+
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = get_production_mcp_client()
+                assert client is not None
+                assert production_mcp_client._production_client is not None
+
+    def test_get_production_mcp_client_returns_existing(self):
+        """Test get_production_mcp_client returns existing client."""
+        from traigent.cloud import production_mcp_client
+        from traigent.cloud.production_mcp_client import (
+            MCPServerConfig,
+            get_production_mcp_client,
+        )
+
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client1 = get_production_mcp_client()
+                client2 = get_production_mcp_client()
+                assert client1 is client2
+
+    def test_get_production_mcp_client_with_custom_args(self):
+        """Test get_production_mcp_client with custom arguments."""
+        from traigent.cloud import production_mcp_client
+        from traigent.cloud.production_mcp_client import get_production_mcp_client
+
+        production_mcp_client._production_client = None
+
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                client = get_production_mcp_client(
+                    server_path="/usr/bin/python",
+                    server_args=["-m", "custom_server"],
+                    timeout=60.0,
+                )
+                assert client.server_config.server_path == "/usr/bin/python"
+                assert client.server_config.timeout == 60.0
+
+    def test_set_production_mcp_client(self):
+        """Test set_production_mcp_client."""
+        from traigent.cloud import production_mcp_client
+        from traigent.cloud.production_mcp_client import (
+            MCPServerConfig,
+            set_production_mcp_client,
+        )
+
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+
+                config = MCPServerConfig(server_path="custom")
+                custom_client = ProductionMCPClient(config)
+
+                set_production_mcp_client(custom_client)
+                assert production_mcp_client._production_client is custom_client
+
+
 class TestMCPConfiguration:
     """Test MCP client configuration management."""
 
@@ -734,6 +1302,669 @@ class TestMCPConfiguration:
                 # Verify configuration was applied
                 assert client.server_config.timeout == 60.0
                 assert client.server_config.max_retries == 5
+
+
+class TestCallToolExecution:
+    """Test call_tool method execution paths."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_validation_error_branch(self):
+        """Test call_tool returns validation error when inputs invalid."""
+        # Empty tool name should trigger validation error
+        result = await self.client.call_tool("", {"arg": "value"})
+        assert result.success is False
+        assert "tool_name" in result.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_with_operation_id(self):
+        """Test call_tool with custom operation_id."""
+        custom_op_id = "custom-op-123"
+        result = await self.client.call_tool("test_tool", {}, operation_id=custom_op_id)
+        # The operation result should be stored with this ID
+        assert (
+            custom_op_id in self.client._operation_results
+            or result.request_id == custom_op_id
+        )
+
+
+class TestListResources:
+    """Test list_resources method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_list_resources_not_connected(self):
+        """Test list_resources when not connected and connect fails."""
+        self.client._connected = False
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = False
+            with patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect:
+                mock_connect.return_value = False
+
+                result = await self.client.list_resources()
+                assert result.success is False
+                assert "Unable to connect" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_list_resources_success(self):
+        """Test list_resources when connected successfully."""
+        self.client._connected = True
+        mock_resource = Mock()
+        mock_resource.__dict__ = {"uri": "test://resource", "name": "Test"}
+
+        mock_session = AsyncMock()
+        mock_result = Mock()
+        mock_result.resources = [mock_resource]
+        mock_session.list_resources = AsyncMock(return_value=mock_result)
+        self.client._session = mock_session
+
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = True
+
+            # Mock asdict to return a simple dict
+            with patch(
+                "traigent.cloud.production_mcp_client.asdict",
+                return_value={"uri": "test"},
+            ):
+                result = await self.client.list_resources()
+                assert result.success is True
+                assert "resources" in result.data
+
+
+class TestReadResource:
+    """Test read_resource method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_read_resource_not_connected(self):
+        """Test read_resource when not connected and connect fails."""
+        self.client._connected = False
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = False
+            with patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect:
+                mock_connect.return_value = False
+
+                result = await self.client.read_resource("test://uri")
+                assert result.success is False
+                assert "Unable to connect" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_read_resource_success(self):
+        """Test read_resource when connected successfully."""
+        self.client._connected = True
+        mock_content = Mock()
+        mock_content.text = "Test resource content"
+
+        mock_session = AsyncMock()
+        mock_result = Mock()
+        mock_result.contents = [mock_content]
+        mock_session.read_resource = AsyncMock(return_value=mock_result)
+        self.client._session = mock_session
+
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = True
+
+            result = await self.client.read_resource("test://uri")
+            assert result.success is True
+            assert result.data["content"] == "Test resource content"
+
+
+class TestCreateExperiment:
+    """Test create_experiment method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_create_experiment_invalid_type(self):
+        """Test create_experiment with invalid type raises ValidationError."""
+        from traigent.utils.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="must be an OptimizationRequest"):
+            await self.client.create_experiment("not an optimization request")
+
+    @pytest.mark.asyncio
+    async def test_create_experiment_valid(self):
+        """Test create_experiment with valid OptimizationRequest."""
+        from traigent.cloud.models import OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        # Create proper dataset with examples
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        dataset = Dataset(name="test", examples=[example])
+
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=dataset,
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+        )
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"experiment_id": "exp_123"}
+            )
+
+            result = await self.client.create_experiment(request)
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+
+
+class TestStartExperimentRun:
+    """Test start_experiment_run method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_start_experiment_run_valid(self):
+        """Test start_experiment_run with valid inputs."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"experiment_run_id": "run_123"}
+            )
+
+            result = await self.client.start_experiment_run(
+                "exp_123", {"param": [1, 2]}, 10
+            )
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+
+
+class TestCreateConfigurationRun:
+    """Test create_configuration_run method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_create_configuration_run_valid(self):
+        """Test create_configuration_run with valid inputs."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"config_run_id": "config_123"}
+            )
+
+            result = await self.client.create_configuration_run(
+                "run_123", {"param1": "value1"}, "trial_123"
+            )
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+
+
+class TestUpdateConfigurationRunResults:
+    """Test update_configuration_run_results method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_update_configuration_run_results_valid(self):
+        """Test update_configuration_run_results with valid inputs."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(success=True, data={})
+
+            result = await self.client.update_configuration_run_results(
+                "config_123", {"accuracy": 0.95}, "COMPLETED"
+            )
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_configuration_run_results_with_error(self):
+        """Test update_configuration_run_results with error message."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(success=True, data={})
+
+            result = await self.client.update_configuration_run_results(
+                "config_123", {"accuracy": 0.0}, "FAILED", error_message="Test error"
+            )
+            assert result.success is True
+
+
+class TestCreateAgent:
+    """Test create_agent method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_create_agent_invalid_type(self):
+        """Test create_agent with invalid type raises ValidationError."""
+        from traigent.utils.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="must be an AgentSpecification"):
+            await self.client.create_agent("not an agent spec")
+
+    @pytest.mark.asyncio
+    async def test_create_agent_valid(self):
+        """Test create_agent with valid AgentSpecification."""
+        from traigent.cloud.models import AgentSpecification
+        from traigent.cloud.production_mcp_client import MCPResponse
+
+        agent_spec = AgentSpecification(name="test_agent", agent_type="optimization")
+
+        with patch.object(
+            self.client, "call_tool", new_callable=AsyncMock
+        ) as mock_call_tool:
+            mock_call_tool.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_123"}
+            )
+
+            result = await self.client.create_agent(agent_spec)
+            assert result.success is True
+            mock_call_tool.assert_called_once()
+
+
+class TestUploadDataset:
+    """Test upload_dataset method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_upload_dataset_invalid_type(self):
+        """Test upload_dataset with invalid type raises ValidationError."""
+        from traigent.utils.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="must be a Dataset"):
+            await self.client.upload_dataset("not a dataset")
+
+    @pytest.mark.asyncio
+    async def test_upload_dataset_valid(self):
+        """Test upload_dataset with valid Dataset."""
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        # Create proper EvaluationExample instances
+        example = EvaluationExample(
+            input_data={"test": "input"},
+            expected_output="test output",
+        )
+        dataset = Dataset(
+            name="test_dataset",
+            examples=[example],
+        )
+
+        # Mock the converter (locally imported in upload_dataset)
+        mock_metadata = Mock()
+        mock_metadata.name = "test_dataset"
+        mock_metadata.type = "qa"
+        mock_metadata.description = "Test dataset"
+
+        mock_converter = Mock()
+        mock_converter.sdk_dataset_to_backend_examples.return_value = (
+            [{"input": "test"}],
+            mock_metadata,
+        )
+
+        with patch("traigent.cloud.dataset_converter.converter", mock_converter):
+            with patch.object(
+                self.client, "call_tool", new_callable=AsyncMock
+            ) as mock_call_tool:
+                mock_call_tool.return_value = MCPResponse(
+                    success=True, data={"example_set_id": "set_123"}
+                )
+
+                result = await self.client.upload_dataset(dataset)
+                assert result.success is True
+
+
+class TestCreateOptimizationWorkflow:
+    """Test create_optimization_workflow method."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_invalid_type(self):
+        """Test create_optimization_workflow with invalid type."""
+        from traigent.utils.exceptions import ValidationError
+
+        with pytest.raises(ValidationError, match="must be an OptimizationRequest"):
+            await self.client.create_optimization_workflow("not a request")
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_missing_agent_spec(self):
+        """Test create_optimization_workflow with missing agent_specification."""
+        from traigent.cloud.models import OptimizationRequest
+        from traigent.evaluators.base import Dataset, EvaluationExample
+        from traigent.utils.exceptions import ValidationError
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        dataset = Dataset(name="test", examples=[example])
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=dataset,
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=None,
+        )
+
+        with pytest.raises(ValidationError, match="agent_specification is required"):
+            await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_invalid_dataset(self):
+        """Test create_optimization_workflow with invalid dataset type."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.utils.exceptions import ValidationError
+
+        request = OptimizationRequest(
+            function_name="test_function",
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            dataset="not a dataset",  # Invalid type
+        )
+
+        with pytest.raises(ValidationError, match="must be a Dataset"):
+            await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_agent_creation_failure(self):
+        """Test create_optimization_workflow when agent creation fails."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+        )
+
+        with patch.object(
+            self.client, "create_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MCPResponse(
+                success=False, error_message="Agent creation failed"
+            )
+
+            with pytest.raises(RuntimeError, match="Failed to create agent"):
+                await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_dataset_upload_failure(self):
+        """Test create_optimization_workflow when dataset upload fails."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            metadata={},
+        )
+
+        with patch.object(
+            self.client, "create_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_123"}
+            )
+
+            with patch.object(
+                self.client, "upload_dataset", new_callable=AsyncMock
+            ) as mock_upload:
+                mock_upload.return_value = MCPResponse(
+                    success=False, error_message="Upload failed"
+                )
+
+                with pytest.raises(RuntimeError, match="Failed to upload dataset"):
+                    await self.client.create_optimization_workflow(request)
+
+    @pytest.mark.asyncio
+    async def test_create_optimization_workflow_success(self):
+        """Test create_optimization_workflow with successful workflow."""
+        from traigent.cloud.models import AgentSpecification, OptimizationRequest
+        from traigent.cloud.production_mcp_client import MCPResponse
+        from traigent.evaluators.base import Dataset, EvaluationExample
+
+        example = EvaluationExample(
+            input_data={"test": "input"}, expected_output="output"
+        )
+        request = OptimizationRequest(
+            function_name="test_function",
+            dataset=Dataset(name="test", examples=[example]),
+            configuration_space={"param": [1, 2, 3]},
+            objectives=["maximize"],
+            max_trials=10,
+            agent_specification=AgentSpecification(name="test", agent_type="opt"),
+            metadata={},
+        )
+
+        with patch.object(
+            self.client, "create_agent", new_callable=AsyncMock
+        ) as mock_create_agent:
+            mock_create_agent.return_value = MCPResponse(
+                success=True, data={"agent_id": "agent_123"}
+            )
+
+            with patch.object(
+                self.client, "upload_dataset", new_callable=AsyncMock
+            ) as mock_upload:
+                mock_upload.return_value = MCPResponse(
+                    success=True, data={"example_set_id": "set_123"}
+                )
+
+                with patch.object(
+                    self.client, "create_experiment", new_callable=AsyncMock
+                ) as mock_create_exp:
+                    mock_create_exp.return_value = MCPResponse(
+                        success=True, data={"experiment_id": "exp_123"}
+                    )
+
+                    with patch.object(
+                        self.client, "start_experiment_run", new_callable=AsyncMock
+                    ) as mock_start_run:
+                        mock_start_run.return_value = MCPResponse(
+                            success=True, data={"experiment_run_id": "run_123"}
+                        )
+
+                        agent_id, exp_id, run_id = (
+                            await self.client.create_optimization_workflow(request)
+                        )
+                        assert agent_id == "agent_123"
+                        assert exp_id == "exp_123"
+                        assert run_id == "run_123"
 
 
 if __name__ == "__main__":

@@ -32,13 +32,17 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List
 
+from traigent.utils.secure_path import safe_open, validate_path
 
 class CleanupBackupManager:
     """Manages backups for cleanup operations with undo capability."""
 
     def __init__(self, base_path: Path):
-        self.base_path = base_path
-        self.backup_dir = base_path / "scripts" / "maintenance" / "cleanup_backups"
+        self.base_path = validate_path(base_path, Path.cwd(), must_exist=True)
+        self.backup_dir = validate_path(
+            self.base_path / "scripts" / "maintenance" / "cleanup_backups",
+            self.base_path,
+        )
         self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def create_cleanup_backup(
@@ -47,7 +51,7 @@ class CleanupBackupManager:
         """Create a backup before cleanup operations."""
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         backup_id = f"cleanup_{timestamp}"
-        backup_path = self.backup_dir / backup_id
+        backup_path = validate_path(self.backup_dir / backup_id, self.backup_dir)
         backup_path.mkdir(exist_ok=True)
 
         backup_manifest = {
@@ -62,8 +66,11 @@ class CleanupBackupManager:
             if not item_path.exists():
                 continue
 
-            relative_path = str(item_path.relative_to(self.base_path))
-            backup_item_path = backup_path / relative_path
+                relative_path = str(item_path.relative_to(self.base_path))
+                backup_item_path = validate_path(
+                    backup_path / relative_path,
+                    backup_path,
+                )
 
             try:
                 if item_path.is_file():
@@ -93,26 +100,33 @@ class CleanupBackupManager:
         backup_manifest["total_size"] = total_size
 
         # Save manifest
-        with open(backup_path / "manifest.json", "w") as f:
+        manifest_path = validate_path(backup_path / "manifest.json", backup_path)
+        with safe_open(manifest_path, backup_path, mode="w", encoding="utf-8") as f:
             json.dump(backup_manifest, f, indent=2)
 
         return backup_id
 
     def restore_cleanup_backup(self, backup_id: str) -> bool:
         """Restore items from cleanup backup."""
-        backup_path = self.backup_dir / backup_id
-        manifest_file = backup_path / "manifest.json"
+        backup_path = validate_path(self.backup_dir / backup_id, self.backup_dir)
+        manifest_file = validate_path(backup_path / "manifest.json", backup_path)
 
         if not manifest_file.exists():
             return False
 
-        with open(manifest_file) as f:
+        with safe_open(manifest_file, backup_path, mode="r", encoding="utf-8") as f:
             manifest = json.load(f)
 
         restored_count = 0
         for item_info in manifest["items"]:
-            backup_item = backup_path / item_info["path"]
-            original_item = self.base_path / item_info["path"]
+            backup_item = validate_path(
+                backup_path / item_info["path"],
+                backup_path,
+            )
+            original_item = validate_path(
+                self.base_path / item_info["path"],
+                self.base_path,
+            )
 
             if not backup_item.exists():
                 continue
@@ -136,9 +150,14 @@ class CleanupBackupManager:
         """List available cleanup backups."""
         backups = []
         for backup_dir in self.backup_dir.glob("cleanup_*"):
-            manifest_file = backup_dir / "manifest.json"
+            manifest_file = validate_path(
+                backup_dir / "manifest.json",
+                backup_dir,
+            )
             if manifest_file.exists():
-                with open(manifest_file) as f:
+                with safe_open(
+                    manifest_file, backup_dir, mode="r", encoding="utf-8"
+                ) as f:
                     manifest = json.load(f)
                     backups.append(manifest)
         return sorted(backups, key=lambda x: x["timestamp"], reverse=True)
@@ -350,7 +369,7 @@ class SafeCleanupAnalyzer:
 
             try:
                 # Calculate file hash using SHA-256 for collision resistance
-                with open(file_path, "rb") as f:
+                with safe_open(file_path, self.base_path, mode="rb") as f:
                     file_hash = hashlib.sha256(f.read()).hexdigest()
 
                 file_size = file_path.stat().st_size

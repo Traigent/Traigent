@@ -59,3 +59,64 @@ class TestDatasetConverterValidation:
         converter = DatasetConverter()
         with pytest.raises(ValueError):
             await converter.backend_example_set_to_sdk_dataset("??invalid??")
+
+
+class TestDatasetConverterSecurePath:
+    """Tests for secure path handling in DatasetConverter."""
+
+    def test_backend_examples_to_jsonl_with_output_path(self, tmp_path):
+        """Test that JSONL output uses secure path validation."""
+        converter = DatasetConverter()
+
+        # Create backend examples (dict format)
+        examples = [
+            {"input": '{"question": "What is 2+2?"}', "output": "4"},
+            {
+                "input": '{"question": "What is the capital of France?"}',
+                "output": "Paris",
+            },
+        ]
+
+        # Write to output path
+        output_file = tmp_path / "output.jsonl"
+        result = converter.backend_examples_to_jsonl(examples, output_path=output_file)
+
+        # Verify file was written
+        assert output_file.exists()
+        assert len(result) > 0
+
+        # Verify content
+        lines = output_file.read_text().strip().split("\n")
+        assert len(lines) == 2
+
+    def test_backend_examples_to_jsonl_with_absolute_output_path(self, tmp_path):
+        """Test JSONL output with absolute path."""
+        converter = DatasetConverter()
+
+        examples = [
+            {"input": '{"text": "Hello"}', "output": "Hi"},
+        ]
+
+        # Use absolute path
+        output_file = tmp_path / "absolute_output.jsonl"
+        abs_path = output_file.resolve()
+
+        result = converter.backend_examples_to_jsonl(examples, output_path=abs_path)
+
+        assert abs_path.exists()
+        assert len(result) > 0
+
+    def test_backend_examples_to_jsonl_without_output_path(self):
+        """Test JSONL generation without writing to file."""
+        converter = DatasetConverter()
+
+        examples = [
+            {"input": '{"prompt": "Test"}', "output": "Response"},
+        ]
+
+        # No output path - should return content without writing
+        result = converter.backend_examples_to_jsonl(examples, output_path=None)
+
+        assert len(result) > 0
+        assert "Test" in result
+        assert "Response" in result

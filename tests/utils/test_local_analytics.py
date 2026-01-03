@@ -573,7 +573,7 @@ class TestAnalyticsIntegration:
             function_name="secret_agent_classifier",  # Sensitive function name
             optimization_config={
                 "search_space": {
-                    "api_key": ["sk-secret123"],  # Sensitive config
+                    "api_key": ["example-key-123"],  # Sensitive config
                     "model": ["gpt-4"],
                 }
             },
@@ -581,7 +581,7 @@ class TestAnalyticsIntegration:
 
         # Add trial with sensitive data
         sensitive_config = {
-            "api_key": "sk-secret123",
+            "api_key": "example-key-123",
             "model": "gpt-4",
             "user_data": "sensitive_customer_info",
         }
@@ -596,7 +596,7 @@ class TestAnalyticsIntegration:
 
         # Verify no sensitive data is present
         assert "secret_agent_classifier" not in stats_json
-        assert "sk-secret123" not in stats_json
+        assert "example-key-123" not in stats_json
         assert "api_key" not in stats_json
         assert "sensitive_customer_info" not in stats_json
         assert "user_data" not in stats_json

@@ -22,6 +22,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_write_text,
+    validate_path,
+)
 
 @dataclass
 class MethodContract:
@@ -464,7 +469,7 @@ def output_yaml(data: dict[str, Any], output_path: Path | None = None) -> str:
     yaml_str = "\n".join(lines)
 
     if output_path:
-        output_path.write_text(yaml_str, encoding="utf-8")
+        safe_write_text(output_path, yaml_str, output_path.parent, encoding="utf-8")
         print(f"Report written to {output_path}")
 
     return yaml_str
@@ -526,26 +531,47 @@ Examples:
 
     args = parser.parse_args(argv)
 
+    base_dir = Path.cwd()
+    try:
+        scan_path = (
+            validate_path(args.scan, base_dir, must_exist=True) if args.scan else None
+        )
+        base_path = (
+            validate_path(args.base, base_dir, must_exist=True) if args.base else None
+        )
+        impl_path = (
+            validate_path(args.impl, base_dir, must_exist=True) if args.impl else None
+        )
+        verify_path = (
+            validate_path(args.verify, base_dir, must_exist=True)
+            if args.verify
+            else None
+        )
+        output_path = validate_path(args.output, base_dir) if args.output else None
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
     extractor = ContractExtractor(verbose=args.verbose)
 
-    if args.scan:
+    if scan_path:
         # Full directory scan
-        if not args.scan.is_dir():
-            print(f"Error: {args.scan} is not a directory", file=sys.stderr)
+        if not scan_path.is_dir():
+            print(f"Error: {scan_path} is not a directory", file=sys.stderr)
             return 1
 
-        report = extractor.scan_directory(args.scan)
+        report = extractor.scan_directory(scan_path)
 
         if args.json:
             output = json.dumps(report, indent=2)
-            if args.output:
-                args.output.write_text(output, encoding="utf-8")
-                print(f"Report written to {args.output}")
+            if output_path:
+                safe_write_text(output_path, output, output_path.parent, encoding="utf-8")
+                print(f"Report written to {output_path}")
             else:
                 print(output)
         else:
-            output_yaml(report, args.output)
-            if not args.output:
+            output_yaml(report, output_path)
+            if not output_path:
                 print(output_yaml(report))
 
         # Print summary
@@ -557,22 +583,22 @@ Examples:
 
         return 0 if report["summary"]["non_compliant"] == 0 else 1
 
-    elif args.base and args.impl:
+    elif base_path and impl_path:
         # Extract contract from base file and verify implementations
-        if not args.base.is_file():
-            print(f"Error: {args.base} is not a file", file=sys.stderr)
+        if not base_path.is_file():
+            print(f"Error: {base_path} is not a file", file=sys.stderr)
             return 1
 
-        if not args.impl.is_dir():
-            print(f"Error: {args.impl} is not a directory", file=sys.stderr)
+        if not impl_path.is_dir():
+            print(f"Error: {impl_path} is not a directory", file=sys.stderr)
             return 1
 
-        contracts = extractor.extract_contract(args.base)
+        contracts = extractor.extract_contract(base_path)
         if not contracts:
-            print(f"No contracts found in {args.base}")
+            print(f"No contracts found in {base_path}")
             return 0
 
-        print(f"Contracts found in {args.base}:")
+        print(f"Contracts found in {base_path}:")
         for contract in contracts:
             print(f"\n  {contract.name}:")
             print(f"    Abstract methods:")
@@ -583,7 +609,7 @@ Examples:
                 )
 
             # Find implementations
-            implementations = extractor.find_implementations(args.impl, contract.name)
+            implementations = extractor.find_implementations(impl_path, contract.name)
             extractor.verify_compliance(contract.name)
 
             print(f"\n    Implementations:")
@@ -597,14 +623,14 @@ Examples:
 
         return 0
 
-    elif args.verify and args.base_class:
+    elif verify_path and args.base_class:
         # Verify implementations against specific base class
-        if not args.verify.is_dir():
-            print(f"Error: {args.verify} is not a directory", file=sys.stderr)
+        if not verify_path.is_dir():
+            print(f"Error: {verify_path} is not a directory", file=sys.stderr)
             return 1
 
         # First find the contract
-        for py_file in args.verify.rglob("*.py"):
+        for py_file in verify_path.rglob("*.py"):
             if "__pycache__" in str(py_file):
                 continue
             extractor.extract_contract(py_file)
@@ -613,7 +639,7 @@ Examples:
             print(f"Error: Contract for {args.base_class} not found", file=sys.stderr)
             return 1
 
-        implementations = extractor.find_implementations(args.verify, args.base_class)
+        implementations = extractor.find_implementations(verify_path, args.base_class)
         extractor.verify_compliance(args.base_class)
 
         non_compliant = [impl for impl in implementations if not impl.is_compliant]

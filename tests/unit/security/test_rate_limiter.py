@@ -474,7 +474,7 @@ class TestSecureRateLimiter:
         self, limiter: SecureRateLimiter
     ) -> None:
         """Test generating secure identifier with API key."""
-        identifier = limiter._generate_secure_identifier(api_key="sk_test_key_12345")
+        identifier = limiter._generate_secure_identifier(api_key="example_key_12345")
 
         assert isinstance(identifier, str)
         assert len(identifier) == 64
@@ -486,7 +486,7 @@ class TestSecureRateLimiter:
         identifier = limiter._generate_secure_identifier(
             ip_address="192.168.1.1",
             username="testuser",
-            api_key="sk_test_key",
+            api_key="example_key",
         )
 
         assert isinstance(identifier, str)
@@ -1295,7 +1295,7 @@ class TestIdentifierGeneration:
         limiter = SecureRateLimiter(config)
 
         # Use long API key
-        api_key = "sk_test_" + "a" * 100
+        api_key = "example_key_" + "a" * 100
         identifier = limiter._generate_secure_identifier(api_key=api_key)
 
         # Identifier should be generated (key is used internally)
@@ -1307,7 +1307,7 @@ class TestIdentifierGeneration:
         config = SecureRateLimitConfig(use_cryptographic_ids=True)
         limiter = SecureRateLimiter(config)
 
-        identifier = limiter._generate_secure_identifier(api_key="sk_test_12345")
+        identifier = limiter._generate_secure_identifier(api_key="example_key_12345")
 
         assert isinstance(identifier, str)
         assert len(identifier) == 64

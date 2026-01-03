@@ -15,6 +15,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from traigent.utils.secure_path import safe_open
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -67,7 +69,8 @@ def load_baseline(baseline_path: Path) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        with open(baseline_path) as f:
+        repo_root = Path(__file__).parent.parent.parent.resolve()
+        with safe_open(baseline_path, repo_root, mode="r", encoding="utf-8") as f:
             data = json.load(f)
             # Validate JSON structure
             required_keys = {"accuracy", "avg_latency", "cost"}
@@ -303,9 +306,14 @@ def update_baseline(metrics: Dict[str, Any], baseline_path: Path):
             f".backup.{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         )
         try:
-            with open(baseline_path) as f:
+            repo_root = Path(__file__).parent.parent.parent.resolve()
+            with safe_open(
+                baseline_path, repo_root, mode="r", encoding="utf-8"
+            ) as f:
                 backup_data = json.load(f)
-            with open(backup_path, "w") as f:
+            with safe_open(
+                backup_path, repo_root, mode="w", encoding="utf-8"
+            ) as f:
                 json.dump(backup_data, f, indent=2)
             logger.info(f"Created backup at {backup_path}")
         except Exception as e:
@@ -313,7 +321,8 @@ def update_baseline(metrics: Dict[str, Any], baseline_path: Path):
 
     # Write new baseline
     try:
-        with open(baseline_path, "w") as f:
+        repo_root = Path(__file__).parent.parent.parent.resolve()
+        with safe_open(baseline_path, repo_root, mode="w", encoding="utf-8") as f:
             json.dump(metrics_with_metadata, f, indent=2)
         logger.info(f"Baseline updated at {baseline_path}")
         print(f"✅ Baseline updated at {baseline_path}")
@@ -337,7 +346,8 @@ def log_audit_event(event: Dict[str, Any]):
     """Log audit events for compliance and tracking."""
     audit_file = Path("audit_log.jsonl")
     try:
-        with open(audit_file, "a") as f:
+        repo_root = Path(__file__).parent.parent.parent.resolve()
+        with safe_open(audit_file, repo_root, mode="a", encoding="utf-8") as f:
             f.write(json.dumps(event) + "\n")
     except Exception as e:
         logger.error(f"Failed to write audit log: {e}")

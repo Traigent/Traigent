@@ -13,6 +13,17 @@ Traigent provides four powerful configuration injection modes to seamlessly inte
 | **Parameter** | Function signature | Yes | Type-safe apps, team projects |
 | **Attribute** | None | No | External monitoring, debugging |
 
+## Parallel & Threading Notes
+
+- **Context + Seamless**: Use `contextvars` under the hood. Traigent propagates
+  context in its own evaluators, but if you spawn your own `ThreadPoolExecutor`
+  inside an optimized function, use `traigent.copy_context_to_thread()` (or pass
+  config explicitly) so worker threads can read `get_config()`.
+- **Parameter**: Safe for parallel trials, but treat the injected config object
+  as read-only, especially when `example_concurrency > 1`.
+- **Attribute**: Unsafe for parallel trials; see the warning in the Attribute
+  section below.
+
 ## 1. Context Mode (Default)
 
 Access configuration through Traigent's context system — flexible, thread/async-safe, and works everywhere.
@@ -466,6 +477,31 @@ def get_buffer_stats():
 - ❌ Config tied to function object
 - ❌ Potential for external mutations
 - ❌ Not ideal for pure functions
+- ❌ **Not safe for parallel trials** (see warning below)
+
+> ⚠️ **Parallel Execution Warning**: Attribute mode stores configuration on the
+> function object, which is shared across all concurrent trial invocations. When
+> running with `trial_concurrency > 1`, the `current_config` attribute can be
+> overwritten by another trial mid-execution, causing race conditions.
+>
+> **Recommendations:**
+> - Use `injection_mode="context"` or `"parameter"` for parallel trials
+> - Use `traigent.get_config()` inside your function for correct per-trial access
+> - If you must use attribute mode with parallel trials, set
+>   `allow_parallel_attribute=True` in your injection options and access config
+>   via `traigent.get_config()`:
+>
+> ```python
+> @traigent.optimize(
+>     injection={"injection_mode": "attribute", "allow_parallel_attribute": True},
+>     parallel_config={"trial_concurrency": 2},
+>     ...
+> )
+> def my_func(query: str) -> str:
+>     # Use get_config() for thread-safe access, not my_func.current_config
+>     config = traigent.get_config()
+>     return process(query, config)
+> ```
 
 ### When to Use
 

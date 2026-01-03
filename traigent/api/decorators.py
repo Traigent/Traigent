@@ -92,7 +92,18 @@ class EvaluationOptions(BaseModel):
 
 
 class InjectionOptions(BaseModel):
-    """Configuration bundle controlling how optimized configs are injected."""
+    """Configuration bundle controlling how optimized configs are injected.
+
+    Attributes:
+        injection_mode: How to inject config ("context", "parameter", "attribute", "seamless").
+        config_param: Parameter name for injection_mode="parameter".
+        auto_override_frameworks: Whether to auto-override framework calls.
+        framework_targets: List of framework names to target.
+        allow_parallel_attribute: Opt-in to allow attribute mode with parallel trials.
+            Attribute mode is unsafe for parallel trials (race condition on shared
+            function attribute). Set to True only if you understand the risk and
+            are using context-based access inside the function body.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
@@ -100,6 +111,7 @@ class InjectionOptions(BaseModel):
     config_param: str | None = None
     auto_override_frameworks: bool = True
     framework_targets: list[str] | None = None
+    allow_parallel_attribute: bool = False
 
 
 class ExecutionOptions(BaseModel):
@@ -157,8 +169,7 @@ def _coerce_bundle(
     if isinstance(value, dict):
         return cast(BundleModel, model_cls.model_validate(value))
     raise TypeError(
-        f"{parameter_name} must be a dict or {model_cls.__name__}, "
-        f"got {type(value).__name__}"
+        f"{parameter_name} must be a dict or {model_cls.__name__}, got {type(value).__name__}"
     )
 
 
@@ -259,6 +270,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "config_param": None,
     "auto_override_frameworks": True,
     "framework_targets": None,
+    "allow_parallel_attribute": False,
     "execution_mode": "edge_analytics",
     "local_storage_path": None,
     "minimal_logging": True,
@@ -485,6 +497,512 @@ def _apply_tvl_artifact(
     return configuration_space, objectives, constraints, default_config
 
 
+def _parse_legacy_args(
+    legacy: LegacyOptimizeArgs | dict[str, Any] | None,
+) -> LegacyOptimizeArgs | None:
+    """Parse legacy arguments into LegacyOptimizeArgs if provided."""
+    if legacy is None:
+        return None
+    if isinstance(legacy, LegacyOptimizeArgs):
+        return legacy
+    if isinstance(legacy, dict):
+        return LegacyOptimizeArgs.from_mapping(legacy)
+    raise TypeError("legacy must be a LegacyOptimizeArgs instance or dict")
+
+
+def _build_settings_recorder(
+    combined_settings: dict[str, Any],
+    provided_sources: dict[str, str],
+) -> Callable[[str, Any, str], None]:
+    """Build a recorder function for merging optimize options."""
+
+    def record_option(key: str, value: Any, source: str) -> None:
+        """Record a resolved option and track its configuration source."""
+        if value is None:
+            return
+        if key in _REMOVED_PARAMETERS:
+            raise TypeError(
+                f"{key} parameter has been removed. Use supported arguments such as "
+                "parallel_config or ExecutionOptions instead."
+            )
+        existing_source = provided_sources.get(key)
+        if existing_source is not None:
+            existing_value = combined_settings[key]
+            if existing_value != value:
+                raise TypeError(
+                    f"Conflicting values for {key!r} supplied via both {existing_source} "
+                    f"and {source}. Remove one of the definitions."
+                )
+            return
+        combined_settings[key] = value
+        provided_sources[key] = source
+
+    return record_option
+
+
+def _extract_inline_params(
+    combined_runtime_overrides: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Extract inline parameter definitions from runtime overrides.
+
+    Returns:
+        Tuple of (inline_params, remaining_overrides).
+    """
+    inline_params: dict[str, Any] = {}
+    remaining_overrides: dict[str, Any] = {}
+    for key, value in combined_runtime_overrides.items():
+        if is_inline_param_definition(value):
+            inline_params[key] = value
+        else:
+            remaining_overrides[key] = value
+    return inline_params, remaining_overrides
+
+
+def _validate_runtime_overrides(remaining_overrides: dict[str, Any]) -> None:
+    """Validate that runtime overrides don't contain unknown keys."""
+    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
+    if unknown_keys:
+        raise TypeError(
+            f"Unknown keyword arguments: {sorted(unknown_keys)}. "
+            f"If you meant to define parameter ranges, use Range(), IntRange(), "
+            f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
+        )
+
+
+def _resolve_evaluation_bundle_options(
+    evaluation_bundle: EvaluationOptions | None,
+    eval_dataset: Any,
+    custom_evaluator: Any,
+    scoring_function: Any,
+    metric_functions: Any,
+    defaults: dict[str, Any],
+) -> tuple[Any, Any, Any, Any]:
+    """Resolve evaluation options from bundle."""
+    if evaluation_bundle is None:
+        return eval_dataset, custom_evaluator, scoring_function, metric_functions
+
+    return (
+        _resolve_option(
+            "eval_dataset", eval_dataset, evaluation_bundle.eval_dataset, defaults
+        ),
+        _resolve_option(
+            "custom_evaluator",
+            custom_evaluator,
+            evaluation_bundle.custom_evaluator,
+            defaults,
+        ),
+        _resolve_option(
+            "scoring_function",
+            scoring_function,
+            evaluation_bundle.scoring_function,
+            defaults,
+        ),
+        _resolve_option(
+            "metric_functions",
+            metric_functions,
+            evaluation_bundle.metric_functions,
+            defaults,
+        ),
+    )
+
+
+def _resolve_injection_bundle_options(
+    injection_bundle: InjectionOptions | None,
+    injection_mode: Any,
+    config_param: Any,
+    auto_override_frameworks: Any,
+    framework_targets: Any,
+    allow_parallel_attribute: Any,
+    defaults: dict[str, Any],
+) -> tuple[Any, Any, Any, Any, Any]:
+    """Resolve injection options from bundle."""
+    if injection_bundle is None:
+        return (
+            injection_mode,
+            config_param,
+            auto_override_frameworks,
+            framework_targets,
+            allow_parallel_attribute,
+        )
+
+    return (
+        _resolve_option(
+            "injection_mode", injection_mode, injection_bundle.injection_mode, defaults
+        ),
+        _resolve_option(
+            "config_param", config_param, injection_bundle.config_param, defaults
+        ),
+        _resolve_option(
+            "auto_override_frameworks",
+            auto_override_frameworks,
+            injection_bundle.auto_override_frameworks,
+            defaults,
+        ),
+        _resolve_option(
+            "framework_targets",
+            framework_targets,
+            injection_bundle.framework_targets,
+            defaults,
+        ),
+        _resolve_option(
+            "allow_parallel_attribute",
+            allow_parallel_attribute,
+            injection_bundle.allow_parallel_attribute,
+            defaults,
+        ),
+    )
+
+
+def _resolve_execution_bundle_options(
+    execution_bundle: ExecutionOptions | None,
+    execution_mode: Any,
+    local_storage_path: Any,
+    minimal_logging: Any,
+    parallel_config: Any,
+    privacy_enabled: Any,
+    max_total_examples: Any,
+    samples_include_pruned: Any,
+    defaults: dict[str, Any],
+) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
+    """Resolve execution options from bundle and validate enterprise features."""
+    if execution_bundle is None:
+        return (
+            execution_mode,
+            local_storage_path,
+            minimal_logging,
+            parallel_config,
+            privacy_enabled,
+            max_total_examples,
+            samples_include_pruned,
+        )
+
+    # Validate enterprise-gated features
+    if execution_bundle.reps_per_trial != 1:
+        raise NotImplementedError(
+            "reps_per_trial is not available in this version. "
+            "This feature requires Traigent Enterprise. "
+            "Contact sales@traigent.ai for more information."
+        )
+    if execution_bundle.reps_aggregation != "mean":
+        raise NotImplementedError(
+            "reps_aggregation is not available in this version. "
+            "This feature requires Traigent Enterprise. "
+            "Contact sales@traigent.ai for more information."
+        )
+
+    return (
+        _resolve_option(
+            "execution_mode", execution_mode, execution_bundle.execution_mode, defaults
+        ),
+        _resolve_option(
+            "local_storage_path",
+            local_storage_path,
+            execution_bundle.local_storage_path,
+            defaults,
+        ),
+        _resolve_option(
+            "minimal_logging",
+            minimal_logging,
+            execution_bundle.minimal_logging,
+            defaults,
+        ),
+        _resolve_option(
+            "parallel_config",
+            parallel_config,
+            execution_bundle.parallel_config,
+            defaults,
+        ),
+        _resolve_option(
+            "privacy_enabled",
+            privacy_enabled,
+            execution_bundle.privacy_enabled,
+            defaults,
+        ),
+        _resolve_option(
+            "max_total_examples",
+            max_total_examples,
+            execution_bundle.max_total_examples,
+            defaults,
+        ),
+        _resolve_option(
+            "samples_include_pruned",
+            samples_include_pruned,
+            execution_bundle.samples_include_pruned,
+            defaults,
+        ),
+    )
+
+
+def _resolve_injection_mode_enum(
+    injection_mode: str | InjectionMode,
+) -> str | InjectionMode:
+    """Convert string injection mode to enum, handling deprecations."""
+    if not isinstance(injection_mode, str):
+        return injection_mode
+
+    if injection_mode == "decorator":
+        warnings.warn(
+            "injection_mode='decorator' is deprecated. Use 'attribute' instead.",
+            DeprecationWarning,
+            stacklevel=4,
+        )
+        return InjectionMode.ATTRIBUTE
+
+    try:
+        return InjectionMode(injection_mode)
+    except ValueError:
+        return injection_mode
+
+
+def _resolve_execution_mode_enum(
+    execution_mode: str | ExecutionMode,
+    privacy_enabled: bool | None,
+) -> tuple[ExecutionMode, bool | None]:
+    """Resolve execution mode enum and handle privacy deprecation."""
+    try:
+        execution_mode_enum = resolve_execution_mode(execution_mode)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(str(exc)) from None
+
+    if execution_mode_enum is ExecutionMode.PRIVACY:
+        logger.warning(
+            "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
+            "with privacy_enabled=True. Mapping automatically."
+        )
+        execution_mode_enum = ExecutionMode.HYBRID
+        if privacy_enabled is None:
+            privacy_enabled = True
+
+    return execution_mode_enum, privacy_enabled
+
+
+_OBJECTIVES_TYPE_ERROR = (
+    "objectives must be a sequence of strings or an ObjectiveSchema"
+)
+
+
+def _validate_objectives(
+    objectives: list[str] | ObjectiveSchema | None,
+) -> None:
+    """Validate objectives format."""
+    if objectives is None or isinstance(objectives, ObjectiveSchema):
+        return
+
+    if isinstance(objectives, (str, bytes)):
+        raise ValidationError(_OBJECTIVES_TYPE_ERROR)
+    try:
+        iter(objectives)
+    except TypeError as exc:
+        raise ValidationError(_OBJECTIVES_TYPE_ERROR) from exc
+    if not all(isinstance(obj, str) for obj in objectives):
+        raise ValidationError(
+            "All objectives must be strings when provided as a sequence"
+        )
+
+
+def _resolve_objective_schema(
+    objectives: list[str] | ObjectiveSchema | None,
+) -> ObjectiveSchema:
+    """Resolve objective schema from objectives or global config."""
+    resolved_schema = normalize_objectives(objectives)
+    if resolved_schema is not None:
+        return resolved_schema
+
+    global_schema = _GLOBAL_CONFIG.get("objective_schema")
+    if isinstance(global_schema, ObjectiveSchema):
+        return global_schema
+
+    global_names = _GLOBAL_CONFIG.get("objectives") or []
+    if global_names:
+        return create_default_objectives(list(global_names))
+
+    return create_default_objectives(["accuracy"])
+
+
+def _resolve_actual_execution_mode(
+    execution_mode: str,
+) -> str:
+    """Resolve actual execution mode from provided or global config."""
+    if (
+        execution_mode == _OPTIMIZE_DEFAULTS["execution_mode"]
+        and "execution_mode" in _GLOBAL_CONFIG
+    ):
+        result: str = str(_GLOBAL_CONFIG["execution_mode"])
+        logger.debug(f"Using execution mode from global config: {result}")
+        return result
+    logger.debug(f"Using explicitly provided execution mode: {execution_mode}")
+    return execution_mode
+
+
+def _log_execution_mode_warnings(
+    execution_mode_enum: ExecutionMode,
+    actual_execution_mode: str,
+    local_storage_path: str | None,
+    minimal_logging: bool,
+) -> None:
+    """Log warnings for incompatible execution mode settings."""
+    if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
+        logger.warning(
+            "local_storage_path is ignored when execution_mode='cloud'. "
+            "Cloud mode uses Traigent cloud storage."
+        )
+
+    if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
+        logger.warning(
+            "minimal_logging is only effective in Edge Analytics mode. "
+            f"It will be ignored in {actual_execution_mode} mode."
+        )
+
+
+def _check_deprecated_objective_kwargs(
+    combined_runtime_overrides: dict[str, Any],
+) -> None:
+    """Check for and reject deprecated objective kwargs."""
+    deprecated_objective_kwargs = {
+        key
+        for key in ("objective_orientations", "objective_weights")
+        if key in combined_runtime_overrides
+    }
+    if deprecated_objective_kwargs:
+        raise TypeError(
+            "objective_orientations/objective_weights are no longer supported. "
+            "Provide an ObjectiveSchema when you need explicit orientations or weights."
+        )
+
+
+def _apply_tvl_options_if_present(
+    tvl_options: TVLOptions | None,
+    configuration_space: dict[str, Any] | None,
+    objectives: list[str] | ObjectiveSchema | None,
+    constraints: list[Any] | None,
+    default_config: dict[str, Any] | None,
+    eval_dataset: Any,
+    combined_runtime_overrides: dict[str, Any],
+) -> tuple[
+    dict[str, Any] | None,
+    list[str] | ObjectiveSchema | None,
+    list[Any] | None,
+    dict[str, Any] | None,
+    Any,
+]:
+    """Apply TVL options if present, returning updated values."""
+    if tvl_options is None:
+        return (
+            configuration_space,
+            objectives,
+            constraints,
+            default_config,
+            eval_dataset,
+        )
+
+    try:
+        tvl_artifact = load_tvl_spec(**tvl_options.to_kwargs())  # type: ignore[arg-type]
+    except TVLValidationError as exc:
+        raise ValidationError(exc.message) from exc
+
+    configuration_space, objectives, constraints, default_config = _apply_tvl_artifact(
+        artifact=tvl_artifact,
+        options=tvl_options,
+        configuration_space=configuration_space,
+        objectives=objectives,
+        constraints=constraints,
+        default_config=default_config,
+        runtime_overrides=combined_runtime_overrides,
+    )
+
+    if (
+        tvl_options.apply_evaluation_set
+        and eval_dataset is None
+        and tvl_artifact.evaluation_set is not None
+    ):
+        eval_dataset = tvl_artifact.evaluation_set.dataset
+
+    env_suffix = f" (env={tvl_options.environment})" if tvl_options.environment else ""
+    logger.info("TVL spec %s applied%s", tvl_artifact.path, env_suffix)
+
+    return configuration_space, objectives, constraints, default_config, eval_dataset
+
+
+def _process_runtime_overrides(
+    runtime_overrides: dict[str, Any],
+    legacy_args: LegacyOptimizeArgs | None,
+    record_option: Callable[[str, Any, str], None],
+) -> dict[str, Any]:
+    """Process runtime overrides, handling removed parameters."""
+    combined_runtime_overrides: dict[str, Any] = {}
+    if legacy_args:
+        combined_runtime_overrides.update(legacy_args.extra)
+
+    for key, value in runtime_overrides.items():
+        if key in _REMOVED_PARAMETERS:
+            raise TypeError(
+                "The following optimize() parameters have been removed: "
+                f"[{key}]. Use supported arguments such as parallel_config "
+                "or ExecutionOptions instead."
+            )
+        if key in _DIRECT_OPTION_KEYS:
+            record_option(key, value, "keyword argument")
+        else:
+            combined_runtime_overrides[key] = value
+
+    removed_in_runtime = set(combined_runtime_overrides) & _REMOVED_PARAMETERS
+    if removed_in_runtime:
+        raise TypeError(
+            "The following optimize() parameters have been removed: "
+            f"{sorted(removed_in_runtime)}. Use supported arguments such as parallel_config "
+            "or ExecutionOptions instead."
+        )
+
+    return combined_runtime_overrides
+
+
+def _process_config_space_constraints(
+    configuration_space: dict[str, Any] | None,
+    constraints: list[Any] | None,
+) -> tuple[Any, Any, Any]:
+    """Process ConfigSpace constraints, returning constraints and var_names."""
+    config_space_constraints_attr = getattr(configuration_space, "constraints", None)
+    config_space_has_constraints = bool(config_space_constraints_attr)
+    if config_space_has_constraints and constraints:
+        raise TypeError(
+            "Cannot provide both ConfigSpace with constraints and explicit constraints. "
+            "Either include constraints in your ConfigSpace or pass them separately."
+        )
+
+    config_space_constraints = None
+    config_space_var_names = None
+    if config_space_has_constraints:
+        config_space_constraints = getattr(configuration_space, "constraints", None)
+        config_space_var_names = getattr(configuration_space, "var_names", None)
+
+    return (
+        config_space_constraints,
+        config_space_var_names,
+        config_space_has_constraints,
+    )
+
+
+def _normalize_config_space_and_defaults(
+    configuration_space: dict[str, Any] | None,
+    inline_params: dict[str, Any],
+    default_config: dict[str, Any] | None,
+    config_space_constraints: Any,
+    constraints: list[Any] | None,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[Any] | None]:
+    """Normalize configuration space and merge defaults."""
+    if inline_params or configuration_space:
+        configuration_space, param_defaults = normalize_configuration_space(
+            configuration_space, inline_params
+        )
+        if param_defaults:
+            default_config = {**param_defaults, **(default_config or {})}
+
+    if config_space_constraints and not constraints:
+        constraints = config_space_constraints
+
+    return configuration_space, default_config, constraints
+
+
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -552,6 +1070,8 @@ def optimize(
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
             framework_targets: Explicit list of framework classes to override.
+            allow_parallel_attribute: Opt-in to allow attribute mode with parallel
+                trials (unsafe by default due to shared function attributes).
 
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
@@ -663,44 +1183,11 @@ def optimize(
         >>> best_config = my_agent.get_best_config()
     """
 
-    if legacy is None:
-        legacy_args: LegacyOptimizeArgs | None = None
-    elif isinstance(legacy, LegacyOptimizeArgs):
-        legacy_args = legacy
-    elif isinstance(legacy, dict):
-        legacy_args = LegacyOptimizeArgs.from_mapping(legacy)
-    else:
-        raise TypeError("legacy must be a LegacyOptimizeArgs instance or dict")
+    legacy_args = _parse_legacy_args(legacy)
 
     combined_settings = dict(_OPTIMIZE_DEFAULTS)
     provided_sources: dict[str, str] = {}
-
-    def record_option(key: str, value: Any, source: str) -> None:
-        """Merge a single optimize option while guarding against duplicates.
-
-        Args:
-            key: Optimize parameter name being merged.
-            value: Candidate value to apply for the parameter.
-            source: Human-readable description of where the value originated.
-        """
-        if value is None:
-            return
-        if key in _REMOVED_PARAMETERS:
-            raise TypeError(
-                f"{key} parameter has been removed. Use supported arguments such as "
-                "parallel_config or ExecutionOptions instead."
-            )
-        existing_source = provided_sources.get(key)
-        if existing_source is not None:
-            existing_value = combined_settings[key]
-            if existing_value != value:
-                raise TypeError(
-                    f"Conflicting values for {key!r} supplied via both {existing_source} "
-                    f"and {source}. Remove one of the definitions."
-                )
-            return
-        combined_settings[key] = value
-        provided_sources[key] = source
+    record_option = _build_settings_recorder(combined_settings, provided_sources)
 
     if legacy_args:
         for key, value in legacy_args.iter_known_values():
@@ -722,48 +1209,15 @@ def optimize(
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
 
-    combined_runtime_overrides: dict[str, Any] = {}
-    if legacy_args:
-        combined_runtime_overrides.update(legacy_args.extra)
+    combined_runtime_overrides = _process_runtime_overrides(
+        runtime_overrides, legacy_args, record_option
+    )
 
-    for key, value in runtime_overrides.items():
-        if key in _REMOVED_PARAMETERS:
-            raise TypeError(
-                "The following optimize() parameters have been removed: "
-                f"[{key}]. Use supported arguments such as parallel_config "
-                "or ExecutionOptions instead."
-            )
-        if key in _DIRECT_OPTION_KEYS:
-            record_option(key, value, "keyword argument")
-        else:
-            combined_runtime_overrides[key] = value
-
-    removed_in_runtime = set(combined_runtime_overrides) & _REMOVED_PARAMETERS
-    if removed_in_runtime:
-        raise TypeError(
-            "The following optimize() parameters have been removed: "
-            f"{sorted(removed_in_runtime)}. Use supported arguments such as parallel_config "
-            "or ExecutionOptions instead."
-        )
-
-    # Extract inline parameter definitions (Range, IntRange, Choices, tuples)
-    # from runtime_overrides and merge into configuration_space
-    inline_params: dict[str, Any] = {}
-    remaining_overrides: dict[str, Any] = {}
-    for key, value in combined_runtime_overrides.items():
-        if is_inline_param_definition(value):
-            inline_params[key] = value
-        else:
-            remaining_overrides[key] = value
-
-    # Reject unknown non-parameter kwargs to catch typos (per Gemini feedback)
-    unknown_keys = set(remaining_overrides.keys()) - _DIRECT_OPTION_KEYS
-    if unknown_keys:
-        raise TypeError(
-            f"Unknown keyword arguments: {sorted(unknown_keys)}. "
-            f"If you meant to define parameter ranges, use Range(), IntRange(), "
-            f"Choices(), or tuple syntax. Example: temperature=Range(0.0, 1.0)"
-        )
+    # Extract inline parameter definitions and validate remaining overrides
+    inline_params, remaining_overrides = _extract_inline_params(
+        combined_runtime_overrides
+    )
+    _validate_runtime_overrides(remaining_overrides)
     combined_runtime_overrides = remaining_overrides
 
     eval_dataset = combined_settings["eval_dataset"]
@@ -772,39 +1226,21 @@ def optimize(
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
 
-    # Check for conflicting constraints: ConfigSpace with constraints AND explicit constraints
-    original_config_space = configuration_space
-    config_space_has_constraints = (
-        hasattr(original_config_space, "constraints")
-        and original_config_space.constraints
+    # Process ConfigSpace constraints
+    config_space_constraints, config_space_var_names, _ = (
+        _process_config_space_constraints(configuration_space, constraints)
     )
-    if config_space_has_constraints and constraints:
-        raise TypeError(
-            "Cannot provide both ConfigSpace with constraints and explicit constraints. "
-            "Either include constraints in your ConfigSpace or pass them separately."
+
+    # Normalize configuration_space and merge defaults
+    configuration_space, default_config, constraints = (
+        _normalize_config_space_and_defaults(
+            configuration_space,
+            inline_params,
+            default_config,
+            config_space_constraints,
+            constraints,
         )
-
-    # Extract constraints from ConfigSpace if present (and no explicit constraints)
-    config_space_constraints = None
-    config_space_var_names = None
-    if config_space_has_constraints:
-        config_space_constraints = getattr(original_config_space, "constraints", None)
-        # Build var_names mapping from ConfigSpace tvars for constraint normalization
-        config_space_var_names = getattr(original_config_space, "var_names", None)
-
-    # Normalize configuration_space and merge inline params (inline takes precedence)
-    # Also extract defaults from Range/Choices objects
-    if inline_params or configuration_space:
-        configuration_space, param_defaults = normalize_configuration_space(
-            configuration_space, inline_params
-        )
-        # Merge param defaults with explicit default_config (explicit takes precedence)
-        if param_defaults:
-            default_config = {**param_defaults, **(default_config or {})}
-
-    # Merge ConfigSpace constraints if no explicit constraints were provided
-    if config_space_constraints and not constraints:
-        constraints = config_space_constraints
+    )
 
     # Note: Constraint normalization is deferred until after TVL artifact application
     # to allow merging of user constraints with TVL constraints
@@ -812,6 +1248,7 @@ def optimize(
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
+    allow_parallel_attribute = combined_settings["allow_parallel_attribute"]
     execution_mode = combined_settings["execution_mode"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
@@ -840,149 +1277,72 @@ def optimize(
     mock_bundle = _coerce_bundle(combined_settings["mock"], MockModeOptions, "mock")
     tvl_bundle = _coerce_bundle(combined_settings["tvl"], TVLOptions, "tvl")
 
-    if evaluation_bundle:
-        eval_dataset = _resolve_option(
-            "eval_dataset", eval_dataset, evaluation_bundle.eval_dataset, defaults
-        )
-        custom_evaluator = _resolve_option(
-            "custom_evaluator",
+    # Resolve options from bundles
+    eval_dataset, custom_evaluator, scoring_function, metric_functions = (
+        _resolve_evaluation_bundle_options(
+            evaluation_bundle,
+            eval_dataset,
             custom_evaluator,
-            evaluation_bundle.custom_evaluator,
-            defaults,
-        )
-        scoring_function = _resolve_option(
-            "scoring_function",
             scoring_function,
-            evaluation_bundle.scoring_function,
-            defaults,
-        )
-        metric_functions = _resolve_option(
-            "metric_functions",
             metric_functions,
-            evaluation_bundle.metric_functions,
             defaults,
         )
+    )
 
     # Validate custom_evaluator signature early to catch interface mismatches
     if custom_evaluator is not None:
         _validate_custom_evaluator_signature(custom_evaluator)
 
-    if injection_bundle:
-        injection_mode = _resolve_option(
-            "injection_mode",
-            injection_mode,
-            injection_bundle.injection_mode,
-            defaults,
-        )
-        config_param = _resolve_option(
-            "config_param", config_param, injection_bundle.config_param, defaults
-        )
-        auto_override_frameworks = _resolve_option(
-            "auto_override_frameworks",
-            auto_override_frameworks,
-            injection_bundle.auto_override_frameworks,
-            defaults,
-        )
-        framework_targets = _resolve_option(
-            "framework_targets",
-            framework_targets,
-            injection_bundle.framework_targets,
-            defaults,
-        )
+    (
+        injection_mode,
+        config_param,
+        auto_override_frameworks,
+        framework_targets,
+        allow_parallel_attribute,
+    ) = _resolve_injection_bundle_options(
+        injection_bundle,
+        injection_mode,
+        config_param,
+        auto_override_frameworks,
+        framework_targets,
+        allow_parallel_attribute,
+        defaults,
+    )
 
-    if execution_bundle:
-        execution_mode = _resolve_option(
-            "execution_mode",
-            execution_mode,
-            execution_bundle.execution_mode,
-            defaults,
-        )
-        local_storage_path = _resolve_option(
-            "local_storage_path",
-            local_storage_path,
-            execution_bundle.local_storage_path,
-            defaults,
-        )
-        minimal_logging = _resolve_option(
-            "minimal_logging",
-            minimal_logging,
-            execution_bundle.minimal_logging,
-            defaults,
-        )
-        parallel_config = _resolve_option(
-            "parallel_config",
-            parallel_config,
-            execution_bundle.parallel_config,
-            defaults,
-        )
-        privacy_enabled = _resolve_option(
-            "privacy_enabled",
-            privacy_enabled,
-            execution_bundle.privacy_enabled,
-            defaults,
-        )
-        max_total_examples = _resolve_option(
-            "max_total_examples",
-            max_total_examples,
-            execution_bundle.max_total_examples,
-            defaults,
-        )
-        samples_include_pruned = _resolve_option(
-            "samples_include_pruned",
-            samples_include_pruned,
-            execution_bundle.samples_include_pruned,
-            defaults,
-        )
-
-        # Enterprise-gated features: reps_per_trial and reps_aggregation
-        # These are reserved for future Traigent Enterprise editions
-        if execution_bundle.reps_per_trial != 1:
-            raise NotImplementedError(
-                "reps_per_trial is not available in this version. "
-                "This feature requires Traigent Enterprise. "
-                "Contact sales@traigent.ai for more information."
-            )
-        if execution_bundle.reps_aggregation != "mean":
-            raise NotImplementedError(
-                "reps_aggregation is not available in this version. "
-                "This feature requires Traigent Enterprise. "
-                "Contact sales@traigent.ai for more information."
-            )
+    (
+        execution_mode,
+        local_storage_path,
+        minimal_logging,
+        parallel_config,
+        privacy_enabled,
+        max_total_examples,
+        samples_include_pruned,
+    ) = _resolve_execution_bundle_options(
+        execution_bundle,
+        execution_mode,
+        local_storage_path,
+        minimal_logging,
+        parallel_config,
+        privacy_enabled,
+        max_total_examples,
+        samples_include_pruned,
+        defaults,
+    )
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
     )
-    if tvl_options:
-        try:
-            tvl_artifact = load_tvl_spec(**tvl_options.to_kwargs())  # type: ignore[arg-type]
-        except TVLValidationError as exc:
-            raise ValidationError(exc.message) from exc
-
-        (
+    configuration_space, objectives, constraints, default_config, eval_dataset = (
+        _apply_tvl_options_if_present(
+            tvl_options,
             configuration_space,
             objectives,
             constraints,
             default_config,
-        ) = _apply_tvl_artifact(
-            artifact=tvl_artifact,
-            options=tvl_options,
-            configuration_space=configuration_space,
-            objectives=objectives,
-            constraints=constraints,
-            default_config=default_config,
-            runtime_overrides=combined_runtime_overrides,
+            eval_dataset,
+            combined_runtime_overrides,
         )
-        if (
-            tvl_options.apply_evaluation_set
-            and eval_dataset is None
-            and tvl_artifact.evaluation_set is not None
-        ):
-            eval_dataset = tvl_artifact.evaluation_set.dataset
-        logger.info(
-            "TVL spec %s applied%s",
-            tvl_artifact.path,
-            f" (env={tvl_options.environment})" if tvl_options.environment else "",
-        )
+    )
 
     if samples_include_pruned is None:
         samples_include_pruned = True
@@ -995,21 +1355,7 @@ def optimize(
             defaults,
         )
 
-    if objectives is not None and not isinstance(objectives, ObjectiveSchema):
-        if isinstance(objectives, (str, bytes)):
-            raise ValidationError(
-                "objectives must be a sequence of strings or an ObjectiveSchema"
-            )
-        try:
-            iter(objectives)
-        except TypeError as exc:
-            raise ValidationError(
-                "objectives must be a sequence of strings or an ObjectiveSchema"
-            ) from exc
-        if not all(isinstance(obj, str) for obj in objectives):
-            raise ValidationError(
-                "All objectives must be strings when provided as a sequence"
-            )
+    _validate_objectives(objectives)
 
     def decorator(func: Callable[..., Any]) -> OptimizedFunction:
         """Actual decorator function.
@@ -1020,92 +1366,28 @@ def optimize(
         Returns:
             OptimizedFunction wrapper
         """
-        deprecated_objective_kwargs = {
-            key
-            for key in ("objective_orientations", "objective_weights")
-            if key in combined_runtime_overrides
-        }
-        if deprecated_objective_kwargs:
-            raise TypeError(
-                "objective_orientations/objective_weights are no longer supported. "
-                "Provide an ObjectiveSchema when you need explicit orientations or weights."
-            )
+        _check_deprecated_objective_kwargs(combined_runtime_overrides)
 
         logger.debug(f"Decorating function {func.__name__} with @traigent.optimize")
 
-        resolved_schema = normalize_objectives(objectives)
-        if resolved_schema is None:
-            global_schema = _GLOBAL_CONFIG.get("objective_schema")
-            if isinstance(global_schema, ObjectiveSchema):
-                resolved_schema = global_schema
-            else:
-                global_names = _GLOBAL_CONFIG.get("objectives") or []
-                if global_names:
-                    resolved_schema = create_default_objectives(list(global_names))
-
-        if resolved_schema is None:
-            resolved_schema = create_default_objectives(["accuracy"])
+        resolved_schema = _resolve_objective_schema(objectives)
 
         requested_execution_mode = execution_mode
-        actual_execution_mode = execution_mode
+        actual_execution_mode = _resolve_actual_execution_mode(execution_mode)
 
-        if (
-            actual_execution_mode == _OPTIMIZE_DEFAULTS["execution_mode"]
-            and "execution_mode" in _GLOBAL_CONFIG
-        ):
-            actual_execution_mode = _GLOBAL_CONFIG["execution_mode"]
-            logger.debug(
-                f"Using execution mode from global config: {actual_execution_mode}"
-            )
-        else:
-            logger.debug(
-                f"Using explicitly provided execution mode: {actual_execution_mode}"
-            )
+        actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
 
-        actual_injection_mode = injection_mode
-
-        if isinstance(actual_injection_mode, str):
-            if actual_injection_mode == "decorator":
-                warnings.warn(
-                    "injection_mode='decorator' is deprecated. Use 'attribute' instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                actual_injection_mode = InjectionMode.ATTRIBUTE
-            else:
-                try:
-                    actual_injection_mode = InjectionMode(actual_injection_mode)
-                except ValueError:
-                    pass
-
-        effective_privacy_enabled = privacy_enabled
-        try:
-            execution_mode_enum = resolve_execution_mode(actual_execution_mode)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(str(exc)) from None
-
-        if execution_mode_enum is ExecutionMode.PRIVACY:
-            logger.warning(
-                "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
-                "with privacy_enabled=True. Mapping automatically."
-            )
-            execution_mode_enum = ExecutionMode.HYBRID
-            if effective_privacy_enabled is None:
-                effective_privacy_enabled = True
-
+        execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
+            actual_execution_mode, privacy_enabled
+        )
         actual_execution_mode = execution_mode_enum.value
 
-        if local_storage_path and execution_mode_enum is ExecutionMode.CLOUD:
-            logger.warning(
-                "local_storage_path is ignored when execution_mode='cloud'. "
-                "Cloud mode uses Traigent cloud storage."
-            )
-
-        if minimal_logging and execution_mode_enum is not ExecutionMode.EDGE_ANALYTICS:
-            logger.warning(
-                "minimal_logging is only effective in Edge Analytics mode. "
-                f"It will be ignored in {actual_execution_mode} mode."
-            )
+        _log_execution_mode_warnings(
+            execution_mode_enum,
+            actual_execution_mode,
+            local_storage_path,
+            minimal_logging,
+        )
 
         user_parallel_config = coerce_parallel_config(parallel_config)
         combined_parallel_config, parallel_sources = merge_parallel_configs(
@@ -1137,6 +1419,7 @@ def optimize(
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
+            allow_parallel_attribute=allow_parallel_attribute,
             execution_mode=execution_mode_enum,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,

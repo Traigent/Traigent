@@ -4,8 +4,10 @@ Monitoring and alerting system for auto-tuning pipeline.
 Provides health checks, metrics collection, and alerting.
 """
 
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -13,6 +15,7 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import psutil
 import requests
@@ -310,8 +313,9 @@ class AlertManager:
     def _save_alert(self, alert: Alert):
         """Save alert to file."""
         try:
-            with open(self.alert_file, "a") as f:
-                f.write(json.dumps(asdict(alert)) + "\n")
+            existing = safe_file_read(self.alert_file) or ""
+            new_line = json.dumps(asdict(alert)) + "\n"
+            safe_file_write(self.alert_file, existing + new_line, backup=False)
         except Exception as e:
             logger.error(f"Failed to save alert: {e}")
 
@@ -335,6 +339,10 @@ class AlertManager:
     def _send_webhook(self, url: str, alert: Alert):
         """Send alert to webhook."""
         try:
+            validated_url = self._validated_webhook_url(url)
+            if not validated_url:
+                logger.error("Refusing to send webhook to unsafe URL: %s", url)
+                return
             payload = {
                 "text": f"{alert.severity.value.upper()}: {alert.title}",
                 "attachments": [
@@ -350,11 +358,98 @@ class AlertManager:
                 ],
             }
 
-            response = requests.post(url, json=payload, timeout=5)
+            response = requests.post(validated_url, json=payload, timeout=5)
             response.raise_for_status()
 
         except Exception as e:
             logger.error(f"Failed to send webhook: {e}")
+
+    @staticmethod
+    def _is_safe_webhook_url(url: str) -> bool:
+        """Validate webhook URL to reduce SSRF risk."""
+        try:
+            parsed = urlparse(url)
+        except Exception:
+            return False
+        if parsed.scheme != "https":
+            return False
+        if not parsed.hostname:
+            return False
+        if parsed.username or parsed.password:
+            return False
+        if parsed.port not in (None, 443):
+            return False
+
+        hostname = parsed.hostname.lower()
+        allowlist_raw = os.environ.get("ALERT_WEBHOOK_ALLOWLIST", "").strip()
+        allow_unlisted = os.environ.get("ALERT_WEBHOOK_ALLOW_UNLISTED", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if allowlist_raw:
+            allowlist = [entry.strip().lower() for entry in allowlist_raw.split(",")]
+            if not AlertManager._host_allowed(hostname, allowlist):
+                return False
+        elif not allow_unlisted:
+            return False
+
+        if hostname in {"localhost", "127.0.0.1"} or hostname.endswith(".local"):
+            return False
+
+        try:
+            ip_addr = ipaddress.ip_address(hostname)
+        except ValueError:
+            ip_addr = None
+
+        if ip_addr is not None:
+            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+                return False
+            if ip_addr.is_multicast or ip_addr.is_reserved:
+                return False
+            return True
+
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None)
+        except (socket.gaierror, OSError):
+            return False
+
+        for _family, _socktype, _proto, _canon, sockaddr in addr_infos:
+            ip_str = sockaddr[0]
+            try:
+                resolved_ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False
+            if (
+                resolved_ip.is_private
+                or resolved_ip.is_loopback
+                or resolved_ip.is_link_local
+            ):
+                return False
+            if resolved_ip.is_multicast or resolved_ip.is_reserved:
+                return False
+
+        return True
+
+    def _validated_webhook_url(self, url: str) -> Optional[str]:
+        """Return validated webhook URL or None if the URL is not allowed."""
+        if self._is_safe_webhook_url(url):
+            return url
+        return None
+
+    @staticmethod
+    def _host_allowed(hostname: str, allowlist: List[str]) -> bool:
+        """Check hostname against allowlist entries, including wildcard suffixes."""
+        for entry in allowlist:
+            if not entry:
+                continue
+            if entry.startswith("*."):
+                suffix = entry[1:]
+                if hostname.endswith(suffix) and hostname != suffix.lstrip("."):
+                    return True
+            elif hostname == entry:
+                return True
+        return False
 
     def _get_alert_color(self, severity: AlertSeverity) -> str:
         """Get color for alert severity."""

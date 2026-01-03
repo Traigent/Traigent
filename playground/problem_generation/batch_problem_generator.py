@@ -13,6 +13,7 @@ from pathlib import Path
 
 from playground.problem_management.code_generator import CodeGenerator
 from playground.problem_management.intelligence import ProblemIntelligence
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .enhanced_example_generator import (
     EnhancedExampleGenerator,
@@ -74,7 +75,8 @@ class BatchProblemGenerator:
             output_dir: Directory to save generated problems
             generation_config: Configuration for example generation
         """
-        self.output_dir = Path(output_dir)
+        self._base_dir = Path.cwd()
+        self.output_dir = validate_path(output_dir, self._base_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.diversity_manager = ProblemDiversityManager(str(self.output_dir))
@@ -83,7 +85,10 @@ class BatchProblemGenerator:
         self.intelligence = ProblemIntelligence()
 
         # Create generation subdirectories
-        self.reports_dir = self.output_dir / "generation_reports"
+        self.reports_dir = validate_path(
+            self.output_dir / "generation_reports",
+            self.output_dir,
+        )
         self.reports_dir.mkdir(exist_ok=True)
 
     async def generate_problem_suite(
@@ -284,20 +289,28 @@ class BatchProblemGenerator:
 
         # Save code
         safe_filename = self._make_safe_filename(spec.name)
-        code_path = self.output_dir / f"{safe_filename}.py"
+        code_path = validate_path(
+            self.output_dir / f"{safe_filename}.py",
+            self.output_dir,
+        )
 
-        with open(code_path, "w") as f:
-            f.write(code)
+        safe_write_text(code_path, code, self.output_dir)
 
         return code_path
 
     def _save_example_data(self, problem_name: str, batches: list[GenerationBatch]):
         """Save detailed example data for analysis."""
-        data_dir = self.output_dir / "example_data"
+        data_dir = validate_path(
+            self.output_dir / "example_data",
+            self.output_dir,
+        )
         data_dir.mkdir(exist_ok=True)
 
         safe_name = self._make_safe_filename(problem_name)
-        data_file = data_dir / f"{safe_name}_examples.json"
+        data_file = validate_path(
+            data_dir / f"{safe_name}_examples.json",
+            self.output_dir,
+        )
 
         # Convert batches to serializable format
         batch_data = []
@@ -324,8 +337,7 @@ class BatchProblemGenerator:
             }
             batch_data.append(batch_dict)
 
-        with open(data_file, "w") as f:
-            json.dump(batch_data, f, indent=2)
+        safe_write_text(data_file, json.dumps(batch_data, indent=2), self.output_dir)
 
     def _generate_default_specs(self, count: int) -> list[ProblemSpecification]:
         """Generate default problem specifications."""
@@ -335,7 +347,10 @@ class BatchProblemGenerator:
 
     def _save_problem_plan(self, specs: list[ProblemSpecification]):
         """Save the problem generation plan."""
-        plan_file = self.reports_dir / f"problem_plan_{int(time.time())}.json"
+        plan_file = validate_path(
+            self.reports_dir / f"problem_plan_{int(time.time())}.json",
+            self.output_dir,
+        )
 
         plan_data = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -354,8 +369,7 @@ class BatchProblemGenerator:
             ],
         }
 
-        with open(plan_file, "w") as f:
-            json.dump(plan_data, f, indent=2)
+        safe_write_text(plan_file, json.dumps(plan_data, indent=2), self.output_dir)
 
         print(f"📋 Problem plan saved to: {plan_file}")
 
@@ -395,7 +409,10 @@ class BatchProblemGenerator:
 
     def _save_generation_report(self, report: BatchGenerationReport):
         """Save detailed generation report."""
-        report_file = self.reports_dir / f"generation_report_{int(time.time())}.json"
+        report_file = validate_path(
+            self.reports_dir / f"generation_report_{int(time.time())}.json",
+            self.output_dir,
+        )
 
         report_data = {
             "summary": {
@@ -422,8 +439,9 @@ class BatchProblemGenerator:
             "coverage_analysis": report.coverage_analysis,
         }
 
-        with open(report_file, "w") as f:
-            json.dump(report_data, f, indent=2)
+        safe_write_text(
+            report_file, json.dumps(report_data, indent=2), self.output_dir
+        )
 
         print(f"\n📊 Full report saved to: {report_file}")
 

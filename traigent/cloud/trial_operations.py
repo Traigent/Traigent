@@ -209,10 +209,13 @@ class TrialOperations:
                 is_sensitive = any(
                     s.replace("_", "") in key_lower for s in sensitive_keys
                 )
-                if is_sensitive and isinstance(value, str) and len(value) > 20:
-                    redacted[key] = f"[REDACTED:{len(value)} chars]"
-                elif is_sensitive and isinstance(value, (list, dict)) and value:
-                    redacted[key] = f"[REDACTED:{type(value).__name__}]"
+                if is_sensitive:
+                    if isinstance(value, str):
+                        redacted[key] = f"[REDACTED:{len(value)} chars]"
+                    elif isinstance(value, (list, dict, tuple, set)):
+                        redacted[key] = f"[REDACTED:{type(value).__name__}]"
+                    else:
+                        redacted[key] = "[REDACTED]"
                 else:
                     redacted[key] = TrialOperations._redact_sensitive_fields(
                         value, depth + 1
@@ -270,13 +273,7 @@ class TrialOperations:
             }
             registration_payload = self._sanitize_for_json(registration_data)
 
-            # Create connector without SSL for localhost
             connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -471,10 +468,7 @@ class TrialOperations:
             logger.warning(f"⚠️ No summary_stats found for trial {trial_id}")
 
     def _create_localhost_connector(self) -> Any:
-        """Create connector without SSL for localhost connections."""
-        backend_url = self.client.backend_config.backend_base_url
-        if backend_url and ("localhost" in backend_url or "127.0.0.1" in backend_url):
-            return aiohttp.TCPConnector(ssl=False)
+        """Create connector for localhost connections."""
         return None
 
     async def _handle_trial_success_response(
@@ -757,13 +751,7 @@ class TrialOperations:
                 f"Submitting summary_stats with structure: {json.dumps(submission_data, indent=2)[:1000]}"
             )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
+            connector = self._create_localhost_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
@@ -867,13 +855,7 @@ class TrialOperations:
                 },
             }
 
-            # Create connector without SSL for localhost
             connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(

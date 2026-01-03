@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 @dataclass
 class AgentMetrics:
@@ -167,7 +168,7 @@ class MetricsTracker:
             return None
 
         try:
-            data = json.loads(metrics_file.read_text())
+            data = json.loads(safe_read_text(metrics_file, self.base_path))
             release = ReleaseMetrics(
                 version=data["version"],
                 started_at=data["started_at"],
@@ -215,7 +216,12 @@ class MetricsTracker:
             Path to saved file
         """
         metrics_file = self.get_metrics_file(release.version)
-        metrics_file.write_text(json.dumps(release.to_dict(), indent=2))
+        metrics_file = validate_path(metrics_file, self.base_path, must_exist=False)
+        safe_write_text(
+            metrics_file,
+            json.dumps(release.to_dict(), indent=2),
+            self.base_path,
+        )
         return metrics_file
 
     def create_release(self, version: str, total_components: int) -> ReleaseMetrics:

@@ -14,6 +14,8 @@ from itertools import cycle
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
+
 
 @dataclass
 class Assignment:
@@ -119,7 +121,8 @@ class RotationScheduler:
 
         if history_path is None:
             history_path = Path(".release_review/rotation_history.json")
-        self.history_path = Path(history_path)
+        self._base_dir = Path.cwd()
+        self.history_path = validate_path(history_path, self._base_dir)
 
     def get_schedule(
         self,
@@ -231,7 +234,11 @@ class RotationScheduler:
         history.append(schedule.to_dict())
 
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
-        self.history_path.write_text(json.dumps(history, indent=2))
+        safe_write_text(
+            self.history_path,
+            json.dumps(history, indent=2),
+            self._base_dir,
+        )
         self.write_markdown(schedule)
 
         return self.history_path
@@ -245,16 +252,22 @@ class RotationScheduler:
         Returns:
             Path to the markdown file
         """
-        version_dir = Path(".release_review") / schedule.version
+        version_dir = validate_path(
+            Path(".release_review") / schedule.version,
+            self._base_dir,
+        )
         version_dir.mkdir(parents=True, exist_ok=True)
-        md_path = version_dir / "ROTATION_HISTORY.md"
+        md_path = validate_path(
+            version_dir / "ROTATION_HISTORY.md",
+            self._base_dir,
+        )
 
         marker_start = "<!-- BEGIN AUTO-GENERATED ROTATION -->"
         marker_end = "<!-- END AUTO-GENERATED ROTATION -->"
         auto_block = schedule.to_markdown()
 
         if md_path.exists():
-            content = md_path.read_text()
+            content = safe_read_text(md_path, self._base_dir)
             if marker_start in content and marker_end in content:
                 pre, rest = content.split(marker_start, 1)
                 _, post = rest.split(marker_end, 1)
@@ -286,7 +299,7 @@ class RotationScheduler:
                 "(Fill in or link the component mapping for this release.)\n"
             )
 
-        md_path.write_text(new_content)
+        safe_write_text(md_path, new_content, self._base_dir)
         return md_path
 
     def load_history(self) -> list[dict[str, Any]]:
@@ -299,7 +312,7 @@ class RotationScheduler:
             return []
 
         try:
-            return json.loads(self.history_path.read_text())
+            return json.loads(safe_read_text(self.history_path, self._base_dir))
         except json.JSONDecodeError:
             return []
 

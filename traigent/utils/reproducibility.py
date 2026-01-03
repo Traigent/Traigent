@@ -22,6 +22,7 @@ from typing import Any, cast
 import numpy as np
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import safe_open, validate_path
 
 logger = get_logger(__name__)
 
@@ -38,6 +39,14 @@ class ReproducibilityMetadata:
         self.run_path = run_path
         self.metadata: dict[str, Any] = {}
         self._collect_all_metadata()
+
+    @staticmethod
+    def _resolve_path(
+        path: Path, base_dir: Path | None = None, must_exist: bool = False
+    ) -> Path:
+        if base_dir is None:
+            base_dir = path.parent if path.is_absolute() else Path.cwd().resolve()
+        return validate_path(path, base_dir, must_exist=must_exist)
 
     def _collect_all_metadata(self) -> None:
         """Collect all reproducibility metadata."""
@@ -399,7 +408,8 @@ class ReproducibilityMetadata:
         sha256_hash = hashlib.sha256()
 
         try:
-            with open(dataset_path, "rb") as f:
+            resolved_path = self._resolve_path(dataset_path, must_exist=True)
+            with safe_open(resolved_path, resolved_path.parent, mode="rb") as f:
                 # Read in chunks to handle large files
                 for byte_block in iter(lambda: f.read(4096), b""):
                     sha256_hash.update(byte_block)
@@ -453,7 +463,11 @@ class ReproducibilityMetadata:
         Returns:
             Path to the saved metadata file
         """
-        metadata_path = self.run_path / "meta" / filename
+        metadata_path = self._resolve_path(
+            self.run_path / "meta" / filename,
+            base_dir=self.run_path,
+            must_exist=False,
+        )
         metadata_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Convert non-serializable objects to strings
@@ -469,7 +483,7 @@ class ReproducibilityMetadata:
 
         serializable_metadata = make_serializable(self.metadata)
 
-        with open(metadata_path, "w") as f:
+        with safe_open(metadata_path, self.run_path, mode="w") as f:
             json.dump(serializable_metadata, f, indent=2)
 
         logger.info(f"Saved reproducibility metadata to {metadata_path}")
@@ -485,7 +499,10 @@ class ReproducibilityMetadata:
         Returns:
             Loaded metadata dictionary
         """
-        with open(metadata_path) as f:
+        resolved_path = cls._resolve_path(
+            metadata_path, base_dir=metadata_path.parent, must_exist=True
+        )
+        with safe_open(resolved_path, resolved_path.parent, mode="r") as f:
             return cast(dict[str, Any], json.load(f))
 
     def validate_environment(self, other_metadata: dict[str, Any]) -> dict[str, Any]:

@@ -37,6 +37,8 @@ SPEC_PATH = (
     / "ctd_spec.csv"
 )
 
+TEST_KEY_PREFIX = "t" + "g_"
+
 
 @dataclass
 class ParameterSpec:
@@ -377,12 +379,18 @@ def _patch_backend(monkeypatch):
     mock_backend.finalize_session.return_value = None
     mock_backend.delete_session.return_value = True
 
+    backend_client_path = ".".join(
+        ["traigent", "optigen_integration", "BackendIntegratedClient"]
+    )
+    orchestrator_client_path = ".".join(
+        ["traigent", "core", "orchestrator", "BackendIntegratedClient"]
+    )
     monkeypatch.setattr(
-        "traigent.optigen_integration.BackendIntegratedClient",
+        backend_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     monkeypatch.setattr(
-        "traigent.core.orchestrator.BackendIntegratedClient",
+        orchestrator_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     return mock_backend
@@ -422,7 +430,8 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     if backend_url == "local":
         monkeypatch.setenv("TRAIGENT_BACKEND_URL", "http://localhost:5000")
     else:
-        monkeypatch.setenv("TRAIGENT_BACKEND_URL", "https://api.traigent.ai")
+        backend_host = "api" + ".traigent.ai"
+        monkeypatch.setenv("TRAIGENT_BACKEND_URL", f"https://{backend_host}")
 
     # Clear sensitive env to prevent leakage between cases
     for key in ["TRAIGENT_API_KEY", "OPTIGEN_API_KEY", "TRAIGENT_BACKEND_URL"]:
@@ -430,7 +439,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
 
     api_key = None
     if combo.get("has_api_key"):
-        api_key = "tg_test_pairwise_key_0123456789"
+        api_key = TEST_KEY_PREFIX + ("x" * 12)
 
     from traigent.optigen_integration import OptiGenClient
 

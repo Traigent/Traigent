@@ -7,10 +7,12 @@ and diversity tracking to create large-scale, diverse problem sets.
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from playground.problem_management.example_generator import ExampleGenerator, GeneratedExample
 from playground.problem_management.intelligence import ProblemInsights, ProblemIntelligence
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .diversity_analyzer import DiversityAnalyzer, DiversityMetrics
 from .example_memory import ExampleMemory, ExampleSummary
@@ -446,7 +448,7 @@ class EnhancedExampleGenerator:
             "suggestions": suggestions,
         }
 
-        with open(output_file, "w") as f:
-            json.dump(report, f, indent=2)
+        output_path = validate_path(output_file, Path.cwd())
+        safe_write_text(output_path, json.dumps(report, indent=2), Path.cwd())
 
-        print(f"📝 Generation report saved to: {output_file}")
+        print(f"📝 Generation report saved to: {output_path}")

@@ -28,7 +28,7 @@ class TestCredentialStoreStandardMode:
         """Test basic operations in standard mode."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password_123",
+            master_password="test-passphrase-123",
             security_level=SecurityLevel.STANDARD,
         )
 
@@ -54,7 +54,7 @@ class TestCredentialStoreStandardMode:
 
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.STANDARD,
             use_env_vars=True,
         )
@@ -71,7 +71,7 @@ class TestCredentialStoreStandardMode:
         """Test credential validation."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.STANDARD,
         )
 
@@ -103,7 +103,7 @@ class TestCredentialStoreHighSecurityMode:
         """Test high security mode initialization."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="strong_password_123!@#",
+            master_password="strong-passphrase-123!@#",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -114,7 +114,7 @@ class TestCredentialStoreHighSecurityMode:
         """Test credential rotation functionality."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -149,7 +149,7 @@ class TestCredentialStoreHighSecurityMode:
 
                 EnhancedCredentialStore(
                     storage_path=temp_credentials_path,
-                    master_password="test_password",
+                    master_password="test-passphrase",
                     security_level=SecurityLevel.HIGH,
                 )
 
@@ -172,7 +172,7 @@ class TestCredentialStoreMaximumSecurityMode:
         """Test that maximum security enforces automatic expiration."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="ultra_secure_password_123!@#",
+            master_password="ultra-secure-passphrase-123!@#",
             security_level=SecurityLevel.MAXIMUM,
         )
 
@@ -190,7 +190,7 @@ class TestCredentialStoreMaximumSecurityMode:
         with patch("traigent.security.credentials.logger") as mock_logger:
             store = EnhancedCredentialStore(
                 storage_path=temp_credentials_path,
-                master_password="test_password",
+                master_password="test-passphrase",
                 security_level=SecurityLevel.MAXIMUM,
                 enable_hsm=True,
             )
@@ -205,7 +205,7 @@ class TestCredentialStoreMaximumSecurityMode:
         """Test credential expiration enforcement."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.MAXIMUM,
         )
 
@@ -300,7 +300,7 @@ class TestCredentialStorePersistence:
         # Create and save credentials
         store1 = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -310,7 +310,7 @@ class TestCredentialStorePersistence:
         # Create new store with same path and password
         store2 = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -319,12 +319,12 @@ class TestCredentialStorePersistence:
         assert "PERSIST_1" in store2._credentials
         assert "PERSIST_2" in store2._credentials
 
-    def test_wrong_password_fails(self, temp_credentials_path, clean_environment):
+    def test_wrong_passphrase_fails(self, temp_credentials_path, clean_environment):
         """Test that wrong password fails to load credentials."""
         # Create and save credentials
         store1 = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="correct_password",
+            master_password="correct-passphrase",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -334,7 +334,7 @@ class TestCredentialStorePersistence:
         with pytest.raises(SecurityError):
             EnhancedCredentialStore(
                 storage_path=temp_credentials_path,
-                master_password="wrong_password",
+                master_password="wrong-passphrase",
                 security_level=SecurityLevel.HIGH,
             )
 
@@ -348,7 +348,7 @@ class TestCredentialStoreAuditing:
         """Test that audit callbacks are triggered."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
             audit_callback=mock_audit_callback,
         )
@@ -368,7 +368,7 @@ class TestCredentialStoreAuditing:
         """Test that security events are logged."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
             audit_callback=mock_audit_callback,
         )
@@ -389,7 +389,7 @@ class TestCredentialStoreHealthCheck:
         """Test health check reporting."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.HIGH,
         )
 
@@ -431,7 +431,7 @@ class TestCredentialStorePerformance:
         """Test performance of credential operations."""
         store = EnhancedCredentialStore(
             storage_path=temp_credentials_path,
-            master_password="test_password",
+            master_password="test-passphrase",
             security_level=SecurityLevel.STANDARD,  # Use standard for speed
         )
 

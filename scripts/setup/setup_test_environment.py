@@ -55,9 +55,9 @@ def create_test_env_file():
 
     env_content = """# Test environment variables
 # DO NOT USE REAL API KEYS IN THIS FILE
-TRAIGENT_API_KEY=test-api-key-12345
-OPENAI_API_KEY=test-openai-key-67890
-ANTHROPIC_API_KEY=test-anthropic-key-abcdef
+TRAIGENT_API_KEY=
+OPENAI_API_KEY=
+ANTHROPIC_API_KEY=
 TRAIGENT_TEST_MODE=true
 TRAIGENT_BACKEND_URL=http://localhost:5000
 TRAIGENT_DISABLE_ANALYTICS=true

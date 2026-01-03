@@ -377,6 +377,12 @@ tests/optimizer_validation/viewer/ontology/*.ttl
 # Large test reports
 report.json
 
+# MLflow database (local development)
+mlflow.db
+
+# Trial output files (local development)
+trial_*.json
+
 # Agent instruction files (development only)
 AGENTS.md
 MAINTENANCE.md

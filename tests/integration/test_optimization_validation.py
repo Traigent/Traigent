@@ -2,19 +2,42 @@
 """
 Test script for Traigent optimization validation system.
 This file contains functions decorated with @traigent.optimize for testing.
+
+NOTE: This test file uses dataset paths that require the 'data/' directory
+to exist in the repository root. The data/ directory is in .gitignore,
+so these tests are skipped if the datasets don't exist.
 """
 
 import os
+from pathlib import Path
 from typing import Any
+
+import pytest
 
 # Enable mock mode for testing
 os.environ["TRAIGENT_MOCK_MODE"] = "true"
 
+# Get project root to resolve dataset paths
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_DATA_DIR = _PROJECT_ROOT / "data"
+
+# Skip this module if the data directory doesn't exist
+if not _DATA_DIR.exists():
+    pytest.skip(
+        "Skipping test_optimization_validation: data/ directory not found",
+        allow_module_level=True,
+    )
+
 import traigent
+
+# Use absolute paths to avoid working directory issues
+_TEST_DATASET = str(_DATA_DIR / "test_dataset.jsonl")
+_QA_DATASET = str(_DATA_DIR / "qa_dataset.jsonl")
+_SIMPLE_DATASET = str(_DATA_DIR / "simple_dataset.jsonl")
 
 
 @traigent.optimize(
-    eval_dataset="data/test_dataset.jsonl",
+    eval_dataset=_TEST_DATASET,
     objectives=["accuracy", "cost"],
     configuration_space={
         "temperature": [0.0, 0.5, 1.0],
@@ -50,7 +73,7 @@ def analyze_sentiment(
 
 
 @traigent.optimize(
-    eval_dataset="data/qa_dataset.jsonl",
+    eval_dataset=_QA_DATASET,
     objectives=["accuracy"],
     configuration_space={
         "max_tokens": [50, 100, 200],
@@ -80,7 +103,7 @@ def unoptimized_function(text: str) -> str:
 
 # Function with no default parameters
 @traigent.optimize(
-    eval_dataset="data/simple_dataset.jsonl",
+    eval_dataset=_SIMPLE_DATASET,
     objectives=["speed"],
     configuration_space={"method": ["fast", "slow"]},
 )

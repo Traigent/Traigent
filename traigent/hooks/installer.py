@@ -12,6 +12,11 @@ import stat
 from pathlib import Path
 
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import (
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 logger = get_logger(__name__)
 
@@ -152,10 +157,13 @@ class HooksInstaller:
         Returns:
             True if hook was installed successfully
         """
+        hooks_dir = self.get_hooks_dir()
+        hook_path = validate_path(hook_path, hooks_dir, must_exist=False)
+
         if hook_path.exists():
             if not force:
                 # Check if it's already a Traigent hook
-                existing_content = hook_path.read_text()
+                existing_content = safe_read_text(hook_path, hooks_dir)
                 if HOOK_MARKER in existing_content:
                     logger.info(f"Traigent hook already installed at {hook_path}")
                     return True
@@ -171,7 +179,7 @@ class HooksInstaller:
             logger.info(f"Backed up existing hook to {backup_path}")
 
         # Write hook script
-        hook_path.write_text(content)
+        safe_write_text(hook_path, content, hooks_dir)
 
         # Make executable
         current_mode = hook_path.stat().st_mode
@@ -208,7 +216,7 @@ class HooksInstaller:
             return True
 
         # Only remove if it's a Traigent hook
-        content = hook_path.read_text()
+        content = safe_read_text(hook_path, self.hooks_dir)
         if HOOK_MARKER not in content:
             logger.warning(
                 f"Hook at {hook_path} was not installed by Traigent - skipping"
@@ -244,7 +252,7 @@ class HooksInstaller:
             if not hook_path.exists():
                 status[hook_name] = "not installed"
             else:
-                content = hook_path.read_text()
+                content = safe_read_text(hook_path, hooks_dir)
                 if HOOK_MARKER in content:
                     status[hook_name] = "installed (traigent)"
                 else:
