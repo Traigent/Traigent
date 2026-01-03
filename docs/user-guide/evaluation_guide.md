@@ -108,7 +108,7 @@ def classifier(text):
 For testing without real API calls:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python your_script.py
 ```
 
@@ -264,7 +264,7 @@ def summarizer(text):
 
 4. **Use Mock Mode for Testing**
    ```bash
-   export TRAIGENT_MOCK_MODE=true
+   export TRAIGENT_MOCK_LLM=true
    ```
 
 ### Issue: Inconsistent Results

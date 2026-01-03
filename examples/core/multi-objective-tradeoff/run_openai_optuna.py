@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 # Environment setup must happen before imports
-MOCK = str(os.getenv("TRAIGENT_MOCK_MODE", "")).lower() in {"1", "true", "yes", "y"}
+MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
     os.environ["HOME"] = str(BASE)

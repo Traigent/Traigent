@@ -24,7 +24,7 @@ from unittest.mock import Mock
 import pytest
 
 # Ensure mock mode is disabled for these tests - we want real cost tracking
-os.environ["TRAIGENT_MOCK_MODE"] = "false"
+os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
 from traigent.api.types import (
     TrialResult,
@@ -47,7 +47,7 @@ FLOAT_TOLERANCE = 1e-10
 @pytest.fixture(autouse=True)
 def disable_mock_mode() -> None:
     """Ensure mock mode is disabled for all tests in this module."""
-    os.environ["TRAIGENT_MOCK_MODE"] = "false"
+    os.environ["TRAIGENT_MOCK_LLM"] = "false"
     if "TRAIGENT_REQUIRE_COST_TRACKING" in os.environ:
         del os.environ["TRAIGENT_REQUIRE_COST_TRACKING"]
 

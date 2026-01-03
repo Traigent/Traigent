@@ -6,7 +6,7 @@ This agent handles customer support inquiries for ShopEasy, an e-commerce platfo
 It optimizes for resolution accuracy, tone quality, and escalation decisions.
 
 Usage:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python use-cases/customer-support/agent/support_agent.py
 """
 
@@ -80,7 +80,7 @@ Respond naturally to the customer:"""
 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled via environment variable."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("true", "1", "yes")
 
 
 def build_escalation_decision_prompt(
@@ -172,7 +172,7 @@ def customer_support_agent(
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
         raise ImportError(
-            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "langchain-openai is required when TRAIGENT_MOCK_LLM is disabled. "
             "Install it with: pip install langchain-openai"
         ) from exc
 
@@ -353,7 +353,7 @@ async def run_optimization():
 
     if not mock_mode:
         print("\nWARNING: Running without mock mode will incur API costs!")
-        print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
+        print("Set TRAIGENT_MOCK_LLM=true for testing.\n")
 
     print("\nStarting optimization...")
     print("Configuration Space:")

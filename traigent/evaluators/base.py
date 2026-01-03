@@ -769,14 +769,12 @@ class BaseEvaluator(ABC):
         return correct / total if total > 0 else 0.0
 
     async def _apply_mock_delay_if_enabled(self) -> None:
-        """Apply mock delay if TRAIGENT_MOCK_MODE and TRAIGENT_MOCK_DELAY_MS are set.
+        """Apply mock delay if TRAIGENT_MOCK_LLM and TRAIGENT_MOCK_DELAY_MS are set.
 
-        This simulates realistic LLM latency in mock mode to make parallel execution
+        This simulates realistic LLM latency in mock LLM mode to make parallel execution
         visible in traces. Uses asyncio.sleep to not block the event loop.
         """
-        import os
-
-        if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() not in ("true", "1", "yes"):
+        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() not in ("true", "1", "yes"):
             return
 
         delay_str = os.environ.get("TRAIGENT_MOCK_DELAY_MS", "")
@@ -1094,7 +1092,7 @@ class BaseEvaluator(ABC):
                 # Fail fast on API key errors - don't retry hundreds of times
                 raise APIKeyError(
                     f"API key error detected. Set the required API key environment "
-                    f"variable or use TRAIGENT_MOCK_MODE=true for testing. "
+                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
                     f"Original error: {e}"
                 ) from e
 

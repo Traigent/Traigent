@@ -23,7 +23,7 @@ Based on the Traigent Agent Optimization Guide, we have implemented the followin
 source venv/bin/activate
 
 # Set mock mode (REQUIRED for testing without API costs)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Run any agent evaluator to test
 python use-cases/gtm-acquisition/eval/evaluator.py
@@ -370,7 +370,7 @@ All agents work in mock mode without API keys:
 ```bash
 # Set up environment
 source venv/bin/activate
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Test each evaluator (no API keys needed)
 python use-cases/gtm-acquisition/eval/evaluator.py

@@ -160,7 +160,7 @@ def setup_environment():
         print_info("Creating .env file with mock credentials...")
         env_content = """# Traigent Environment Variables
 # For mock mode testing (no real API calls)
-TRAIGENT_MOCK_MODE=true
+TRAIGENT_MOCK_LLM=true
 
 # Add your real API keys here when ready:
 # OPENAI_API_KEY=your-key-here
@@ -172,7 +172,7 @@ TRAIGENT_MOCK_MODE=true
         print_success(".env file created with mock mode enabled")
 
     # Set mock mode for this session
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
     print_success("Mock mode enabled for this session")
     return True
 
@@ -183,7 +183,7 @@ def run_demo():
 
     demo_code = '''
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 import traigent
 from pathlib import Path
@@ -268,7 +268,7 @@ def print_next_steps():
 
     print("\n4. When ready for real usage:")
     print("   - Add your API keys to .env")
-    print("   - Set TRAIGENT_MOCK_MODE=false")
+    print("   - Set TRAIGENT_MOCK_LLM=false")
     print("   - Run with real LLM providers")
 
     print(f"\n{Colors.BOLD}{Colors.GREEN}Happy optimizing! 🚀{Colors.ENDC}")

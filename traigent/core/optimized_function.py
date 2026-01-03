@@ -65,7 +65,7 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.env_config import is_mock_mode, is_production
+from traigent.utils.env_config import is_mock_llm, is_production
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
@@ -104,7 +104,7 @@ def _emit_cost_warning_once() -> None:
     global _COST_WARNING_EMITTED
     if _COST_WARNING_EMITTED:
         return
-    if os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+    if is_mock_llm():
         return
 
     _COST_WARNING_EMITTED = True
@@ -126,7 +126,7 @@ def _emit_cost_warning_once() -> None:
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
-            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_MODE=true{RESET}\n"
+            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
@@ -137,7 +137,7 @@ def _emit_cost_warning_once() -> None:
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
-            "  - Disable for testing:   TRAIGENT_MOCK_MODE=true\n"
+            "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
             "  - Full details:          DISCLAIMER.md\n"
         )
 
@@ -1366,7 +1366,7 @@ class OptimizedFunction:
         Returns:
             The custom evaluator to use, or None if LocalEvaluator should be used.
         """
-        mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
+        mock_mode_env = is_mock_llm()
         mock_config = self.mock_mode_config or {}
         mock_enabled = mock_config.get("enabled", True)
         override_evaluator = mock_config.get("override_evaluator", True)
@@ -1925,9 +1925,9 @@ class OptimizedFunction:
         if not self.traigent_config.is_edge_analytics_mode():
             return
 
-        # Allow mock mode to run without CI approval since no real calls occur
-        if is_mock_mode():
-            msg = "Skipping CI approval in mock mode"
+        # Allow mock LLM mode to run without CI approval since no real calls occur
+        if is_mock_llm():
+            msg = "Skipping CI approval in mock LLM mode"
             if is_production():
                 logger.warning(f"{msg} while ENVIRONMENT=production.")
             else:

@@ -274,7 +274,7 @@
   name: "Mock mode bypass"
   title: "Mock mode bypasses all cost tracking"
   description: >
-    When TRAIGENT_MOCK_MODE=true, cost enforcement is bypassed to enable
+    When TRAIGENT_MOCK_LLM=true, cost enforcement is bypassed to enable
     zero-cost development and testing.
   acceptance_criteria:
     - Mock mode cached at CostEnforcer init time.

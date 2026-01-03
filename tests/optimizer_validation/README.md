@@ -60,7 +60,7 @@ tests/optimizer_validation/
 make test-validation
 
 # Specific dimension
-TRAIGENT_MOCK_MODE=true pytest tests/optimizer_validation/dimensions/test_injection_modes.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/optimizer_validation/dimensions/test_injection_modes.py -v
 
 # Only failure tests
 make test-validation-failures
@@ -89,7 +89,7 @@ make jaeger-stop
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TRAIGENT_MOCK_MODE` | Enable mock mode (no API calls) | `true` (auto-set) |
+| `TRAIGENT_MOCK_LLM` | Enable mock mode (no API calls) | `true` (auto-set) |
 | `TRAIGENT_TRACE_ENABLED` | Enable OpenTelemetry tracing | `false` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Jaeger/OTLP endpoint | - |
 
@@ -442,7 +442,7 @@ The tracing module uses lazy imports to avoid circular dependencies. If you see 
 
 ### Mock mode not working
 
-Ensure `TRAIGENT_MOCK_MODE=true` is set. The `conftest.py` sets this automatically for all validation tests.
+Ensure `TRAIGENT_MOCK_LLM=true` is set. The `conftest.py` sets this automatically for all validation tests.
 
 ## Contributing
 
@@ -588,7 +588,7 @@ Use the validation tool to check all tests emit proper evidence:
 
 ```bash
 # Generate a JSON report
-TRAIGENT_MOCK_MODE=true pytest tests/optimizer_validation/ \
+TRAIGENT_MOCK_LLM=true pytest tests/optimizer_validation/ \
     --json-report --json-report-file=report.json
 
 # Validate the report

@@ -5,7 +5,7 @@ Optimize RAG chunking parameters for long document Q&A.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/chunking-long-context/run.py
 ```
 

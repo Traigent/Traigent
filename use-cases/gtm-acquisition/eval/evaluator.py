@@ -12,7 +12,7 @@ Supports two modes:
 
 Usage:
   Mock mode: python evaluator.py  (default, uses heuristics)
-  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
+  Real mode: TRAIGENT_MOCK_LLM=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
 import os
@@ -164,7 +164,7 @@ class MessageQualityEvaluator:
 
     def is_mock_mode(self) -> bool:
         """Check if running in mock mode."""
-        return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+        return os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
 
     def evaluate_message(
         self,
@@ -679,7 +679,7 @@ def print_score_bar(label: str, score: float, max_score: float = 5.0, width: int
 
 def demo_evaluator():
     """Demo the GTM & Acquisition evaluator with clear input/output examples."""
-    mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+    mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
 
     print("=" * 70)
     print("GTM & ACQUISITION AGENT - Evaluator Demo")
@@ -871,7 +871,7 @@ Alex"""
     print("HOW TO RUN:")
     print("  Mock mode (heuristics): python evaluator.py  (default)")
     print(
-        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_LLM=false OPENAI_API_KEY=sk-... python evaluator.py"
     )
     print("=" * 70)
 

@@ -34,17 +34,17 @@ examples/
 ## Core examples at a glance
 | Example | Optimizes | Run (mock mode) |
 | --- | --- | --- |
-| simple-prompt | Model, temperature, prompt style | `TRAIGENT_MOCK_MODE=true python examples/core/simple-prompt/run.py` |
-| hello-world | RAG toggle, model, top_k | `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py` |
-| few-shot-classification | Example count/strategy | `TRAIGENT_MOCK_MODE=true python examples/core/few-shot-classification/run.py` |
-| multi-objective-tradeoff | Accuracy, cost, latency | `TRAIGENT_MOCK_MODE=true python examples/core/multi-objective-tradeoff/run_anthropic.py` |
-| prompt-ab-test | Prompt variants | `TRAIGENT_MOCK_MODE=true python examples/core/prompt-ab-test/run.py` |
-| structured-output-json | Schema validation | `TRAIGENT_MOCK_MODE=true python examples/core/structured-output-json/run.py` |
-| token-budget-summarization | Budgeted summaries | `TRAIGENT_MOCK_MODE=true python examples/core/token-budget-summarization/run.py` |
-| safety-guardrails | Moderation tuning | `TRAIGENT_MOCK_MODE=true python examples/core/safety-guardrails/run.py` |
-| tool-use-calculator | Tool calling | `TRAIGENT_MOCK_MODE=true python examples/core/tool-use-calculator/run.py` |
-| prompt-style-optimization | Tone/voice tuning | `TRAIGENT_MOCK_MODE=true python examples/core/prompt-style-optimization/run.py` |
-| chunking-long-context | RAG chunking | `TRAIGENT_MOCK_MODE=true python examples/core/chunking-long-context/run.py` |
+| simple-prompt | Model, temperature, prompt style | `TRAIGENT_MOCK_LLM=true python examples/core/simple-prompt/run.py` |
+| hello-world | RAG toggle, model, top_k | `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py` |
+| few-shot-classification | Example count/strategy | `TRAIGENT_MOCK_LLM=true python examples/core/few-shot-classification/run.py` |
+| multi-objective-tradeoff | Accuracy, cost, latency | `TRAIGENT_MOCK_LLM=true python examples/core/multi-objective-tradeoff/run_anthropic.py` |
+| prompt-ab-test | Prompt variants | `TRAIGENT_MOCK_LLM=true python examples/core/prompt-ab-test/run.py` |
+| structured-output-json | Schema validation | `TRAIGENT_MOCK_LLM=true python examples/core/structured-output-json/run.py` |
+| token-budget-summarization | Budgeted summaries | `TRAIGENT_MOCK_LLM=true python examples/core/token-budget-summarization/run.py` |
+| safety-guardrails | Moderation tuning | `TRAIGENT_MOCK_LLM=true python examples/core/safety-guardrails/run.py` |
+| tool-use-calculator | Tool calling | `TRAIGENT_MOCK_LLM=true python examples/core/tool-use-calculator/run.py` |
+| prompt-style-optimization | Tone/voice tuning | `TRAIGENT_MOCK_LLM=true python examples/core/prompt-style-optimization/run.py` |
+| chunking-long-context | RAG chunking | `TRAIGENT_MOCK_LLM=true python examples/core/chunking-long-context/run.py` |
 
 ## How to run
 ```bash
@@ -52,7 +52,7 @@ examples/
 pip install -e ".[examples]"
 
 # Mock mode (recommended)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 
 # Real APIs (set keys you need)

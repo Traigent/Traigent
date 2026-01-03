@@ -21,7 +21,7 @@ BASE = Path(__file__).parent
 DATASET = str(BASE / "evaluation_set.jsonl")
 
 os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("RAGAS_DISABLE_ANALYTICS", "true")
 
 _RESPONSES = {

@@ -269,16 +269,16 @@ Always use mock mode for local development:
 
 ```bash
 # Run all tests with mock mode
-TRAIGENT_MOCK_MODE=true pytest tests/
+TRAIGENT_MOCK_LLM=true pytest tests/
 
 # Run with coverage report
-TRAIGENT_MOCK_MODE=true pytest tests/ --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true pytest tests/ --cov=traigent --cov-report=term-missing
 
 # Run specific test file with verbose output
-TRAIGENT_MOCK_MODE=true pytest tests/unit/api/test_decorators.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/api/test_decorators.py -v
 
 # Run tests matching pattern
-TRAIGENT_MOCK_MODE=true pytest -k "test_constraint" -v
+TRAIGENT_MOCK_LLM=true pytest -k "test_constraint" -v
 ```
 
 ## Common Mistakes

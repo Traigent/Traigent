@@ -12,7 +12,7 @@ import sys
 import time
 from pathlib import Path
 
-MOCK = str(os.getenv("TRAIGENT_MOCK_MODE", "")).lower() in {"1", "true", "yes", "y"}
+MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
     os.environ["HOME"] = str(BASE)
@@ -281,7 +281,7 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
     execution_mode="edge_analytics",
 )
 def answer_question(question: str) -> str:
-    print(f"DEBUG: MOCK={MOCK}, TRAIGENT_MOCK_MODE={os.getenv('TRAIGENT_MOCK_MODE')}")
+    print(f"DEBUG: MOCK={MOCK}, TRAIGENT_MOCK_LLM={os.getenv('TRAIGENT_MOCK_LLM')}")
     if MOCK:
         print("DEBUG: Returning mock answer with realistic telemetry")
         cfg = traigent.get_config()

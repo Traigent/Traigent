@@ -108,7 +108,7 @@ def main():
     # Test mock mode
     print("\n🎭 Testing Mock Mode:")
     try:
-        os.environ["TRAIGENT_MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_MOCK_LLM"] = "true"
         import traigent
 
         # Create a simple test function
@@ -122,7 +122,7 @@ def main():
         print("  ✅ Mock mode setup works!")
 
         # Clean up
-        del os.environ["TRAIGENT_MOCK_MODE"]
+        del os.environ["TRAIGENT_MOCK_LLM"]
     except Exception as e:
         print(f"  ❌ Mock mode error: {e}")
         all_ok = False
@@ -133,7 +133,7 @@ def main():
         print("✅ Installation verified successfully!")
         print("\n🚀 You're ready to use Traigent!")
         print("\nQuick test command:")
-        print("  TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py")
+        print("  TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py")
         return 0
     else:
         print("❌ Some issues found. Please fix them before proceeding.")

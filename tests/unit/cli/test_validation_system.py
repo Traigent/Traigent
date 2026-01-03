@@ -329,7 +329,7 @@ class TestOptimizationValidator:
     @pytest.mark.asyncio
     async def test_run_baseline_mock_mode(self, validator, mock_function_info):
         """Test baseline execution in mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             metrics, config = await validator._run_baseline(mock_function_info)
 
             assert isinstance(metrics, dict)
@@ -339,7 +339,7 @@ class TestOptimizationValidator:
     @pytest.mark.asyncio
     async def test_run_optimization_mock_mode(self, validator, mock_function_info):
         """Test optimization execution in mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             metrics, config = await validator._run_optimization(mock_function_info)
 
             assert isinstance(metrics, dict)
@@ -498,7 +498,7 @@ class TestIntegrationScenarios:
         # Create temporary test module
         test_content = '''
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 import traigent
 
 @traigent.optimize(
@@ -546,7 +546,7 @@ def analyze_sentiment(text: str, model: str = "default", temperature: float = 0.
 @pytest.fixture(autouse=True)
 def mock_environment():
     """Set up mock environment for all tests."""
-    with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+    with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
         yield
 
 

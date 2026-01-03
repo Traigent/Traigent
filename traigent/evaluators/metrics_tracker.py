@@ -960,19 +960,21 @@ class CostCalculator:
             prompt_length: Length of prompt in privacy mode
             response_length: Length of response in privacy mode
         """
-        # Check if we're in mock mode
+        # Check if we're in mock LLM mode
         import os
 
-        mock_mode_env = os.environ.get("TRAIGENT_MOCK_MODE", "").lower()
+        from traigent.utils.env_config import is_mock_llm
+
+        mock_mode = is_mock_llm()
         generate_mocks_env = os.environ.get("TRAIGENT_GENERATE_MOCKS", "").lower()
 
         # DEBUG: Log environment variables
         self.logger.debug(
-            f"COST DEBUG: Checking mock mode - TRAIGENT_MOCK_MODE='{mock_mode_env}', "
+            f"COST DEBUG: Checking mock mode - is_mock_llm={mock_mode}, "
             f"TRAIGENT_GENERATE_MOCKS='{generate_mocks_env}', model_name='{model_name}'"
         )
 
-        if mock_mode_env == "true" or generate_mocks_env == "true":
+        if mock_mode or generate_mocks_env == "true":
             # In mock mode, set costs to 0 but estimate tokens if in privacy mode
             if prompt_length is not None and metrics.tokens.input_tokens == 0:
                 # Estimate tokens from length (roughly 1 token per 4 characters)

@@ -112,7 +112,7 @@ def intelligent_assistant(query: str) -> str:
     """An intelligent assistant that answers queries with optimal parameters."""
 
     # Check for mock mode
-    if os.environ.get("TRAIGENT_MOCK_MODE", "false").lower() == "true":
+    if os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true":
         return "This is a mock response for testing purposes."
 
     # Get the current configuration from Traigent

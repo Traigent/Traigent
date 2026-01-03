@@ -55,7 +55,7 @@ pip install -e .
 
 ```bash
 # Quick test with mock mode (no API keys needed!)
-TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py
+TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
 ```
 
 You should see optimization results showing different configurations being tested!
@@ -497,7 +497,7 @@ Run a full production-ready example with all Traigent features combined.
 pip install -e .
 
 # Run with mock mode
-TRAIGENT_MOCK_MODE=true python my_script.py
+TRAIGENT_MOCK_LLM=true python my_script.py
 
 # Check installation
 python scripts/verify_installation.py
@@ -533,7 +533,7 @@ custom_evaluator=my_evaluator_function
 ## 💡 Key Takeaways
 
 1. **Start Simple**: Use the decorator on existing code - zero changes needed!
-2. **Mock Mode First**: Test without API keys using `TRAIGENT_MOCK_MODE=true`
+2. **Mock Mode First**: Test without API keys using `TRAIGENT_MOCK_LLM=true`
 3. **Small Datasets**: Start with 10-20 examples in your evaluation dataset
 4. **Multiple Objectives**: Optimize for accuracy AND cost together
 5. **Local Privacy**: Use `execution_mode="edge_analytics"` to keep everything on your machine

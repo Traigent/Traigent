@@ -380,7 +380,7 @@ class TestYourProviderPluginMetadata:
 Run tests in mock mode to avoid real API calls:
 
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
 ```
 
 ## Code Quality Standards
@@ -430,21 +430,21 @@ Your contribution must include tests for:
 
 ```bash
 # Run your plugin tests
-TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/test_your_provider_plugin.py -v
 
 # Run all integration tests
-TRAIGENT_MOCK_MODE=true pytest tests/unit/integrations/ -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/ -v
 
 # Run with coverage
-TRAIGENT_MOCK_MODE=true pytest tests/ --cov=traigent.integrations.llms.your_provider_plugin
+TRAIGENT_MOCK_LLM=true pytest tests/ --cov=traigent.integrations.llms.your_provider_plugin
 ```
 
 ### Mock Mode
 
-Always use `TRAIGENT_MOCK_MODE=true` for tests to avoid real API calls:
+Always use `TRAIGENT_MOCK_LLM=true` for tests to avoid real API calls:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 pytest tests/unit/integrations/test_your_provider_plugin.py
 ```
 
@@ -479,7 +479,7 @@ isort --check-only traigent/
 - [ ] Known models added to `models.yaml`
 - [ ] Plugin exported in `__init__.py`
 - [ ] Comprehensive test suite (minimum 10 tests)
-- [ ] All tests pass with `TRAIGENT_MOCK_MODE=true`
+- [ ] All tests pass with `TRAIGENT_MOCK_LLM=true`
 - [ ] Code formatted with `make format`
 - [ ] Code passes `make lint`
 

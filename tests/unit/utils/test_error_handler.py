@@ -281,9 +281,9 @@ class TestErrorHandlerConnectionErrors:
             ErrorHandler.handle_connection_error(error)
 
         assert "backend" in str(exc_info.value).lower()
-        assert "mock mode" in str(
+        assert "offline mode" in str(
             exc_info.value
-        ).lower() or "TRAIGENT_MOCK_MODE" in str(exc_info.value)
+        ).lower() or "TRAIGENT_OFFLINE_MODE" in str(exc_info.value)
 
     def test_handle_connection_error_generic(self):
         """Test handling of generic connection error."""
@@ -330,9 +330,9 @@ class TestErrorHandlerZeroAccuracy:
         with pytest.raises(TraigentError) as exc_info:
             ErrorHandler.handle_zero_accuracy(error)
 
-        assert "mock mode" in str(
+        assert "mock mode" in str(exc_info.value).lower() or "TRAIGENT_MOCK_LLM" in str(
             exc_info.value
-        ).lower() or "TRAIGENT_MOCK_MODE" in str(exc_info.value)
+        )
 
 
 class TestErrorHandlerUnknownErrors:

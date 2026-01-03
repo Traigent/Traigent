@@ -55,7 +55,7 @@ Pick 1–2 per post/article and keep it concrete:
 ## Calls-to-action (rotate; keep them concrete)
 
 - **Try it locally (no API spend)**: run quickstart with mock mode:
-  - `export TRAIGENT_MOCK_MODE=true`
+  - `export TRAIGENT_MOCK_LLM=true`
   - `python examples/quickstart/01_simple_qa.py`
 - **CI gates example**: point to `examples/integrations/ci-cd/README.md`
 - **Minimal agent spec template**: `marketing/templates/AGENT_SPEC_TEMPLATE.md`

@@ -42,7 +42,7 @@ try:
     import traigent
 
     # Set mock mode for demo
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
     from rich.console import Console
     from rich.panel import Panel
     from rich.progress import Progress, SpinnerColumn, TextColumn

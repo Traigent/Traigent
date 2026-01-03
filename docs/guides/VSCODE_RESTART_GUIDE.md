@@ -25,7 +25,7 @@ Run a quick test from the terminal:
 
 ```bash
 source .venv/bin/activate
-TRAIGENT_MOCK_MODE=true pytest tests/unit/core/test_stop_conditions.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/core/test_stop_conditions.py -v
 ```
 
 ## If Issues Persist

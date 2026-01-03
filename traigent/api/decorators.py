@@ -1106,7 +1106,7 @@ def optimize(
                 ``budget_limit``, ``plateau_window``, ``cost_limit``, and ``cost_approved``.
 
     Warning:
-        Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_MODE=true for testing.
+        Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
         Cost estimates are approximations; actual billing is determined by your LLM provider.
         See DISCLAIMER.md for full liability terms.
 

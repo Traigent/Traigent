@@ -143,7 +143,7 @@ cd examples/advanced/ai-engineering-tasks/p1_token_budget/
 python main.py
 
 # Run with mock mode (no external API calls)
-TRAIGENT_MOCK_MODE=true python main.py
+TRAIGENT_MOCK_LLM=true python main.py
 ```
 
 ## 📋 Success Criteria

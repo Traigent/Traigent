@@ -111,7 +111,7 @@ LOG_LEVEL
 TRAIGENT_LOG_LEVEL
 
 # Features
-TRAIGENT_MOCK_MODE
+TRAIGENT_MOCK_LLM
 ENABLE_EXPERIMENTAL_FEATURES
 ```
 
@@ -145,7 +145,7 @@ To keep secrets out of local files and CI logs:
 **Solution**: Check `DATABASE_URL` and ensure database is running
 
 ### "Tests failing with API errors"
-**Solution**: Set `TRAIGENT_MOCK_MODE=true` in test environment
+**Solution**: Set `TRAIGENT_MOCK_LLM=true` in test environment
 
 ## 📖 Related Documentation
 

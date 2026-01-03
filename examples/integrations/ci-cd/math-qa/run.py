@@ -144,10 +144,10 @@ def main():
 
     # Set mock mode for CI
     if os.environ.get("CI") == "true":
-        os.environ["TRAIGENT_MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     print(f"Running in {mode} mode...")
-    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_MODE', 'false')}")
+    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
 
     if mode == "eval":
         # Evaluate saved configuration
