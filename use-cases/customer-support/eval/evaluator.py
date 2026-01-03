@@ -13,7 +13,7 @@ Supports two modes:
 
 Usage:
   Mock mode: python evaluator.py  (default, uses heuristics)
-  Real mode: TRAIGENT_MOCK_MODE=false python evaluator.py  (requires OPENAI_API_KEY)
+  Real mode: TRAIGENT_MOCK_LLM=false python evaluator.py  (requires OPENAI_API_KEY)
 """
 
 import json
@@ -263,7 +263,7 @@ NEXT_STEPS_CLEAR: [yes/no]
         try:
             from langchain_openai import ChatOpenAI
 
-            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
             if mock_mode:
                 raise ImportError("Mock mode enabled")
 
@@ -417,7 +417,7 @@ NEXT_STEPS_CLEAR: [yes/no]
         try:
             from langchain_openai import ChatOpenAI
 
-            mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
             if mock_mode:
                 raise ImportError("Mock mode enabled")
 
@@ -513,7 +513,7 @@ NEXT_STEPS_CLEAR: [yes/no]
 
 def is_mock_mode() -> bool:
     """Check if running in mock mode."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+    return os.environ.get("TRAIGENT_MOCK_LLM", "true").lower() == "true"
 
 
 def run_optimization(num_configs: int = 5, num_examples: int = 10):
@@ -910,7 +910,7 @@ Please let me know which works best. Is there anything else I can help with?"""
     print("HOW TO RUN:")
     print("  Mock mode (heuristics): python evaluator.py  (default)")
     print(
-        "  Real mode (LLM+optimize): TRAIGENT_MOCK_MODE=false OPENAI_API_KEY=sk-... python evaluator.py"
+        "  Real mode (LLM+optimize): TRAIGENT_MOCK_LLM=false OPENAI_API_KEY=sk-... python evaluator.py"
     )
     print("=" * 70)
 

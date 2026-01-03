@@ -5,7 +5,7 @@ Compare prompt variants to find the best performing version.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/prompt-ab-test/run.py
 ```
 

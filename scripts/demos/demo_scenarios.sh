@@ -253,13 +253,13 @@ run_selected_scenario() {
     echo "▶ Running in mock mode (no external API calls)."
     (
       cd "$PROJECT_ROOT" >/dev/null 2>&1
-      TRAIGENT_MOCK_MODE=1 bash -lc "$cmd"
+      TRAIGENT_MOCK_LLM=1 bash -lc "$cmd"
     )
   else
     echo "▶ Running in real mode. Ensure provider API keys are configured."
     (
       cd "$PROJECT_ROOT" >/dev/null 2>&1
-      TRAIGENT_MOCK_MODE=0 bash -lc "$cmd"
+      TRAIGENT_MOCK_LLM=0 bash -lc "$cmd"
     )
   fi
 

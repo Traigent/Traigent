@@ -155,7 +155,7 @@ class BehavioralValidator(ABC):
         if scenario.mock_mode_config:
             return True
         # Check environment variable
-        if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true":
+        if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() == "true":
             return True
         return False
 

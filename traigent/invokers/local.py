@@ -150,7 +150,7 @@ class LocalInvoker(BaseInvoker):
             ):
                 raise APIKeyError(
                     f"API key error detected. Set the required API key environment "
-                    f"variable or use TRAIGENT_MOCK_MODE=true for testing. "
+                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
                     f"Original error: {e}"
                 ) from e
 

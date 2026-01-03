@@ -5,7 +5,7 @@ Optimize function calling and tool usage for math problems.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/tool-use-calculator/run.py
 ```
 

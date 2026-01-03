@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_mock_mode
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.logging import get_logger
 
 # Track whether we've warned about weighted score update failures
@@ -33,21 +33,6 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
-
-
-def _allow_http_in_mock_mode() -> bool:
-    """Determine whether HTTP paths should run while in mock mode.
-
-    Unit tests patch aiohttp to avoid real network calls but still want to
-    exercise request-building logic. When running under pytest (or when the
-    explicit override is set), allow HTTP execution even if mock mode is on.
-    """
-
-    override = os.getenv("TRAIGENT_ALLOW_HTTP_IN_MOCK", "").lower()
-    if override in {"1", "true", "yes", "on"}:
-        return True
-
-    return "PYTEST_CURRENT_TEST" in os.environ
 
 
 class TrialOperations:
@@ -246,14 +231,9 @@ class TrialOperations:
         Returns:
             True if successful, False otherwise
         """
-        # Skip backend calls in mock mode - run fully offline
-        mock_mode = is_mock_mode()
-        allow_http = _allow_http_in_mock_mode()
-
-        if mock_mode and not allow_http:
-            logger.debug(
-                "Mock mode: skipping trial registration for %s (offline mode)", trial_id
-            )
+        # Skip backend calls in offline mode
+        if is_backend_offline():
+            logger.debug("Offline mode: skipping trial registration for %s", trial_id)
             return True
 
         if not AIOHTTP_AVAILABLE:
@@ -315,9 +295,9 @@ class TrialOperations:
                         return False
 
         except Exception as exc:
-            if mock_mode:
+            if is_backend_offline():
                 logger.debug(
-                    "Mock mode: trial registration encountered %s; treating as success",
+                    "Offline mode: trial registration encountered %s; treating as success",
                     exc,
                 )
                 return True
@@ -553,13 +533,10 @@ class TrialOperations:
         Returns:
             True if successful, False otherwise
         """
-        # Skip backend calls in mock mode - run fully offline
-        mock_mode = is_mock_mode()
-        allow_http = _allow_http_in_mock_mode()
-
-        if mock_mode and not allow_http:
+        # Skip backend calls in offline mode
+        if is_backend_offline():
             logger.debug(
-                "Mock mode: skipping trial result submission for %s (offline mode)",
+                "Offline mode: skipping trial result submission for %s",
                 trial_id,
             )
             return True
@@ -659,9 +636,9 @@ class TrialOperations:
                         return False
 
         except Exception as exc:
-            if mock_mode:
+            if is_backend_offline():
                 logger.debug(
-                    "Mock mode: trial result submission encountered %s; "
+                    "Offline mode: trial result submission encountered %s; "
                     "treating as success",
                     exc,
                 )
@@ -694,13 +671,10 @@ class TrialOperations:
         Returns:
             True if submission successful, False otherwise
         """
-        # Skip backend calls in mock mode - run fully offline
-        mock_mode = is_mock_mode()
-        allow_http = _allow_http_in_mock_mode()
-
-        if mock_mode and not allow_http:
+        # Skip backend calls in offline mode
+        if is_backend_offline():
             logger.debug(
-                "Mock mode: skipping summary stats submission for %s (offline mode)",
+                "Offline mode: skipping summary stats submission for %s",
                 trial_id,
             )
             return True
@@ -797,9 +771,9 @@ class TrialOperations:
                         return False
 
         except Exception as exc:
-            if mock_mode:
+            if is_backend_offline():
                 logger.debug(
-                    "Mock mode: summary stats submission encountered %s; "
+                    "Offline mode: summary stats submission encountered %s; "
                     "treating as success",
                     exc,
                 )
@@ -832,10 +806,10 @@ class TrialOperations:
         Returns:
             bool: True if update successful, False otherwise
         """
-        # Skip backend calls in mock mode - run fully offline
-        if is_mock_mode():
+        # Skip backend calls in offline mode
+        if is_backend_offline():
             logger.debug(
-                f"Mock mode: skipping weighted score update for trial {trial_id}"
+                f"Offline mode: skipping weighted score update for trial {trial_id}"
             )
             return True
 
@@ -913,8 +887,11 @@ class TrialOperations:
                         exc, aiohttp.ClientConnectorError
                     ):
                         global _warned_weighted_score_failure
-                        # Only warn once and skip in mock mode
-                        if not _warned_weighted_score_failure and not is_mock_mode():
+                        # Only warn once; suppress warnings in offline mode
+                        if (
+                            not _warned_weighted_score_failure
+                            and not is_backend_offline()
+                        ):
                             logger.warning(
                                 "Cannot connect to backend while updating weighted score for %s (%s). Skipping.",
                                 trial_id,

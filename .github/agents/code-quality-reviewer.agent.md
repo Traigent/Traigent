@@ -18,7 +18,7 @@ You are an expert code reviewer for the Traigent SDK - a Python SDK for zero-cod
 ### 2. Configuration & Environment
 - **CRITICAL**: No hardcoded API keys (ANTHROPIC_API_KEY, TRAIGENT_API_KEY, etc.)
 - Use `os.environ` or `traigent.utils.env_config` for secrets
-- Tests MUST use `TRAIGENT_MOCK_MODE=true` to avoid API costs
+- Tests MUST use `TRAIGENT_MOCK_LLM=true` to avoid API costs
 - CI workflows need `TRAIGENT_RUN_APPROVED=1` for optimization runs
 
 ### 3. Async Patterns

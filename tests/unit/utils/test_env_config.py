@@ -15,7 +15,8 @@ def _reset_env(monkeypatch):
     """Clear critical environment variables to isolate test cases."""
     for key in (
         "JWT_SECRET_KEY",
-        "TRAIGENT_MOCK_MODE",
+        "TRAIGENT_MOCK_LLM",
+        "TRAIGENT_OFFLINE_MODE",
         "ENVIRONMENT",
         "TRAIGENT_DEV_JWT_SECRET",
     ):
@@ -45,9 +46,9 @@ def test_get_jwt_secret_missing_secret(monkeypatch, env, expect_error):
 
 
 def test_get_jwt_secret_accepts_mock_mode(monkeypatch):
-    """Mock mode should allow fallback secret even if environment not set."""
+    """Mock LLM mode should allow fallback secret even if environment not set."""
     _reset_env(monkeypatch)
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "true")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
 
     with pytest.warns(UserWarning):
         secret = env_config.get_jwt_secret()

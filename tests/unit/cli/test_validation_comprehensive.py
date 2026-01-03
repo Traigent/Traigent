@@ -180,7 +180,7 @@ class TestOptimizationValidator:
     @pytest.mark.asyncio
     async def test_validation_successful(self, validator, valid_function_info):
         """Test successful validation with mocked execution."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             with (
                 patch.object(
                     validator,
@@ -445,7 +445,7 @@ class TestMockModeIntegration:
     @pytest.mark.asyncio
     async def test_mock_mode_baseline_execution(self, validator, mock_function_info):
         """Test baseline execution in mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             metrics, config = await validator._run_baseline(mock_function_info)
 
             assert isinstance(metrics, dict)
@@ -458,7 +458,7 @@ class TestMockModeIntegration:
         self, validator, mock_function_info
     ):
         """Test optimization execution in mock mode."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             metrics, config = await validator._run_optimization(mock_function_info)
 
             assert isinstance(metrics, dict)

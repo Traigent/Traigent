@@ -200,7 +200,7 @@ def mutant_scenario_runner(scenario_runner):
                 capture_output=True,
                 text=True,
                 timeout=300,
-                env={"TRAIGENT_MOCK_MODE": "true", "MUTATION_TESTING": "true"},
+                env={"TRAIGENT_MOCK_LLM": "true", "MUTATION_TESTING": "true"},
             )
 
             # Parse results

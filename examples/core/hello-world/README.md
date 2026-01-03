@@ -7,7 +7,7 @@ Optimize a RAG-enabled Q&A function to find the best model, temperature, and RAG
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true  # Skip API calls
+export TRAIGENT_MOCK_LLM=true  # Skip API calls
 python examples/core/hello-world/run.py
 ```
 

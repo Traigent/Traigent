@@ -24,7 +24,7 @@ def estimate_tokens(text: str) -> int:
 
 def setup_mock_mode() -> bool:
     """Setup mock mode for testing."""
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
     os.environ["OPENAI_API_KEY"] = "mock-key-for-demos"
     os.environ["ANTHROPIC_API_KEY"] = "mock-key-for-demos"
     return True
@@ -136,7 +136,7 @@ class TestMockModeMetrics:
     ):
         """Test basic mock mode function with string outputs."""
         # Override mock mode for exact accuracy testing
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
         async def mock_sentiment_function(**kwargs) -> str:
             """Mock function that returns strings like real mock mode."""
@@ -540,7 +540,7 @@ class TestMockModeIntegrationWithDemos:
 
     def test_setup_mock_mode_integration(self):
         """Test that setup_mock_mode works correctly."""
-        original_mock = os.environ.get("TRAIGENT_MOCK_MODE", "")
+        original_mock = os.environ.get("TRAIGENT_MOCK_LLM", "")
         original_openai = os.environ.get("OPENAI_API_KEY", "")
         original_anthropic = os.environ.get("ANTHROPIC_API_KEY", "")
 
@@ -561,7 +561,7 @@ class TestMockModeIntegrationWithDemos:
 
         finally:
             # Restore environment
-            os.environ["TRAIGENT_MOCK_MODE"] = original_mock
+            os.environ["TRAIGENT_MOCK_LLM"] = original_mock
             if original_openai:
                 os.environ["OPENAI_API_KEY"] = original_openai
             if original_anthropic:
@@ -571,7 +571,7 @@ class TestMockModeIntegrationWithDemos:
     async def test_demo_like_integration(self, monkeypatch):
         """Test integration similar to actual demo usage."""
         # Override mock mode for exact accuracy testing
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
         # Simulate demo environment setup
         original_mock = os.environ.get("MOCK_MODE", "")

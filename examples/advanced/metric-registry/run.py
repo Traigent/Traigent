@@ -10,7 +10,7 @@ from typing import Any
 
 # Ensure the example runs fully locally without attempting cloud coordination.
 os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 import traigent
 from traigent.metrics import MetricSpec, register_metric, reset_registry

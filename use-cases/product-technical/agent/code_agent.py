@@ -6,7 +6,7 @@ This agent generates Python functions based on specifications and optimizes
 for correctness (test pass rate) and code quality.
 
 Usage:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python use-cases/product-technical/agent/code_agent.py
 """
 
@@ -54,7 +54,7 @@ Return ONLY the function code, no explanations or markdown:"""
 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled via environment variable."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("true", "1", "yes")
 
 
 def get_approach_instruction(approach: str) -> str:
@@ -129,7 +129,7 @@ def code_generation_agent(
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
         raise ImportError(
-            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "langchain-openai is required when TRAIGENT_MOCK_LLM is disabled. "
             "Install it with: pip install langchain-openai"
         ) from exc
 
@@ -232,7 +232,7 @@ async def run_optimization():
 
     if not mock_mode:
         print("\nWARNING: Running without mock mode will incur API costs!")
-        print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
+        print("Set TRAIGENT_MOCK_LLM=true for testing.\n")
 
     print("\nStarting optimization...")
     print("Configuration Space:")

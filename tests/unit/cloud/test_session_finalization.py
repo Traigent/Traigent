@@ -190,8 +190,10 @@ class TestAutoFinalizationDetection:
     """Test detection of backend auto-finalization."""
 
     @pytest.fixture
-    def client(self):
+    def client(self, monkeypatch):
         """Create a mock BackendIntegratedClient."""
+        # Disable offline mode so backend calls are actually made
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
         with patch("traigent.cloud.backend_client.AIOHTTP_AVAILABLE", True):
             client = BackendIntegratedClient(
                 api_key="test-api-key", base_url="http://localhost:5000"

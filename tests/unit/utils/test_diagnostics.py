@@ -385,7 +385,7 @@ class TestTraigentDiagnostics:
         assert "OPTIONAL_VAR not set (optional" in msg
 
     @patch("traigent.initialize")
-    @patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}, clear=True)
+    @patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}, clear=True)
     def test_check_traigent_config_success(self, mock_initialize: MagicMock) -> None:
         """Test Traigent configuration check when successful."""
         report = DiagnosticReport()
@@ -399,17 +399,17 @@ class TestTraigentDiagnostics:
         mock_initialize.assert_called_once_with(execution_mode="edge_analytics")
 
     @patch("traigent.initialize")
-    @patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"})
+    @patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"})
     def test_check_traigent_config_with_mock_mode(
         self, mock_initialize: MagicMock
     ) -> None:
-        """Test Traigent config check with mock mode enabled."""
+        """Test Traigent config check with mock LLM mode enabled."""
         report = DiagnosticReport()
 
         TraigentDiagnostics._check_traigent_config(report)
 
         assert len(report.successes) >= 2
-        assert any("Mock mode is enabled" in s["message"] for s in report.successes)
+        assert any("Mock LLM mode is enabled" in s["message"] for s in report.successes)
 
     @patch("traigent.initialize")
     @patch.dict(os.environ, {}, clear=True)
@@ -486,14 +486,14 @@ class TestTraigentDiagnostics:
 
     @patch.dict(os.environ, {}, clear=True)
     def test_add_recommendations_without_mock_mode(self) -> None:
-        """Test recommendations when mock mode is not enabled."""
+        """Test recommendations when mock LLM mode is not enabled."""
         report = DiagnosticReport()
 
         TraigentDiagnostics._add_recommendations(report)
 
-        assert any("Enable mock mode" in r for r in report.recommendations)
+        assert any("Enable mock LLM mode" in r for r in report.recommendations)
 
-    @patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"})
+    @patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"})
     def test_add_recommendations_with_mock_mode(self) -> None:
         """Test recommendations when mock mode is enabled."""
         report = DiagnosticReport()

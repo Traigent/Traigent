@@ -62,10 +62,10 @@ The script wraps `run_demo.py`, which optimizes a compact mock-mode HotpotQA age
    ```
 2. Disable mock mode (`true` by default in the demo) and launch with the full command:
    ```bash
-   TRAIGENT_MOCK_MODE=false ./run_demo.sh
+   TRAIGENT_MOCK_LLM=false ./run_demo.sh
    ```
 
-The real-mode pipeline streams the retrieved context into OpenAI (`gpt-4o`, `gpt-4o-mini`) and Anthropic (`haiku-3.5`) models, so expect live API usage, latency, and billing. Leave `TRAIGENT_MOCK_MODE=true` (default) to keep runs local and deterministic.
+The real-mode pipeline streams the retrieved context into OpenAI (`gpt-4o`, `gpt-4o-mini`) and Anthropic (`haiku-3.5`) models, so expect live API usage, latency, and billing. Leave `TRAIGENT_MOCK_LLM=true` (default) to keep runs local and deterministic.
 
 The demo simultaneously tunes several high-impact variables:
 - `model` — compare OpenAI `gpt-4o` / `gpt-4o-mini` vs. Anthropic `haiku-3.5`.
@@ -88,7 +88,7 @@ Use the interactive launcher and follow the prompts. The RAG chapter mirrors the
 Run the dedicated HotpotQA scenario via the paper experiments CLI. Start in mock mode (no API keys required):
 
 ```bash
-TRAIGENT_MOCK_MODE=true \
+TRAIGENT_MOCK_LLM=true \
 python paper_experiments/cli.py optimize \
   --scenario hotpotqa \
   --algorithm optuna_nsga2 \

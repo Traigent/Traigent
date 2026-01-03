@@ -112,7 +112,7 @@ fi
 
 # Test the setup
 echo -e "\n${YELLOW}Testing setup with mock mode...${NC}"
-TRAIGENT_MOCK_MODE=true python -c "
+TRAIGENT_MOCK_LLM=true python -c "
 import traigent
 from traigent import traigent as traigent_decorator
 print('Traigent version:', traigent.__version__)
@@ -130,7 +130,7 @@ fi
 echo -e "\n${GREEN}✅ Setup Complete!${NC}"
 echo -e "\n${YELLOW}Next Steps:${NC}"
 echo "1. Configure GitHub secrets (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)"
-echo "2. Run a test optimization: ${GREEN}TRAIGENT_MOCK_MODE=true dvc repro${NC}"
+echo "2. Run a test optimization: ${GREEN}TRAIGENT_MOCK_LLM=true dvc repro${NC}"
 echo "3. Push to staging branch to trigger auto-tuning"
 echo "4. Check the documentation: ${GREEN}docs/CI_CD_AUTO_TUNING.md${NC}"
 

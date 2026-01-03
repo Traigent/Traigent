@@ -10,7 +10,7 @@ For authoritative details, point builders to the repo integrations and examples.
 | --- | --- | --- |
 | Plain Python functions | Decorate a function, run `.optimize()`, evaluate on a dataset | Best when key knobs are explicit or framework-overridable |
 | Local execution | `execution_mode="edge_analytics"` | Default OSS mode |
-| Mock mode | `TRAIGENT_MOCK_MODE=true` | Great for demos/CI dry runs (still validate your own code paths) |
+| Mock mode | `TRAIGENT_MOCK_LLM=true` | Great for demos/CI dry runs (still validate your own code paths) |
 | CI gates pattern | Evaluate baseline vs PR + optionally tune | Example runner exists under `examples/integrations/ci-cd/` |
 
 ## Supported integrations (typical adoption paths)

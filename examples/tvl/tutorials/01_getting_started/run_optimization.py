@@ -39,7 +39,7 @@ def simulate_chatbot_response(model: str, temperature: float, max_tokens: int) -
 
 
 # Option 1: Use the @optimize decorator with TVL spec
-# Note: Set TRAIGENT_MOCK_MODE=true environment variable for tutorials
+# Note: Set TRAIGENT_MOCK_LLM=true environment variable for tutorials
 @traigent.optimize(
     tvl_spec=str(SPEC_PATH),
 )

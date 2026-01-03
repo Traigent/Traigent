@@ -316,7 +316,7 @@ class TestExtractLLMMetrics:
         """Test extracting metrics from metadata."""
 
         # Disable mock mode for this test
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "")
         monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "")
 
         class MockResponse:

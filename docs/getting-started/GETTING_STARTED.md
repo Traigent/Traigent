@@ -8,7 +8,7 @@ The fastest path to optimize an LLM workflow with **zero code changes**.
 
 ```bash
 pip install -e ".[integrations]"        # Core + LangChain/OpenAI/Anthropic
-export TRAIGENT_MOCK_MODE=true          # Run examples without API keys
+export TRAIGENT_MOCK_LLM=true          # Run examples without API keys
 python examples/quickstart/01_simple_qa.py
 ```
 
@@ -70,7 +70,7 @@ def classify(text: str) -> str:
 
 ## 🧪 Mock Mode & Examples
 
-- `TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py` (no API keys)
+- `TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py` (no API keys)
 - Examples Navigator: `python -m http.server -d examples 8000` → http://localhost:8000
 
 ## 🛠️ CLI Snippets

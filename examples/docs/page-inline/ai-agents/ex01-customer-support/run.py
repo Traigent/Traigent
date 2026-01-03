@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 # Initialize in mock mode for examples
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 from customer_support import demonstrate_customer_support
 
@@ -20,5 +20,5 @@ if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("Example complete!")
     print("\nTo run without mock mode:")
-    print("  export TRAIGENT_MOCK_MODE=false")
+    print("  export TRAIGENT_MOCK_LLM=false")
     print("  python run.py")

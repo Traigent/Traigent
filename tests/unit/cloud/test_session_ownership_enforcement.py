@@ -13,8 +13,10 @@ from traigent.cloud.trial_operations import TrialOperations
 
 
 @pytest.mark.asyncio
-async def test_trial_operations_register_forbidden_logs(caplog):
+async def test_trial_operations_register_forbidden_logs(caplog, monkeypatch):
     """403 responses should emit remediation guidance and return False."""
+    # Disable offline mode so backend calls are actually made
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
 
     backend_config = SimpleNamespace(
         backend_base_url="https://api.traigent.ai",

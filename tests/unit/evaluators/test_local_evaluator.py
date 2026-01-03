@@ -322,7 +322,7 @@ class TestLocalEvaluatorIntegration:
     async def test_sentiment_analysis_simulation(self, monkeypatch):
         """Test with realistic sentiment analysis function."""
         # Ensure we're not in mock mode for exact accuracy testing
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
         # Create realistic dataset
         examples = [

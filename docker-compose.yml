@@ -10,7 +10,8 @@ services:
       - .:/app
       - pip-cache:/root/.cache/pip
     environment:
-      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_MOCK_LLM=true
+      - TRAIGENT_OFFLINE_MODE=true
       - TRAIGENT_LOG_LEVEL=DEBUG
     command: ["bash"]
     stdin_open: true
@@ -24,7 +25,8 @@ services:
     volumes:
       - .:/app
     environment:
-      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_MOCK_LLM=true
+      - TRAIGENT_OFFLINE_MODE=true
     command: ["pytest", "tests/", "-v", "--tb=short"]
 
   # Run unit tests only (faster)
@@ -35,7 +37,8 @@ services:
     volumes:
       - .:/app
     environment:
-      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_MOCK_LLM=true
+      - TRAIGENT_OFFLINE_MODE=true
     command: ["pytest", "tests/unit/", "-v", "--tb=short"]
 
   # Run linting
@@ -64,7 +67,8 @@ services:
     volumes:
       - .:/app
     environment:
-      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_MOCK_LLM=true
+      - TRAIGENT_OFFLINE_MODE=true
     command: ["python", "-c", "import traigent; import IPython; IPython.embed()"]
     stdin_open: true
     tty: true
@@ -79,7 +83,8 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - TRAIGENT_MOCK_MODE=true
+      - TRAIGENT_MOCK_LLM=true
+      - TRAIGENT_OFFLINE_MODE=true
     command: ["streamlit", "run", "playground/traigent_control_center.py", "--server.address", "0.0.0.0"]
 
 volumes:

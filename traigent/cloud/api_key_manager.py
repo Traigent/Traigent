@@ -9,7 +9,6 @@ Extracted from AuthManager to follow Single Responsibility Principle.
 from __future__ import annotations
 
 import logging
-import os
 import time
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -157,10 +156,11 @@ class APIKeyManager:
                 _expires_at=time.time() + ttl_seconds,
             )
         except ValueError as e:
-            # Only warn once per source to reduce log noise, and skip in mock mode
-            mock_mode = os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+            # Only warn once per source to reduce log noise; suppress in offline mode
+            from traigent.utils.env_config import is_backend_offline
+
             warn_key = f"{source}:{len(api_key)}"
-            if warn_key not in _warned_api_key_sources and not mock_mode:
+            if warn_key not in _warned_api_key_sources and not is_backend_offline():
                 logger.warning(
                     "Ignoring invalid API key (length=%d, source=%s): %s. "
                     "Continuing without cloud authentication in local/dev mode.",

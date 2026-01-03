@@ -5,7 +5,7 @@ Optimize few-shot prompting parameters for sentiment classification.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/few-shot-classification/run.py
 ```
 

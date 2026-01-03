@@ -125,14 +125,14 @@ class TestEnhancedCredentialStore:
         """Create credential store with temp storage."""
         storage_path = Path(temp_dir) / "credentials"
         return EnhancedCredentialStore(
-            master_password="test-passphrase-12345",
+            master_password="test-passphrase-12345",  # noqa: S106 - test credential
             storage_path=str(storage_path),
         )
 
     def test_store_initialization(self, temp_dir):
         """Test credential store initialization."""
         store = EnhancedCredentialStore(
-            master_password="test-passphrase-12345",
+            master_password="test-passphrase-12345",  # noqa: S106 - test credential
             storage_path=str(Path(temp_dir) / "creds"),
         )
         assert store is not None
@@ -304,7 +304,7 @@ class TestCredentialStoreEdgeCases:
         """Create credential store with temp storage."""
         storage_path = Path(temp_dir) / "credentials"
         return EnhancedCredentialStore(
-            master_password="test-passphrase-12345",
+            master_password="test-passphrase-12345",  # noqa: S106 - test credential
             storage_path=str(storage_path),
         )
 

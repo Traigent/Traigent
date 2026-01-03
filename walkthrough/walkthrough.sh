@@ -217,7 +217,7 @@ run_example_mock() {
 
     # Run with mock mode enabled
     cd "$TRAIGENT_ROOT"
-    TRAIGENT_MOCK_MODE=true python "$example_file" 2>&1 | while IFS= read -r line; do
+    TRAIGENT_MOCK_LLM=true python "$example_file" 2>&1 | while IFS= read -r line; do
         # Color code the output
         if [[ $line == *"Best"* ]] || [[ $line == *"✅"* ]]; then
             echo -e "${GREEN}$line${NC}"

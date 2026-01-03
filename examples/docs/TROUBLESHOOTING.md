@@ -3,7 +3,7 @@
 Fast fixes for the most common issues. Start here, then dive deeper if needed.
 
 ## One-minute fixes
-- Missing API keys: set `TRAIGENT_MOCK_MODE=true`.
+- Missing API keys: set `TRAIGENT_MOCK_LLM=true`.
 - Import errors: run `pip install -e ".[examples]"` from repo root.
 - High cost or latency: lower `max_trials` and pick cheaper models.
 - Slow runs: shrink the configuration space; enable caching; reduce concurrency.
@@ -15,7 +15,7 @@ Fast fixes for the most common issues. Start here, then dive deeper if needed.
 pip install -e ".[examples]"
 
 # Mock mode (no keys)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Real keys
 export OPENAI_API_KEY="sk-..."
