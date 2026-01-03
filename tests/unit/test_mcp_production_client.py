@@ -1967,5 +1967,99 @@ class TestCreateOptimizationWorkflow:
                         assert run_id == "run_123"
 
 
+class TestSessionUnavailableAfterConnect:
+    """Test ConnectionError when session is None after successful connect."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        from traigent.cloud.production_mcp_client import MCPServerConfig
+
+        server_config = MCPServerConfig(
+            server_path="python", server_args=["-m", "test"]
+        )
+        with patch(
+            "traigent.cloud.production_mcp_client.RetryConfig"
+        ) as mock_retry_config:
+            with patch(
+                "traigent.cloud.production_mcp_client.RetryHandler"
+            ) as mock_retry_handler:
+                mock_retry_config.return_value = Mock()
+                mock_retry_handler.return_value = Mock()
+                self.client = ProductionMCPClient(server_config)
+
+    @pytest.mark.asyncio
+    async def test_call_tool_session_unavailable_after_connect(self):
+        """Test call_tool returns error when session is None after connect."""
+        self.client._connected = False
+        self.client._session = None
+
+        # Mock retry handler to execute the function directly
+        async def mock_execute(func):
+            try:
+                result = await func()
+                return Mock(success=True, result=result)
+            except Exception as e:
+                return Mock(success=False, last_exception=e, result=None)
+
+        self.client._retry_handler.execute_async = mock_execute
+
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = False
+            with patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect:
+                # connect returns True but session remains None
+                mock_connect.return_value = True
+
+                result = await self.client.call_tool("test_tool", {"arg": "value"})
+                assert result.success is False
+                assert (
+                    "session" in result.error_message.lower()
+                    or "unavailable" in result.error_message.lower()
+                )
+
+    @pytest.mark.asyncio
+    async def test_list_resources_session_unavailable_after_connect(self):
+        """Test list_resources raises ConnectionError when session is None after connect."""
+        self.client._connected = False
+        self.client._session = None
+
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = False
+            with patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect:
+                # connect returns True but session remains None
+                mock_connect.return_value = True
+
+                result = await self.client.list_resources()
+                assert result.success is False
+                assert "session" in result.error_message.lower()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_session_unavailable_after_connect(self):
+        """Test read_resource raises ConnectionError when session is None after connect."""
+        self.client._connected = False
+        self.client._session = None
+
+        with patch.object(
+            self.client, "is_connected", new_callable=AsyncMock
+        ) as mock_is_connected:
+            mock_is_connected.return_value = False
+            with patch.object(
+                self.client, "connect", new_callable=AsyncMock
+            ) as mock_connect:
+                # connect returns True but session remains None
+                mock_connect.return_value = True
+
+                result = await self.client.read_resource("test://uri")
+                assert result.success is False
+                assert "session" in result.error_message.lower()
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
