@@ -54,21 +54,21 @@ jobs:
 
     - name: Verify installation
       run: |
-        python scripts/verify_installation.py
+        python scripts/validation/verify_installation.py
 
     - name: Run quickstart
       env:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true
       run: |
-        python scripts/quickstart.py
+        python scripts/setup/quickstart.py
 
     - name: Test first run example
       env:
         TRAIGENT_MOCK_LLM: true
         TRAIGENT_OFFLINE_MODE: true
       run: |
-        python examples/quickstart/first_run.py
+        python examples/quickstart/01_simple_qa.py
 
     - name: Test README examples
       env:
@@ -139,6 +139,6 @@ jobs:
         python -c "import traigent; print('✅ Import works')"
 
         # Test one example
-        python examples/quickstart/first_run.py || true
+        python examples/quickstart/01_simple_qa.py || true
 
         echo "✅ Quick validation passed"
