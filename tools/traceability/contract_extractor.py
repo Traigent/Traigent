@@ -22,7 +22,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_write_text,
+    validate_path,
+)
 
 @dataclass
 class MethodContract:
@@ -465,7 +469,7 @@ def output_yaml(data: dict[str, Any], output_path: Path | None = None) -> str:
     yaml_str = "\n".join(lines)
 
     if output_path:
-        output_path.write_text(yaml_str, encoding="utf-8")
+        safe_write_text(output_path, yaml_str, output_path.parent, encoding="utf-8")
         print(f"Report written to {output_path}")
 
     return yaml_str
@@ -561,7 +565,7 @@ Examples:
         if args.json:
             output = json.dumps(report, indent=2)
             if output_path:
-                output_path.write_text(output, encoding="utf-8")
+                safe_write_text(output_path, output, output_path.parent, encoding="utf-8")
                 print(f"Report written to {output_path}")
             else:
                 print(output)

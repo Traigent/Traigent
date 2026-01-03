@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_open, validate_path
 
 class CleanupBackupManager:
     """Manages backups for cleanup operations with undo capability."""
@@ -101,7 +101,7 @@ class CleanupBackupManager:
 
         # Save manifest
         manifest_path = validate_path(backup_path / "manifest.json", backup_path)
-        with open(manifest_path, "w") as f:
+        with safe_open(manifest_path, backup_path, mode="w", encoding="utf-8") as f:
             json.dump(backup_manifest, f, indent=2)
 
         return backup_id
@@ -114,7 +114,7 @@ class CleanupBackupManager:
         if not manifest_file.exists():
             return False
 
-        with open(manifest_file) as f:
+        with safe_open(manifest_file, backup_path, mode="r", encoding="utf-8") as f:
             manifest = json.load(f)
 
         restored_count = 0
@@ -155,7 +155,9 @@ class CleanupBackupManager:
                 backup_dir,
             )
             if manifest_file.exists():
-                with open(manifest_file) as f:
+                with safe_open(
+                    manifest_file, backup_dir, mode="r", encoding="utf-8"
+                ) as f:
                     manifest = json.load(f)
                     backups.append(manifest)
         return sorted(backups, key=lambda x: x["timestamp"], reverse=True)
@@ -367,7 +369,7 @@ class SafeCleanupAnalyzer:
 
             try:
                 # Calculate file hash using SHA-256 for collision resistance
-                with open(file_path, "rb") as f:
+                with safe_open(file_path, self.base_path, mode="rb") as f:
                     file_hash = hashlib.sha256(f.read()).hexdigest()
 
                 file_size = file_path.stat().st_size

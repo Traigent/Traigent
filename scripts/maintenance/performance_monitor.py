@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, List
 
 import psutil
 
-from traigent.utils.secure_path import validate_path
+from traigent.utils.secure_path import safe_open, validate_path
 logger = logging.getLogger(__name__)
 
 
@@ -105,7 +105,7 @@ class PerformanceMonitor:
             self.output_dir / f"{func_name.replace('.', '_')}_profile.txt",
             self.output_dir,
         )
-        with open(profile_file, "w") as f:
+        with safe_open(profile_file, self.output_dir, mode="w", encoding="utf-8") as f:
             stats.print_stats(file=f)
 
         # Save top bottlenecks
@@ -114,7 +114,9 @@ class PerformanceMonitor:
             self.output_dir,
         )
         bottlenecks = self._extract_bottlenecks(stats)
-        with open(bottlenecks_file, "w") as f:
+        with safe_open(
+            bottlenecks_file, self.output_dir, mode="w", encoding="utf-8"
+        ) as f:
             json.dump(bottlenecks, f, indent=2)
 
     def _extract_bottlenecks(self, stats: pstats.Stats) -> Dict[str, Any]:
@@ -210,7 +212,7 @@ class PerformanceMonitor:
             filename = f"performance_report_{timestamp}.json"
 
         report_file = validate_path(self.output_dir / filename, self.output_dir)
-        with open(report_file, "w") as f:
+        with safe_open(report_file, self.output_dir, mode="w", encoding="utf-8") as f:
             json.dump(report, f, indent=2)
 
         return str(report_file)

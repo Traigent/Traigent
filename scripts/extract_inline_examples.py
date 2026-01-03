@@ -25,7 +25,12 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 class Node:
     def __init__(
@@ -315,8 +320,12 @@ def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
         code = clean_snippet(code)
         code = maybe_add_python_imports(code)
         code = append_python_main(code)
-    with open(code_path, "w", encoding="utf-8") as f:
-        f.write(code.rstrip() + "\n")
+    safe_write_text(
+        code_path,
+        f"{code.rstrip()}\n",
+        base_out,
+        encoding="utf-8",
+    )
 
     # Attempt to identify eval_dataset from code and create stub
     # Looks for patterns like eval_dataset="name.jsonl"
@@ -336,8 +345,12 @@ def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
         eval_path = validate_path(eval_dir / dataset_name, base_out)
         # Minimal JSONL stub
         sample = {"input": "sample text", "expected": "sample expected output"}
-        with open(eval_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(sample) + "\n")
+        safe_write_text(
+            eval_path,
+            f"{json.dumps(sample)}\n",
+            base_out,
+            encoding="utf-8",
+        )
         eval_path_written = eval_path
         # Remove any duplicate root-level dataset file if present
         root_eval_path = validate_path(folder / dataset_name, base_out)
@@ -350,12 +363,14 @@ def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
     # Minimal metadata README (created once)
     readme_path = validate_path(folder / "README.txt", base_out)
     if not readme_path.exists():
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(
-                f"page: {page_id}\n"
-                f"section: {section}\n"
-                + (f"eval_dataset: {eval_path_written}\n" if eval_path_written else "")
-            )
+        safe_write_text(
+            readme_path,
+            f"page: {page_id}\n"
+            f"section: {section}\n"
+            + (f"eval_dataset: {eval_path_written}\n" if eval_path_written else ""),
+            base_out,
+            encoding="utf-8",
+        )
 
     # Remove legacy nested folder if exists (keep only one folder per example)
     legacy_dir = validate_path(folder / example, base_out)
@@ -403,8 +418,7 @@ def main() -> int:
 
     out_base.mkdir(parents=True, exist_ok=True)
 
-    with open(html_path, encoding="utf-8") as f:
-        html = f.read()
+    html = safe_read_text(html_path, base_dir, encoding="utf-8")
 
     examples = extract_examples(html)
     if not examples:

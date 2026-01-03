@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
 
 def patch_examples(root_dir):
     base_dir = Path.cwd()
@@ -16,7 +16,7 @@ def patch_examples(root_dir):
         for file in files:
             if file.endswith(".py"):
                 filepath = validate_path(Path(root) / file, root_dir, must_exist=True)
-                with open(filepath, "r") as f:
+                with safe_open(filepath, root_dir, mode="r", encoding="utf-8") as f:
                     lines = f.readlines()
                 
                 new_lines = []
@@ -67,7 +67,9 @@ def patch_examples(root_dir):
                             
                 if modified:
                     print(f"Patched {filepath}")
-                    with open(filepath, "w") as f:
+                    with safe_open(
+                        filepath, root_dir, mode="w", encoding="utf-8"
+                    ) as f:
                         f.writelines(new_lines)
 
 if __name__ == "__main__":

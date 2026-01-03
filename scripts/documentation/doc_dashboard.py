@@ -19,7 +19,12 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict
 
-from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -80,7 +85,7 @@ class DocumentationDashboard:
             module_stats = {"total": 0, "documented": 0}
 
             try:
-                content = py_file.read_text()
+                content = safe_read_text(py_file, self.root_path)
                 tree = ast.parse(content)
 
                 for node in ast.walk(tree):
@@ -174,7 +179,7 @@ class DocumentationDashboard:
             if any(part in str(md_file) for part in ["venv", "env", "node_modules"]):
                 continue
 
-            content = md_file.read_text()
+            content = safe_read_text(md_file, self.root_path)
             doc_lengths.append(len(content))
 
             # Count code examples
@@ -216,7 +221,7 @@ class DocumentationDashboard:
             self.root_path / "traigent" / "__init__.py",
         ]:
             if file_path.exists():
-                content = file_path.read_text()
+                content = safe_read_text(file_path, self.root_path)
                 matches = re.findall(version_pattern, content, re.IGNORECASE)
                 versions.update(matches)
 
@@ -233,7 +238,7 @@ class DocumentationDashboard:
 
         for correct_term, variations in terms_variations.items():
             for md_file in self.root_path.glob("*.md"):
-                content = md_file.read_text()
+                content = safe_read_text(md_file, self.root_path)
                 for variation in variations:
                     if variation in content:
                         consistency["terminology_consistent"] = False

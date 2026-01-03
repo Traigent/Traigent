@@ -18,7 +18,12 @@ from typing import Iterable
 import libcst as cst
 import libcst.matchers as m
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 _EMPTY_MODULE = cst.Module(body=[])
 
 
@@ -103,13 +108,14 @@ def iter_python_files(paths: Iterable[pathlib.Path]) -> Iterable[pathlib.Path]:
             yield path
 
 
-def process_file(path: pathlib.Path) -> bool:
-    source = path.read_text()
+def process_file(path: pathlib.Path, base_dir: pathlib.Path) -> bool:
+    safe_path = validate_path(path, base_dir, must_exist=True)
+    source = safe_read_text(safe_path, base_dir)
     module = cst.parse_module(source)
     transformer = OptionalDefaultTransformer()
     updated = module.visit(transformer)
     if transformer.changed and updated != module:
-        path.write_text(updated.code)
+        safe_write_text(safe_path, updated.code, base_dir)
     return transformer.changed
 
 
@@ -134,7 +140,7 @@ def main() -> None:
 
     changed_files = []
     for file in iter_python_files(safe_paths):
-        if process_file(file):
+        if process_file(file, base_dir):
             changed_files.append(file)
 
     if changed_files:

@@ -7,7 +7,12 @@ import fnmatch
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from traigent.utils.secure_path import PathTraversalError, safe_read_text, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 try:  # pragma: no cover
     from .analysis_utils import (
@@ -131,10 +136,12 @@ def run_lint(project_root: Path, lint_output: Path) -> None:
         project_root,
     )
     if result.stdout:
-        lint_output.write_text(result.stdout, encoding="utf-8")
+        safe_write_text(lint_output, result.stdout, project_root, encoding="utf-8")
     elif result.returncode != 0:
-        lint_output.write_text(
+        safe_write_text(
+            lint_output,
             f"{{\n  \"error\": \"ruff command failed with code {result.returncode}\"\n}}\n",
+            project_root,
             encoding="utf-8",
         )
 
@@ -150,8 +157,10 @@ def run_coverage(project_root: Path, coverage_output: Path) -> None:
     if result.returncode != 0:
         # Persist stdout/stderr for troubleshooting and fall back to empty coverage map.
         failure_log = coverage_output.with_suffix(".log")
-        failure_log.write_text(
+        safe_write_text(
+            failure_log,
             f"Command: {' '.join(cmd)}\nReturn code: {result.returncode}\n\nSTDOUT:\n{result.stdout}\n\nSTDERR:\n{result.stderr}\n",
+            project_root,
             encoding="utf-8",
         )
 

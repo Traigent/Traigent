@@ -396,7 +396,8 @@ def write_top20(path: Path, data: Mapping[str, Mapping[str, object]]) -> None:
         reasons = metrics.get("reasons") or []
         reason_text = "; ".join(reasons) if reasons else "No major signals (score mostly baseline)."
         lines.append(f"- **{module}** — risk {metrics['risk']:.3f}: {reason_text}")
-    path.write_text("\n".join(lines), encoding="utf-8")
+    validated_path = validate_path(path, path.parent, must_exist=False)
+    safe_write_text(validated_path, "\n".join(lines), path.parent, encoding="utf-8")
 
 
 def main() -> None:

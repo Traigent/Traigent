@@ -17,7 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from traigent.utils.secure_path import PathTraversalError, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 @dataclass
 class MigrationRule:
@@ -227,7 +232,7 @@ def apply_rule(
     """
     try:
         safe_path = validate_path(file_path, base_dir, must_exist=True)
-        content = safe_path.read_text(encoding="utf-8")
+        content = safe_read_text(safe_path, base_dir, encoding="utf-8")
     except (PathTraversalError, FileNotFoundError, OSError) as e:
         return False, f"Error reading {file_path}: {e}"
 
@@ -255,7 +260,7 @@ def apply_rule(
     if dry_run:
         return True, f"[DRY-RUN] {safe_path}\n  OLD: {old_line}\n  NEW: {new_line}"
     else:
-        safe_path.write_text(new_content, encoding="utf-8")
+        safe_write_text(safe_path, new_content, base_dir, encoding="utf-8")
         return True, f"[APPLIED] {safe_path}\n  OLD: {old_line}\n  NEW: {new_line}"
 
 

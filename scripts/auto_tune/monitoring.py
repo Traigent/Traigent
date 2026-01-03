@@ -7,6 +7,7 @@ Provides health checks, metrics collection, and alerting.
 import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -381,12 +382,35 @@ class AlertManager:
         try:
             ip_addr = ipaddress.ip_address(hostname)
         except ValueError:
+            ip_addr = None
+
+        if ip_addr is not None:
+            if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+                return False
+            if ip_addr.is_multicast or ip_addr.is_reserved:
+                return False
             return True
 
-        if ip_addr.is_private or ip_addr.is_loopback or ip_addr.is_link_local:
+        try:
+            addr_infos = socket.getaddrinfo(hostname, None)
+        except (socket.gaierror, OSError):
             return False
-        if ip_addr.is_multicast or ip_addr.is_reserved:
-            return False
+
+        for _family, _socktype, _proto, _canon, sockaddr in addr_infos:
+            ip_str = sockaddr[0]
+            try:
+                resolved_ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False
+            if (
+                resolved_ip.is_private
+                or resolved_ip.is_loopback
+                or resolved_ip.is_link_local
+            ):
+                return False
+            if resolved_ip.is_multicast or resolved_ip.is_reserved:
+                return False
+
         return True
 
     def _get_alert_color(self, severity: AlertSeverity) -> str:
