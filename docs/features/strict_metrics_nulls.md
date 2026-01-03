@@ -135,7 +135,7 @@ export TRAIGENT_STRICT_METRICS_NULLS=true
 
 Run the comprehensive test suite:
 ```bash
-TRAIGENT_MOCK_MODE=true pytest tests/unit/config/test_strict_metrics_nulls.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/config/test_strict_metrics_nulls.py -v
 ```
 
 The test suite covers:
@@ -220,5 +220,5 @@ print(os.environ.get("TRAIGENT_STRICT_METRICS_NULLS"))
 ## Related Configuration
 
 Other Traigent configuration options that work well with strict nulls:
-- `TRAIGENT_MOCK_MODE`: Testing without real API calls
+- `TRAIGENT_MOCK_LLM`: Testing without real API calls
 - `TRAIGENT_DEBUG`: Enhanced logging for troubleshooting

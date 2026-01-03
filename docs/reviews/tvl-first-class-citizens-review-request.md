@@ -318,7 +318,7 @@ These could be refactored but work correctly. Lower priority.
 
 - 44 new tests in `test_constraints.py`
 - 98 existing tests in `test_parameter_ranges.py`
-- All tests pass with `TRAIGENT_MOCK_MODE=true`
+- All tests pass with `TRAIGENT_MOCK_LLM=true`
 
 ---
 
@@ -355,13 +355,13 @@ These could be refactored but work correctly. Lower priority.
 
 ```bash
 # Run all constraint tests
-TRAIGENT_MOCK_MODE=true pytest tests/unit/api/test_constraints.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/api/test_constraints.py -v
 
 # Run with parameter range tests
-TRAIGENT_MOCK_MODE=true pytest tests/unit/api/test_constraints.py tests/unit/api/test_parameter_ranges.py -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/api/test_constraints.py tests/unit/api/test_parameter_ranges.py -v
 
 # Quick manual test
-TRAIGENT_MOCK_MODE=true python -c "
+TRAIGENT_MOCK_LLM=true python -c "
 from traigent import Range, Choices, implies, ConfigSpace
 
 temp = Range(0.0, 2.0, name='temperature')

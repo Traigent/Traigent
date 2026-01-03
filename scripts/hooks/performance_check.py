@@ -93,7 +93,7 @@ import sys
 
 try:
     # Enable mock mode for testing
-    os.environ['TRAIGENT_MOCK_MODE'] = 'true'
+    os.environ['TRAIGENT_MOCK_LLM'] = 'true'
 
     # FIX: Correct import for the decorator
     from traigent.api.decorators import optimize
@@ -139,7 +139,7 @@ except Exception as e:
     try:
         # Security: Use subprocess with restricted environment
         env = os.environ.copy()
-        env["TRAIGENT_MOCK_MODE"] = "true"
+        env["TRAIGENT_MOCK_LLM"] = "true"
         # Remove sensitive variables
         for key in list(env.keys()):
             if "KEY" in key or "SECRET" in key or "TOKEN" in key:

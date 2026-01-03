@@ -239,7 +239,7 @@ def test_token_estimation_with_tiktoken():
 @pytest.mark.asyncio
 async def test_end_to_end_flow_with_mock_mode():
     """Test complete flow from function call to metrics extraction in mock mode."""
-    os.environ["TRAIGENT_MOCK_MODE"] = "true"
+    os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
     evaluator = LocalEvaluator(
         metrics=["accuracy"],
@@ -279,7 +279,7 @@ async def test_end_to_end_flow_with_mock_mode():
     assert example_metrics["total_cost"] == 0.0  # Mock mode
 
     # Clean up
-    del os.environ["TRAIGENT_MOCK_MODE"]
+    del os.environ["TRAIGENT_MOCK_LLM"]
 
 
 if __name__ == "__main__":

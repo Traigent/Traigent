@@ -43,7 +43,7 @@ Here is a technical breakdown of our current optimization capabilities:
 1.  **Bayesian Optimizer Limitations:** The native `bayesian.py` implementation assumes a maximization problem and has hardcoded convergence limits. It struggles with purely categorical search spaces (e.g., choosing between 'gpt-4' and 'claude-3').
 2.  **Optuna Strategy:** We have a robust adapter for Optuna (`optuna_adapter.py`) which solves the categorical variable issue using TPE (Tree-structured Parzen Estimator). The long-term plan is to make this the default optimizer.
 3.  **Async Architecture:** The cloud sync operations are async, but the core optimization loop in `Orchestrator` often runs synchronously in local mode.
-4.  **Mock Mode:** For development, we rely heavily on `TRAIGENT_MOCK_MODE=true` to avoid burning API credits.
+4.  **Mock Mode:** For development, we rely heavily on `TRAIGENT_MOCK_LLM=true` to avoid burning API credits.
 
 ## 5. Immediate Priorities for You
 1.  **Review the Optuna Migration Plan:** Read `docs/plans/optuna_integration_plan.md`. This is a critical infrastructure upgrade.
@@ -64,7 +64,7 @@ Here is a technical breakdown of our current optimization capabilities:
     *   *Success Criteria*: `python -c "import traigent; print('✅ Installed')"` prints the success message.
 3.  **Verification**:
     ```bash
-    TRAIGENT_MOCK_MODE=true make test-unit
+    TRAIGENT_MOCK_LLM=true make test-unit
     ```
     *   *Success Criteria*: All unit tests pass (green).
 
@@ -75,7 +75,7 @@ Here is a technical breakdown of our current optimization capabilities:
     ```
 2.  **Run in Mock Mode**:
     ```bash
-    TRAIGENT_MOCK_MODE=true python run.py
+    TRAIGENT_MOCK_LLM=true python run.py
     ```
     *   *Why Mock Mode?* To test the flow without needing API keys immediately.
     *   *Success Criteria*: Script runs, logs show "Optimization started", and a "Best config" is printed at the end.

@@ -17,7 +17,7 @@ The basic example from the README showing Tuned Variables optimization.
 
 ```bash
 # Run in mock mode (no API keys needed)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/quickstart/01_simple_qa.py
 ```
 
@@ -26,7 +26,7 @@ python examples/quickstart/01_simple_qa.py
 Full example with RAG integration for customer support optimization.
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/quickstart/02_customer_support_rag.py
 ```
 
@@ -35,7 +35,7 @@ python examples/quickstart/02_customer_support_rag.py
 Shows how to use custom weights and objective definitions.
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/quickstart/03_custom_objectives.py
 ```
 
@@ -49,7 +49,7 @@ export OPENAI_API_KEY="your-key-here"
 export ANTHROPIC_API_KEY="your-key-here"
 
 # Disable mock mode
-export TRAIGENT_MOCK_MODE=false
+export TRAIGENT_MOCK_LLM=false
 
 # Run any example
 python examples/quickstart/01_simple_qa.py

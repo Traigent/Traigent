@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 # Enable mock mode for testing
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Get project root to resolve dataset paths
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent

@@ -96,7 +96,7 @@ class TestEndToEndMetricsFlow:
     ):
         """Test complete flow with function returning strings."""
         # Override mock mode for exact accuracy testing
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
         async def sentiment_analysis_function(**kwargs) -> str:
             """Realistic sentiment analysis function for testing."""
@@ -429,7 +429,7 @@ class TestEndToEndMetricsFlow:
     ):
         """Test metrics flow when some function calls fail."""
         # Override mock mode for exact accuracy testing
-        monkeypatch.setenv("TRAIGENT_MOCK_MODE", "false")
+        monkeypatch.setenv("TRAIGENT_MOCK_LLM", "false")
 
         call_count = 0
 

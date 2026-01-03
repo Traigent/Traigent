@@ -9,7 +9,8 @@ on:
       - '.github/workflows/traigent-ci-gates.yml'
 
 env:
-  TRAIGENT_MOCK_MODE: "true"
+  TRAIGENT_MOCK_LLM: "true"
+  TRAIGENT_OFFLINE_MODE: "true"
   CI: "true"
   TRAIGENT_RUN_APPROVED: "1"  # Auto-approve CI runs for testing
   TRAIGENT_APPROVED_BY: "github-actions"

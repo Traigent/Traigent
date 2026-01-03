@@ -45,10 +45,10 @@ tests/
 
 ## 🛠️ Development Workflow
 - **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
-- **Testing**: `TRAIGENT_MOCK_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
+- **Testing**: `TRAIGENT_MOCK_LLM=true pytest tests/` (Critical: Use mock mode to avoid API costs).
   - **Markers**: `pytest -m "unit"`, `pytest -m "integration"`, `pytest -m "security"`, `pytest -m "slow"`.
 - **Linting**: `make lint` (runs Ruff, MyPy, Bandit). `make format` (Black, Isort).
-- **Mock Mode**: Always use `TRAIGENT_MOCK_MODE=true` for local development and tests.
+- **Mock Mode**: Always use `TRAIGENT_MOCK_LLM=true` for local development and tests.
 - **Quick Fix**: `make quick-fix` applies formatting and safe lint fixes.
 
 ## 📐 Code Formatting & Linting (CRITICAL)
@@ -102,7 +102,7 @@ The CI workflow uses different flags than local development:
 
 ## 🔐 Environment Variables
 Key environment variables (see `.env.example` for complete list):
-- `TRAIGENT_MOCK_MODE=true` - Enable mock mode for testing without API costs
+- `TRAIGENT_MOCK_LLM=true` - Enable mock mode for testing without API costs
 - `TRAIGENT_API_KEY` - Cloud backend authentication
 - `TRAIGENT_LOG_LEVEL=DEBUG` - Enable debug logging
 - `TRAIGENT_RESULTS_FOLDER=~/.traigent` - Local results storage path
@@ -131,14 +131,14 @@ Key environment variables (see `.env.example` for complete list):
 
 ### Debugging Tips
 - Set `TRAIGENT_LOG_LEVEL=DEBUG` for verbose logging
-- Use `TRAIGENT_MOCK_MODE=true` to avoid API costs during debugging
+- Use `TRAIGENT_MOCK_LLM=true` to avoid API costs during debugging
 - Check `~/.traigent/` for local optimization results
 - Use `make dev-server` to run the Streamlit UI for interactive debugging
 - For async issues, check `asyncio_mode = auto` in `pytest.ini`
 
 ## 📝 Examples Usage
 Examples are in `examples/` directory:
-- **Quickstart**: `examples/quickstart/` - Basic usage patterns (run with `TRAIGENT_MOCK_MODE=true`)
+- **Quickstart**: `examples/quickstart/` - Basic usage patterns (run with `TRAIGENT_MOCK_LLM=true`)
 - **Core**: `examples/core/` - Core features (objectives, config spaces)
 - **Advanced**: `examples/advanced/` - Callbacks, hooks, RAG patterns
 - **Integrations**: `examples/integrations/` - LangChain, OpenAI, Anthropic examples
@@ -158,7 +158,7 @@ Before submitting PRs:
 1. ✅ Run `make format && make lint` - No linting errors
 2. ✅ Run `pytest tests/unit -v` - All unit tests pass
 3. ✅ Run `pytest tests/integration -v -m "not slow"` - Integration tests pass
-4. ✅ Test examples with `TRAIGENT_MOCK_MODE=true`
+4. ✅ Test examples with `TRAIGENT_MOCK_LLM=true`
 5. ✅ Update docstrings for public APIs
 6. ✅ Add/update tests for new features
 7. ✅ Check no secrets in code (`make security`)
@@ -179,7 +179,7 @@ Before submitting PRs:
 
 ### Testing
 - Mock external APIs in unit tests (use `pytest-mock`)
-- Use `TRAIGENT_MOCK_MODE=true` for integration tests
+- Use `TRAIGENT_MOCK_LLM=true` for integration tests
 - Test edge cases and error paths
 - Use markers: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
 

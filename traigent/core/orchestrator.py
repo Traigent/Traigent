@@ -251,7 +251,7 @@ class OptimizationOrchestrator:
         )
 
         # Initialize cost enforcer for cost limit enforcement
-        # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_MODE
+        # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_LLM
         cost_limit = self.config.get("cost_limit")
         cost_approved = self.config.get("cost_approved", False)
         cost_config = None

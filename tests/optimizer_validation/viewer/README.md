@@ -91,7 +91,7 @@ viewer/
 - Check that pytest is installed and working
 
 **Tests not running**
-- Ensure `TRAIGENT_MOCK_MODE` is available
+- Ensure `TRAIGENT_MOCK_LLM` is available
 - Check console output from serve.py for errors
 
 **Traces not showing in Jaeger**

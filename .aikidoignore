@@ -1,0 +1,10 @@
+# Aikido Security Scanner Ignore File
+# https://docs.aikido.dev/
+
+# Ignore "Dangerous use of assert" in test files
+# Assert statements are the standard and correct approach in pytest tests
+tests/**/*.py:assert
+
+# Ignore test credential patterns in test files
+# These are intentionally fake credentials for testing purposes
+tests/**/*.py:generic-api-key

@@ -29,7 +29,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import Bundle, RuleBasedStateMachine, invariant, rule
 
 # Ensure mock mode is disabled for these tests
-os.environ["TRAIGENT_MOCK_MODE"] = "false"
+os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
 from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
 
@@ -47,7 +47,7 @@ class CostEnforcerStateMachine(RuleBasedStateMachine):
     def __init__(self) -> None:
         super().__init__()
         # Ensure mock mode is disabled for each test case
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
         # Real enforcer under test - low limit to trigger denials frequently
         self.enforcer = CostEnforcer(
@@ -250,7 +250,7 @@ class TestCostEnforcerStateMachineAdditional:
     @settings(max_examples=50, deadline=None)
     def test_random_acquire_release_sequence(self, operations: list[int]) -> None:
         """Test random sequences of acquire/release with counts."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         enforcer = CostEnforcer(CostEnforcerConfig(limit=100.0))
         permits: list[Permit] = []
 
@@ -290,7 +290,7 @@ class TestCostEnforcerStateMachineAdditional:
         ops: list[tuple[str, float]],
     ) -> None:
         """Test random sequences of all operations."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         enforcer = CostEnforcer(CostEnforcerConfig(limit=10.0))
         active_permits: list[Permit] = []
         released_permits: list[Permit] = []
@@ -326,7 +326,7 @@ class TestCostEnforcerStateMachineAdditional:
     @settings(max_examples=30, deadline=None)
     def test_permit_id_monotonicity(self, costs: list[float]) -> None:
         """Test that permit IDs are strictly monotonically increasing."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         enforcer = CostEnforcer(CostEnforcerConfig(limit=100.0))
         permit_ids: list[int] = []
 
@@ -349,7 +349,7 @@ class TestCostEnforcerStateMachineAdditional:
     @settings(max_examples=20, deadline=None)
     def test_double_release_always_fails(self, num_permits: int) -> None:
         """Test that double-release always fails regardless of sequence."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         enforcer = CostEnforcer(CostEnforcerConfig(limit=100.0))
 
         # Acquire permits
@@ -379,7 +379,7 @@ class TestDeniedPermitProperties:
 
     def test_denied_permit_properties(self) -> None:
         """Verify denied permits have correct properties (I7)."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         # Very low limit to force denial
         enforcer = CostEnforcer(
             CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
@@ -395,7 +395,7 @@ class TestDeniedPermitProperties:
 
     def test_denied_permit_release_is_safe(self) -> None:
         """Verify releasing a denied permit doesn't affect state."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
         enforcer = CostEnforcer(
             CostEnforcerConfig(limit=0.01, estimated_cost_per_trial=0.1)
         )

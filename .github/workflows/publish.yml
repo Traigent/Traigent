@@ -50,7 +50,8 @@ jobs:
 
     - name: Run tests before publishing
       env:
-        TRAIGENT_MOCK_MODE: true
+        TRAIGENT_MOCK_LLM: true
+        TRAIGENT_OFFLINE_MODE: true
         PYTHONPATH: .
       run: |
         python -m pip install -e ".[dev,all]"

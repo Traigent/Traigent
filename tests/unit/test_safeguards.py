@@ -513,7 +513,7 @@ class TestCIApproval:
         )
 
         with patch.dict(
-            os.environ, {"CI": "true", "TRAIGENT_MOCK_MODE": "true"}, clear=True
+            os.environ, {"CI": "true", "TRAIGENT_MOCK_LLM": "true"}, clear=True
         ):
             result = func._check_ci_approval()  # Should not raise
             assert result is None  # Mock mode bypass returns None
@@ -574,7 +574,7 @@ class TestCIApproval:
                 json.dump(token_data, f)
 
             # Test with CI environment and expired token (disable mock mode to test CI approval)
-            with patch.dict(os.environ, {"CI": "true", "TRAIGENT_MOCK_MODE": "false"}):
+            with patch.dict(os.environ, {"CI": "true", "TRAIGENT_MOCK_LLM": "false"}):
                 with pytest.raises(OptimizationError) as exc:
                     func._check_ci_approval()
 
@@ -656,7 +656,7 @@ class TestCIApproval:
             {
                 "CI": "true",
                 "TRAIGENT_APPROVAL_SECRET": "test_secret",
-                "TRAIGENT_MOCK_MODE": "false",
+                "TRAIGENT_MOCK_LLM": "false",
             },
         ):
             with pytest.raises(OptimizationError):

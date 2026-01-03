@@ -25,7 +25,7 @@ def _prepare_mock_paths(base: Path) -> None:
 
 
 # --- Setup for local development/testing ---
-MOCK = str(os.getenv("TRAIGENT_MOCK_MODE", "")).lower() in {"1", "true", "yes", "y"}
+MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
     _prepare_mock_paths(BASE)
@@ -112,7 +112,7 @@ def summarize_text(text: str) -> str:
     from langchain_core.messages import HumanMessage
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        raise ValueError("Please set ANTHROPIC_API_KEY or use TRAIGENT_MOCK_MODE=true")
+        raise ValueError("Please set ANTHROPIC_API_KEY or use TRAIGENT_MOCK_LLM=true")
 
     prompt = f"Please summarize the following text. Style: {style}.\n\nText: {text}"
 

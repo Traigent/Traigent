@@ -57,7 +57,7 @@ def my_agent(query: str) -> str:
 
 - Regulated or sensitive data (healthcare, finance, legal)
 - Air-gapped or restricted environments
-- CI smoke tests and demos (`TRAIGENT_MOCK_MODE=true`)
+- CI smoke tests and demos (`TRAIGENT_MOCK_LLM=true`)
 - Budget-conscious experiments
 
 ## Roadmap (Awareness Only)

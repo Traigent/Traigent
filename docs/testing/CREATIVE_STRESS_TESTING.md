@@ -11,7 +11,7 @@ You are a senior AI engineer exploring Traigent's capabilities. The README quick
 ```bash
 # Ensure you're in the Traigent directory with the SDK installed
 cd /path/to/traigent-sdk
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 export TRAIGENT_LOG_LEVEL=INFO
 ```
 
@@ -879,7 +879,7 @@ for template in basic multi-objective langchain openai; do
     if [ -f "test_${template}.py" ]; then
         echo "  Generated successfully"
         # Try to run it
-        TRAIGENT_MOCK_MODE=true timeout 60 python "test_${template}.py" 2>&1 | head -20
+        TRAIGENT_MOCK_LLM=true timeout 60 python "test_${template}.py" 2>&1 | head -20
         echo ""
     else
         echo "  ❌ Generation failed"

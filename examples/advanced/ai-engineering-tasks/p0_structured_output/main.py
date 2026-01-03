@@ -6,7 +6,7 @@ P0: Structured Output Engineering with Traigent
 Demonstrates optimizing structured data extraction from text.
 Traigent finds the best output format and parsing strategy.
 
-Run: TRAIGENT_MOCK_MODE=true python main.py
+Run: TRAIGENT_MOCK_LLM=true python main.py
 """
 
 import asyncio
@@ -33,7 +33,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
     traigent = importlib.import_module("traigent")
 
 # Mock mode for demo
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 
 def create_extraction_dataset() -> str:

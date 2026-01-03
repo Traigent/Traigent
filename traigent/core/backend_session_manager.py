@@ -19,7 +19,7 @@ from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
 from traigent.evaluators.base import Dataset
 from traigent.optimizers.base import BaseOptimizer
-from traigent.utils.env_config import is_mock_mode
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.function_identity import FunctionDescriptor
 from traigent.utils.logging import get_logger
 
@@ -73,13 +73,13 @@ class BackendSessionManager:
         """Check if backend-related warnings should be suppressed.
 
         Returns True if:
-        - Mock mode is enabled, OR
+        - Offline mode is enabled, OR
         - No API key is configured (user hasn't set up backend access)
 
         This prevents noisy warnings for users evaluating the SDK without
         backend access or running in local-only mode.
         """
-        if is_mock_mode():
+        if is_backend_offline():
             return True
 
         # Check if backend client has API key configured
@@ -171,8 +171,11 @@ class BackendSessionManager:
                     )
 
             if session_mapping is None:
-                # Only warn once per session and skip in mock mode
-                if session_id not in _warned_missing_mapping and not is_mock_mode():
+                # Only warn once per session; suppress in offline mode (expected)
+                if (
+                    session_id not in _warned_missing_mapping
+                    and not is_backend_offline()
+                ):
                     logger.warning(
                         "Backend mapping missing for session %s (%s). "
                         "This strongly suggests the Traigent API rejected the session "
@@ -182,9 +185,9 @@ class BackendSessionManager:
                         function_identifier,
                     )
                     _warned_missing_mapping.add(session_id)
-                elif is_mock_mode():
+                elif is_backend_offline():
                     logger.debug(
-                        "Backend mapping missing for session %s (mock mode - expected)",
+                        "Backend mapping missing for session %s (offline mode - expected)",
                         session_id,
                     )
 
@@ -281,8 +284,8 @@ class BackendSessionManager:
         )
         global _warned_no_api_key
         if not has_api_key:
-            # Only warn once in non-mock mode to reduce log noise
-            if not _warned_no_api_key and not is_mock_mode():
+            # Only warn once; suppress in offline mode to reduce log noise
+            if not _warned_no_api_key and not is_backend_offline():
                 logger.warning(
                     "⚠️ Skipping backend trial submissions (no API key detected). "
                     "Results will be saved locally only."
