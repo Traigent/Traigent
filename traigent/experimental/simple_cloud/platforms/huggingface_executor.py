@@ -209,7 +209,8 @@ class HuggingFaceAgentExecutor(BasePlatformExecutor):
             self.model_id = model_id
 
         # Generate
-        assert self.local_pipeline is not None  # Ensured by the above if block
+        if self.local_pipeline is None:
+            raise RuntimeError("Local pipeline not initialized for completion")
         result = self.local_pipeline(prompt, **params)
 
         # Extract generated text
@@ -327,7 +328,10 @@ class HuggingFaceAgentExecutor(BasePlatformExecutor):
                 self.model_id = model_id
 
             # Batch generate
-            assert self.local_pipeline is not None  # Ensured by the above if block
+            if self.local_pipeline is None:
+                raise RuntimeError(
+                    "Local pipeline not initialized for batch completion"
+                )
             results = self.local_pipeline(prompts, **params)
 
             # Extract generated texts

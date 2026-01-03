@@ -78,7 +78,7 @@ from traigent.cloud.client import TraigentCloudClient
 from traigent.optimizers.interactive_optimizer import InteractiveOptimizer
 
 # Initialize cloud client
-client = TraigentCloudClient(api_key="your-api-key")
+client = TraigentCloudClient(api_key="<API_KEY>")
 
 # Create interactive optimizer
 optimizer = InteractiveOptimizer(

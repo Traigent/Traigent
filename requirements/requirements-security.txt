@@ -5,7 +5,7 @@
 
 # Enterprise security features
 pyjwt>=2.4.0
-cryptography>=3.4.0
+cryptography>=44.0.1
 passlib>=1.7.4
 python-multipart>=0.0.5
 psutil>=5.8.0

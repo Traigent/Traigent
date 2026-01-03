@@ -46,17 +46,19 @@ except ImportError:
         class ClientError(RuntimeError):
             pass
 
+        _AIOHTTP_MISSING_MSG = "aiohttp is not installed"
+
         class ClientTimeout:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
         class TCPConnector:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
         class ClientSession:  # pragma: no cover - placeholder
             def __init__(self, *args: Any, **kwargs: Any) -> None:
-                raise RuntimeError("aiohttp is not installed")
+                raise RuntimeError(_AiohttpPlaceholder._AIOHTTP_MISSING_MSG)
 
     aiohttp = _AiohttpPlaceholder()
 
@@ -65,6 +67,9 @@ _backend_unavailable_warned: bool = False
 
 # Common log message for fallback to local optimization
 _LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
+
+# Content-Type header for JSON requests
+_JSON_CONTENT_TYPE = "application/json"
 
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
@@ -232,7 +237,7 @@ class ApiOperations:
             )
             connector = self._build_connector()
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
             return await self._post_session_creation(
                 session_payload, headers, connector
@@ -286,11 +291,8 @@ class ApiOperations:
         }
 
     def _build_connector(self) -> Any | None:
-        """Create an aiohttp connector, disabling SSL for localhost usage."""
+        """Create an aiohttp connector when custom transport settings are required."""
 
-        backend_url = self.client.backend_config.backend_base_url
-        if backend_url and ("localhost" in backend_url or "127.0.0.1" in backend_url):
-            return cast(Any, aiohttp).TCPConnector(ssl=False)
         return None
 
     async def _post_session_creation(
@@ -445,17 +447,11 @@ class ApiOperations:
             return False
 
         try:
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
@@ -558,17 +554,11 @@ class ApiOperations:
                     execution_time
                 )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
@@ -640,16 +630,10 @@ class ApiOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                {"Content-Type": _JSON_CONTENT_TYPE}
             )
 
-            # Create connector without SSL for localhost
-            connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = cast(Any, aiohttp).TCPConnector(ssl=False)
+            connector = self._build_connector()
 
             async with cast(Any, aiohttp).ClientSession(connector=connector) as session:
                 api_base = (

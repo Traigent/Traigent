@@ -20,6 +20,7 @@ from packaging.specifiers import InvalidSpecifier, SpecifierSet
 from packaging.version import InvalidVersion, Version
 
 from traigent.utils.exceptions import TraigentError
+from traigent.utils.secure_path import safe_open, validate_path
 
 if TYPE_CHECKING:
     from traigent.config.types import TraigentConfig
@@ -324,7 +325,12 @@ class IntegrationPlugin(ABC):
             return
 
         try:
-            with open(config_path) as f:
+            validated_path = validate_path(
+                config_path, config_path.parent, must_exist=True
+            )
+            with safe_open(
+                validated_path, config_path.parent, mode="r", encoding="utf-8"
+            ) as f:
                 if config_path.suffix.lower() in [".yaml", ".yml"]:
                     config_data = yaml.safe_load(f)
                 elif config_path.suffix.lower() == ".json":

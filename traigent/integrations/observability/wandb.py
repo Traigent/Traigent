@@ -144,7 +144,8 @@ class TraigentWandBTracker:
         Path(config_file).unlink(missing_ok=True)
 
         run = self.current_run
-        assert run is not None, "W&B run initialization failed"
+        if run is None:
+            raise RuntimeError("W&B run initialization failed")
         logger.info(f"Started W&B run: {run.id}")
         return cast(str, run.id)
 

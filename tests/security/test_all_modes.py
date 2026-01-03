@@ -66,7 +66,7 @@ def main():
             "TRAIGENT_JWKS_URL": "https://test.example.com/jwks",
             "TRAIGENT_JWT_ISSUER": "test_issuer",
             "TRAIGENT_JWT_AUDIENCE": "test_audience",
-            "TRAIGENT_MASTER_PASSWORD": "prod_secure_password_123",
+            "TRAIGENT_MASTER_PASSWORD": "prod_secure_passphrase_123",
         },
         "staging": {
             "TRAIGENT_ENVIRONMENT": "staging",

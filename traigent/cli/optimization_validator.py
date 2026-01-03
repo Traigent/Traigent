@@ -187,13 +187,61 @@ class OptimizationValidator:
             logger.error(f"Optimization failed for {func_info.name}: {e}")
             raise RuntimeError(f"Optimization failed: {e}") from e
 
+    def _create_evaluator(
+        self, func_info: OptimizedFunction, is_mock_mode: bool
+    ) -> LocalEvaluator:
+        """Create a LocalEvaluator with appropriate settings for mock or real mode."""
+        if is_mock_mode:
+            return LocalEvaluator(
+                metrics=func_info.objectives or ["accuracy"],
+                execution_mode="edge_analytics",
+                privacy_enabled=False,
+                mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
+            )
+        return LocalEvaluator(
+            metrics=func_info.objectives,
+            execution_mode=getattr(func_info.func, "execution_mode", "cloud"),
+            privacy_enabled=getattr(func_info.func, "privacy_enabled", False),
+            mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
+        )
+
+    def _filter_metrics_to_objectives(
+        self,
+        metrics: dict[str, float],
+        func_info: OptimizedFunction,
+        is_mock_mode: bool,
+    ) -> dict[str, float]:
+        """Filter metrics to only include requested objectives."""
+        if not func_info.objectives:
+            return metrics
+
+        if is_mock_mode:
+            # In mock mode, silently return available objectives
+            return {
+                obj: metrics.get(obj, 0.0)
+                for obj in func_info.objectives
+                if obj in metrics
+            }
+
+        # In real mode, warn about missing objectives
+        filtered: dict[str, float] = {}
+        for objective in func_info.objectives:
+            if objective in metrics:
+                filtered[objective] = metrics[objective]
+            else:
+                logger.warning(
+                    "Objective '%s' not present in evaluation metrics for %s",
+                    objective,
+                    func_info.name,
+                )
+        return filtered if filtered else metrics
+
     async def _evaluate_configuration(
         self,
         func_info: OptimizedFunction,
         config: dict[str, Any],
     ) -> dict[str, float]:
         """Evaluate a function with a specific configuration on its dataset."""
-
         # Load dataset first - needed for both mock mode and real evaluation
         try:
             dataset = func_info.func._load_dataset()
@@ -202,43 +250,7 @@ class OptimizationValidator:
                 f"Failed to load evaluation dataset for {func_info.name}: {exc}"
             ) from exc
 
-        # Fast-path mock mode: use the LocalEvaluator with mock mode to get
-        # simulated metrics based on actual dataset examples
-        if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true":
-            # In mock mode, still use the evaluator so we get proper metric computation
-            # with the dataset examples, but with simulated LLM responses
-            evaluator = LocalEvaluator(
-                metrics=func_info.objectives or ["accuracy"],
-                execution_mode="edge_analytics",
-                privacy_enabled=False,
-                mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
-            )
-
-            # Ensure we have a valid config dict
-            effective_config = (config or {}).copy()
-
-            provider = func_info.func._provider
-            configured_callable = provider.inject_config(
-                func_info.func.func, effective_config, func_info.func.config_param
-            )
-
-            evaluation_result = await evaluator.evaluate(
-                configured_callable, effective_config, dataset
-            )
-
-            metrics = evaluation_result.metrics or {}
-
-            # Filter to requested objectives if provided
-            if func_info.objectives:
-                return {
-                    objective: metrics.get(objective, 0.0)
-                    for objective in func_info.objectives
-                    if objective in metrics
-                }
-
-            return metrics
-
-        # Ensure we always operate on a dict (copy to avoid mutating defaults)
+        is_mock_mode = os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true"
         effective_config = (config or {}).copy()
 
         provider = func_info.func._provider
@@ -246,35 +258,13 @@ class OptimizationValidator:
             func_info.func.func, effective_config, func_info.func.config_param
         )
 
-        evaluator = LocalEvaluator(
-            metrics=func_info.objectives,
-            execution_mode=getattr(func_info.func, "execution_mode", "cloud"),
-            privacy_enabled=getattr(func_info.func, "privacy_enabled", False),
-            mock_mode_config=getattr(func_info.func, "mock_mode_config", None),
-        )
-
+        evaluator = self._create_evaluator(func_info, is_mock_mode)
         evaluation_result = await evaluator.evaluate(
             configured_callable, effective_config, dataset
         )
 
         metrics = evaluation_result.metrics or {}
-
-        # Filter to requested objectives if provided
-        if func_info.objectives:
-            filtered_metrics: dict[str, float] = {}
-            for objective in func_info.objectives:
-                if objective in metrics:
-                    filtered_metrics[objective] = metrics[objective]
-                else:
-                    logger.warning(
-                        "Objective '%s' not present in evaluation metrics for %s",
-                        objective,
-                        func_info.name,
-                    )
-            if filtered_metrics:
-                return filtered_metrics
-
-        return metrics
+        return self._filter_metrics_to_objectives(metrics, func_info, is_mock_mode)
 
     def _compare_results(
         self,

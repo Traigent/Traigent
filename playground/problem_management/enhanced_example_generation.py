@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 from .llm_providers import LLMProviderManager
 from .prompt_builder import build_prompt_for_problem
 
@@ -223,18 +224,23 @@ async def save_examples_to_problem(
         if not problem_file:
             return False, f"Could not find problem file for '{problem_name}'"
 
+        problem_file = validate_path(problem_file, problem_file.parent, must_exist=True)
+
         # Read the current file content
-        content = problem_file.read_text()
+        content = safe_read_text(problem_file, problem_file.parent)
 
         # Backup the original file
-        backup_file = problem_file.with_suffix(".py.backup")
-        backup_file.write_text(content)
+        backup_file = validate_path(
+            problem_file.with_suffix(".py.backup"),
+            problem_file.parent,
+        )
+        safe_write_text(backup_file, content, problem_file.parent)
 
         # Parse and update the examples
         updated_content = add_examples_to_content(content, new_examples)
 
         # Write the updated content
-        problem_file.write_text(updated_content)
+        safe_write_text(problem_file, updated_content, problem_file.parent)
 
         return (
             True,
@@ -248,17 +254,21 @@ async def save_examples_to_problem(
 def find_problem_file(problem_name: str) -> Optional[Path]:
     """Find the Python file for a given problem."""
     # Look in the langchain_problems directory
-    problems_dir = Path(__file__).parent.parent / "langchain_problems"
+    base_dir = Path(__file__).parent.parent
+    problems_dir = validate_path(base_dir / "langchain_problems", base_dir)
 
     # Try exact match first
-    exact_file = problems_dir / f"{problem_name}.py"
+    exact_file = validate_path(
+        problems_dir / f"{problem_name}.py",
+        problems_dir,
+    )
     if exact_file.exists():
         return exact_file
 
     # Try looking for files containing the problem name
     for file_path in problems_dir.glob("*.py"):
         if file_path.stem == problem_name or problem_name in file_path.stem:
-            return file_path
+            return validate_path(file_path, problems_dir, must_exist=True)
 
     return None
 

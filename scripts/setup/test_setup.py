@@ -10,13 +10,13 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 
-def run_command(cmd, description):
+def run_command(cmd: list[str], description: str) -> int:
     """Run a command and print status."""
     print(f"\n{'='*60}")
     print(f"🔧 {description}")
     print(f"{'='*60}")
 
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode == 0:
         print("✅ Success")
@@ -37,13 +37,25 @@ def main():
     print("🧪 Traigent SDK Test Setup")
 
     # 1. Install test dependencies
-    if run_command("pip install -e '.[dev]'", "Installing test dependencies") != 0:
+    if (
+        run_command(
+            ["pip", "install", "-e", ".[dev]"], "Installing test dependencies"
+        )
+        != 0
+    ):
         print("Failed to install dependencies")
         return 1
 
     # 2. Run unit tests with coverage
     run_command(
-        "pytest tests/unit -v --cov=traigent --cov-report=term-missing --cov-report=html",
+        [
+            "pytest",
+            "tests/unit",
+            "-v",
+            "--cov=traigent",
+            "--cov-report=term-missing",
+            "--cov-report=html",
+        ],
         "Running unit tests with coverage",
     )
 
@@ -61,8 +73,8 @@ def main():
     ]
 
     for category_name, test_path in categories:
-        cmd = f"pytest {test_path} -q --tb=no"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        cmd = ["pytest", test_path, "-q", "--tb=no"]
+        result = subprocess.run(cmd, capture_output=True, text=True)
 
         # Parse output for pass/fail counts
         output_lines = result.stdout.strip().split("\n")
@@ -76,7 +88,10 @@ def main():
 
     # 4. Check test coverage threshold
     print("\n📈 Coverage Report:")
-    run_command("coverage report --fail-under=70", "Checking coverage threshold (70%)")
+    run_command(
+        ["coverage", "report", "--fail-under=70"],
+        "Checking coverage threshold (70%)",
+    )
 
     print("\n✨ Test setup complete!")
     print("📁 HTML coverage report: htmlcov/index.html")

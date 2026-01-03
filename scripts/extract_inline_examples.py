@@ -22,8 +22,15 @@ import re
 import shutil
 import sys
 from html.parser import HTMLParser
+from pathlib import Path
 from typing import Dict, List, Optional
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
 
 class Node:
     def __init__(
@@ -135,8 +142,8 @@ def extract_examples(html: str) -> List[Dict[str, str]]:
     return examples
 
 
-def ensure_dir(path: str) -> None:
-    os.makedirs(path, exist_ok=True)
+def ensure_dir(path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
 
 
 def maybe_add_python_imports(code: str) -> str:
@@ -285,14 +292,14 @@ def clean_snippet(code: str) -> str:
     return "\n".join(out)
 
 
-def write_example(base_out: str, page_id: str, ex: Dict[str, str]) -> str:
+def write_example(base_out: Path, page_id: str, ex: Dict[str, str]) -> str:
     section = ex["section_id"] or "no-section"
     example = ex["example_id"] or "example"
     lang = ex["language"] or "text"
     code = ex["code"]
 
     # Build folder: examples/docs/page-inline/<page-id>/<section>
-    folder = os.path.join(base_out, page_id, section)
+    folder = validate_path(base_out / page_id / section, base_out)
     ensure_dir(folder)
 
     # Choose filename extension based on language
@@ -307,14 +314,18 @@ def write_example(base_out: str, page_id: str, ex: Dict[str, str]) -> str:
     }.get(lang, ".txt")
 
     code_filename = f"{example}{ext}"
-    code_path = os.path.join(folder, code_filename)
+    code_path = validate_path(folder / code_filename, base_out)
     # Minimal cleanup + import fix-ups for Python examples and append a __main__ block
     if lang == "python":
         code = clean_snippet(code)
         code = maybe_add_python_imports(code)
         code = append_python_main(code)
-    with open(code_path, "w", encoding="utf-8") as f:
-        f.write(code.rstrip() + "\n")
+    safe_write_text(
+        code_path,
+        f"{code.rstrip()}\n",
+        base_out,
+        encoding="utf-8",
+    )
 
     # Attempt to identify eval_dataset from code and create stub
     # Looks for patterns like eval_dataset="name.jsonl"
@@ -329,54 +340,58 @@ def write_example(base_out: str, page_id: str, ex: Dict[str, str]) -> str:
 
     eval_path_written: Optional[str] = None
     if dataset_name and dataset_name.endswith(".jsonl"):
-        eval_dir = os.path.join(folder, "eval")
+        eval_dir = validate_path(folder / "eval", base_out)
         ensure_dir(eval_dir)
-        eval_path = os.path.join(eval_dir, dataset_name)
+        eval_path = validate_path(eval_dir / dataset_name, base_out)
         # Minimal JSONL stub
         sample = {"input": "sample text", "expected": "sample expected output"}
-        with open(eval_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps(sample) + "\n")
+        safe_write_text(
+            eval_path,
+            f"{json.dumps(sample)}\n",
+            base_out,
+            encoding="utf-8",
+        )
         eval_path_written = eval_path
         # Remove any duplicate root-level dataset file if present
-        root_eval_path = os.path.join(folder, dataset_name)
-        if os.path.exists(root_eval_path) and os.path.abspath(
-            root_eval_path
-        ) != os.path.abspath(eval_path):
+        root_eval_path = validate_path(folder / dataset_name, base_out)
+        if root_eval_path.exists() and root_eval_path.resolve() != eval_path.resolve():
             try:
-                os.remove(root_eval_path)
+                root_eval_path.unlink()
             except OSError:
                 pass
 
     # Minimal metadata README (created once)
-    readme_path = os.path.join(folder, "README.txt")
-    if not os.path.exists(readme_path):
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(
-                f"page: {page_id}\n"
-                f"section: {section}\n"
-                + (f"eval_dataset: {eval_path_written}\n" if eval_path_written else "")
-            )
+    readme_path = validate_path(folder / "README.txt", base_out)
+    if not readme_path.exists():
+        safe_write_text(
+            readme_path,
+            f"page: {page_id}\n"
+            f"section: {section}\n"
+            + (f"eval_dataset: {eval_path_written}\n" if eval_path_written else ""),
+            base_out,
+            encoding="utf-8",
+        )
 
     # Remove legacy nested folder if exists (keep only one folder per example)
-    legacy_dir = os.path.join(folder, example)
-    if os.path.isdir(legacy_dir):
+    legacy_dir = validate_path(folder / example, base_out)
+    if legacy_dir.is_dir():
         shutil.rmtree(legacy_dir, ignore_errors=True)
 
     # Cleanup legacy helper files if they exist
-    legacy_runner = os.path.join(folder, "run_example.py")
-    if os.path.exists(legacy_runner):
+    legacy_runner = validate_path(folder / "run_example.py", base_out)
+    if legacy_runner.exists():
         try:
-            os.remove(legacy_runner)
+            legacy_runner.unlink()
         except OSError:
             pass
-    legacy_results = os.path.join(folder, "results.run.json")
-    if os.path.exists(legacy_results):
+    legacy_results = validate_path(folder / "results.run.json", base_out)
+    if legacy_results.exists():
         try:
-            os.remove(legacy_results)
+            legacy_results.unlink()
         except OSError:
             pass
 
-    return folder
+    return str(folder)
 
 
 def main() -> int:
@@ -393,8 +408,17 @@ def main() -> int:
         sys.argv[3] if len(sys.argv) > 3 else os.path.join("examples", "docs/page-inline")
     )
 
-    with open(html_path, encoding="utf-8") as f:
-        html = f.read()
+    base_dir = Path.cwd()
+    try:
+        html_path = validate_path(Path(html_path), base_dir, must_exist=True)
+        out_base = validate_path(Path(out_base), base_dir)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    out_base.mkdir(parents=True, exist_ok=True)
+
+    html = safe_read_text(html_path, base_dir, encoding="utf-8")
 
     examples = extract_examples(html)
     if not examples:

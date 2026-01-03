@@ -58,6 +58,9 @@ from .models import (
 
 logger = get_logger(__name__)
 
+# Error message constants
+_MCP_SESSION_UNAVAILABLE = "Connected to MCP server but session is unavailable"
+
 
 @dataclass
 class MCPServerConfig:
@@ -316,7 +319,8 @@ class ProductionMCPClient:
                     if not await self.connect():
                         raise NetworkError("Unable to connect to MCP server") from None
 
-                assert self._session is not None, "Connected but session is None"
+                if self._session is None:
+                    raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
                 self._stats["total_requests"] += 1
 
                 # Call tool via MCP
@@ -391,7 +395,8 @@ class ProductionMCPClient:
                 if not await self.connect():
                     raise ConnectionError("Unable to connect to MCP server") from None
 
-            assert self._session is not None, "Connected but session is None"
+            if self._session is None:
+                raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
             resources = await self._session.list_resources()
 
             return MCPResponse(
@@ -417,7 +422,8 @@ class ProductionMCPClient:
                 if not await self.connect():
                     raise ConnectionError("Unable to connect to MCP server") from None
 
-            assert self._session is not None, "Connected but session is None"
+            if self._session is None:
+                raise ConnectionError(_MCP_SESSION_UNAVAILABLE)
             resource = await self._session.read_resource(uri)
 
             return MCPResponse(

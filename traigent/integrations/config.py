@@ -54,9 +54,11 @@ def _register_integration_config_subscribers() -> None:
         module = inspect.getmodule(frame_info.frame)
         if not _should_register_module(module):
             continue
-        assert (
-            module is not None
-        ), "_should_register_module returned True but module is None"
+        if module is None:
+            logger.debug(
+                "Skipping integration config registration: module resolved to None"
+            )
+            continue
         if module not in _integration_config_subscribers:
             _integration_config_subscribers.add(module)
         module.__dict__.setdefault("integration_config", None)

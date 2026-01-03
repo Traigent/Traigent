@@ -154,17 +154,17 @@ from traigent.security.credentials import get_secure_credential_store, Credentia
 store = get_secure_credential_store()
 
 # Store API keys securely
-store.set("OPENAI_API_KEY", "sk-...", CredentialType.API_KEY)
-store.set("DATABASE_PASSWORD", "secure_password", CredentialType.PASSWORD)
+store.set("OPENAI_API_KEY", "<OPENAI_API_KEY>", CredentialType.API_KEY)
+store.set("DATABASE_PASSWORD", "<DATABASE_PASSWORD>", CredentialType.PASSWORD)
 ```
 
 ### 2. Environment Variables
 
 Set environment variables for automatic loading:
 ```bash
-export TRAIGENT_MASTER_PASSWORD="your-master-password"
-export TRAIGENT_OPENAI_API_KEY="sk-..."
-export TRAIGENT_DATABASE_PASSWORD="secure_password"
+export TRAIGENT_MASTER_PASSWORD="<MASTER_PASSPHRASE>"
+export TRAIGENT_OPENAI_API_KEY="<OPENAI_API_KEY>"
+export TRAIGENT_DATABASE_PASSWORD="<DATABASE_PASSWORD>"
 ```
 
 ### 3. Reading credentials
@@ -179,7 +179,7 @@ database_password = store.get("DATABASE_PASSWORD")
 
 ```python
 # Rotate a credential (keeps history)
-store.rotate_credential("DATABASE_PASSWORD", "new_secure_password")
+store.rotate_credential("DATABASE_PASSWORD", "<NEW_DATABASE_PASSWORD>")
 ```
 
 ## Security Checklist

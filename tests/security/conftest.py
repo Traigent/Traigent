@@ -37,7 +37,7 @@ def test_environments():
             "TRAIGENT_JWKS_URL": "https://test.example.com/jwks",
             "TRAIGENT_JWT_ISSUER": "test_issuer",
             "TRAIGENT_JWT_AUDIENCE": "test_audience",
-            "TRAIGENT_MASTER_PASSWORD": "test_secure_password_123",
+            "TRAIGENT_MASTER_PASSWORD": "test_secure_passphrase_123",
         },
         "staging": {
             "TRAIGENT_ENVIRONMENT": "staging",
@@ -119,7 +119,7 @@ def sample_credentials():
     return {
         "api_key": {
             "name": "OPENAI_API_KEY",
-            "value": "sk-test-1234567890abcdef",
+            "value": "example-key-1234567890",
             "type": "api_key",
         },
         "database": {

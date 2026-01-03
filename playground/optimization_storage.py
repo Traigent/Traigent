@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 class OptimizationStorage:
     """Handles file-based storage of optimization results."""
@@ -34,7 +35,8 @@ class OptimizationStorage:
         """
         if base_path is None:
             base_path = Path(__file__).parent / self.RESULTS_DIR
-        self.base_path = Path(base_path)
+        self._base_dir = Path.cwd()
+        self.base_path = validate_path(base_path, self._base_dir)
         self.ensure_storage_directories()
 
     def ensure_storage_directories(self):
@@ -56,7 +58,7 @@ class OptimizationStorage:
             c for c in problem_name if c.isalnum() or c in (" ", "-", "_")
         ).rstrip()
         safe_name = safe_name.replace(" ", "_").lower()
-        return self.base_path / safe_name
+        return validate_path(self.base_path / safe_name, self.base_path)
 
     def generate_run_id(self, problem_name: str, strategy: str) -> str:
         """
@@ -86,7 +88,7 @@ class OptimizationStorage:
             Path object for the result file
         """
         problem_dir = self.get_problem_directory(problem_name)
-        return problem_dir / f"{run_id}.json"
+        return validate_path(problem_dir / f"{run_id}.json", self.base_path)
 
     def save_optimization_result(self, result: Dict[str, Any]) -> str:
         """
@@ -125,8 +127,11 @@ class OptimizationStorage:
         # Save to file
         filepath = self.get_result_filepath(result["problem"], result["run_id"])
         try:
-            with open(filepath, "w") as f:
-                json.dump(result, f, indent=2, default=str)
+            safe_write_text(
+                filepath,
+                json.dumps(result, indent=2, default=str),
+                self.base_path,
+            )
             return result["run_id"]
         except Exception as e:
             raise OSError(f"Failed to save optimization result: {str(e)}") from e
@@ -149,8 +154,7 @@ class OptimizationStorage:
             return None
 
         try:
-            with open(filepath) as f:
-                return json.load(f)
+            return json.loads(safe_read_text(filepath, self.base_path))
         except Exception as e:
             print(f"Error loading result {run_id}: {str(e)}")
             return None
@@ -172,8 +176,7 @@ class OptimizationStorage:
         results = []
         for file_path in problem_dir.glob("run_*.json"):
             try:
-                with open(file_path) as f:
-                    result = json.load(f)
+                result = json.loads(safe_read_text(file_path, self.base_path))
                     # Ensure run_id is present
                     if "run_id" not in result:
                         result["run_id"] = file_path.stem
@@ -207,8 +210,7 @@ class OptimizationStorage:
                 # Load results for this problem
                 for file_path in problem_dir.glob("run_*.json"):
                     try:
-                        with open(file_path) as f:
-                            result = json.load(f)
+                    result = json.loads(safe_read_text(file_path, self.base_path))
                             # Ensure run_id is present
                             if "run_id" not in result:
                                 result["run_id"] = file_path.stem

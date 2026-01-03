@@ -286,7 +286,8 @@ class OptunaCheckpointManager:
         return entries
 
     def _next_checkpoint_path(self) -> Path:
-        assert self._checkpoint_dir is not None  # Guarded by caller
+        if self._checkpoint_dir is None:
+            raise RuntimeError("Checkpoint directory is not initialized")
 
         timestamp = int(time.time() * 1000)
         counter = 0

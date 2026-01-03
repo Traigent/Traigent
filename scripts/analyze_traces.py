@@ -27,6 +27,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_read_text,
+    safe_write_text,
+    validate_path,
+)
+
 
 @dataclass
 class SpanSummary:
@@ -133,8 +140,7 @@ def load_trace_file(path: Path) -> list[dict[str, Any]]:
     Returns:
         List of span dictionaries
     """
-    with open(path) as f:
-        data = json.load(f)
+    data = json.loads(safe_read_text(path, path.parent))
 
     # Handle both single trace and list of spans
     if isinstance(data, list):
@@ -362,14 +368,23 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    base_dir = Path.cwd()
+    try:
+        traces_dir = validate_path(args.traces_dir, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}")
+        return 1
+
     # Analyze traces
-    report = analyze_directory(args.traces_dir, test_filter=args.test_filter)
+    report = analyze_directory(traces_dir, test_filter=args.test_filter)
 
     # Output report
     if args.output:
-        with open(args.output, "w") as f:
-            json.dump(report.to_dict(), f, indent=2)
-        print(f"Report written to: {args.output}")
+        output_path = validate_path(args.output, base_dir)
+        safe_write_text(
+            output_path, json.dumps(report.to_dict(), indent=2), base_dir
+        )
+        print(f"Report written to: {output_path}")
     elif args.json:
         print(json.dumps(report.to_dict(), indent=2))
     else:

@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 class DomainKnowledge:
     """
@@ -21,7 +22,11 @@ class DomainKnowledge:
 
     def __init__(self):
         """Initialize domain knowledge."""
-        self.knowledge_dir = Path(__file__).parent / "domain_knowledge"
+        self._base_dir = Path(__file__).parent
+        self.knowledge_dir = validate_path(
+            self._base_dir / "domain_knowledge",
+            self._base_dir,
+        )
         self.knowledge_dir.mkdir(exist_ok=True)
 
         # Initialize built-in domain knowledge
@@ -418,11 +423,13 @@ class DomainKnowledge:
             Dictionary containing domain-specific patterns
         """
         # Try to load from file first
-        domain_file = self.knowledge_dir / f"{domain}.json"
+        domain_file = validate_path(
+            self.knowledge_dir / f"{domain}.json",
+            self.knowledge_dir,
+        )
         if domain_file.exists():
             try:
-                with open(domain_file) as f:
-                    return json.load(f)
+                return json.loads(safe_read_text(domain_file, self.knowledge_dir))
             except Exception:
                 pass  # Fall back to built-in
 
@@ -441,9 +448,13 @@ class DomainKnowledge:
             domain: Domain name
             knowledge: Domain knowledge dictionary
         """
-        domain_file = self.knowledge_dir / f"{domain}.json"
-        with open(domain_file, "w") as f:
-            json.dump(knowledge, f, indent=2)
+        domain_file = validate_path(
+            self.knowledge_dir / f"{domain}.json",
+            self.knowledge_dir,
+        )
+        safe_write_text(
+            domain_file, json.dumps(knowledge, indent=2), self.knowledge_dir
+        )
 
     def get_available_domains(self) -> List[str]:
         """Get list of available domains."""

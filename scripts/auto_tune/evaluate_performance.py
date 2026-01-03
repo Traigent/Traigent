@@ -12,11 +12,14 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
+
 
 def load_params() -> Dict[str, Any]:
     """Load parameters from params.yaml."""
-    with open("params.yaml") as f:
-        return yaml.safe_load(f)
+    base_dir = Path.cwd()
+    params_path = validate_path("params.yaml", base_dir, must_exist=True)
+    return yaml.safe_load(safe_read_text(params_path, base_dir))
 
 
 def load_optimization_results(
@@ -27,8 +30,9 @@ def load_optimization_results(
         print(f"⚠️  No optimization results found at {path}")
         return {}
 
-    with open(path) as f:
-        return json.load(f)
+    base_dir = Path.cwd()
+    results_path = validate_path(path, base_dir, must_exist=True)
+    return json.loads(safe_read_text(results_path, base_dir))
 
 
 def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
@@ -38,8 +42,8 @@ def load_baseline(baseline_path: str) -> Optional[Dict[str, Any]]:
         print(f"⚠️  No baseline found at {baseline_path}")
         return None
 
-    with open(path) as f:
-        return json.load(f)
+    validated_path = validate_path(path, path.parent, must_exist=True)
+    return json.loads(safe_read_text(validated_path, path.parent))
 
 
 def calculate_metrics(results: Dict[str, Any]) -> Dict[str, float]:
@@ -209,9 +213,14 @@ def main():
     else:
         # No baseline, create one
         print("Creating initial baseline...")
-        Path(baseline_path).parent.mkdir(parents=True, exist_ok=True)
-        with open(baseline_path, "w") as f:
-            json.dump(current_metrics, f, indent=2)
+        baseline_parent = Path(baseline_path).parent
+        baseline_parent.mkdir(parents=True, exist_ok=True)
+        validated_baseline = validate_path(baseline_path, baseline_parent)
+        safe_write_text(
+            validated_baseline,
+            json.dumps(current_metrics, indent=2),
+            baseline_parent,
+        )
         comparison = {
             "metrics": {},
             "has_regression": False,
@@ -232,16 +241,17 @@ def main():
     }
 
     # Save performance report
-    with open("performance_report.json", "w") as f:
-        json.dump(report, f, indent=2)
+    base_dir = Path.cwd()
+    report_path = validate_path("performance_report.json", base_dir)
+    safe_write_text(report_path, json.dumps(report, indent=2), base_dir)
 
     # Generate plots data
     plots_dir = Path("performance_plots")
     plots_dir.mkdir(exist_ok=True)
 
     plots_data = generate_plots_data(results)
-    with open(plots_dir / "data.json", "w") as f:
-        json.dump(plots_data, f, indent=2)
+    plots_path = validate_path(plots_dir / "data.json", plots_dir)
+    safe_write_text(plots_path, json.dumps(plots_data, indent=2), plots_dir)
 
     print("✅ Performance evaluation complete")
 

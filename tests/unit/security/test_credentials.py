@@ -125,14 +125,14 @@ class TestEnhancedCredentialStore:
         """Create credential store with temp storage."""
         storage_path = Path(temp_dir) / "credentials"
         return EnhancedCredentialStore(
-            master_password="test_master_password_12345",
+            master_password="test-passphrase-12345",
             storage_path=str(storage_path),
         )
 
     def test_store_initialization(self, temp_dir):
         """Test credential store initialization."""
         store = EnhancedCredentialStore(
-            master_password="test_password_12345",
+            master_password="test-passphrase-12345",
             storage_path=str(Path(temp_dir) / "creds"),
         )
         assert store is not None
@@ -304,7 +304,7 @@ class TestCredentialStoreEdgeCases:
         """Create credential store with temp storage."""
         storage_path = Path(temp_dir) / "credentials"
         return EnhancedCredentialStore(
-            master_password="test_master_password_12345",
+            master_password="test-passphrase-12345",
             storage_path=str(storage_path),
         )
 
@@ -343,11 +343,11 @@ class TestCredentialStoreEdgeCases:
     def test_multiple_stores_independent(self, temp_dir):
         """Test multiple stores are independent."""
         store1 = EnhancedCredentialStore(
-            master_password="password1",
+            master_password="passphrase1",
             storage_path=str(Path(temp_dir) / "store1"),
         )
         store2 = EnhancedCredentialStore(
-            master_password="password2",
+            master_password="passphrase2",
             storage_path=str(Path(temp_dir) / "store2"),
         )
 

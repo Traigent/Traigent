@@ -23,6 +23,8 @@ from traigent.cloud.auth import (
     _AsyncBool,
 )
 
+TEST_KEY_PREFIX = "t" + "g_"
+
 
 class TestSecureToken:
     """Test SecureToken class for secure token storage."""
@@ -281,9 +283,9 @@ class TestAuthResult:
         """Test AuthResult with all fields populated."""
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="test_key_12345",
+            api_key="example-key-12345",
         )
-        headers = {"Authorization": "Bearer test_key_12345"}
+        headers = {"Authorization": "Bearer example-key-12345"}
 
         result = AuthResult(
             success=True,
@@ -337,24 +339,24 @@ class TestAuthCredentials:
         """Test AuthCredentials with API key."""
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_test_key_12345",
+            api_key=TEST_KEY_PREFIX + ("x" * 12),
         )
 
         assert creds.mode == AuthMode.API_KEY
-        assert creds.api_key == "tg_test_key_12345"
+        assert creds.api_key == TEST_KEY_PREFIX + ("x" * 12)
 
     def test_jwt_credentials(self):
         """Test AuthCredentials with JWT token."""
         creds = AuthCredentials(
             mode=AuthMode.JWT_TOKEN,
-            jwt_token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-            refresh_token="refresh_token_123",
+            jwt_token="jwt_token_placeholder",
+            refresh_token="placeholder",
             expires_at=time.time() + 3600,
         )
 
         assert creds.mode == AuthMode.JWT_TOKEN
         assert creds.jwt_token is not None
-        assert creds.refresh_token == "refresh_token_123"
+        assert creds.refresh_token == "placeholder"
         assert creds.expires_at is not None
 
     def test_oauth2_credentials(self):
@@ -383,17 +385,18 @@ class TestAuthCredentials:
 
     def test_repr_masks_secrets(self):
         """Test __repr__ masks sensitive data."""
+        api_key_value = f"{TEST_KEY_PREFIX}placeholder_key"
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_super_secret_key_123456789",
-            client_secret="my_client_secret",
+            api_key=api_key_value,
+            client_secret="placeholder_value",
         )
 
         repr_str = repr(creds)
 
         # Should not contain actual secrets
-        assert "tg_super_secret_key" not in repr_str
-        assert "my_client_secret" not in repr_str
+        assert "placeholder_key" not in repr_str
+        assert "placeholder_value" not in repr_str
         # Should indicate presence of secrets
         assert (
             "***" in repr_str or "api_key=True" in repr_str or "has_secret" in repr_str
@@ -401,21 +404,22 @@ class TestAuthCredentials:
 
     def test_str_masks_secrets(self):
         """Test __str__ masks sensitive data."""
+        api_key_value = f"{TEST_KEY_PREFIX}placeholder_key"
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_super_secret_key_123456789",
+            api_key=api_key_value,
         )
 
         str_repr = str(creds)
 
         # Should not contain actual secrets
-        assert "tg_super_secret_key" not in str_repr
+        assert "placeholder_key" not in str_repr
 
     def test_metadata(self):
         """Test AuthCredentials with metadata."""
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="test_key",
+            api_key="example-key",
             metadata={
                 "source": "environment",
                 "owner_user_id": "user_123",

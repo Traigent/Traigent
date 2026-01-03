@@ -79,7 +79,7 @@ class TestConfigure:
 
     def test_configure_api_keys(self):
         """Test configuring API keys."""
-        api_keys = {"openai": "sk-test123", "anthropic": "ak-test456"}
+        api_keys = {"openai": "example-key-123", "anthropic": "example-key-456"}
 
         # Should trigger security warning
         import warnings
@@ -96,20 +96,20 @@ class TestConfigure:
         assert result is True
 
         config = get_global_config()
-        assert config["api_keys"]["openai"] == "sk-test123"
-        assert config["api_keys"]["anthropic"] == "ak-test456"
+        assert config["api_keys"]["openai"] == "example-key-123"
+        assert config["api_keys"]["anthropic"] == "example-key-456"
 
     def test_configure_api_keys_update(self):
         """Test that API keys are updated, not replaced."""
         # First configure
-        configure(api_keys={"openai": "sk-old"})
+        configure(api_keys={"openai": "example-key-old"})
 
         # Update with new keys
-        configure(api_keys={"anthropic": "ak-new"})
+        configure(api_keys={"anthropic": "example-key-new"})
 
         config = get_global_config()
-        assert config["api_keys"]["openai"] == "sk-old"  # Preserved
-        assert config["api_keys"]["anthropic"] == "ak-new"  # Added
+        assert config["api_keys"]["openai"] == "example-key-old"  # Preserved
+        assert config["api_keys"]["anthropic"] == "example-key-new"  # Added
 
     def test_configure_invalid_api_keys(self):
         """Test configuring with invalid API keys."""

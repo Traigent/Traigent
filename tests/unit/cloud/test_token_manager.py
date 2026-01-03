@@ -374,8 +374,8 @@ class TestRefreshAccessToken:
         """Test refresh with API_KEY mode returns success (no refresh needed)."""
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="test_api_key_12345",
-            refresh_token="some_token_12345",  # Has refresh token but mode is API_KEY
+            api_key="placeholder_key",
+            refresh_token="placeholder",  # Has refresh token but mode is API_KEY
         )
         token_manager.set_callbacks(
             get_credentials=lambda: credentials,
@@ -513,9 +513,9 @@ class TestBuildCredentialsFromTokenData:
         token_manager._set_api_key_token = set_key_fn
 
         token_data = {
-            "access_token": "new_access_token_12345",
+            "access_token": "access_token_placeholder",
             "expires_in": 3600,
-            "api_key": "tg_test_api_key_12345",
+            "api_key": "placeholder_key",
         }
         token_manager.set_callbacks(
             get_credentials=lambda: None,
@@ -526,7 +526,7 @@ class TestBuildCredentialsFromTokenData:
 
         credentials = token_manager.build_credentials_from_token_data(token_data)
 
-        assert credentials.api_key == "tg_test_api_key_12345"
+        assert credentials.api_key == "placeholder_key"
         set_key_fn.assert_called_once()
 
 

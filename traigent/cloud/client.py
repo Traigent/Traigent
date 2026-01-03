@@ -48,6 +48,11 @@ from .subset_selection import SmartSubsetSelector
 
 logger = get_logger(__name__)
 
+# Error messages for session state validation
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+_CLIENT_SESSION_NOT_INITIALIZED = "Client session not initialized"
+_AGENT_SPEC_REQUIRED = "agent_spec is required"
+
 
 def _session_is_closed(session: Any) -> bool:
     """Robustly determine whether an aiohttp session is closed."""
@@ -184,6 +189,65 @@ class CloudOptimizationResult:
     optimization_time: float
     subset_used: bool
     subset_size: int | None = None
+
+
+class _DirectResponseContext:
+    """Wrapper for direct response objects to support async context manager protocol."""
+
+    def __init__(self, response: Any) -> None:
+        self._response = response
+
+    async def __aenter__(self) -> Any:
+        return self._response
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
+        return False
+
+
+def _get_status_code(response: Any) -> int:
+    """Extract status code from response object."""
+    raw_status = getattr(response, "status", 200)
+    if isinstance(raw_status, (int, float)):
+        return int(raw_status)
+    return 200
+
+
+async def _get_json_response(response: Any) -> dict[str, Any] | None:
+    """Extract JSON from response if available."""
+    json_method = getattr(response, "json", None)
+    if callable(json_method):
+        result = json_method()
+        return cast(
+            dict[str, Any],
+            await result if asyncio.iscoroutine(result) else result,
+        )
+    return None
+
+
+async def _get_error_text(response: Any) -> str:
+    """Extract error text from response."""
+    text_method = getattr(response, "text", None)
+    if callable(text_method):
+        result = text_method()
+        if asyncio.iscoroutine(result):
+            text: str = await result
+            return text
+        return str(result)
+    return ""
+
+
+def _get_retry_delay(response: Any) -> float:
+    """Get retry delay from Retry-After header."""
+    headers = getattr(response, "headers", {}) or {}
+    if not isinstance(headers, dict):
+        return 0.0
+    retry_after = headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            return float(retry_after)
+        except (TypeError, ValueError):
+            return 0.0
+    return 0.0
 
 
 class TraigentCloudClient(BaseTraigentClient):
@@ -626,7 +690,8 @@ class TraigentCloudClient(BaseTraigentClient):
     ) -> dict[str, Any]:
         """Submit optimization request to cloud service."""
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.api_base_url}/optimize"
         session = self._aio_session  # Capture for use in nested function
@@ -737,7 +802,8 @@ class TraigentCloudClient(BaseTraigentClient):
     async def check_service_status(self) -> dict[str, Any]:
         """Check Traigent Cloud Service status."""
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.base_url}/health"
         attempts = max(1, self.max_retries)
@@ -745,74 +811,12 @@ class TraigentCloudClient(BaseTraigentClient):
 
         for attempt in range(1, attempts + 1):
             try:
-                request = self._aio_session.get(url, headers=await self._get_headers())
-
-                class _DirectResponseContext:
-                    def __init__(self, response) -> None:
-                        self._response = response
-
-                    async def __aenter__(self):
-                        return self._response
-
-                    async def __aexit__(self, exc_type, exc, tb):
-                        return False
-
-                response_candidate = (
-                    await request if asyncio.iscoroutine(request) else request
+                result = await self._check_service_status_attempt(
+                    url, attempt, attempts
                 )
-
-                if hasattr(response_candidate, "__aenter__"):
-                    manager = response_candidate
-                else:
-                    manager = _DirectResponseContext(response_candidate)
-
-                async with manager as response:
-                    raw_status = getattr(response, "status", 200)
-                    if isinstance(raw_status, (int, float)):
-                        status_code = int(raw_status)
-                    else:
-                        status_code = 200
-
-                    if status_code == 200:
-                        json_method = getattr(response, "json", None)
-                        if callable(json_method):
-                            result = json_method()
-                            return cast(
-                                dict[str, Any],
-                                await result if asyncio.iscoroutine(result) else result,
-                            )
-                        return {"status": "ok"}
-
-                    error_text = ""
-                    text_method = getattr(response, "text", None)
-                    if callable(text_method):
-                        result = text_method()
-                        if asyncio.iscoroutine(result):
-                            error_text = await result
-                        else:
-                            error_text = str(result)
-
-                    if status_code in {429, 503} and attempt < attempts:
-                        retry_after = None
-                        headers = getattr(response, "headers", {}) or {}
-                        if isinstance(headers, dict):
-                            retry_after = headers.get("Retry-After")
-
-                        delay = 0.0
-                        if retry_after is not None:
-                            try:
-                                delay = float(retry_after)
-                            except (TypeError, ValueError):
-                                delay = 0.0
-
-                        if delay > 0:
-                            await asyncio.sleep(min(delay, 1.0))
-                        continue
-
-                    raise CloudServiceError(
-                        f"Service status check failed: HTTP {status_code} {error_text}"
-                    )
-
+                if result is not None:
+                    return result
+                # result is None means retry (continue loop)
             except CloudServiceError as exc:
                 last_error = exc
                 if attempt == attempts:
@@ -826,6 +830,41 @@ class TraigentCloudClient(BaseTraigentClient):
             "status": "unavailable",
             "error": str(last_error) if last_error else "Unknown error",
         }
+
+    async def _check_service_status_attempt(
+        self, url: str, attempt: int, attempts: int
+    ) -> dict[str, Any] | None:
+        """Execute a single service status check attempt.
+
+        Returns:
+            dict with status on success/final failure, or None to signal retry.
+        """
+        request = self._aio_session.get(url, headers=await self._get_headers())  # type: ignore[union-attr]
+        response_candidate = await request if asyncio.iscoroutine(request) else request
+
+        if hasattr(response_candidate, "__aenter__"):
+            manager = response_candidate
+        else:
+            manager = _DirectResponseContext(response_candidate)
+
+        async with manager as response:
+            status_code = _get_status_code(response)
+
+            if status_code == 200:
+                json_result = await _get_json_response(response)
+                return json_result if json_result is not None else {"status": "ok"}
+
+            error_text = await _get_error_text(response)
+
+            if status_code in {429, 503} and attempt < attempts:
+                delay = _get_retry_delay(response)
+                if delay > 0:
+                    await asyncio.sleep(min(delay, 1.0))
+                return None  # Signal retry
+
+            raise CloudServiceError(
+                f"Service status check failed: HTTP {status_code} {error_text}"
+            )
 
     # Standard interface implementation (BaseTraigentClient)
     # Note: The existing methods already provide the interface functionality
@@ -884,7 +923,8 @@ class TraigentCloudClient(BaseTraigentClient):
             raise ValueError("session_id is required")
 
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         url = f"{self.api_base_url}/sessions/{session_id}"
         params = {"cascade": "true" if cascade else "false"}
@@ -967,7 +1007,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 billing_tier=billing_tier,
             )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions"
             request_data = self._serialize_session_request(request)
@@ -1017,7 +1058,8 @@ class TraigentCloudClient(BaseTraigentClient):
             session_id=session_id, previous_results=previous_results
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/next-trial"
             request_data = self._serialize_next_trial_request(request)
@@ -1093,7 +1135,8 @@ class TraigentCloudClient(BaseTraigentClient):
             metadata=metadata or {},
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/results"
             request_data = self._serialize_trial_result(result)
@@ -1140,7 +1183,8 @@ class TraigentCloudClient(BaseTraigentClient):
             session_id=session_id, include_full_history=include_full_history
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/sessions/{session_id}/finalize"
             request_data = self._serialize_finalization_request(request)
@@ -1337,11 +1381,12 @@ class TraigentCloudClient(BaseTraigentClient):
         Raises:
             CloudServiceError: If optimization start fails
         """
-        assert request.agent_spec is not None, "agent_spec is required"
-        assert request.dataset is not None, "dataset is required"
-        assert (
-            request.configuration_space is not None
-        ), "configuration_space is required"
+        if request.agent_spec is None:
+            raise ValueError(_AGENT_SPEC_REQUIRED)
+        if request.dataset is None:
+            raise ValueError("dataset is required")
+        if request.configuration_space is None:
+            raise ValueError("configuration_space is required")
 
         return await self.optimize_agent(
             agent_spec=request.agent_spec,
@@ -1403,7 +1448,8 @@ class TraigentCloudClient(BaseTraigentClient):
             metadata=optimization_strategy or {},
         )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/optimize"
             payload = self._serialize_agent_optimization_request(request)
@@ -1473,7 +1519,8 @@ class TraigentCloudClient(BaseTraigentClient):
                 execution_context=execution_context,
             )
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/execute"
             payload = self._serialize_agent_execution_request(request)
@@ -1515,7 +1562,8 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudServiceError: If status retrieval fails
         """
         await self._ensure_session()
-        assert self._aio_session is not None, "Session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_SESSION_NOT_INITIALIZED)
 
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/status"
@@ -1559,7 +1607,8 @@ class TraigentCloudClient(BaseTraigentClient):
         """
         await self._ensure_session()
 
-        assert self._aio_session is not None, "Client session not initialized"
+        if self._aio_session is None:
+            raise CloudServiceError(_CLIENT_SESSION_NOT_INITIALIZED)
         try:
             url = f"{self.api_base_url}/agent/optimize/{optimization_id}/cancel"
 
@@ -1593,8 +1642,10 @@ class TraigentCloudClient(BaseTraigentClient):
         self, request: AgentOptimizationRequest
     ) -> dict[str, Any]:
         """Serialize agent optimization request."""
-        assert request.agent_spec is not None, "agent_spec is required"
-        assert request.dataset is not None, "dataset is required"
+        if request.agent_spec is None:
+            raise ValueError(_AGENT_SPEC_REQUIRED)
+        if request.dataset is None:
+            raise ValueError("dataset is required")
 
         return {
             "agent_spec": self._serialize_agent_spec(request.agent_spec),
@@ -1612,7 +1663,8 @@ class TraigentCloudClient(BaseTraigentClient):
         self, request: AgentExecutionRequest
     ) -> dict[str, Any]:
         """Serialize agent execution request."""
-        assert request.agent_spec is not None, "agent_spec is required"
+        if request.agent_spec is None:
+            raise ValueError(_AGENT_SPEC_REQUIRED)
 
         return {
             "agent_spec": self._serialize_agent_spec(request.agent_spec),
