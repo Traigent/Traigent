@@ -5,7 +5,7 @@ Optimize summarization under strict token constraints.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/token-budget-summarization/run.py
 ```
 

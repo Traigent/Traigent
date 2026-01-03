@@ -116,7 +116,8 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          TRAIGENT_MOCK_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+          TRAIGENT_MOCK_LLM: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
+          TRAIGENT_OFFLINE_MODE: ${{ steps.env.outputs.environment == 'development' && 'true' || 'false' }}
         run: |
           # Update DVC params with current settings
           python -c "

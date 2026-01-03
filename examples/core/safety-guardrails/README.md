@@ -5,7 +5,7 @@ Optimize safety response parameters for consistent refusals without over-blockin
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/safety-guardrails/run.py
 ```
 

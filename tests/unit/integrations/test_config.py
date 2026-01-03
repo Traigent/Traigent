@@ -7,6 +7,7 @@ and the configure_integrations function with extensive edge case coverage.
 from __future__ import annotations
 
 from dataclasses import fields
+from unittest.mock import Mock
 
 import pytest
 
@@ -697,6 +698,11 @@ class TestRegisterIntegrationConfigSubscribers:
         # but _should_register_module would return True
         mock_frame_info = Mock()
         mock_frame_info.frame.f_globals = {"__name__": "test"}
+
+        def mock_stack():
+            return [mock_frame_info]
+
+        def mock_getmodule(_frame):
             return None
 
         def mock_should_register(module):

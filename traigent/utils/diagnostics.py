@@ -126,7 +126,8 @@ class TraigentDiagnostics:
         ("TRAIGENT_API_KEY", "Traigent cloud features", False),
         ("ANTHROPIC_API_KEY", "Anthropic Claude access", False),
         ("TRAIGENT_BACKEND_URL", "Traigent backend", False),
-        ("TRAIGENT_MOCK_MODE", "Mock mode testing", False),
+        ("TRAIGENT_MOCK_LLM", "Mock LLM mode testing", False),
+        ("TRAIGENT_OFFLINE_MODE", "Offline backend mode", False),
     ]
 
     @classmethod
@@ -250,10 +251,10 @@ class TraigentDiagnostics:
             traigent.initialize(execution_mode="edge_analytics")
             report.add_success("Traigent", "SDK initialized successfully")
 
-            # Check for mock mode
-            if os.environ.get("TRAIGENT_MOCK_MODE", "").lower() == "true":
+            # Check for mock LLM mode
+            if os.environ.get("TRAIGENT_MOCK_LLM", "").lower() == "true":
                 report.add_success(
-                    "Traigent", "Mock mode is enabled (good for testing)"
+                    "Traigent", "Mock LLM mode is enabled (good for testing)"
                 )
 
         except Exception as e:
@@ -312,9 +313,9 @@ class TraigentDiagnostics:
         if report.issues:
             report.add_recommendation("Fix critical issues before proceeding")
 
-        if not os.environ.get("TRAIGENT_MOCK_MODE"):
+        if not os.environ.get("TRAIGENT_MOCK_LLM"):
             report.add_recommendation(
-                "Enable mock mode for testing: export TRAIGENT_MOCK_MODE=true"
+                "Enable mock LLM mode for testing: export TRAIGENT_MOCK_LLM=true"
             )
 
         if not any(

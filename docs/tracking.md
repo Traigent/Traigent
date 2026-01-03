@@ -17,7 +17,7 @@ docs and the SDK behavior.
 - Clarity: Use short sentences, ordered steps, and explicit parameter names.
   Define acronyms on first use.
 - Examples: Ensure code blocks are runnable and include imports. Call out
-  `TRAIGENT_MOCK_MODE=true` when examples might incur API costs.
+  `TRAIGENT_MOCK_LLM=true` when examples might incur API costs.
 - Links: All local links must resolve; external links should be current.
 - Versioning: Align version tags and feature availability with the current
   release. Call out roadmap-only features explicitly.

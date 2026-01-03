@@ -51,7 +51,7 @@ from unittest.mock import Mock
 import pytest
 
 # Ensure mock mode is disabled - we want real cost tracking
-os.environ["TRAIGENT_MOCK_MODE"] = "false"
+os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
 from traigent.config.types import ExecutionMode, InjectionMode, TraigentConfig
 from traigent.core.cost_enforcement import CostEnforcer
@@ -204,9 +204,9 @@ def sample_dataset() -> Dataset:
 @pytest.fixture(autouse=True)
 def disable_mock_mode():
     """Ensure mock mode is disabled for all tests."""
-    os.environ["TRAIGENT_MOCK_MODE"] = "false"
+    os.environ["TRAIGENT_MOCK_LLM"] = "false"
     yield
-    os.environ.pop("TRAIGENT_MOCK_MODE", None)
+    os.environ.pop("TRAIGENT_MOCK_LLM", None)
 
 
 @pytest.fixture(autouse=True)

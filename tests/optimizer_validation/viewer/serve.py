@@ -361,7 +361,7 @@ def run_tests_async(
     )
 
     env = os.environ.copy()
-    env["TRAIGENT_MOCK_MODE"] = "true"
+    env["TRAIGENT_MOCK_LLM"] = "true"
     env["TRAIGENT_TRACE_ENABLED"] = "true"
     env["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://localhost:4318"
     # Add mock delay to make parallel execution visible in traces (50ms default)

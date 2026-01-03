@@ -11,7 +11,7 @@ Traigent optimizes LLM applications by running multiple trials across configurat
 
 | Recommendation      | How                                                         |
 | ------------------- | ----------------------------------------------------------- |
-| Development/Testing | Use `TRAIGENT_MOCK_MODE=true`                               |
+| Development/Testing | Use `TRAIGENT_MOCK_LLM=true`                               |
 | Control Spending    | Set `TRAIGENT_RUN_COST_LIMIT=2.0` (default: $2 USD per run) |
 | Before Production   | Review the [DISCLAIMER.md](DISCLAIMER.md)                   |
 
@@ -45,7 +45,7 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 > **Want to run this now?** First [install Traigent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
 >
 > ```bash
-> export TRAIGENT_MOCK_MODE=true
+> export TRAIGENT_MOCK_LLM=true
 > python examples/quickstart/01_simple_qa.py
 > ```
 >
@@ -242,7 +242,7 @@ python -c "import traigent; print('✅ Traigent ready')"
 For local development and testing without API keys:
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 ```
 
 **What mock mode does:**
@@ -379,7 +379,7 @@ pip install -e ".[all]"
 1. **Try the quickstart examples** (recommended first):
 
    ```bash
-   export TRAIGENT_MOCK_MODE=true
+   export TRAIGENT_MOCK_LLM=true
    python examples/quickstart/01_simple_qa.py
    python examples/quickstart/02_customer_support_rag.py
    python examples/quickstart/03_custom_objectives.py
@@ -393,7 +393,7 @@ pip install -e ".[all]"
 
 4. **Deep dive**: Start with `examples/README.md` and `examples/docs/EXAMPLES_GUIDE.md` for experiment-specific instructions
 
-> **Note**: `TRAIGENT_MOCK_MODE=true` runs examples without real API calls. The quickstart commands above include this export.
+> **Note**: `TRAIGENT_MOCK_LLM=true` runs examples without real API calls. The quickstart commands above include this export.
 
 ---
 
@@ -1039,7 +1039,7 @@ Each example includes:
 pip install -e ".[integrations]"
 
 # Run any example in mock mode
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
 
@@ -1209,7 +1209,7 @@ The code examples in this README demonstrate patterns and concepts but may requi
 
 ```bash
 # These work immediately with mock mode - no API keys needed!
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/quickstart/01_simple_qa.py   # Simple Q&A
 python examples/quickstart/02_customer_support_rag.py  # RAG example
 python examples/quickstart/03_custom_objectives.py     # Custom weights
@@ -1242,7 +1242,7 @@ For other datasets, use the full path or create your own local copy.
 
 #### Mock Mode and API Keys
 
-`TRAIGENT_MOCK_MODE=true` prevents Traigent from making real API calls during optimization, but if your agent code directly instantiates `ChatOpenAI()` or similar, you still need the API key set (even if unused). The quickstart examples avoid this by using mock responses internally.
+`TRAIGENT_MOCK_LLM=true` prevents Traigent from making real API calls during optimization, but if your agent code directly instantiates `ChatOpenAI()` or similar, you still need the API key set (even if unused). The quickstart examples avoid this by using mock responses internally.
 
 ### Common Issues
 
@@ -1250,7 +1250,7 @@ For other datasets, use the full path or create your own local copy.
 
 If you see 0.0% accuracy:
 
-- **Enable Mock Mode**: Set `TRAIGENT_MOCK_MODE=true` for realistic demo values
+- **Enable Mock Mode**: Set `TRAIGENT_MOCK_LLM=true` for realistic demo values
 - **Check Dataset Format**: Ensure your dataset follows the correct format (see Evaluation section)
 - **Use Custom Evaluator**: For non-exact matches, provide a custom evaluator function
 - **Verify API Keys**: Ensure OPENAI_API_KEY is set for embedding-based evaluation

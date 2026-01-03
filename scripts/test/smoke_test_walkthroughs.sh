@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 cd "$REPO_ROOT"
 
-export TRAIGENT_MOCK_MODE="${TRAIGENT_MOCK_MODE:-true}"
+export TRAIGENT_MOCK_LLM="${TRAIGENT_MOCK_LLM:-true}"
 EXAMPLE_TIMEOUT="${WALKTHROUGH_TIMEOUT:-30}"
 
 examples=(walkthrough/examples/0*.py)

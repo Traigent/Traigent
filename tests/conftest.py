@@ -39,8 +39,10 @@ sys.setrecursionlimit(2000)
 def jwt_development_mode(monkeypatch):
     """Set JWT validator to development mode for all tests."""
     monkeypatch.setenv("TRAIGENT_ENVIRONMENT", "development")
-    # Ensure mock mode to avoid real network/LLM calls during tests
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "true")
+    # Ensure mock LLM mode to avoid real LLM API calls during tests
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
+    # Ensure offline mode to avoid real backend calls during tests
+    monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
     monkeypatch.setenv("MOCK_MODE", "true")
 
 
@@ -630,7 +632,7 @@ def mock_environment():
     original_vars = {}
     mock_vars = {
         "MOCK_MODE": "true",
-        "TRAIGENT_MOCK_MODE": "true",
+        "TRAIGENT_MOCK_LLM": "true",
         "OPENAI_API_KEY": "mock-key-for-testing",
         "ANTHROPIC_API_KEY": "mock-key-for-testing",
     }

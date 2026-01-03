@@ -7,7 +7,7 @@ ICP (Ideal Customer Profile) criteria. It optimizes for message quality and
 compliance.
 
 Usage:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python use-cases/gtm-acquisition/agent/gtm_agent.py
 """
 
@@ -38,7 +38,7 @@ DATASET_PATH = Path(__file__).parent.parent / "datasets" / "leads_dataset.jsonl"
 
 def is_mock_mode() -> bool:
     """Check if mock mode is enabled via environment variable."""
-    return os.environ.get("TRAIGENT_MOCK_MODE", "").lower() in ("true", "1", "yes")
+    return os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in ("true", "1", "yes")
 
 
 def normalize_pain_points(lead: dict[str, Any]) -> list[str]:
@@ -209,7 +209,7 @@ def gtm_outreach_agent(
         from langchain_openai import ChatOpenAI
     except ImportError as exc:
         raise ImportError(
-            "langchain-openai is required when TRAIGENT_MOCK_MODE is disabled. "
+            "langchain-openai is required when TRAIGENT_MOCK_LLM is disabled. "
             "Install it with: pip install langchain-openai"
         ) from exc
 
@@ -233,7 +233,7 @@ async def run_optimization():
 
     if not mock_mode:
         print("\nWARNING: Running without mock mode will incur API costs!")
-        print("Set TRAIGENT_MOCK_MODE=true for testing.\n")
+        print("Set TRAIGENT_MOCK_LLM=true for testing.\n")
 
     print("\nStarting optimization...")
     print("Configuration Space:")

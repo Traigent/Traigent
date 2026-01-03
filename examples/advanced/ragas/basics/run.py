@@ -23,7 +23,7 @@ DATASET = str(BASE / "evaluation_set.jsonl")
 
 # Keep everything local/offline
 os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("RAGAS_DISABLE_ANALYTICS", "true")
 
 SUPPORTED_RAGAS_METRICS = {

@@ -5,7 +5,7 @@ Traigent Quickstart Example 1: Simple Q&A Agent
 This is the exact example from the main README.md, configured to work out of the box.
 
 Run with:
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     python examples/quickstart/01_simple_qa.py
 """
 
@@ -14,7 +14,7 @@ import os
 from pathlib import Path
 
 # Ensure mock mode for testing without API keys
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
 # Set results folder to local directory
 os.environ.setdefault(
@@ -25,7 +25,9 @@ import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
 # Path to dataset (relative to this file)
-DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "qa_samples.jsonl"
+DATASET_PATH = (
+    Path(__file__).resolve().parents[1] / "datasets" / "quickstart" / "qa_samples.jsonl"
+)
 
 
 @traigent.optimize(
@@ -66,7 +68,7 @@ async def main():
     print()
 
     print(f"Dataset: {DATASET_PATH}")
-    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_MODE', 'false')}")
+    print(f"Mock mode: {os.environ.get('TRAIGENT_MOCK_LLM', 'false')}")
     print()
 
     # Run optimization
@@ -97,7 +99,7 @@ async def main():
     print()
     print("Next steps:")
     print("  1. Try with real API keys (set OPENAI_API_KEY)")
-    print("  2. Disable mock mode (TRAIGENT_MOCK_MODE=false)")
+    print("  2. Disable mock mode (TRAIGENT_MOCK_LLM=false)")
     print("  3. Explore more examples in examples/core/")
 
 

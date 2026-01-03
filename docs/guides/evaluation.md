@@ -30,7 +30,7 @@ with open("data/qa_samples.jsonl", "w") as f:
 
 ### 1) Default semantic similarity
 
-- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless running in `TRAIGENT_MOCK_MODE`.
+- Embedding-based comparison (OpenAI embeddings by default); set `OPENAI_API_KEY` unless running in `TRAIGENT_MOCK_LLM`.
 - Great for natural language tasks where paraphrasing is fine.
 
 ```python
@@ -79,10 +79,10 @@ def combined_eval(output: str, expected: str) -> EvaluationResult:
 
 ### 3) Mock mode
 
-`TRAIGENT_MOCK_MODE=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
+`TRAIGENT_MOCK_LLM=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python your_optimization_script.py
 ```
 
@@ -295,7 +295,7 @@ Best accuracy: 0.00
 
 3. **Use Mock Mode for Testing**
    ```bash
-   export TRAIGENT_MOCK_MODE=true
+   export TRAIGENT_MOCK_LLM=true
    ```
 
 ### Issue: Out of Memory

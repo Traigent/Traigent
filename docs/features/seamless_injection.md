@@ -55,4 +55,4 @@ def answer(question: str, *, model: str = "gpt-4o", temperature: float = 0.7) ->
 
 Seamless injection logs when it falls back to the runtime shim in debug mode. If
 you need deterministic, low-cost runs while testing injection behavior, use
-`TRAIGENT_MOCK_MODE=true`.
+`TRAIGENT_MOCK_LLM=true`.

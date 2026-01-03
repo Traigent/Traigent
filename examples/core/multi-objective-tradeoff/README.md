@@ -5,7 +5,7 @@ Balance accuracy vs cost when optimizing math expression evaluation.
 ## Quick Start
 
 ```bash
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 python examples/core/multi-objective-tradeoff/run_openai.py --max-trials 5
 ```
 

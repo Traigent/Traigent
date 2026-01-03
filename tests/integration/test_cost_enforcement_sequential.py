@@ -20,7 +20,7 @@ import os
 import pytest
 
 # Ensure mock mode is disabled for these tests - we want real cost tracking
-os.environ["TRAIGENT_MOCK_MODE"] = "false"
+os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
 from traigent.core.cost_enforcement import (
     CostEnforcer,
@@ -36,7 +36,7 @@ FLOAT_TOLERANCE = 1e-10
 @pytest.fixture(autouse=True)
 def disable_mock_mode() -> None:
     """Ensure mock mode is disabled for all tests in this module."""
-    os.environ["TRAIGENT_MOCK_MODE"] = "false"
+    os.environ["TRAIGENT_MOCK_LLM"] = "false"
     # Also clear strict mode by default
     if "TRAIGENT_REQUIRE_COST_TRACKING" in os.environ:
         del os.environ["TRAIGENT_REQUIRE_COST_TRACKING"]
@@ -438,7 +438,7 @@ class TestMockModeIntegration:
 
     def test_mock_mode_bypasses_tracking(self) -> None:
         """Verify mock mode bypasses all cost tracking."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
         try:
             enforcer = CostEnforcer(
@@ -459,16 +459,16 @@ class TestMockModeIntegration:
             assert abs(enforcer._accumulated_cost) < FLOAT_TOLERANCE
             assert enforcer._in_flight_count == 0
         finally:
-            os.environ["TRAIGENT_MOCK_MODE"] = "false"
+            os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
     def test_mock_mode_cached_at_init(self) -> None:
         """Verify mock mode is cached at init time."""
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
         enforcer = CostEnforcer(CostEnforcerConfig(limit=0.10))
 
         # Change env var after init
-        os.environ["TRAIGENT_MOCK_MODE"] = "true"
+        os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
         # Should still use real tracking (cached at init)
         permit = enforcer.acquire_permit()
@@ -479,4 +479,4 @@ class TestMockModeIntegration:
         assert abs(enforcer._accumulated_cost - 0.05) < FLOAT_TOLERANCE
 
         # Cleanup
-        os.environ["TRAIGENT_MOCK_MODE"] = "false"
+        os.environ["TRAIGENT_MOCK_LLM"] = "false"

@@ -12,10 +12,10 @@ Traigent is a Python SDK for zero-code LLM optimization using decorators (`@trai
 
 ## 🛠️ Development Workflow
 - **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
-- **Testing**: `TRAIGENT_MOCK_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
+- **Testing**: `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
   - **Markers**: `pytest -m "unit"`, `pytest -m "integration"`, `pytest -m "security"`.
 - **Linting**: `make lint` (runs Ruff, MyPy, Bandit). `make format` (Black, Isort).
-- **Mock Mode**: Always use `TRAIGENT_MOCK_MODE=true` for local development and tests.
+- **Mock Mode**: Always use `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true` for local development and tests.
 
 ## 📐 Code Formatting & Linting (CRITICAL)
 

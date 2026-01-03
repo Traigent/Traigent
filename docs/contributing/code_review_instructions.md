@@ -134,7 +134,7 @@ Got it—you want a **comprehensive, per-module code-review playbook** (not diff
 
 * [ ] Unit tests for public API and edge cases; e2e smoke for happy path.
 * [ ] **Golden tests** for prompts/schemas; update protocol documented.
-* [ ] Offline stubs/record-replay for LLM calls; use `TRAIGENT_MOCK_MODE=true` in CI and local tests.
+* [ ] Offline stubs/record-replay for LLM calls; use `TRAIGENT_MOCK_LLM=true` in CI and local tests.
 * [ ] Coverage trend non-decreasing for this module.
 
 **Deliverable:** Missing test list (by function/branch) + fixtures to add.

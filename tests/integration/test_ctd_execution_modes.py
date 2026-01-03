@@ -25,7 +25,7 @@ from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError
 
 # Ensure cost-free execution during tests
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("TRAIGENT_USE_MOCK", "true")
 os.environ.setdefault("TRAIGENT_GENERATE_MOCKS", "true")
 
@@ -403,7 +403,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     combo = dict(case["combo"])
 
     # Enforce mock-only execution to avoid real costs
-    monkeypatch.setenv("TRAIGENT_MOCK_MODE", "true")
+    monkeypatch.setenv("TRAIGENT_MOCK_LLM", "true")
     monkeypatch.setenv("TRAIGENT_USE_MOCK", "true")
     monkeypatch.setenv("TRAIGENT_GENERATE_MOCKS", "true")
 

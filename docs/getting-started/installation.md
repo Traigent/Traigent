@@ -49,7 +49,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 
   ```bash
   pip install -e ".[examples]"
-  export TRAIGENT_MOCK_MODE=true
+  export TRAIGENT_MOCK_LLM=true
   python examples/quickstart/01_simple_qa.py
   ```
 
@@ -57,7 +57,7 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 
   ```bash
   pip install -e ".[dev,integrations,analytics]"
-  TRAIGENT_MOCK_MODE=true pytest tests/ -q
+  TRAIGENT_MOCK_LLM=true pytest tests/ -q
   ```
 
 - **Playground UI:**
@@ -85,7 +85,7 @@ PY
 ## Troubleshooting (quick fixes)
 
 - **`ModuleNotFoundError: langchain`** — install integrations: `pip install -e ".[integrations]"`.
-- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_MODE=true`).
+- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`).
 - **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[integrations]"`.
 
 ---

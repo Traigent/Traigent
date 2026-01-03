@@ -24,7 +24,7 @@ Users are **solely responsible** for:
 
 1. Monitoring and controlling their API spending
 2. Configuring appropriate spending limits via `TRAIGENT_RUN_COST_LIMIT`
-3. Using `TRAIGENT_MOCK_MODE=true` for development and testing
+3. Using `TRAIGENT_MOCK_LLM=true` for development and testing
 4. Reviewing actual API provider billing independently
 5. Understanding provider pricing before production use
 
@@ -93,7 +93,7 @@ To minimize unexpected costs, we strongly recommend:
 
 1. **Always use mock mode for development**:
    ```bash
-   export TRAIGENT_MOCK_MODE=true
+   export TRAIGENT_MOCK_LLM=true
    ```
 
 2. **Set explicit cost limits**:

@@ -32,7 +32,7 @@ import time
 from typing import Dict, Any
 
 # Enable mock mode for testing
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 
 # Import traigent after setting mock mode
 import traigent
@@ -175,7 +175,7 @@ def helper_function():
 
     def test_function_discovery_integration(self, test_module):
         """Test function discovery with real Traigent decorators."""
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             try:
                 functions = discover_optimized_functions(test_module)
 
@@ -204,7 +204,7 @@ def helper_function():
         """Test optimization validation with real Traigent functions."""
         validator = OptimizationValidator(threshold_pct=10)
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             try:
                 functions = discover_optimized_functions(test_module)
 
@@ -234,7 +234,7 @@ def helper_function():
         """Test CLI integration with real module."""
         runner = CliRunner()
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             # Test dry run mode
             result = runner.invoke(cli, ["check", test_module, "--dry-run"])
 
@@ -258,7 +258,7 @@ def helper_function():
         """Test complete CLI validation workflow."""
         runner = CliRunner()
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             # Test full validation (not just dry run)
             result = runner.invoke(cli, ["check", test_module])
 
@@ -307,7 +307,7 @@ def helper_function():
         """Test validation filtering by objectives."""
         runner = CliRunner()
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             # Test filtering by accuracy objective
             result = runner.invoke(
                 cli, ["check", test_module, "--objectives", "accuracy", "--dry-run"]
@@ -332,7 +332,7 @@ def helper_function():
         """Test that mock mode behaves correctly."""
         validator = OptimizationValidator(threshold_pct=10)
 
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             try:
                 functions = discover_optimized_functions(test_module)
 
@@ -372,7 +372,7 @@ class TestRealWorldScenarios:
         # Create a minimal optimized function
         module_content = """
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 import traigent
 
 @traigent.optimize(eval_dataset="test.jsonl", objectives=["accuracy"])
@@ -395,7 +395,7 @@ def simple_function(text: str, param: str = "default"):
 
         # Test as would be run in git hook
         runner = CliRunner()
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             result = runner.invoke(cli, ["check", str(module_file)])
 
             # Should complete without crashing
@@ -408,7 +408,7 @@ def simple_function(text: str, param: str = "default"):
         """Test validation with multiple functions in one module."""
         module_content = """
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 import traigent
 
 @traigent.optimize(eval_dataset="test1.jsonl", objectives=["accuracy"])
@@ -445,7 +445,7 @@ def regular_function():
 
         # Test discovery and validation
         runner = CliRunner()
-        with patch.dict(os.environ, {"TRAIGENT_MOCK_MODE": "true"}):
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "true"}):
             # Test function discovery
             result = runner.invoke(cli, ["check", str(module_file), "--dry-run"])
             assert result.exit_code in [0, 1]

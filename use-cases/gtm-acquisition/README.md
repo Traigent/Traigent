@@ -24,7 +24,7 @@ The GTM agent generates personalized outbound sales messages based on lead profi
 cd /path/to/Traigent
 
 # Enable mock mode (recommended for testing)
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Run the agent optimization
 python use-cases/gtm-acquisition/agent/gtm_agent.py

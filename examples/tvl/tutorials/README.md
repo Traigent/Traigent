@@ -6,7 +6,7 @@ Welcome to the TVL (Tuned Variables Language) 0.9 tutorials! These hands-on exam
 
 - Python 3.10+
 - Traigent SDK installed: `pip install traigent`
-- Set `TRAIGENT_MOCK_MODE=true` for tutorials (no API costs)
+- Set `TRAIGENT_MOCK_LLM=true` for tutorials (no API costs)
 
 ## Tutorial Overview
 

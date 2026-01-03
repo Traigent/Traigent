@@ -8,7 +8,7 @@ Environment Variables:
     TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
-    TRAIGENT_MOCK_MODE: Bypass all cost tracking when "true"
+    TRAIGENT_MOCK_LLM: Bypass all cost tracking when "true" (no real LLM costs)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
 """
 
@@ -180,8 +180,8 @@ class CostEnforcer:
         self._permit_counter: int = 0  # Monotonic counter for permit IDs
         self._active_permits: dict[int, Permit] = {}  # Track active permits by ID
 
-        # Cache mock mode at init to prevent mid-run env var changes (Phase 2.2).
-        # NOTE: Changing TRAIGENT_MOCK_MODE after CostEnforcer is initialized will
+        # Cache mock LLM mode at init to prevent mid-run env var changes (Phase 2.2).
+        # NOTE: Changing TRAIGENT_MOCK_LLM after CostEnforcer is initialized will
         # have NO EFFECT. This is intentional - toggling mock mode mid-run could
         # cause stranded permits (acquired with tracking, released without tracking).
         # If you need to change mock mode, create a new CostEnforcer instance.
@@ -192,8 +192,12 @@ class CostEnforcer:
         self._async_used: bool = False
 
     def _check_mock_mode(self) -> bool:
-        """Check if mock mode is enabled from environment."""
-        return os.getenv("TRAIGENT_MOCK_MODE", "false").lower() == "true"
+        """Check if mock LLM mode is enabled from environment.
+
+        When TRAIGENT_MOCK_LLM=true, cost tracking is bypassed because
+        there are no real LLM API costs to track.
+        """
+        return os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
     def _check_mixing(self, is_async: bool) -> None:
         """Log when switching between sync and async method usage."""

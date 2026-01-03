@@ -9,7 +9,7 @@ if git diff --cached --name-only | grep -q "examples/ci-cd-integration/"; then
     cd examples/ci-cd-integration/math-qa || exit 0
 
     # Quick evaluation in mock mode
-    export TRAIGENT_MOCK_MODE=true
+    export TRAIGENT_MOCK_LLM=true
     export MODE=eval
 
     # Run evaluation

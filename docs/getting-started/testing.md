@@ -21,19 +21,19 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Run all tests (mock mode to avoid API costs)
-TRAIGENT_MOCK_MODE=true pytest
+TRAIGENT_MOCK_LLM=true pytest
 
 # Run with coverage
-TRAIGENT_MOCK_MODE=true pytest --cov=traigent --cov-report=html
+TRAIGENT_MOCK_LLM=true pytest --cov=traigent --cov-report=html
 
 # Run specific test file
-TRAIGENT_MOCK_MODE=true pytest tests/unit/core/test_orchestrator.py
+TRAIGENT_MOCK_LLM=true pytest tests/unit/core/test_orchestrator.py
 
 # Run specific test
-TRAIGENT_MOCK_MODE=true pytest tests/unit/core/test_orchestrator.py::test_orchestrator_initialization -v
+TRAIGENT_MOCK_LLM=true pytest tests/unit/core/test_orchestrator.py::test_orchestrator_initialization -v
 
 # Run tests matching a pattern
-TRAIGENT_MOCK_MODE=true pytest -k "test_optimization" -v
+TRAIGENT_MOCK_LLM=true pytest -k "test_optimization" -v
 ```
 
 ## Test Dependencies
@@ -111,13 +111,13 @@ Traigent includes a mock mode for testing without real API calls:
 
 ```bash
 # Enable mock mode
-export TRAIGENT_MOCK_MODE=true
+export TRAIGENT_MOCK_LLM=true
 
 # Run tests with mock mode
-TRAIGENT_MOCK_MODE=true pytest tests/
+TRAIGENT_MOCK_LLM=true pytest tests/
 
 # Run specific example in mock mode
-TRAIGENT_MOCK_MODE=true python examples/core/hello-world/run.py
+TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
 ```
 
 **Mock Mode Features:**
@@ -148,10 +148,10 @@ uv pip install -e ".[dev]"
 
 ```bash
 # Run all tests
-TRAIGENT_MOCK_MODE=true pytest
+TRAIGENT_MOCK_LLM=true pytest
 
 # Run with coverage
-TRAIGENT_MOCK_MODE=true pytest --cov=traigent --cov-report=term-missing
+TRAIGENT_MOCK_LLM=true pytest --cov=traigent --cov-report=term-missing
 
 # Run linters
 ruff check traigent/
@@ -243,11 +243,11 @@ cat pytest.ini
 
 ```bash
 # Verify environment variable
-echo $TRAIGENT_MOCK_MODE
+echo $TRAIGENT_MOCK_LLM
 
 # Set explicitly in test
 import os
-os.environ["TRAIGENT_MOCK_MODE"] = "true"
+os.environ["TRAIGENT_MOCK_LLM"] = "true"
 ```
 
 ## 📈 Continuous Integration

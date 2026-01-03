@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 # Optuna-backed optimizers are enabled by default.
-os.environ.setdefault("TRAIGENT_MOCK_MODE", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
@@ -30,7 +30,7 @@ from paper_experiments.case_study_rag.metrics import build_hotpot_metric_functio
 from paper_experiments.case_study_rag.simulator import generate_case_study_answer
 
 DATASET = str(dataset_path())
-USE_MOCK = os.getenv("TRAIGENT_MOCK_MODE", "true").lower() == "true"
+USE_MOCK = os.getenv("TRAIGENT_MOCK_LLM", "true").lower() == "true"
 
 
 def _validate_real_credentials(model: str) -> None:
