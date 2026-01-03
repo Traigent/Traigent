@@ -144,3 +144,50 @@ async def test_finalize_session_raises_when_backend_not_initialized(monkeypatch)
 
     with pytest.raises(RuntimeError, match="Backend client not initialized"):
         await manager.finalize_session("session-123", None)
+
+
+# Tests for RuntimeError when MCP client is not initialized
+
+
+@pytest.mark.asyncio
+async def test_start_privacy_integration_raises_when_mcp_not_initialized(monkeypatch):
+    """Test that _start_privacy_integration raises RuntimeError when MCP client is None."""
+    from unittest.mock import Mock
+
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._mcp_client = None  # Not initialized
+    manager._backend_client = SimpleNamespace()  # Backend is initialized
+
+    # Create a mock optimization request
+    mock_request = Mock()
+    mock_request.objectives = ["accuracy"]
+    mock_request.configuration_space = {}
+
+    with pytest.raises(RuntimeError, match="MCP client not initialized"):
+        await manager._start_privacy_integration(mock_request, "test-integration-id")
+
+
+@pytest.mark.asyncio
+async def test_start_cloud_integration_raises_when_mcp_not_initialized(monkeypatch):
+    """Test that _start_cloud_integration raises RuntimeError when MCP client is None."""
+    from unittest.mock import Mock
+
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._mcp_client = None  # Not initialized
+    manager._backend_client = SimpleNamespace()  # Backend is initialized
+
+    # Create a mock optimization request
+    mock_request = Mock()
+    mock_request.objectives = ["accuracy"]
+    mock_request.configuration_space = {}
+
+    with pytest.raises(RuntimeError, match="MCP client not initialized"):
+        await manager._start_cloud_integration(mock_request, "test-integration-id")

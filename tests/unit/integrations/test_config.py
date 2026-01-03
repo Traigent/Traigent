@@ -678,3 +678,44 @@ class TestEdgeCases:
         assert config.discovery_cache_ttl == 999999
         assert config.max_fallback_attempts == 1000
         assert config.fuzzy_matching_threshold == 0.999
+
+
+class TestRegisterIntegrationConfigSubscribers:
+    """Test _register_integration_config_subscribers function."""
+
+    def test_module_none_after_should_register(self, monkeypatch):
+        """Test that module=None is handled gracefully.
+
+        This tests the defensive code path where _should_register_module
+        returns True but getmodule returns None.
+        """
+        import inspect
+
+        from traigent.integrations import config as config_module
+
+        # Mock the stack to return a frame where getmodule returns None
+        # but _should_register_module would return True
+        mock_frame_info = type(
+            "FrameInfo",
+            (),
+            {"frame": type("Frame", (), {"f_globals": {"__name__": "test"}})()},
+        )()
+
+        def mock_stack():
+            return [mock_frame_info]
+
+        def mock_getmodule(frame):
+            return None
+
+        def mock_should_register(module):
+            # Return True even for None to test the defensive check
+            return True
+
+        monkeypatch.setattr(inspect, "stack", mock_stack)
+        monkeypatch.setattr(inspect, "getmodule", mock_getmodule)
+        monkeypatch.setattr(
+            config_module, "_should_register_module", mock_should_register
+        )
+
+        # Should not raise - just skip the None module
+        config_module._register_integration_config_subscribers()
