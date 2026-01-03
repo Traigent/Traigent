@@ -1557,3 +1557,242 @@ class TestEdgeCases:
 
         # Should track as remote failure
         assert optimizer._remote_failures == 1
+
+
+class TestGenerateCandidates:
+    """Test candidate generation functionality."""
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_remote_batch(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test candidate generation via remote batch."""
+        expected_candidates = [
+            {"temperature": 0.5},
+            {"temperature": 0.6},
+            {"temperature": 0.7},
+        ]
+        mock_remote_service.suggest_batch = AsyncMock(return_value=expected_candidates)
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        optimizer.session_id = "test_session"
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        assert candidates == expected_candidates
+        assert optimizer._remote_successes == 1
+        mock_remote_service.suggest_batch.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_remote_sequential(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test candidate generation via sequential remote calls."""
+        # Remove suggest_batch to force sequential fallback
+        del mock_remote_service.suggest_batch
+
+        mock_remote_service.suggest_configuration.side_effect = [
+            {"temperature": 0.5},
+            {"temperature": 0.6},
+            {"temperature": 0.7},
+        ]
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        optimizer.session_id = "test_session"
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        assert len(candidates) == 3
+        assert optimizer._remote_successes == 3
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_fallback_on_remote_failure(
+        self,
+        sample_config_space,
+        sample_objectives,
+        mock_remote_service,
+        mock_fallback_optimizer,
+    ):
+        """Test candidate generation falls back when remote fails."""
+        mock_remote_service.suggest_batch = AsyncMock(
+            side_effect=Exception("Remote failed")
+        )
+        mock_fallback_optimizer.generate_candidates_async = AsyncMock(
+            return_value=[{"temperature": 0.6}]
+        )
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+            fallback_optimizer=mock_fallback_optimizer,
+        )
+        optimizer.session_id = "test_session"
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        assert candidates == [{"temperature": 0.6}]
+        assert optimizer._fallback_uses == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_sequential_stops_on_exception(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test sequential generation stops when exception occurs."""
+        del mock_remote_service.suggest_batch
+
+        mock_remote_service.suggest_configuration.side_effect = [
+            {"temperature": 0.5},
+            Exception("Failed"),
+        ]
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        optimizer.session_id = "test_session"
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        # Should have only one successful candidate before failure
+        assert len(candidates) == 1
+        assert candidates[0] == {"temperature": 0.5}
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_fallback_failure_raises(
+        self,
+        sample_config_space,
+        sample_objectives,
+        mock_remote_service,
+        mock_fallback_optimizer,
+    ):
+        """Test that failure in both remote and fallback raises error."""
+        mock_remote_service.suggest_batch = AsyncMock(
+            side_effect=Exception("Remote failed")
+        )
+        mock_fallback_optimizer.generate_candidates_async = AsyncMock(
+            side_effect=Exception("Fallback failed")
+        )
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+            fallback_optimizer=mock_fallback_optimizer,
+        )
+        optimizer.session_id = "test_session"
+        optimizer._using_fallback = True  # Force using fallback
+
+        with pytest.raises(OptimizationError, match="Both remote and fallback"):
+            await optimizer.generate_candidates_async(3)
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_initializes_session_if_needed(
+        self,
+        sample_config_space,
+        sample_objectives,
+        mock_remote_service,
+        sample_session,
+    ):
+        """Test that generating candidates initializes session if needed."""
+        mock_remote_service.create_session.return_value = sample_session
+        mock_remote_service.suggest_batch = AsyncMock(
+            return_value=[{"temperature": 0.5}]
+        )
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        # Don't set session_id - should be auto-initialized
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        # Session should have been initialized
+        assert optimizer.session_id == sample_session.session_id
+        assert candidates == [{"temperature": 0.5}]
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_empty_batch_uses_fallback(
+        self,
+        sample_config_space,
+        sample_objectives,
+        mock_remote_service,
+        mock_fallback_optimizer,
+    ):
+        """Test that empty batch result uses fallback."""
+        mock_remote_service.suggest_batch = AsyncMock(return_value=[])
+        # Need to also clear suggest_configuration since it's on the mock
+        del mock_remote_service.suggest_configuration
+        mock_fallback_optimizer.generate_candidates_async = AsyncMock(
+            return_value=[{"temperature": 0.5}]
+        )
+
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+            fallback_optimizer=mock_fallback_optimizer,
+        )
+        optimizer.session_id = "test_session"
+
+        candidates = await optimizer.generate_candidates_async(3)
+
+        assert candidates == [{"temperature": 0.5}]
+        assert optimizer._fallback_uses == 1
+
+
+class TestSessionNotInitializedErrors:
+    """Test errors when session is not initialized."""
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_remote_no_session(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test _generate_candidates_remote raises when session is None."""
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        optimizer.session_id = None
+
+        with pytest.raises(ServiceError, match="Session not initialized"):
+            await optimizer._generate_candidates_remote(3, None)
+
+    @pytest.mark.asyncio
+    async def test_generate_candidates_sequential_no_session(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test _generate_candidates_sequential raises when session is None."""
+        optimizer = CloudOptimizer(
+            config_space=sample_config_space,
+            objectives=sample_objectives,
+            remote_service=mock_remote_service,
+        )
+        optimizer.session_id = None
+
+        with pytest.raises(ServiceError, match="Session not initialized"):
+            await optimizer._generate_candidates_sequential(3, None)
+
+
+class TestSessionConstant:
+    """Test the _SESSION_NOT_INITIALIZED constant."""
+
+    def test_session_not_initialized_constant_used(
+        self, sample_config_space, sample_objectives, mock_remote_service
+    ):
+        """Test that _SESSION_NOT_INITIALIZED constant is defined correctly."""
+        from traigent.optimizers.cloud_optimizer import _SESSION_NOT_INITIALIZED
+
+        assert _SESSION_NOT_INITIALIZED == "Session not initialized"
