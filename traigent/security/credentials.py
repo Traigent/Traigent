@@ -266,9 +266,8 @@ class EnhancedCredentialStore:
             self._store_master_password(master_key_value, master_key_path)
 
         self._master_password = SecureString(master_key_value)
-        master_key_value = (
-            None  # Dereference (doesn't wipe underlying string from memory)
-        )
+        # Dereference (doesn't wipe underlying string from memory, but clears local ref)
+        del master_key_value
 
         if master_key_source == "generated":
             logger.critical(

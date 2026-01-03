@@ -1276,8 +1276,8 @@ class BaseEvaluator(ABC):
         errors_by_index: dict[int, str | None],
         example_results_by_index: dict[int, ExampleResult | None],
         pending_tasks: dict[asyncio.Task[Any], int],
-    ) -> bool:
-        """Handle a completed task result. Returns True if processing should continue."""
+    ) -> None:
+        """Handle a completed task result, storing success or error appropriately."""
         try:
             result = task.result()
         except TrialPrunedError:
@@ -1317,7 +1317,7 @@ class BaseEvaluator(ABC):
                     pending_tasks,
                     sample_lease,
                 )
-            return True  # Continue to next task
+            return  # Error stored, continue to next task
 
         # Success case
         self._store_success_result(
@@ -1331,7 +1331,6 @@ class BaseEvaluator(ABC):
             pending_tasks,
             sample_lease,
         )
-        return True
 
     def _store_error_result(
         self,
@@ -1488,12 +1487,51 @@ class BaseEvaluator(ABC):
         outputs_by_index: dict[int, Any] = {}
         errors_by_index: dict[int, str | None] = {}
         example_results_by_index: dict[int, ExampleResult | None] = {}
-        consumed = 0
-        exhausted = False
-        semaphore = asyncio.Semaphore(self.max_workers)
         examples = list(dataset.examples)
+        semaphore = asyncio.Semaphore(self.max_workers)
+
+        consumed, exhausted = await self._run_concurrent_tasks(
+            func,
+            config,
+            examples,
+            sample_lease,
+            detailed,
+            progress_callback,
+            outputs_by_index,
+            errors_by_index,
+            example_results_by_index,
+            semaphore,
+        )
+
+        outputs, errors, example_results = self._collect_ordered_results(
+            outputs_by_index, errors_by_index, example_results_by_index, detailed
+        )
+
+        if exhausted and progress_callback:
+            progress_callback(
+                consumed, {"success": None, "stop_reason": "sample_budget_exhausted"}
+            )
+
+        return outputs, errors, example_results, consumed, exhausted
+
+    async def _run_concurrent_tasks(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        examples: list[EvaluationExample],
+        sample_lease: SampleBudgetLease | None,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[int, bool]:
+        """Run concurrent task scheduling and processing loop."""
         pending_tasks: dict[asyncio.Task[Any], int] = {}
         next_index = 0
+        consumed = 0
+        exhausted = False
 
         async def evaluate_with_semaphore(example: EvaluationExample, idx: int) -> Any:
             async with semaphore:
@@ -1510,19 +1548,19 @@ class BaseEvaluator(ABC):
                     func, config, example.input_data, executor=None
                 )
 
-        def schedule_more() -> None:
-            nonlocal next_index, exhausted
+        def schedule_more() -> bool:
+            """Schedule more tasks. Returns True if budget exhausted."""
+            nonlocal next_index
             while next_index < len(examples) and len(pending_tasks) < self.max_workers:
                 if sample_lease and not sample_lease.try_take(1):
-                    exhausted = True
-                    return
+                    return True
                 example = examples[next_index]
-                pending_tasks[
-                    asyncio.create_task(evaluate_with_semaphore(example, next_index))
-                ] = next_index
+                task = asyncio.create_task(evaluate_with_semaphore(example, next_index))
+                pending_tasks[task] = next_index
                 next_index += 1
+            return False
 
-        schedule_more()
+        exhausted = schedule_more()
 
         while pending_tasks:
             done, _ = await asyncio.wait(
@@ -1546,18 +1584,9 @@ class BaseEvaluator(ABC):
                 consumed += 1
 
             if not exhausted:
-                schedule_more()
+                exhausted = schedule_more()
 
-        outputs, errors, example_results = self._collect_ordered_results(
-            outputs_by_index, errors_by_index, example_results_by_index, detailed
-        )
-
-        if exhausted and progress_callback:
-            progress_callback(
-                consumed, {"success": None, "stop_reason": "sample_budget_exhausted"}
-            )
-
-        return outputs, errors, example_results, consumed, exhausted
+        return consumed, exhausted
 
     @staticmethod
     def _get_capture_key_context() -> Callable[[str], Any]:

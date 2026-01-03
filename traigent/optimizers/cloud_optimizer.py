@@ -31,6 +31,9 @@ from traigent.utils.logging import get_logger
 T = TypeVar("T")
 logger = get_logger(__name__)
 
+# Error message constants
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+
 
 def _run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
     """Run async coroutine from sync context, ensuring no event loop is running.
@@ -206,7 +209,7 @@ class CloudOptimizer(BaseOptimizer):
             await self.initialize_session()
 
         if self.session_id is None:
-            raise ServiceError("Session not initialized")
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
 
         # Try remote service first
         if not self._using_fallback:
@@ -270,7 +273,7 @@ class CloudOptimizer(BaseOptimizer):
             await self.initialize_session()
 
         if self.session_id is None:
-            raise ServiceError("Session not initialized")
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
 
         # Try remote service smart suggestion first
         if not self._using_fallback:
@@ -462,7 +465,7 @@ class CloudOptimizer(BaseOptimizer):
     ) -> list[dict[str, Any]]:
         """Generate candidates using remote service."""
         if self.session_id is None:
-            raise ServiceError("Session not initialized")
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
         try:
             # Try batch suggestions first
             if hasattr(self.remote_service, "suggest_batch"):
@@ -491,7 +494,7 @@ class CloudOptimizer(BaseOptimizer):
     ) -> list[dict[str, Any]]:
         """Generate candidates sequentially from remote service."""
         if self.session_id is None:
-            raise ServiceError("Session not initialized")
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
         candidates: list[dict[str, Any]] = []
         history: list[TrialResult] = []
 

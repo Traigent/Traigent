@@ -230,7 +230,8 @@ async def _get_error_text(response: Any) -> str:
     if callable(text_method):
         result = text_method()
         if asyncio.iscoroutine(result):
-            return await result
+            text: str = await result
+            return text
         return str(result)
     return ""
 

@@ -25,6 +25,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Error message constants
+_TOKEN_EXPIRED_ERROR = "Token has expired"
+
 
 class JWTValidationError(Exception):
     """Base class for JWT validation errors."""
@@ -349,7 +352,7 @@ class SecureJWTValidator:
             )
 
         except jwt.ExpiredSignatureError:
-            return JWTValidationResult(valid=False, error="Token has expired")
+            return JWTValidationResult(valid=False, error=_TOKEN_EXPIRED_ERROR)
         except jwt.InvalidSignatureError:
             return JWTValidationResult(valid=False, error="Invalid token signature")
         except JWTSecurityError as e:
@@ -384,46 +387,83 @@ class SecureJWTValidator:
             "Security validations relaxed but not disabled",
         ]
 
+    def _extract_header_algorithm(self, token: str) -> str | None:
+        """Extract algorithm from JWT header safely."""
+        header_reader = getattr(jwt, "get_unverified_header", None)
+        if token.count(".") < 2 or not callable(header_reader):
+            return None
+        try:
+            header = header_reader(token)
+            alg: str | None = header.get("alg")
+            return alg
+        except Exception as exc:
+            logger.debug(
+                "Failed to parse JWT header in development validation: %s", exc
+            )
+            return None
+
+    def _validate_algorithm(
+        self, header_alg: str | None, warnings: list[str]
+    ) -> JWTValidationResult | None:
+        """Validate algorithm is allowed. Returns error result or None if valid."""
+        if isinstance(header_alg, str) and header_alg.lower() == "none":
+            return JWTValidationResult(
+                valid=False,
+                error="Algorithm 'none' is not allowed",
+                warnings=warnings,
+            )
+        if header_alg:
+            allowed_algs = set(self.ALLOWED_ALGORITHMS + ["HS256"])
+            if header_alg not in allowed_algs:
+                return JWTValidationResult(
+                    valid=False,
+                    error=f"Unsupported algorithm: {header_alg}",
+                    warnings=warnings,
+                )
+        return None
+
+    def _check_token_lifetime(
+        self, payload: dict[str, Any], warnings: list[str]
+    ) -> JWTValidationResult | None:
+        """Check token lifetime constraints. Returns error result or None if valid."""
+        iat = payload.get("iat")
+        current_time = time.time()
+
+        if not isinstance(iat, (int, float)):
+            return JWTValidationResult(
+                valid=False,
+                error="Development tokens must include an iat claim",
+                warnings=warnings,
+            )
+
+        exp = payload.get("exp")
+        if isinstance(exp, (int, float)) and current_time > exp:
+            return JWTValidationResult(
+                valid=False, error=_TOKEN_EXPIRED_ERROR, warnings=warnings
+            )
+
+        if current_time - iat > self.DEVELOPMENT_TOKEN_LIFETIME:
+            return JWTValidationResult(
+                valid=False, error=_TOKEN_EXPIRED_ERROR, warnings=warnings
+            )
+        return None
+
     def _validate_development_secure(self, token: str) -> JWTValidationResult:
         """Development mode with time-limited tokens and security warnings."""
         warnings = self._development_warnings()
 
+        if not JWT_AVAILABLE:
+            warnings.append("Install PyJWT to enable JWT validation")
+            return JWTValidationResult(
+                valid=False, error="JWT validation unavailable", warnings=warnings
+            )
+
         try:
-            # Check if JWT library is available
-            if not JWT_AVAILABLE:
-                warnings.append("Install PyJWT to enable JWT validation")
-                return JWTValidationResult(
-                    valid=False,
-                    error="JWT validation unavailable",
-                    warnings=warnings,
-                )
+            header_alg = self._extract_header_algorithm(token)
 
-            header_alg = None
-            header_reader = getattr(jwt, "get_unverified_header", None)
-            if token.count(".") >= 2 and callable(header_reader):
-                try:
-                    header = header_reader(token)
-                    header_alg = header.get("alg")
-                except Exception as exc:
-                    logger.debug(
-                        "Failed to parse JWT header in development validation: %s", exc
-                    )
-
-            if isinstance(header_alg, str) and header_alg.lower() == "none":
-                return JWTValidationResult(
-                    valid=False,
-                    error="Algorithm 'none' is not allowed",
-                    warnings=warnings,
-                )
-
-            if header_alg:
-                allowed_algs = set(self.ALLOWED_ALGORITHMS + ["HS256"])
-                if header_alg not in allowed_algs:
-                    return JWTValidationResult(
-                        valid=False,
-                        error=f"Unsupported algorithm: {header_alg}",
-                        warnings=warnings,
-                    )
+            alg_error = self._validate_algorithm(header_alg, warnings)
+            if alg_error:
+                return alg_error
 
             decode_options = {
                 "verify_signature": False,
@@ -439,38 +479,12 @@ class SecureJWTValidator:
                 token, self.development_public_key or "", **decode_kwargs
             )
 
-            # Enforce short token lifetime in development
-            iat = unverified_payload.get("iat")
-            current_time = time.time()
+            lifetime_error = self._check_token_lifetime(unverified_payload, warnings)
+            if lifetime_error:
+                return lifetime_error
 
-            if not isinstance(iat, (int, float)):
-                return JWTValidationResult(
-                    valid=False,
-                    error="Development tokens must include an iat claim",
-                    warnings=warnings,
-                )
-
+            payload = self._mark_development_payload(token, unverified_payload)
             exp = unverified_payload.get("exp")
-            if isinstance(exp, (int, float)) and current_time > exp:
-                return JWTValidationResult(
-                    valid=False,
-                    error="Token has expired",
-                    warnings=warnings,
-                )
-
-            if current_time - iat > self.DEVELOPMENT_TOKEN_LIFETIME:
-                return JWTValidationResult(
-                    valid=False,
-                    error="Token has expired",
-                    warnings=warnings,
-                )
-
-            should_mark = token.count(".") >= 2
-            payload = unverified_payload
-            if should_mark:
-                payload = dict(unverified_payload)
-                payload["_development_mode"] = True
-                payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
 
             return JWTValidationResult(
                 valid=True,
@@ -479,7 +493,7 @@ class SecureJWTValidator:
                 warnings=warnings,
                 security_metadata={
                     "mode": "development",
-                    "validated_at": current_time,
+                    "validated_at": time.time(),
                     "max_lifetime": self.DEVELOPMENT_TOKEN_LIFETIME,
                 },
             )
@@ -488,6 +502,17 @@ class SecureJWTValidator:
             return JWTValidationResult(
                 valid=False, error=f"Invalid token structure: {e}", warnings=warnings
             )
+
+    def _mark_development_payload(
+        self, token: str, unverified_payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Mark payload with development mode metadata if applicable."""
+        if token.count(".") >= 2:
+            payload = dict(unverified_payload)
+            payload["_development_mode"] = True
+            payload["_max_validity"] = self.DEVELOPMENT_TOKEN_LIFETIME
+            return payload
+        return unverified_payload
 
     def _validate_strict(self, token: str) -> JWTValidationResult:
         """Strict validation - compatibility wrapper for production validation."""

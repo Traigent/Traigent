@@ -827,7 +827,7 @@ def _resolve_actual_execution_mode(
         execution_mode == _OPTIMIZE_DEFAULTS["execution_mode"]
         and "execution_mode" in _GLOBAL_CONFIG
     ):
-        result = _GLOBAL_CONFIG["execution_mode"]
+        result: str = str(_GLOBAL_CONFIG["execution_mode"])
         logger.debug(f"Using execution mode from global config: {result}")
         return result
     logger.debug(f"Using explicitly provided execution mode: {execution_mode}")
@@ -961,9 +961,8 @@ def _process_config_space_constraints(
     constraints: list[Any] | None,
 ) -> tuple[Any, Any, Any]:
     """Process ConfigSpace constraints, returning constraints and var_names."""
-    config_space_has_constraints = (
-        hasattr(configuration_space, "constraints") and configuration_space.constraints
-    )
+    config_space_constraints_attr = getattr(configuration_space, "constraints", None)
+    config_space_has_constraints = bool(config_space_constraints_attr)
     if config_space_has_constraints and constraints:
         raise TypeError(
             "Cannot provide both ConfigSpace with constraints and explicit constraints. "
