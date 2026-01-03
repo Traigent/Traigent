@@ -1284,6 +1284,7 @@ class BaseEvaluator(ABC):
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             raise
         except asyncio.CancelledError:
+            # S7497: CancelledError must be re-raised after cleanup
             if sample_lease:
                 sample_lease.rollback(1)
             if progress_callback:
@@ -1294,7 +1295,7 @@ class BaseEvaluator(ABC):
                     pending_tasks,
                     sample_lease,
                 )
-            return True  # Continue to next task
+            raise  # Re-raise CancelledError to properly propagate cancellation
         except (FriendlyTraigentError, CoreTraigentError):
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             raise

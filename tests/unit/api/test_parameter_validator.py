@@ -341,3 +341,275 @@ class TestParameterValidatorIntegration:
         assert params.kwargs["parallel_config"]["example_concurrency"] == 5
         assert params.kwargs["parallel_config"]["trial_concurrency"] == 3
         assert params.kwargs["custom_evaluator"] == "my_evaluator"
+
+
+class TestConfigValueHelpers:
+    """Test helper methods for configuration value validation."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.validator = ParameterValidator()
+
+    def test_validate_list_value_valid(self):
+        """Test validation of valid list values."""
+        assert self.validator._validate_list_value("key", ["a", "b"]) is None
+        assert self.validator._validate_list_value("key", [1]) is None
+
+    def test_validate_list_value_empty(self):
+        """Test validation of empty list."""
+        error = self.validator._validate_list_value("model", [])
+        assert error is not None
+        assert "empty list" in error
+        assert "model" in error
+
+    def test_validate_tuple_value_valid(self):
+        """Test validation of valid tuple ranges."""
+        assert self.validator._validate_tuple_value("temp", (0.0, 1.0)) is None
+        assert self.validator._validate_tuple_value("count", (1, 100)) is None
+
+    def test_validate_tuple_value_wrong_length(self):
+        """Test validation of tuples with wrong number of elements."""
+        error = self.validator._validate_tuple_value("key", (1,))
+        assert error is not None
+        assert "invalid range tuple" in error
+        assert "1 elements" in error
+
+        error = self.validator._validate_tuple_value("key", (1, 2, 3))
+        assert error is not None
+        assert "3 elements" in error
+
+    def test_validate_tuple_value_non_numeric(self):
+        """Test validation of tuples with non-numeric values."""
+        error = self.validator._validate_tuple_value("key", ("a", "b"))
+        assert error is not None
+        assert "non-numeric" in error
+
+    def test_validate_tuple_value_inverted_range(self):
+        """Test validation of tuple with min > max."""
+        error = self.validator._validate_tuple_value("temp", (1.0, 0.0))
+        assert error is not None
+        assert "min > max" in error
+        assert "Did you mean" in error
+
+    def test_validate_tuple_value_point_range(self):
+        """Test validation of tuple with min == max."""
+        error = self.validator._validate_tuple_value("temp", (0.5, 0.5))
+        assert error is not None
+        assert "point range" in error
+        assert "min equals max" in error
+
+    def test_validate_dict_value_valid(self):
+        """Test validation of valid dict values."""
+        # Nested config
+        assert self.validator._validate_dict_value("nested", {"param": ["a"]}) is None
+        # Typed parameter
+        assert (
+            self.validator._validate_dict_value(
+                "temp", {"type": "float", "low": 0.0, "high": 1.0}
+            )
+            is None
+        )
+        assert (
+            self.validator._validate_dict_value(
+                "count", {"type": "int", "low": 1, "high": 10}
+            )
+            is None
+        )
+        assert (
+            self.validator._validate_dict_value(
+                "model", {"type": "categorical", "values": ["a", "b"]}
+            )
+            is None
+        )
+        assert (
+            self.validator._validate_dict_value("fixed", {"type": "fixed", "value": 1})
+            is None
+        )
+
+    def test_validate_dict_value_empty(self):
+        """Test validation of empty dict."""
+        error = self.validator._validate_dict_value("key", {})
+        assert error is not None
+        assert "empty nested configuration" in error
+
+    def test_validate_dict_value_unknown_type(self):
+        """Test validation of dict with unknown type."""
+        error = self.validator._validate_dict_value("key", {"type": "unknown"})
+        assert error is not None
+        assert "unknown type" in error
+
+    def test_validate_typed_dict_bounds_missing(self):
+        """Test validation of typed dict missing bounds."""
+        error = self.validator._validate_typed_dict_bounds(
+            "temp", {"low": 0.0}, "float"
+        )
+        assert error is not None
+        assert "'low' and 'high'" in error
+
+        error = self.validator._validate_typed_dict_bounds(
+            "temp", {"high": 1.0}, "float"
+        )
+        assert error is not None
+
+    def test_validate_typed_dict_bounds_non_numeric(self):
+        """Test validation of typed dict with non-numeric bounds."""
+        error = self.validator._validate_typed_dict_bounds(
+            "key", {"low": "a", "high": 1.0}, "float"
+        )
+        assert error is not None
+        assert "non-numeric bounds" in error
+
+    def test_validate_typed_dict_bounds_invalid(self):
+        """Test validation of typed dict with low >= high."""
+        error = self.validator._validate_typed_dict_bounds(
+            "key", {"low": 1.0, "high": 0.5}, "float"
+        )
+        assert error is not None
+        assert "less than high" in error
+
+        # Equal bounds
+        error = self.validator._validate_typed_dict_bounds(
+            "key", {"low": 0.5, "high": 0.5}, "int"
+        )
+        assert error is not None
+
+    def test_get_config_value_error_invalid_type(self):
+        """Test error message for invalid config value types."""
+        error = self.validator._get_config_value_error("key", "string_value")
+        assert error is not None
+        assert "invalid type" in error
+        assert "str" in error
+
+        error = self.validator._get_config_value_error("key", 123)
+        assert error is not None
+        assert "int" in error
+
+    def test_is_valid_config_value(self):
+        """Test _is_valid_config_value method."""
+        # Valid list
+        assert self.validator._is_valid_config_value(["a", "b"]) is True
+        # Empty list
+        assert self.validator._is_valid_config_value([]) is False
+        # Valid tuple
+        assert self.validator._is_valid_config_value((0.0, 1.0)) is True
+        # Invalid tuple length
+        assert self.validator._is_valid_config_value((1,)) is False
+        # Non-numeric tuple
+        assert self.validator._is_valid_config_value(("a", "b")) is False
+        # Invalid range (min >= max)
+        assert self.validator._is_valid_config_value((1.0, 0.0)) is False
+        assert self.validator._is_valid_config_value((0.5, 0.5)) is False
+        # Valid dict
+        assert self.validator._is_valid_config_value({"a": [1]}) is True
+        # Empty dict
+        assert self.validator._is_valid_config_value({}) is False
+        # Invalid type
+        assert self.validator._is_valid_config_value("string") is False
+        assert self.validator._is_valid_config_value(123) is False
+
+
+class TestDeprecatedParameters:
+    """Test handling of deprecated/removed parameters."""
+
+    def test_removed_auto_optimize_parameter(self):
+        """Test that removed auto_optimize parameter raises error."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_optimize_parameters(auto_optimize=True)
+        assert "auto_optimize" in str(exc_info.value)
+        assert "removed" in str(exc_info.value)
+
+    def test_removed_trigger_parameter(self):
+        """Test that removed trigger parameter raises error."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_optimize_parameters(trigger="on_call")
+        assert "trigger" in str(exc_info.value)
+
+    def test_removed_batch_size_parameter(self):
+        """Test that removed batch_size parameter raises error."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_optimize_parameters(batch_size=10)
+        assert "batch_size" in str(exc_info.value)
+
+    def test_removed_parallel_trials_parameter(self):
+        """Test that removed parallel_trials parameter raises error."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_optimize_parameters(parallel_trials=4)
+        assert "parallel_trials" in str(exc_info.value)
+
+    def test_multiple_removed_parameters(self):
+        """Test error message with multiple removed parameters."""
+        with pytest.raises(ValidationError) as exc_info:
+            validate_optimize_parameters(auto_optimize=True, trigger="on_call")
+        error_msg = str(exc_info.value)
+        assert "auto_optimize" in error_msg
+        assert "trigger" in error_msg
+
+
+class TestDatasetValidationEdgeCases:
+    """Test edge cases for dataset validation."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.validator = ParameterValidator()
+
+    def test_validate_dataset_none(self):
+        """Test that None dataset is valid."""
+        assert self.validator._validate_dataset(None) is None
+
+    def test_validate_dataset_single_dataset_object(self):
+        """Test validation of single Dataset object."""
+        dataset = Dataset(
+            examples=[
+                EvaluationExample(
+                    input_data="test", expected_output="response", metadata={}
+                )
+            ],
+            name="test",
+        )
+        assert self.validator._validate_dataset(dataset) is None
+
+    def test_validate_dataset_invalid_type(self):
+        """Test validation of completely invalid dataset type."""
+        with pytest.raises(ValidationError) as exc_info:
+            self.validator._validate_dataset(123)
+        assert "must be a string path" in str(exc_info.value)
+
+        with pytest.raises(ValidationError) as exc_info:
+            self.validator._validate_dataset({"key": "value"})
+        assert "must be a string path" in str(exc_info.value)
+
+
+class TestConfigurationSpaceEdgeCases:
+    """Test edge cases for configuration space validation."""
+
+    def setup_method(self):
+        """Set up test fixtures."""
+        self.validator = ParameterValidator()
+
+    def test_empty_configuration_space(self):
+        """Test that empty configuration space raises error with helpful message."""
+        with pytest.raises(ValidationError) as exc_info:
+            self.validator._validate_configuration_space({})
+        error_msg = str(exc_info.value)
+        assert "cannot be empty" in error_msg
+        assert "Example:" in error_msg
+
+    def test_configuration_space_none(self):
+        """Test that None configuration space is valid."""
+        assert self.validator._validate_configuration_space(None) is None
+
+    def test_configuration_space_not_dict(self):
+        """Test that non-dict configuration space raises error."""
+        with pytest.raises(ValidationError) as exc_info:
+            self.validator._validate_configuration_space(["a", "b"])
+        assert "must be a dictionary" in str(exc_info.value)
+
+    def test_configuration_space_integer_type_dict(self):
+        """Test typed dict with 'integer' type alias."""
+        # 'integer' should be accepted as alias for 'int'
+        assert (
+            self.validator._validate_dict_value(
+                "count", {"type": "integer", "low": 1, "high": 10}
+            )
+            is None
+        )

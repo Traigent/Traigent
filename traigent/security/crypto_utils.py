@@ -10,6 +10,7 @@ import hmac
 import json
 import os
 import threading
+from pathlib import Path
 from typing import Any, cast
 
 from traigent.utils.secure_path import safe_read_text, validate_path

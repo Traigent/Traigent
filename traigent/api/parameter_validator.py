@@ -349,12 +349,21 @@ class ParameterValidator:
     def _normalize_injection_mode(
         self, injection_mode: str | InjectionMode
     ) -> InjectionMode:
-        """Normalize injection mode to enum."""
+        """Normalize injection mode to enum.
+
+        Args:
+            injection_mode: Either a string name or InjectionMode enum value.
+
+        Returns:
+            The normalized InjectionMode enum value.
+
+        Note:
+            Type signature guarantees input is str | InjectionMode,
+            so after str check, it must be InjectionMode.
+        """
         if isinstance(injection_mode, str):
             return InjectionMode(injection_mode)
-        # injection_mode is already an InjectionMode enum
-        if not isinstance(injection_mode, InjectionMode):
-            raise ValidationError("injection_mode must be an InjectionMode value")
+        # Type narrowing: after str check, must be InjectionMode
         return injection_mode
 
 
