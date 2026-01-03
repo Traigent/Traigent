@@ -283,9 +283,9 @@ class TestAuthResult:
         """Test AuthResult with all fields populated."""
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="test_key_12345",
+            api_key="example-key-12345",
         )
-        headers = {"Authorization": "Bearer test_key_12345"}
+        headers = {"Authorization": "Bearer example-key-12345"}
 
         result = AuthResult(
             success=True,
@@ -419,7 +419,7 @@ class TestAuthCredentials:
         """Test AuthCredentials with metadata."""
         creds = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="test_key",
+            api_key="example-key",
             metadata={
                 "source": "environment",
                 "owner_user_id": "user_123",

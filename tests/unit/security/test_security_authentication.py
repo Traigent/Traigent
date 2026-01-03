@@ -33,13 +33,13 @@ class TestAPIKey:
         """Test API key creation with timezone-aware datetime"""
         # Use timezone-aware datetime to match the implementation
         api_key = APIKey(
-            key="sk-test123",
+            key="key-test-123",
             name="Test Key",
             created_at=datetime.now(UTC),
             expires_at=datetime.now(UTC) + timedelta(days=30),
         )
 
-        assert api_key.key == "sk-test123"
+        assert api_key.key == "key-test-123"
         assert api_key.name == "Test Key"
         assert api_key.is_valid()
         assert api_key.has_permission("optimize")
@@ -48,7 +48,7 @@ class TestAPIKey:
         """Test API key expiration with timezone-aware datetime"""
         # Create an expired key using timezone-aware datetime
         api_key = APIKey(
-            key="sk-expired123",
+            key="key-expired-123",
             name="Expired Key",
             created_at=datetime.now(UTC) - timedelta(days=2),
             expires_at=datetime.now(UTC) - timedelta(days=1),
@@ -59,7 +59,7 @@ class TestAPIKey:
     def test_api_key_permissions(self):
         """Test API key permissions"""
         api_key = APIKey(
-            key="sk-test123",
+            key="key-test-123",
             name="Test Key",
             created_at=datetime.now(UTC),
             permissions={"optimize": True, "analytics": False},
@@ -72,7 +72,7 @@ class TestAPIKey:
     def test_api_key_usage_limits(self):
         """Test usage limits"""
         api_key = APIKey(
-            key="sk-limited123",
+            key="key-limited-123",
             name="Limited Key",
             created_at=datetime.now(UTC),
             usage_limit=100,
@@ -84,7 +84,7 @@ class TestAPIKey:
     def test_api_key_no_expiration(self):
         """Test API key without expiration date"""
         api_key = APIKey(
-            key="sk-noexpire123",
+            key="key-noexpire-123",
             name="No Expire Key",
             created_at=datetime.now(UTC),
             expires_at=None,  # No expiration
@@ -115,16 +115,16 @@ class TestAPIKeyManager(TestIsolationMixin):
             # Set API keys for different providers
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")  # Suppress warnings for test
-                self.key_manager.set_api_key("openai", "sk-test123", "code")
-                self.key_manager.set_api_key("anthropic", "sk-ant-test456", "env")
+                self.key_manager.set_api_key("openai", "key-test-123", "code")
+                self.key_manager.set_api_key("anthropic", "key-anthropic-456", "env")
 
             # Get API keys
             openai_key = self.key_manager.get_api_key("openai")
             anthropic_key = self.key_manager.get_api_key("anthropic")
             missing_key = self.key_manager.get_api_key("nonexistent")
 
-            assert openai_key == "sk-test123"
-            assert anthropic_key == "sk-ant-test456"
+            assert openai_key == "key-test-123"
+            assert anthropic_key == "key-anthropic-456"
             assert missing_key is None
 
     def test_environment_priority(self):

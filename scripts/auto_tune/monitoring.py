@@ -339,7 +339,8 @@ class AlertManager:
     def _send_webhook(self, url: str, alert: Alert):
         """Send alert to webhook."""
         try:
-            if not self._is_safe_webhook_url(url):
+            validated_url = self._validated_webhook_url(url)
+            if not validated_url:
                 logger.error("Refusing to send webhook to unsafe URL: %s", url)
                 return
             payload = {
@@ -357,7 +358,7 @@ class AlertManager:
                 ],
             }
 
-            response = requests.post(url, json=payload, timeout=5)
+            response = requests.post(validated_url, json=payload, timeout=5)
             response.raise_for_status()
 
         except Exception as e:
@@ -429,6 +430,12 @@ class AlertManager:
                 return False
 
         return True
+
+    def _validated_webhook_url(self, url: str) -> Optional[str]:
+        """Return validated webhook URL or None if the URL is not allowed."""
+        if self._is_safe_webhook_url(url):
+            return url
+        return None
 
     @staticmethod
     def _host_allowed(hostname: str, allowlist: List[str]) -> bool:

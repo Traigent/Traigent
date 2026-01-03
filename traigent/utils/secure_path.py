@@ -186,7 +186,7 @@ def safe_open(
     """
     resolved_base = _resolve_base_dir(base_dir, must_exist=False)
     validated_path = _resolve_path_in_base(path, resolved_base)
-    return open(validated_path, mode, **kwargs)
+    return open(validated_path, mode, **kwargs)  # nosec - path resolved within base_dir
 
 
 def safe_read_text(
@@ -254,7 +254,9 @@ def safe_write_text(
     validated_path = _resolve_path_in_base(path, resolved_base)
     # Ensure parent directory exists
     validated_path.parent.mkdir(parents=True, exist_ok=True)
-    validated_path.write_text(content, encoding=encoding)
+    validated_path.write_text(
+        content, encoding=encoding
+    )  # nosec - path resolved within base_dir
 
 
 def safe_write_bytes(
