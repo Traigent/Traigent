@@ -12,6 +12,8 @@ import hashlib
 from pathlib import Path
 from typing import Dict, List, Tuple
 
+from traigent.utils.secure_path import PathTraversalError, safe_read_text, validate_path
+
 
 class DuplicationDetector:
     """Detects code duplication patterns in Python files."""
@@ -25,6 +27,7 @@ class DuplicationDetector:
         """
         self.min_lines = min_lines
         self.code_blocks: Dict[str, List[Tuple[Path, int]]] = {}
+        self._base_dir: Path | None = None
 
     def analyze_directory(self, directory: Path) -> Dict[str, List[Tuple[Path, int]]]:
         """
@@ -36,6 +39,7 @@ class DuplicationDetector:
         Returns:
             Dictionary mapping code hashes to file locations
         """
+        self._base_dir = directory.resolve()
         python_files = list(directory.rglob("*.py"))
 
         for file_path in python_files:
@@ -60,8 +64,10 @@ class DuplicationDetector:
     def _analyze_file(self, file_path: Path) -> None:
         """Analyze a single file for code blocks."""
         try:
-            with open(file_path, encoding="utf-8") as f:
-                lines = f.readlines()
+            base_dir = self._base_dir or file_path.parent.resolve()
+            validated_path = validate_path(file_path, base_dir, must_exist=True)
+            content = safe_read_text(validated_path, base_dir)
+            lines = content.splitlines(keepends=True)
         except (OSError, UnicodeDecodeError):
             return
 
@@ -116,7 +122,8 @@ class DuplicationDetector:
 
 
 def generate_report(
-    duplicates: Dict[str, List[Tuple[Path, int]]], output_file: str = None
+    duplicates: Dict[str, List[Tuple[Path, int]]],
+    output_file: str | Path | None = None,
 ) -> str:
     """Generate duplication report."""
     report_lines = [
@@ -199,9 +206,11 @@ def main():
 
     args = parser.parse_args()
 
-    directory = Path(args.directory)
-    if not directory.exists():
-        print(f"Error: Directory {directory} does not exist")
+    base_dir = Path.cwd()
+    try:
+        directory = validate_path(args.directory, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        print(f"Error: {exc}")
         return 1
 
     detector = DuplicationDetector(min_lines=args.min_lines)
@@ -211,7 +220,10 @@ def main():
         print("No code duplication found!")
         return 0
 
-    output_file = args.output or f"duplication_report_{directory.name}.md"
+    output_file = validate_path(
+        args.output or f"duplication_report_{directory.name}.md",
+        base_dir,
+    )
     generate_report(duplicates, output_file)
 
     print(f"Analysis complete. Found {len(duplicates)} duplicate code blocks.")

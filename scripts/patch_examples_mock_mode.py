@@ -1,13 +1,22 @@
 import os
 import re
+from pathlib import Path
+
+from traigent.utils.secure_path import PathTraversalError, safe_open, validate_path
 
 def patch_examples(root_dir):
+    base_dir = Path.cwd()
+    try:
+        root_dir = validate_path(root_dir, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
+
     print(f"Patching examples in {root_dir} for mock mode...")
     for root, dirs, files in os.walk(root_dir):
         for file in files:
             if file.endswith(".py"):
-                filepath = os.path.join(root, file)
-                with open(filepath, "r") as f:
+                filepath = validate_path(Path(root) / file, root_dir, must_exist=True)
+                with safe_open(filepath, root_dir, mode="r", encoding="utf-8") as f:
                     lines = f.readlines()
                 
                 new_lines = []
@@ -58,8 +67,10 @@ def patch_examples(root_dir):
                             
                 if modified:
                     print(f"Patched {filepath}")
-                    with open(filepath, "w") as f:
+                    with safe_open(
+                        filepath, root_dir, mode="w", encoding="utf-8"
+                    ) as f:
                         f.writelines(new_lines)
 
 if __name__ == "__main__":
-    patch_examples("examples/docs/page-inline")
+    patch_examples(Path("examples/docs/page-inline"))

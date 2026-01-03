@@ -55,8 +55,8 @@ This document describes a comprehensive overhaul of the Traigent paper experimen
 export TRAIGENT_MOCK_MODE=true
 
 # Required for real LLM calls (when mock mode is disabled)
-export OPENAI_API_KEY="sk-..."        # For GPT models
-export ANTHROPIC_API_KEY="sk-ant-..."  # For Claude models
+export OPENAI_API_KEY="<OPENAI_API_KEY>"        # For GPT models
+export ANTHROPIC_API_KEY="<ANTHROPIC_API_KEY>"  # For Claude models
 ```
 
 **⚠️ Warning**: Forgetting `TRAIGENT_MOCK_MODE=true` will trigger real API calls and incur costs during CI/QA runs.
@@ -516,8 +516,8 @@ export TRAIGENT_MOCK_MODE=true
 
 # .env.production (when intentionally running real experiments)
 export TRAIGENT_MOCK_MODE=false
-export OPENAI_API_KEY="sk-..."
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OPENAI_API_KEY="<OPENAI_API_KEY>"
+export ANTHROPIC_API_KEY="<ANTHROPIC_API_KEY>"
 ```
 
 #### Step 2: Update Dependencies
@@ -773,7 +773,7 @@ for trial in trials:
 ```bash
 # Run with real LLM calls (manual verification only)
 TRAIGENT_MOCK_MODE=false \
-OPENAI_API_KEY="sk-..." \
+OPENAI_API_KEY="<OPENAI_API_KEY>" \
 python paper_experiments/cli.py optimize \
     --scenario fever \
     --mock-mode off \

@@ -24,6 +24,13 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_open,
+    safe_read_text,
+    validate_path,
+)
+
 try:  # pragma: no cover - allow running as a script
     from .dependency_graph import Canvas, layout_positions
 except ImportError:  # pragma: no cover
@@ -525,7 +532,8 @@ def draw_text(
 
 def load_config(path: Path) -> AtlasConfig:
     defaults = AtlasConfig()
-    if not path.exists():
+    safe_path = validate_path(path, path.parent, must_exist=False)
+    if not safe_path.exists():
         return defaults
 
     def parse_scalar(value: str):
@@ -541,10 +549,10 @@ def load_config(path: Path) -> AtlasConfig:
 
     data: dict[str, object] = {}
     current_key: str | None = None
-    with path.open("r", encoding="utf-8") as handle:
-        for raw_line in handle:
-            if not raw_line.strip() or raw_line.lstrip().startswith("#"):
-                continue
+    content = safe_read_text(safe_path, safe_path.parent, encoding="utf-8")
+    for raw_line in content.splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
             if raw_line.startswith("-") and current_key:
                 value = raw_line[1:].strip()
                 parsed = parse_scalar(value)
@@ -574,18 +582,20 @@ def load_config(path: Path) -> AtlasConfig:
 
 
 def load_inventory(path: Path) -> dict[str, dict[str, str]]:
-    if not path.exists():
+    safe_path = validate_path(path, path.parent, must_exist=False)
+    if not safe_path.exists():
         return {}
-    with path.open("r", encoding="utf-8", newline="") as handle:
+    with safe_open(safe_path, safe_path.parent, mode="r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         return {row["module"]: row for row in reader}
 
 
 def load_metrics(path: Path) -> dict[str, dict[str, object]]:
     results: dict[str, dict[str, object]] = {}
-    if not path.exists():
+    safe_path = validate_path(path, path.parent, must_exist=False)
+    if not safe_path.exists():
         return results
-    with path.open("r", encoding="utf-8", newline="") as handle:
+    with safe_open(safe_path, safe_path.parent, mode="r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             module = row["module"]
@@ -600,9 +610,10 @@ def load_metrics(path: Path) -> dict[str, dict[str, object]]:
 
 
 def load_graphml(path: Path) -> tuple[dict[str, str], list[GraphEdge]]:
-    if not path.exists():
+    safe_path = validate_path(path, path.parent, must_exist=False)
+    if not safe_path.exists():
         return {}, []
-    tree = ET.parse(str(path))
+    tree = ET.parse(str(safe_path))
     root = tree.getroot()
     ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
 
@@ -1205,8 +1216,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    config = load_config(args.config_path)
-    builder = AtlasBuilder(args.input_dir, args.output_dir, config)
+    base_dir = Path.cwd()
+    try:
+        input_dir = validate_path(args.input_dir, base_dir, must_exist=True)
+        output_dir = validate_path(args.output_dir, base_dir)
+        config_path = validate_path(args.config_path, base_dir, must_exist=True)
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
+
+    config = load_config(config_path)
+    builder = AtlasBuilder(input_dir, output_dir, config)
     builder.build()
 
 

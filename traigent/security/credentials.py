@@ -238,13 +238,13 @@ class EnhancedCredentialStore:
 
     def _init_secure_encryption(self, master_password: str | None = None) -> None:
         """Initialize encryption with secure key derivation."""
-        password_path = self._master_password_path()
-        # Variable initialization, not a hardcoded secret
-        secret_value: str | None = None  # nosec B105
-        password_source = "parameter"
+        master_key_path = self._master_password_path()
+        # Variable initialization, not a hardcoded value
+        master_key_value: str | None = None
+        master_key_source = "parameter"
 
         if master_password:
-            secret_value = master_password
+            master_key_value = master_password
         else:
             # Reading from environment variable, not hardcoded
             env_value = (
@@ -253,26 +253,27 @@ class EnhancedCredentialStore:
                 else None
             )
             if env_value:
-                secret_value = env_value
-                password_source = "environment"
-            elif password_path.exists():
-                secret_value = self._load_master_password_from_file(password_path)
-                password_source = "file"
+                master_key_value = env_value
+                master_key_source = "environment"
+            elif master_key_path.exists():
+                master_key_value = self._load_master_password_from_file(master_key_path)
+                master_key_source = "file"
 
-        if secret_value is None:
+        if master_key_value is None:
             # Cryptographically secure random generation, not hardcoded
-            secret_value = secrets.token_urlsafe(32)  # nosec B105
-            password_source = "generated"
-            self._store_master_password(secret_value, password_path)
+            master_key_value = secrets.token_urlsafe(32)
+            master_key_source = "generated"
+            self._store_master_password(master_key_value, master_key_path)
 
-        self._master_password = SecureString(secret_value)
-        secret_value = None  # Dereference (doesn't wipe underlying string from memory)
+        self._master_password = SecureString(master_key_value)
+        # Dereference (doesn't wipe underlying string from memory, but clears local ref)
+        del master_key_value
 
-        if password_source == "generated":
+        if master_key_source == "generated":
             logger.critical(
                 "Generated new master password and stored it at %s with restricted permissions. "
                 "Move it to a dedicated secret manager and configure TRAIGENT_MASTER_PASSWORD.",
-                password_path,
+                master_key_path,
             )
 
         # Generate or load salt

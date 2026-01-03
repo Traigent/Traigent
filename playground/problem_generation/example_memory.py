@@ -8,10 +8,12 @@ across large-scale generation while minimizing token usage.
 import hashlib
 import json
 import re
+from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 
+from traigent.utils.secure_path import safe_read_text, safe_write_text, validate_path
 
 @dataclass
 class ExampleSummary:
@@ -356,13 +358,13 @@ class ExampleMemory:
             },
         }
 
-        with open(filepath, "w") as f:
-            json.dump(state, f, indent=2)
+        output_path = validate_path(filepath, Path.cwd())
+        safe_write_text(output_path, json.dumps(state, indent=2), Path.cwd())
 
     def load_from_file(self, filepath: str):
         """Load memory state from file."""
-        with open(filepath) as f:
-            state = json.load(f)
+        input_path = validate_path(filepath, Path.cwd(), must_exist=True)
+        state = json.loads(safe_read_text(input_path, Path.cwd()))
 
         self.total_examples = state["total_examples"]
         self.topic_hashes = set(state["topic_hashes"])

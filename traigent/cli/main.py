@@ -20,23 +20,319 @@ from traigent.cli.hooks_commands import hooks
 from traigent.cli.local_commands import register_edge_analytics_commands
 from traigent.utils.logging import setup_logging
 from traigent.utils.persistence import PersistenceManager
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_open,
+    safe_write_text,
+    validate_path,
+)
 from traigent.utils.validation import OptimizationValidator
 from traigent.visualization.plots import create_quick_plot
 
 console = Console()
 WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
+# Style constant for table headers
+_TABLE_HEADER_STYLE = "bold magenta"
 
-def _resolve_workspace_path(path: Path, description: str) -> Path:
+
+def _resolve_workspace_path(
+    path: Path,
+    description: str,
+    *,
+    must_exist: bool = False,
+) -> Path:
     """Resolve a path and ensure it lives within the repository workspace."""
-    resolved = path.expanduser().resolve()
     try:
-        resolved.relative_to(WORKSPACE_ROOT)
-    except ValueError as exc:
+        return validate_path(
+            path.expanduser(),
+            WORKSPACE_ROOT,
+            must_exist=must_exist,
+        )
+    except FileNotFoundError as exc:
+        raise click.ClickException(f"{description} does not exist: {exc}") from exc
+    except PathTraversalError as exc:
         raise click.ClickException(
             f"{description} must reside within the Traigent workspace ({WORKSPACE_ROOT})"
         ) from exc
-    return resolved
+
+
+def _print_optimization_header(
+    file_path: str,
+    algorithm: str,
+    max_trials: int,
+    timeout: float,
+    max_total_examples: int | None,
+    samples_include_pruned: bool,
+) -> None:
+    """Print the optimization header with configuration details."""
+    console.print(f"\n[bold yellow]Running optimization on {file_path}[/bold yellow]")
+    console.print(f"Algorithm: {algorithm}")
+    console.print(f"Max trials: {max_trials}")
+    if timeout:
+        console.print(f"Timeout: {timeout}s")
+    if max_total_examples is not None:
+        status = "including" if samples_include_pruned else "excluding"
+        console.print(
+            f"Sample budget: {max_total_examples} examples ({status} pruned trials)"
+        )
+    elif not samples_include_pruned:
+        console.print("Pruned trials will be excluded from the sample budget.")
+
+
+def _is_optimizable_function(obj: Any) -> bool:
+    """Check if an object is decorated with @traigent.optimize."""
+    import inspect
+
+    # Check if it's decorated with @traigent.optimize
+    # The decorator returns an OptimizedFunction instance with an optimize method
+    if inspect.isfunction(obj) and hasattr(obj, "optimize"):
+        return True
+    if hasattr(obj, "__class__") and obj.__class__.__name__ == "OptimizedFunction":
+        return True
+    # Additional check for objects with optimize method
+    if hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
+        if hasattr(obj, "func") or callable(obj):
+            return True
+    return False
+
+
+def _find_optimizable_functions(
+    module: Any, function_filter: str | None
+) -> list[tuple[str, Any]]:
+    """Find functions with @traigent.optimize decorator in a module."""
+    import inspect
+
+    optimizable_functions = []
+    for name, obj in inspect.getmembers(module):
+        # Skip private/internal attributes and modules
+        if name.startswith("_") or inspect.ismodule(obj):
+            continue
+
+        if _is_optimizable_function(obj):
+            if function_filter is None or name == function_filter:
+                optimizable_functions.append((name, obj))
+
+    return optimizable_functions
+
+
+def _build_optimize_kwargs(
+    algorithm: str,
+    max_trials: int,
+    timeout: float,
+    verbose: bool,
+    samples_include_pruned: bool,
+    max_total_examples: int | None,
+    tvl_spec: str | None,
+    tvl_environment: str | None,
+) -> dict[str, Any]:
+    """Build keyword arguments for the optimize call."""
+    optimize_kwargs: dict[str, Any] = {
+        "algorithm": algorithm,
+        "max_trials": max_trials,
+        "timeout": timeout,
+        "verbose": verbose,
+        "samples_include_pruned": samples_include_pruned,
+    }
+    if max_total_examples is not None:
+        optimize_kwargs["max_total_examples"] = max_total_examples
+    if tvl_spec:
+        optimize_kwargs["tvl_spec"] = tvl_spec
+    if tvl_environment:
+        optimize_kwargs["tvl_environment"] = tvl_environment
+    return optimize_kwargs
+
+
+def _display_optimization_result(
+    func_name: str,
+    result: Any,
+    persistence: PersistenceManager,
+    algorithm: str,
+    max_trials: int,
+) -> None:
+    """Display and save the optimization result for a single function."""
+    console.print(f"✅ Best score: [green]{result.best_score:.3f}[/green]")
+    console.print(f"   Best config: {result.best_config}")
+    console.print(f"   Total trials: {len(result.trials)}")
+    console.print(f"   Successful trials: {len(result.successful_trials)}")
+
+    # Save result
+    result_name = f"{func_name}_{algorithm}_{max_trials}"
+    persistence.save_result(result, result_name)
+    console.print(f"   Results saved as: {result_name}")
+
+
+def _display_optimization_summary(
+    results: list[tuple[str, Any]], output_dir_resolved: Path
+) -> None:
+    """Display the final optimization summary table."""
+    console.print("\n[bold green]Optimization Complete![/bold green]")
+    console.print(f"Total functions optimized: {len(results)}")
+    console.print(f"Results saved to: {output_dir_resolved}")
+
+    if not results:
+        return
+
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Function", style="cyan")
+    table.add_column("Best Score", justify="right")
+    table.add_column("Best Config", style="green")
+    table.add_column("Trials", justify="right")
+
+    for func_name, result in results:
+        # Truncate config if too long
+        config_str = str(result.best_config)
+        if len(config_str) > 50:
+            config_str = config_str[:47] + "..."
+
+        table.add_row(
+            func_name,
+            f"{result.best_score:.3f}",
+            config_str,
+            str(len(result.trials)),
+        )
+
+    console.print("\n[bold]Summary:[/bold]")
+    console.print(table)
+
+
+def _handle_no_optimizable_functions(function_filter: str | None) -> None:
+    """Print error message when no optimizable functions are found."""
+    if function_filter:
+        console.print(
+            f"[red]No optimizable function named '{function_filter}' found[/red]"
+        )
+    else:
+        console.print("[red]No functions with @traigent.optimize decorator found[/red]")
+    console.print("\nMake sure your functions are decorated with @traigent.optimize")
+
+
+def _load_user_module(file_path_obj: Path) -> Any | None:
+    """Load a Python file as a module. Returns the module or None on failure."""
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location("user_module", file_path_obj)
+    if spec is None or spec.loader is None:
+        console.print("[red]Error: Failed to load Python file[/red]")
+        return None
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["user_module"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _resolve_output_dir(output_dir: str) -> Path:
+    """Resolve and validate the output directory path."""
+    output_dir_candidate = Path(output_dir)
+    if not output_dir_candidate.is_absolute():
+        output_dir_candidate = WORKSPACE_ROOT / output_dir_candidate
+    return _resolve_workspace_path(output_dir_candidate, "Output directory")
+
+
+def _parse_comma_separated_list(value: str | None) -> list[str] | None:
+    """Parse a comma-separated string into a list of trimmed values."""
+    if not value:
+        return None
+    return [item.strip() for item in value.split(",")]
+
+
+def _filter_functions_by_objectives(
+    discovered_functions: list[Any], objectives_filter: list[str]
+) -> list[Any]:
+    """Filter discovered functions to only include those with specified objectives."""
+    return [
+        func_info
+        for func_info in discovered_functions
+        if any(obj in func_info.objectives for obj in objectives_filter)
+    ]
+
+
+def _print_check_summary(
+    discovered_functions: list[Any],
+    passed_count: int,
+    failed_count: int,
+    results: list[Any],
+) -> None:
+    """Print the final validation summary for the check command."""
+    console.print("\n[bold blue]📊 Validation Summary[/bold blue]")
+    console.print(f"Total functions: {len(discovered_functions)}")
+    console.print(f"[green]✅ Passed: {passed_count}[/green]")
+    console.print(f"[red]❌ Failed: {failed_count}[/red]")
+
+    # Show detailed results for failed functions
+    failed_results = [r for r in results if r.should_block]
+    if failed_results:
+        console.print("\n[bold red]🚨 Failed Validations:[/bold red]")
+        for result in failed_results:
+            console.print(f"\n{result.get_detailed_report()}")
+
+
+def _handle_check_exit(failed_count: int) -> None:
+    """Handle exit logic for the check command."""
+    if failed_count > 0:
+        console.print(
+            f"\n[red]❌ Optimization validation failed for {failed_count} function(s)[/red]"
+        )
+        console.print("Optimization does not improve over default parameters")
+        console.print("To bypass: git push --no-verify")
+        exit(1)
+    else:
+        console.print("\n[green]✅ All optimizations validated successfully![/green]")
+        console.print("Optimized configurations are superior to default parameters")
+        exit(0)
+
+
+def _print_check_header(module_path: str, threshold: int, dry_run: bool) -> None:
+    """Print the header for the check command."""
+    console.print("\n[bold blue]🔍 Traigent Optimization Validation[/bold blue]")
+    console.print(f"Module: [cyan]{module_path}[/cyan]")
+    console.print(f"Threshold: [yellow]{threshold}%[/yellow]")
+    if dry_run:
+        console.print(
+            "[dim]Running in dry-run mode (no optimization will be executed)[/dim]"
+        )
+
+
+def _print_filter_info(
+    function_filter: list[str] | None, objectives_filter: list[str] | None
+) -> None:
+    """Print filter information for the check command."""
+    if function_filter:
+        console.print(f"Functions: [green]{', '.join(function_filter)}[/green]")
+    if objectives_filter:
+        console.print(f"Objectives: [magenta]{', '.join(objectives_filter)}[/magenta]")
+
+
+def _run_single_optimization(
+    func_name: str,
+    func: Any,
+    optimize_kwargs: dict[str, Any],
+    persistence: PersistenceManager,
+    algorithm: str,
+    max_trials: int,
+    verbose: bool,
+) -> tuple[str, Any] | None:
+    """Run optimization for a single function. Returns (name, result) or None on error."""
+    import traceback
+
+    console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
+    try:
+        import asyncio
+
+        result = asyncio.get_event_loop().run_until_complete(
+            func.optimize(**optimize_kwargs)
+        )
+        _display_optimization_result(
+            func_name, result, persistence, algorithm, max_trials
+        )
+        return (func_name, result)
+    except Exception as e:
+        console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
+        if verbose:
+            console.print(traceback.format_exc())
+        return None
 
 
 @click.group()
@@ -82,7 +378,7 @@ def info() -> None:
 
     # Features table
     console.print("\n[bold]Features:[/bold]")
-    features_table = Table(show_header=True, header_style="bold magenta")
+    features_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     features_table.add_column("Feature")
     features_table.add_column("Status")
 
@@ -94,7 +390,7 @@ def info() -> None:
 
     # Integrations table
     console.print("\n[bold]Integrations:[/bold]")
-    integrations_table = Table(show_header=True, header_style="bold magenta")
+    integrations_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     integrations_table.add_column("Framework")
     integrations_table.add_column("Status")
 
@@ -191,188 +487,79 @@ def optimize(
         file_path: Path to Python file containing optimizable functions
     """
     import asyncio
-    import importlib.util
-    import inspect
     import sys
+    import traceback
     from pathlib import Path
 
-    console.print(f"\n[bold yellow]Running optimization on {file_path}[/bold yellow]")
-    console.print(f"Algorithm: {algorithm}")
-    console.print(f"Max trials: {max_trials}")
-    if timeout:
-        console.print(f"Timeout: {timeout}s")
-    if max_total_examples is not None:
-        status = "including" if samples_include_pruned else "excluding"
-        console.print(
-            f"Sample budget: {max_total_examples} examples ({status} pruned trials)"
-        )
-    elif not samples_include_pruned:
-        console.print("Pruned trials will be excluded from the sample budget.")
-
-    # Load the Python file as a module
-    file_path_obj = _resolve_workspace_path(Path(file_path), "File path")
-
-    # Validate output directory before loading the module
-    output_dir_candidate = Path(output_dir)
-    if not output_dir_candidate.is_absolute():
-        output_dir_candidate = WORKSPACE_ROOT / output_dir_candidate
-    output_dir_resolved = _resolve_workspace_path(
-        output_dir_candidate, "Output directory"
+    _print_optimization_header(
+        file_path,
+        algorithm,
+        max_trials,
+        timeout,
+        max_total_examples,
+        samples_include_pruned,
     )
+
+    # Resolve paths
+    file_path_obj = _resolve_workspace_path(
+        Path(file_path), "File path", must_exist=True
+    )
+    output_dir_resolved = _resolve_output_dir(output_dir)
 
     # Add parent directory to Python path temporarily
     parent_dir = file_path_obj.parent
     sys.path.insert(0, str(parent_dir))
 
     try:
-        # Import the module
-        spec = importlib.util.spec_from_file_location("user_module", file_path_obj)
-        if spec is None or spec.loader is None:
-            console.print("[red]Error: Failed to load Python file[/red]")
+        module = _load_user_module(file_path_obj)
+        if module is None:
             return
 
-        module = importlib.util.module_from_spec(spec)
-        sys.modules["user_module"] = module
-        spec.loader.exec_module(module)
-
-        # Find functions with optimize method (decorated with @traigent.optimize)
-        # Note: @traigent.optimize returns an OptimizedFunction instance, not a raw function
-        optimizable_functions = []
-        for name, obj in inspect.getmembers(module):
-            # Skip private/internal attributes and modules
-            if name.startswith("_") or inspect.ismodule(obj):
-                continue
-
-            # Check if it's decorated with @traigent.optimize
-            # The decorator returns an OptimizedFunction instance with an optimize method
-            is_optimized = False
-            if inspect.isfunction(obj) and hasattr(obj, "optimize"):
-                is_optimized = True
-            elif (
-                hasattr(obj, "__class__")
-                and obj.__class__.__name__ == "OptimizedFunction"
-            ):
-                is_optimized = True
-            elif hasattr(obj, "optimize") and callable(getattr(obj, "optimize", None)):
-                # Additional check for objects with optimize method
-                if hasattr(obj, "func") or callable(obj):
-                    is_optimized = True
-
-            if is_optimized:
-                if function is None or name == function:
-                    optimizable_functions.append((name, obj))
-
+        optimizable_functions = _find_optimizable_functions(module, function)
         if not optimizable_functions:
-            if function:
-                console.print(
-                    f"[red]No optimizable function named '{function}' found[/red]"
-                )
-            else:
-                console.print(
-                    "[red]No functions with @traigent.optimize decorator found[/red]"
-                )
-            console.print(
-                "\nMake sure your functions are decorated with @traigent.optimize"
-            )
+            _handle_no_optimizable_functions(function)
             return
 
         console.print(
             f"\n[green]Found {len(optimizable_functions)} optimizable function(s)[/green]"
         )
 
-        # Initialize persistence manager
+        optimize_kwargs = _build_optimize_kwargs(
+            algorithm,
+            max_trials,
+            timeout,
+            verbose,
+            samples_include_pruned,
+            max_total_examples,
+            tvl_spec,
+            tvl_environment,
+        )
         persistence = PersistenceManager(str(output_dir_resolved))
 
-        # Run optimization for each function
-        async def run_optimizations() -> list[Any]:
-            results = []
+        async def run_optimizations() -> list[tuple[str, Any]]:
+            results: list[tuple[str, Any]] = []
             for func_name, func in optimizable_functions:
                 console.print(f"\n[bold blue]Optimizing: {func_name}[/bold blue]")
-
                 try:
-                    # Run optimization
-                    optimize_kwargs = {
-                        "algorithm": algorithm,
-                        "max_trials": max_trials,
-                        "timeout": timeout,
-                        "verbose": verbose,
-                        "samples_include_pruned": samples_include_pruned,
-                    }
-                    if max_total_examples is not None:
-                        optimize_kwargs["max_total_examples"] = max_total_examples
-                    if tvl_spec:
-                        optimize_kwargs["tvl_spec"] = tvl_spec
-                    if tvl_environment:
-                        optimize_kwargs["tvl_environment"] = tvl_environment
-
                     result = await func.optimize(**optimize_kwargs)
-
-                    # Display results
-                    console.print(
-                        f"✅ Best score: [green]{result.best_score:.3f}[/green]"
+                    _display_optimization_result(
+                        func_name, result, persistence, algorithm, max_trials
                     )
-                    console.print(f"   Best config: {result.best_config}")
-                    console.print(f"   Total trials: {len(result.trials)}")
-                    console.print(
-                        f"   Successful trials: {len(result.successful_trials)}"
-                    )
-
-                    # Save result
-                    result_name = f"{func_name}_{algorithm}_{max_trials}"
-                    persistence.save_result(result, result_name)
-                    console.print(f"   Results saved as: {result_name}")
-
                     results.append((func_name, result))
-
                 except Exception as e:
                     console.print(f"❌ [red]Error optimizing {func_name}: {e}[/red]")
                     if verbose:
-                        import traceback
-
                         console.print(traceback.format_exc())
-
             return results
 
-        # Run all optimizations
         results = asyncio.run(run_optimizations())
-
-        # Summary
-        console.print("\n[bold green]Optimization Complete![/bold green]")
-        console.print(f"Total functions optimized: {len(results)}")
-        console.print(f"Results saved to: {output_dir_resolved}")
-
-        # Display summary table
-        if results:
-            table = Table(show_header=True, header_style="bold magenta")
-            table.add_column("Function", style="cyan")
-            table.add_column("Best Score", justify="right")
-            table.add_column("Best Config", style="green")
-            table.add_column("Trials", justify="right")
-
-            for func_name, result in results:
-                # Truncate config if too long
-                config_str = str(result.best_config)
-                if len(config_str) > 50:
-                    config_str = config_str[:47] + "..."
-
-                table.add_row(
-                    func_name,
-                    f"{result.best_score:.3f}",
-                    config_str,
-                    str(len(result.trials)),
-                )
-
-            console.print("\n[bold]Summary:[/bold]")
-            console.print(table)
+        _display_optimization_summary(results, output_dir_resolved)
 
     except Exception as e:
         console.print(f"[red]Error loading file: {e}[/red]")
         if verbose:
-            import traceback
-
             console.print(traceback.format_exc())
     finally:
-        # Remove from Python path
         if str(parent_dir) in sys.path:
             sys.path.remove(str(parent_dir))
 
@@ -449,7 +636,7 @@ def results(storage_dir: str) -> None:
         return
 
     # Create results table with no_wrap to prevent truncation
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     table.add_column("Name", style="cyan", no_wrap=True, min_width=20)
     table.add_column("Function", style="green", no_wrap=True, min_width=15)
     table.add_column("Algorithm", no_wrap=True)
@@ -512,7 +699,12 @@ def validate_config(config_file: str) -> None:
     console.print(f"\n[bold blue]Validating Configuration: {config_file}[/bold blue]\n")
 
     try:
-        with open(config_file) as f:
+        config_path = _resolve_workspace_path(
+            Path(config_file),
+            "Config file",
+            must_exist=True,
+        )
+        with safe_open(config_path, WORKSPACE_ROOT, mode="r", encoding="utf-8") as f:
             config = json.load(f)
 
         # Extract configuration components
@@ -563,17 +755,10 @@ def generate(template: str, output: str) -> None:
 
     template_code = templates[template]
 
-    # Validate output path
-    output_path = Path(output).resolve()
-
-    # Security: Check for directory traversal
-    if (
-        ".." in output
-        or str(output_path).startswith("/etc")
-        or str(output_path).startswith("/sys")
-    ):
-        console.print("[red]Error: Invalid output path[/red]")
-        return
+    output_path = _resolve_workspace_path(
+        Path(output),
+        "Output file",
+    )
 
     # Check if file already exists
     if output_path.exists():
@@ -582,8 +767,7 @@ def generate(template: str, output: str) -> None:
             return
 
     # Write template to file
-    with open(output_path, "w") as f:
-        f.write(template_code)
+    safe_write_text(output_path, template_code, WORKSPACE_ROOT, encoding="utf-8")
 
     console.print(f"✅ [green]Template generated: {output}[/green]")
 
@@ -993,37 +1177,18 @@ def check(
     )
     from traigent.cli.optimization_validator import OptimizationValidator
 
-    console.print("\n[bold blue]🔍 Traigent Optimization Validation[/bold blue]")
-    console.print(f"Module: [cyan]{module_path}[/cyan]")
-    console.print(f"Threshold: [yellow]{threshold}%[/yellow]")
-
-    if dry_run:
-        console.print(
-            "[dim]Running in dry-run mode (no optimization will be executed)[/dim]"
-        )
+    _print_check_header(module_path, threshold, dry_run)
 
     try:
-        # Parse function filter
-        function_filter = None
-        if functions:
-            function_filter = [name.strip() for name in functions.split(",")]
-            console.print(f"Functions: [green]{', '.join(function_filter)}[/green]")
+        function_filter = _parse_comma_separated_list(functions)
+        objectives_filter = _parse_comma_separated_list(objectives)
+        _print_filter_info(function_filter, objectives_filter)
 
-        # Parse objectives filter
-        objectives_filter = None
-        if objectives:
-            objectives_filter = [obj.strip() for obj in objectives.split(",")]
-            console.print(
-                f"Objectives: [magenta]{', '.join(objectives_filter)}[/magenta]"
-            )
-
-        # Discover optimized functions
         console.print("\n[bold yellow]📋 Step 1: Function Discovery[/bold yellow]")
         discovered_functions = discover_optimized_functions(
             module_path, function_filter
         )
 
-        # Validate discovered functions
         validation_issues = validate_discovered_functions(discovered_functions)
         print_discovery_summary(discovered_functions, validation_issues)
 
@@ -1036,14 +1201,10 @@ def check(
             )
             return
 
-        # Filter by objectives if specified
         if objectives_filter:
-            filtered_functions = []
-            for func_info in discovered_functions:
-                if any(obj in func_info.objectives for obj in objectives_filter):
-                    filtered_functions.append(func_info)
-            discovered_functions = filtered_functions
-
+            discovered_functions = _filter_functions_by_objectives(
+                discovered_functions, objectives_filter
+            )
             if not discovered_functions:
                 console.print(
                     f"\n[red]❌ No functions found with objectives: {objectives_filter}[/red]"
@@ -1056,68 +1217,33 @@ def check(
             )
             return
 
-        # Run optimization validation
         console.print("\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]")
         validator = OptimizationValidator(threshold_pct=threshold)
 
         async def run_validations() -> tuple[list[Any], int, int]:
-            results = []
-            passed_count = 0
-            failed_count = 0
-
+            results: list[Any] = []
+            passed, failed = 0, 0
             for func_info in discovered_functions:
                 console.print(f"\n[bold cyan]Validating: {func_info.name}[/bold cyan]")
-
                 try:
                     result = await validator.validate_optimization(func_info)
                     results.append(result)
-
-                    # Print result summary
                     if result.should_block:
                         console.print(f"[red]{result.get_summary()}[/red]")
-                        failed_count += 1
+                        failed += 1
                     else:
                         console.print(f"[green]{result.get_summary()}[/green]")
-                        passed_count += 1
-
+                        passed += 1
                 except Exception as e:
                     console.print(
                         f"[red]❌ Error validating {func_info.name}: {e}[/red]"
                     )
-                    failed_count += 1
+                    failed += 1
+            return results, passed, failed
 
-            return results, passed_count, failed_count
-
-        # Run all validations
         results, passed_count, failed_count = asyncio.run(run_validations())
-
-        # Print final summary
-        console.print("\n[bold blue]📊 Validation Summary[/bold blue]")
-        console.print(f"Total functions: {len(discovered_functions)}")
-        console.print(f"[green]✅ Passed: {passed_count}[/green]")
-        console.print(f"[red]❌ Failed: {failed_count}[/red]")
-
-        # Show detailed results for failed functions
-        failed_results = [r for r in results if r.should_block]
-        if failed_results:
-            console.print("\n[bold red]🚨 Failed Validations:[/bold red]")
-            for result in failed_results:
-                console.print(f"\n{result.get_detailed_report()}")
-
-        # Exit with appropriate code for git hooks
-        if failed_count > 0:
-            console.print(
-                f"\n[red]❌ Optimization validation failed for {failed_count} function(s)[/red]"
-            )
-            console.print("Optimization does not improve over default parameters")
-            console.print("To bypass: git push --no-verify")
-            exit(1)
-        else:
-            console.print(
-                "\n[green]✅ All optimizations validated successfully![/green]"
-            )
-            console.print("Optimized configurations are superior to default parameters")
-            exit(0)
+        _print_check_summary(discovered_functions, passed_count, failed_count, results)
+        _handle_check_exit(failed_count)
 
     except Exception as e:
         console.print(f"[red]Error during validation: {e}[/red]")

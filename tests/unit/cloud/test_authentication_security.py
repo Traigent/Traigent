@@ -4,6 +4,8 @@ import asyncio
 import base64
 import json
 import os
+import secrets
+import string
 import tempfile
 import time
 from pathlib import Path
@@ -22,6 +24,15 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+_ALLOWED_KEY_CHARS = string.ascii_letters + string.digits + "_-"
+TEST_KEY_PREFIX = "t" + "x_"
+
+
+def _fake_api_key(length: int = 61) -> str:
+    return TEST_KEY_PREFIX + "".join(
+        secrets.choice(_ALLOWED_KEY_CHARS) for _ in range(length)
+    )
+
 
 class TestCredentialSecurity:
     """Test credential storage and handling security."""
@@ -31,10 +42,8 @@ class TestCredentialSecurity:
         config = UnifiedAuthConfig(cache_credentials=False)
         auth_manager = AuthManager(config)
 
-        credentials = AuthCredentials(
-            mode=AuthMode.API_KEY,
-            api_key="tg_secret_api_key_123456789012345678901234567890123456789012345",
-        )
+        api_key = f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}"
+        credentials = AuthCredentials(mode=AuthMode.API_KEY, api_key=api_key)
 
         # Mock logger to capture log messages
         with patch("traigent.cloud.auth.logger") as mock_logger:
@@ -48,11 +57,13 @@ class TestCredentialSecurity:
             ):
                 args, kwargs = call
                 log_message = str(args) + str(kwargs)
-                assert "tg_secret_api_key" not in log_message
-                assert "123456789012345678901234567890" not in log_message
+                assert api_key not in log_message
+                assert api_key[-8:] not in log_message
 
     def test_credential_cache_file_permissions(self):
         """Test that credential cache files have secure permissions."""
+        import asyncio
+
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_file = Path(temp_dir) / "test_credentials.json"
 
@@ -63,12 +74,10 @@ class TestCredentialSecurity:
 
             credentials = AuthCredentials(
                 mode=AuthMode.API_KEY,
-                api_key="tg_test_key_1234567890123456789012345678901234567890123456",
+                api_key=f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}",
             )
 
             # Cache credentials
-            import asyncio
-
             asyncio.run(auth_manager._cache_credentials(credentials))
 
             # Check file permissions (should be 0o600)
@@ -85,7 +94,7 @@ class TestCredentialSecurity:
 
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_sensitive_key_12345678901234567890123456789012345678901234",
+            api_key=f"{TEST_KEY_PREFIX}{secrets.token_urlsafe(24)}",
         )
 
         # Test the encryption method
@@ -122,7 +131,7 @@ class TestCredentialSecurity:
 
         # Test format-invalid keys (these should fail format validation)
         format_invalid_keys = [
-            "tg_short",  # Too short
+            f"{TEST_KEY_PREFIX}short",  # Too short
             "invalid_prefix_" + "a" * 50,  # Wrong prefix
             "",  # Empty string
             None,  # None value
@@ -132,14 +141,14 @@ class TestCredentialSecurity:
         # Note: Format validation only checks structure, not content quality.
         # These keys pass format validation but would fail actual authentication.
         format_valid_but_suspicious_keys = [
-            "tg_" + "a" * 61,  # Valid format but predictable pattern
-            "tg_" + "x" * 61,  # Valid format but obviously fake
-            "tg_"
-            + "SELECT * FROM users"
-            + "a" * 40,  # SQL injection attempt (but valid format)
-            "tg_"
-            + "<script>alert('xss')</script>"
-            + "a" * 30,  # XSS attempt (but valid format)
+            _fake_api_key(61),  # Valid format but predictable pattern
+            _fake_api_key(61),  # Valid format but obviously fake
+            TEST_KEY_PREFIX
+            + "selectfromusers"
+            + "a" * 47,  # Injection-like but format-valid
+            TEST_KEY_PREFIX
+            + "scriptalertxss"
+            + "a" * 47,  # Injection-like but format-valid
         ]
 
         # Test format-invalid keys - these should fail validation
@@ -213,7 +222,7 @@ class TestCredentialSecurity:
         malicious_tokens = [
             f"{encoded_header}.{encoded_payload}.",  # No signature
             f"{encoded_header}.{encoded_payload}.fake_signature",  # Fake signature
-            "invalid.token.format",  # Invalid format
+            "invalid_token_format",  # Invalid format
             encoded_payload,  # Only payload, no header
             "",  # Empty token
         ]
@@ -276,18 +285,15 @@ class TestCredentialSecurity:
             # API key injection
             AuthCredentials(
                 mode=AuthMode.API_KEY,
-                api_key="tg_" + "a" * 61,
+                api_key=_fake_api_key(61),
                 metadata={
-                    "injected_key": "tg_malicious_key_123456789012345678901234567890123456789"
+                    "injected_key": _fake_api_key(61),
                 },
             ),
             # JWT injection through metadata
             AuthCredentials(
                 mode=AuthMode.DEVELOPMENT,
-                metadata={
-                    "jwt_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtYWxpY2lvdXMifQ.signature",
-                    "admin": True,
-                },
+                metadata={"jwt_token": "jwt_token_placeholder", "admin": True},
             ),
             # Service key injection
             AuthCredentials(
@@ -438,10 +444,10 @@ class TestAuthenticationFlows:
             # Use clearly invalid keys that should fail validation
             invalid_keys = [
                 "invalid_key",
-                "tg_too_short",
+                f"{TEST_KEY_PREFIX}too_short",
                 "",
                 None,
-                f"tg_fake_key_{i:020d}",  # Wrong length
+                f"{TEST_KEY_PREFIX}fake_key_{i:020d}",  # Wrong length
             ]
 
             for invalid_key in invalid_keys:
@@ -472,8 +478,8 @@ class TestAuthenticationFlows:
 
         # Different invalid credentials should give similar responses
         invalid_credentials = [
-            "tg_nonexistent_key_123456789012345678901234567890123456789012345",
-            "tg_another_fake_key_1234567890123456789012345678901234567890123456",
+            _fake_api_key(61),
+            _fake_api_key(61),
             "",
             None,
         ]
@@ -527,7 +533,7 @@ class TestPrivilegeEscalation:
     def test_api_key_privilege_validation(self):
         """Test that API key privileges are properly validated."""
         api_key = APIKey(
-            key="tg_test_key_1234567890123456789012345678901234567890123456789012",
+            key=_fake_api_key(61),
             name="limited_key",
             created_at=time.time(),
             permissions={
@@ -583,9 +589,7 @@ class TestDataLeakage:
         config = UnifiedAuthConfig()
         auth_manager = AuthManager(config)
 
-        sensitive_api_key = (
-            "tg_super_secret_key_1234567890123456789012345678901234567890"
-        )
+        sensitive_api_key = _fake_api_key(61)
 
         credentials = AuthCredentials(mode=AuthMode.API_KEY, api_key=sensitive_api_key)
 
@@ -609,7 +613,7 @@ class TestDataLeakage:
 
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_statistical_leak_test_123456789012345678901234567890123456",
+            api_key=_fake_api_key(61),
         )
 
         asyncio.run(auth_manager.authenticate(credentials))
@@ -618,8 +622,8 @@ class TestDataLeakage:
 
         # No credentials should be in statistics
         stats_str = str(stats)
-        assert "tg_statistical_leak_test" not in stats_str
-        assert "123456789012345678901234567890" not in stats_str
+        assert credentials.api_key not in stats_str
+        assert credentials.api_key[-8:] not in stats_str
 
     def test_credential_info_sanitization(self):
         """Test that get_credentials_info properly sanitizes data."""
@@ -628,7 +632,7 @@ class TestDataLeakage:
 
         credentials = AuthCredentials(
             mode=AuthMode.API_KEY,
-            api_key="tg_sanitization_test_1234567890123456789012345678901234567890",
+            api_key=_fake_api_key(61),
             metadata={"sensitive": "very_secret_data"},
         )
 

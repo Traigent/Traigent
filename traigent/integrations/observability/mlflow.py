@@ -93,6 +93,7 @@ except ImportError:
 from traigent.api.types import OptimizationResult, TrialResult
 
 from ...utils.logging import get_logger
+from ...utils.secure_path import safe_write_text
 
 logger = get_logger(__name__)
 
@@ -228,8 +229,12 @@ class TraigentMLflowTracker:
 
         # Create temporary file for trial data
         trial_file = f"trial_{trial_number}.json"
-        with open(trial_file, "w") as f:
-            json.dump(trial_data, f, indent=2)
+        safe_write_text(
+            Path(trial_file),
+            json.dumps(trial_data, indent=2),
+            Path.cwd(),
+            encoding="utf-8",
+        )
 
         mlflow.log_artifact(trial_file, "trials")
 

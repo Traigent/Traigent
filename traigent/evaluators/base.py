@@ -1264,6 +1264,177 @@ class BaseEvaluator(ABC):
                     index, {"success": error is None, "output": output, "error": error}
                 )
 
+    async def _handle_task_result(
+        self,
+        task: asyncio.Task[Any],
+        index: int,
+        examples: list[EvaluationExample],
+        detailed: bool,
+        sample_lease: SampleBudgetLease | None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        pending_tasks: dict[asyncio.Task[Any], int],
+    ) -> None:
+        """Handle a completed task result, storing success or error appropriately."""
+        try:
+            result = task.result()
+        except TrialPrunedError:
+            await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            raise
+        except asyncio.CancelledError:
+            # S7497: CancelledError must be re-raised after cleanup
+            if sample_lease:
+                sample_lease.rollback(1)
+            if progress_callback:
+                await self._safe_progress_callback(
+                    progress_callback,
+                    index,
+                    {"success": False, "error": "sample_budget_cancelled"},
+                    pending_tasks,
+                    sample_lease,
+                )
+            raise  # Re-raise CancelledError to properly propagate cancellation
+        except (FriendlyTraigentError, CoreTraigentError):
+            await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            raise
+        except Exception as exc:
+            self._store_error_result(
+                index,
+                exc,
+                examples,
+                detailed,
+                outputs_by_index,
+                errors_by_index,
+                example_results_by_index,
+            )
+            if progress_callback:
+                await self._safe_progress_callback(
+                    progress_callback,
+                    index,
+                    {"success": False, "error": str(exc)},
+                    pending_tasks,
+                    sample_lease,
+                )
+            return  # Error stored, continue to next task
+
+        # Success case
+        self._store_success_result(
+            index,
+            result,
+            detailed,
+            progress_callback,
+            outputs_by_index,
+            errors_by_index,
+            example_results_by_index,
+            pending_tasks,
+            sample_lease,
+        )
+
+    def _store_error_result(
+        self,
+        index: int,
+        exc: Exception,
+        examples: list[EvaluationExample],
+        detailed: bool,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+    ) -> None:
+        """Store an error result in the result dictionaries."""
+        if detailed:
+            example = examples[index]
+            example_results_by_index[index] = self._create_failed_example_result(
+                example, index, exc
+            )
+        outputs_by_index[index] = None
+        errors_by_index[index] = str(exc)
+
+    def _store_success_result(
+        self,
+        index: int,
+        result: Any,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        pending_tasks: dict[asyncio.Task[Any], int],
+        sample_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Store a successful result in the result dictionaries."""
+        if detailed:
+            example_results_by_index[index] = result
+            outputs_by_index[index] = result.actual_output
+            errors_by_index[index] = result.error_message
+        else:
+            output, error = result
+            outputs_by_index[index] = output
+            errors_by_index[index] = error
+            if progress_callback:
+                # Note: This is sync in the original, we handle exceptions elsewhere
+                progress_callback(
+                    index,
+                    {"success": error is None, "output": output, "error": error},
+                )
+
+    async def _safe_progress_callback(
+        self,
+        progress_callback: Callable[[int, dict[str, Any]], Any],
+        index: int,
+        data: dict[str, Any],
+        pending_tasks: dict[asyncio.Task[Any], int],
+        sample_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Call progress callback with exception handling."""
+        try:
+            progress_callback(index, data)
+        except TrialPrunedError:
+            await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            raise
+        except Exception:
+            await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            raise
+
+    async def _cancel_pending_tasks(
+        self,
+        pending_tasks: dict[asyncio.Task[Any], int],
+        sample_lease: SampleBudgetLease | None,
+    ) -> None:
+        """Cancel all pending tasks and rollback sample budget."""
+        if not pending_tasks:
+            return
+
+        tasks_list = list(pending_tasks.keys())
+        indices_list = list(pending_tasks.values())
+
+        for task in tasks_list:
+            task.cancel()
+
+        results = await asyncio.gather(*tasks_list, return_exceptions=True)
+        if sample_lease:
+            for _index, result in zip(indices_list, results, strict=False):
+                if isinstance(result, asyncio.CancelledError):
+                    sample_lease.rollback(1)
+
+    def _collect_ordered_results(
+        self,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        detailed: bool,
+    ) -> tuple[list[Any], list[str | None], list[ExampleResult | None]]:
+        """Collect results in order by index."""
+        ordered_indices = sorted(outputs_by_index.keys())
+        outputs = [outputs_by_index[i] for i in ordered_indices]
+        errors = [errors_by_index[i] for i in ordered_indices]
+        if detailed:
+            example_results = [example_results_by_index.get(i) for i in ordered_indices]
+        else:
+            example_results = []
+        return outputs, errors, example_results
+
     async def _evaluate_batch(
         self,
         func: Callable[..., Any],
@@ -1299,160 +1470,42 @@ class BaseEvaluator(ABC):
                 func, config, dataset, sample_lease, detailed, progress_callback
             )
 
-        # Concurrent evaluation
+        return await self._evaluate_batch_concurrent(
+            func, config, dataset, sample_lease, detailed, progress_callback
+        )
+
+    async def _evaluate_batch_concurrent(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        sample_lease: SampleBudgetLease | None,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> tuple[list[Any], list[str | None], list[ExampleResult | None], int, bool]:
+        """Execute concurrent batch evaluation."""
         outputs_by_index: dict[int, Any] = {}
         errors_by_index: dict[int, str | None] = {}
         example_results_by_index: dict[int, ExampleResult | None] = {}
-        consumed = 0
-        exhausted = False
+        examples = list(dataset.examples)
         semaphore = asyncio.Semaphore(self.max_workers)
 
-        examples = list(dataset.examples)
+        consumed, exhausted = await self._run_concurrent_tasks(
+            func,
+            config,
+            examples,
+            sample_lease,
+            detailed,
+            progress_callback,
+            outputs_by_index,
+            errors_by_index,
+            example_results_by_index,
+            semaphore,
+        )
 
-        async def evaluate_with_semaphore(
-            example: EvaluationExample, index: int
-        ) -> Any:
-            async with semaphore:
-                if detailed:
-                    return await self._evaluate_single_detailed(
-                        func,
-                        config,
-                        example,
-                        index,
-                        executor=None,
-                        progress_callback=progress_callback,
-                    )
-                return await self._execute_function(
-                    func, config, example.input_data, executor=None
-                )
-
-        async def cancel_pending(
-            pending: dict[asyncio.Task[Any], int],
-        ) -> None:
-            if not pending:
-                return
-
-            tasks_list = list(pending.keys())
-            indices_list = list(pending.values())
-
-            for task in tasks_list:
-                task.cancel()
-
-            results = await asyncio.gather(*tasks_list, return_exceptions=True)
-            if sample_lease:
-                for _index, result in zip(indices_list, results, strict=False):
-                    if isinstance(result, asyncio.CancelledError):
-                        sample_lease.rollback(1)
-
-        pending_tasks: dict[asyncio.Task[Any], int] = {}
-        next_index = 0
-
-        def schedule_more() -> None:
-            nonlocal next_index, exhausted
-            while next_index < len(examples) and len(pending_tasks) < self.max_workers:
-                if sample_lease and not sample_lease.try_take(1):
-                    exhausted = True
-                    return
-
-                example = examples[next_index]
-                pending_tasks[
-                    asyncio.create_task(evaluate_with_semaphore(example, next_index))
-                ] = next_index
-                next_index += 1
-
-        schedule_more()
-
-        while pending_tasks:
-            done, _ = await asyncio.wait(
-                pending_tasks.keys(),
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-
-            for task in done:
-                index = pending_tasks.pop(task)
-
-                try:
-                    result = task.result()
-                except TrialPrunedError:
-                    await cancel_pending(pending_tasks)
-                    raise
-                except asyncio.CancelledError:
-                    if sample_lease:
-                        sample_lease.rollback(1)
-                    if progress_callback:
-                        try:
-                            progress_callback(
-                                index,
-                                {"success": False, "error": "sample_budget_cancelled"},
-                            )
-                        except TrialPrunedError:
-                            await cancel_pending(pending_tasks)
-                            raise
-                        except Exception:
-                            await cancel_pending(pending_tasks)
-                            raise
-                    continue
-                except (FriendlyTraigentError, CoreTraigentError):
-                    # Note: APIKeyError is a subclass of FriendlyTraigentError
-                    await cancel_pending(pending_tasks)
-                    raise
-                except Exception as exc:
-                    if detailed:
-                        example = examples[index]
-                        example_results_by_index[index] = (
-                            self._create_failed_example_result(example, index, exc)
-                        )
-                    outputs_by_index[index] = None
-                    errors_by_index[index] = str(exc)
-                    if progress_callback:
-                        try:
-                            progress_callback(
-                                index, {"success": False, "error": str(exc)}
-                            )
-                        except TrialPrunedError:
-                            await cancel_pending(pending_tasks)
-                            raise
-                        except Exception:
-                            await cancel_pending(pending_tasks)
-                            raise
-                else:
-                    if detailed:
-                        example_results_by_index[index] = result
-                        outputs_by_index[index] = result.actual_output
-                        errors_by_index[index] = result.error_message
-                    else:
-                        output, error = result
-                        outputs_by_index[index] = output
-                        errors_by_index[index] = error
-                        if progress_callback:
-                            try:
-                                progress_callback(
-                                    index,
-                                    {
-                                        "success": error is None,
-                                        "output": output,
-                                        "error": error,
-                                    },
-                                )
-                            except TrialPrunedError:
-                                await cancel_pending(pending_tasks)
-                                raise
-                            except Exception:
-                                await cancel_pending(pending_tasks)
-                                raise
-
-                consumed += 1
-
-            if not exhausted:
-                schedule_more()
-
-        ordered_indices = sorted(outputs_by_index.keys())
-        outputs = [outputs_by_index[i] for i in ordered_indices]
-        errors = [errors_by_index[i] for i in ordered_indices]
-        if detailed:
-            example_results = [example_results_by_index.get(i) for i in ordered_indices]
-        else:
-            example_results = []
+        outputs, errors, example_results = self._collect_ordered_results(
+            outputs_by_index, errors_by_index, example_results_by_index, detailed
+        )
 
         if exhausted and progress_callback:
             progress_callback(
@@ -1460,6 +1513,80 @@ class BaseEvaluator(ABC):
             )
 
         return outputs, errors, example_results, consumed, exhausted
+
+    async def _run_concurrent_tasks(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        examples: list[EvaluationExample],
+        sample_lease: SampleBudgetLease | None,
+        detailed: bool,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+        outputs_by_index: dict[int, Any],
+        errors_by_index: dict[int, str | None],
+        example_results_by_index: dict[int, ExampleResult | None],
+        semaphore: asyncio.Semaphore,
+    ) -> tuple[int, bool]:
+        """Run concurrent task scheduling and processing loop."""
+        pending_tasks: dict[asyncio.Task[Any], int] = {}
+        next_index = 0
+        consumed = 0
+        exhausted = False
+
+        async def evaluate_with_semaphore(example: EvaluationExample, idx: int) -> Any:
+            async with semaphore:
+                if detailed:
+                    return await self._evaluate_single_detailed(
+                        func,
+                        config,
+                        example,
+                        idx,
+                        executor=None,
+                        progress_callback=progress_callback,
+                    )
+                return await self._execute_function(
+                    func, config, example.input_data, executor=None
+                )
+
+        def schedule_more() -> bool:
+            """Schedule more tasks. Returns True if budget exhausted."""
+            nonlocal next_index
+            while next_index < len(examples) and len(pending_tasks) < self.max_workers:
+                if sample_lease and not sample_lease.try_take(1):
+                    return True
+                example = examples[next_index]
+                task = asyncio.create_task(evaluate_with_semaphore(example, next_index))
+                pending_tasks[task] = next_index
+                next_index += 1
+            return False
+
+        exhausted = schedule_more()
+
+        while pending_tasks:
+            done, _ = await asyncio.wait(
+                pending_tasks.keys(), return_when=asyncio.FIRST_COMPLETED
+            )
+
+            for task in done:
+                index = pending_tasks.pop(task)
+                await self._handle_task_result(
+                    task,
+                    index,
+                    examples,
+                    detailed,
+                    sample_lease,
+                    progress_callback,
+                    outputs_by_index,
+                    errors_by_index,
+                    example_results_by_index,
+                    pending_tasks,
+                )
+                consumed += 1
+
+            if not exhausted:
+                exhausted = schedule_more()
+
+        return consumed, exhausted
 
     @staticmethod
     def _get_capture_key_context() -> Callable[[str], Any]:
@@ -1570,7 +1697,8 @@ class BaseEvaluator(ABC):
         """Run custom evaluator function with proper context."""
         from traigent.config.context import ConfigurationContext, get_trial_context
 
-        assert self.custom_eval_func is not None, "custom_eval_func must be set"
+        if self.custom_eval_func is None:
+            raise RuntimeError("custom_eval_func must be set before evaluation")
 
         trial_ctx = get_trial_context()
         capture_key = self._get_capture_key_context()
@@ -1685,6 +1813,70 @@ class BaseEvaluator(ABC):
         ) as span:
             yield span
 
+    def _create_failure_result(
+        self,
+        example_id: str,
+        example: EvaluationExample,
+        execution_time: float,
+        error: Exception,
+    ) -> ExampleResult:
+        """Create an ExampleResult for a failed evaluation."""
+        return ExampleResult(
+            example_id=example_id,
+            input_data=example.input_data,
+            expected_output=example.expected_output,
+            actual_output=None,
+            metrics=dict.fromkeys(self.metrics, 0.0),
+            execution_time=execution_time,
+            success=False,
+            error_message=str(error),
+            metadata=example.metadata.copy() if example.metadata else {},
+        )
+
+    async def _try_custom_evaluator(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        example: EvaluationExample,
+        example_id: str,
+        start_time: float,
+        span: Any,
+        example_index: int,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None,
+    ) -> ExampleResult:
+        """Try running the custom evaluator, handling exceptions appropriately."""
+        # Exceptions that should be re-raised without handling
+        passthrough_exceptions = (
+            TrialPrunedError,
+            asyncio.CancelledError,
+            APIKeyError,
+            FriendlyTraigentError,
+            CoreTraigentError,
+            ConfigurationError,
+        )
+        try:
+            result = await self._run_custom_evaluator(func, config, example, example_id)
+            self._record_example_trace(span, result)
+            if progress_callback:
+                progress_callback(
+                    example_index,
+                    {
+                        "success": result.success,
+                        "error": result.error_message,
+                        "metrics": result.metrics,
+                        "output": result.actual_output,
+                    },
+                )
+            return result
+        except passthrough_exceptions:
+            raise
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.warning(f"Custom evaluation failed for example {example_id}: {e}")
+            result = self._create_failure_result(example_id, example, execution_time, e)
+            self._record_example_trace(span, result)
+            return result
+
     async def _evaluate_single_detailed(
         self,
         func: Callable[..., Any],
@@ -1721,51 +1913,16 @@ class BaseEvaluator(ABC):
         with self._example_trace_context(example_id, example_index, example) as span:
             # Use custom evaluator if available
             if self.custom_eval_func:
-                try:
-                    result = await self._run_custom_evaluator(
-                        func, config, example, example_id
-                    )
-                    self._record_example_trace(span, result)
-                    if progress_callback:
-                        progress_callback(
-                            example_index,
-                            {
-                                "success": result.success,
-                                "error": result.error_message,
-                                "metrics": result.metrics,
-                                "output": result.actual_output,
-                            },
-                        )
-                    return result
-                except TrialPrunedError:
-                    raise
-                except asyncio.CancelledError:
-                    raise
-                except (
-                    APIKeyError,
-                    FriendlyTraigentError,
-                    CoreTraigentError,
-                    ConfigurationError,
-                ):
-                    raise
-                except Exception as e:
-                    execution_time = time.time() - start_time
-                    logger.warning(
-                        f"Custom evaluation failed for example {example_id}: {e}"
-                    )
-                    result = ExampleResult(
-                        example_id=example_id,
-                        input_data=example.input_data,
-                        expected_output=example.expected_output,
-                        actual_output=None,
-                        metrics=dict.fromkeys(self.metrics, 0.0),
-                        execution_time=execution_time,
-                        success=False,
-                        error_message=str(e),
-                        metadata=example.metadata.copy() if example.metadata else {},
-                    )
-                    self._record_example_trace(span, result)
-                    return result
+                return await self._try_custom_evaluator(
+                    func,
+                    config,
+                    example,
+                    example_id,
+                    start_time,
+                    span,
+                    example_index,
+                    progress_callback,
+                )
 
             # Default evaluation with correlation key
             capture_key = self._get_capture_key_context()

@@ -701,13 +701,7 @@ class SessionOperations:
                 {"Content-Type": "application/json"}
             )
 
-            # Create connector without SSL for localhost
             connector = None
-            backend_url = self.client.backend_config.backend_base_url
-            if backend_url and (
-                "localhost" in backend_url or "127.0.0.1" in backend_url
-            ):
-                connector = aiohttp.TCPConnector(ssl=False)
 
             async with aiohttp.ClientSession(connector=connector) as session:
                 api_base = (

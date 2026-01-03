@@ -90,3 +90,57 @@ async def test_cancel_session_validates_identifiers(monkeypatch):
     success = await manager.cancel_session("")
     assert success is False
     assert lifecycle_stub.calls == []
+
+
+# Tests for RuntimeError when clients are not initialized
+
+
+@pytest.mark.asyncio
+async def test_get_next_trial_raises_when_backend_not_initialized(monkeypatch):
+    """Test that get_next_trial raises RuntimeError when backend client is None."""
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = None  # Not initialized
+    manager._active_integrations = {}
+
+    with pytest.raises(RuntimeError, match="Backend client not initialized"):
+        await manager.get_next_trial("session-123", None)
+
+
+@pytest.mark.asyncio
+async def test_submit_trial_results_raises_when_backend_not_initialized(monkeypatch):
+    """Test that submit_trial_results raises RuntimeError when backend client is None."""
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = None  # Not initialized
+    manager._active_integrations = {
+        "integration-1": {
+            "result": IntegrationResult(success=True, session_id="session-1"),
+            "mode": "private",
+        }
+    }
+
+    with pytest.raises(RuntimeError, match="Backend client not initialized"):
+        await manager.submit_trial_results(
+            "session-1", "trial-123", {"param": 1}, {"accuracy": 0.9}, 1.0
+        )
+
+
+@pytest.mark.asyncio
+async def test_finalize_session_raises_when_backend_not_initialized(monkeypatch):
+    """Test that finalize_session raises RuntimeError when backend client is None."""
+    lifecycle_stub = StubLifecycleManager()
+    monkeypatch.setattr(integration_module, "lifecycle_manager", lifecycle_stub)
+
+    manager = IntegrationManager()
+    manager._initialized = True
+    manager._backend_client = None  # Not initialized
+
+    with pytest.raises(RuntimeError, match="Backend client not initialized"):
+        await manager.finalize_session("session-123", None)

@@ -91,7 +91,7 @@ class TestSecureDataConversion:
         """Test that sensitive data isn't leaked through metadata."""
         sensitive_data = {
             "password": "secret123",
-            "api_key": "sk-1234567890",
+            "api_key": "placeholder",
             "credit_card": "4111-1111-1111-1111",
         }
 

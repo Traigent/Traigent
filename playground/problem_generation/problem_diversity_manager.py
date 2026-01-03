@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
+from traigent.utils.secure_path import safe_write_text, validate_path
 
 @dataclass
 class ProblemProfile:
@@ -78,7 +79,8 @@ class ProblemDiversityManager:
         Args:
             problems_dir: Directory containing existing problems
         """
-        self.problems_dir = Path(problems_dir)
+        self._base_dir = Path.cwd()
+        self.problems_dir = validate_path(problems_dir, self._base_dir)
         self.existing_problems: Dict[str, ProblemProfile] = {}
 
         # Define comprehensive taxonomies
@@ -283,7 +285,8 @@ class ProblemDiversityManager:
         """Analyze a single problem file."""
         try:
             # Read file content
-            content = problem_file.read_text()
+            safe_path = validate_path(problem_file, self.problems_dir, must_exist=True)
+            content = safe_path.read_text()
 
             # Extract metadata from docstring and code
             name = problem_file.stem
@@ -891,8 +894,8 @@ class ProblemDiversityManager:
             },
         }
 
-        with open(output_file, "w") as f:
-            json.dump(analysis, f, indent=2)
+        output_path = validate_path(output_file, Path.cwd())
+        safe_write_text(output_path, json.dumps(analysis, indent=2), Path.cwd())
 
     def _calculate_domain_coverage(self) -> Dict[str, float]:
         """Calculate coverage percentage for each domain."""

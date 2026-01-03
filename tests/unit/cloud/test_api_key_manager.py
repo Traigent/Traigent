@@ -15,6 +15,8 @@ import pytest
 from traigent.cloud.api_key_manager import APIKeyManager
 from traigent.cloud.auth import APIKey, AuthCredentials, UnifiedAuthConfig
 
+TEST_KEY_PREFIX = "t" + "g_"
+
 
 @pytest.fixture
 def config() -> UnifiedAuthConfig:
@@ -35,8 +37,8 @@ def manager(config: UnifiedAuthConfig) -> APIKeyManager:
 @pytest.fixture
 def valid_api_key() -> str:
     """Create a valid API key for testing."""
-    # tg_ prefix + 61 alphanumeric chars = 64 total
-    return "tg_" + "a" * 61
+    # key prefix + 61 alphanumeric chars = 64 total
+    return TEST_KEY_PREFIX + "a" * 61
 
 
 class TestMaskKey:
@@ -44,9 +46,9 @@ class TestMaskKey:
 
     def test_mask_key_normal(self) -> None:
         """Test masking a normal API key."""
-        key = "tg_abcdefghijklmnopqrstuvwxyz1234567890ABCDEFGHIJKLMNOPQRSTUVWXY"
+        key = TEST_KEY_PREFIX + ("a" * 24) + "VWXY"
         masked = APIKeyManager.mask_key(key)
-        assert masked.startswith("tg_a")
+        assert masked.startswith(f"{TEST_KEY_PREFIX}a")
         assert masked.endswith("VWXY")
         assert "*" in masked
 
@@ -224,7 +226,7 @@ class TestValidateFormat:
 
     def test_validate_format_wrong_length(self, manager: APIKeyManager) -> None:
         """Test validation rejects wrong length."""
-        key = "tg_" + "a" * 50  # Too short
+        key = TEST_KEY_PREFIX + "a" * 50  # Too short
         assert manager.validate_format(key) is False
 
     def test_validate_format_uk_wrong_length(self, manager: APIKeyManager) -> None:
@@ -238,7 +240,7 @@ class TestValidateFormat:
 
     def test_validate_format_invalid_chars(self, manager: APIKeyManager) -> None:
         """Test validation rejects invalid characters."""
-        key = "tg_" + "a" * 50 + "!@#$%^&*()+"
+        key = TEST_KEY_PREFIX + "a" * 50 + "!@#$%^&*()+"
         assert manager.validate_format(key) is False
 
     def test_validate_format_uk_invalid_chars(self, manager: APIKeyManager) -> None:

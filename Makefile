@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -149,3 +149,47 @@ dev: install-dev install-hooks  ## Complete development setup
 check: quality-check  ## Alias for quality-check
 
 fix: quick-fix  ## Alias for quick-fix
+
+# Local SonarQube (avoids consuming cloud tokens)
+sonar-local-start:  ## Start local SonarQube server (Docker)
+	@echo "Starting local SonarQube..."
+	cd scripts/sonarqube-local && docker compose up -d
+	@echo "Waiting for SonarQube to be ready (this may take 1-2 minutes)..."
+	@until curl -s http://localhost:9000/api/system/status 2>/dev/null | grep -q '"status":"UP"'; do \
+		echo "  Still starting..."; \
+		sleep 5; \
+	done
+	@echo "SonarQube is ready at http://localhost:9000 (login: admin/admin)"
+
+sonar-local-stop:  ## Stop local SonarQube server
+	cd scripts/sonarqube-local && docker compose stop
+
+sonar-local-down:  ## Stop and remove local SonarQube (keeps data volumes)
+	cd scripts/sonarqube-local && docker compose down
+
+sonar-local-clean:  ## Remove local SonarQube and all data
+	cd scripts/sonarqube-local && docker compose down -v
+
+sonar-local:  ## Run SonarQube analysis locally (requires sonar-local-start first)
+	@if ! curl -s http://localhost:9000/api/system/status 2>/dev/null | grep -q '"status":"UP"'; then \
+		echo "Error: Local SonarQube not running. Start it with: make sonar-local-start"; \
+		exit 1; \
+	fi
+	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \
+		echo "Error: SONAR_LOCAL_TOKEN not set. Source .env.local or set it manually."; \
+		echo "Create a token at http://localhost:9000 -> My Account -> Security -> Generate Tokens"; \
+		exit 1; \
+	fi
+	$$HOME/sonar-scanner/bin/sonar-scanner \
+		-Dproject.settings=scripts/sonarqube-local/sonar-project-local.properties \
+		-Dsonar.login=$$SONAR_LOCAL_TOKEN
+	@echo ""
+	@echo "View results at: http://localhost:9000/dashboard?id=traigent-local"
+
+sonar-local-issues:  ## Show issues from local SonarQube
+	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \
+		echo "Error: SONAR_LOCAL_TOKEN not set"; \
+		exit 1; \
+	fi
+	@curl -s -u "$$SONAR_LOCAL_TOKEN:" "http://localhost:9000/api/issues/search?componentKeys=traigent-local&statuses=OPEN&ps=50" \
+		| python3 -c "import sys,json; d=json.load(sys.stdin); print(f'Open Issues: {d[\"total\"]}'); [print(f'  [{i[\"severity\"]}] {i[\"component\"].split(\":\")[-1]}:{i.get(\"line\",\"?\")} - {i[\"message\"][:60]}...') for i in d.get('issues',[])]"

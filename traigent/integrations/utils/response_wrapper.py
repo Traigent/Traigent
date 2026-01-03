@@ -48,6 +48,66 @@ class LLMResponse:
     metadata: dict[str, Any] | None = None
 
 
+def _safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """Safely get an attribute, returning default if not present."""
+    return getattr(obj, attr, default) if hasattr(obj, attr) else default
+
+
+def _extract_openai_text(response: Any) -> str:
+    """Extract text content from OpenAI response choices."""
+    if not hasattr(response, "choices") or not response.choices:
+        return ""
+    choice = response.choices[0]
+    if hasattr(choice, "message") and hasattr(choice.message, "content"):
+        return choice.message.content or ""
+    if hasattr(choice, "text"):
+        return choice.text or ""
+    return ""
+
+
+def _extract_openai_finish_reason(response: Any) -> str | None:
+    """Extract finish reason from OpenAI response."""
+    if hasattr(response, "choices") and response.choices:
+        choice = response.choices[0]
+        if hasattr(choice, "finish_reason"):
+            finish_reason = choice.finish_reason
+            return str(finish_reason) if finish_reason is not None else None
+    return None
+
+
+def _extract_anthropic_text(response: Any) -> str:
+    """Extract text content from Anthropic content blocks."""
+    if not hasattr(response, "content") or not response.content:
+        return ""
+    texts = []
+    for block in response.content:
+        if hasattr(block, "text"):
+            texts.append(block.text)
+        elif isinstance(block, dict) and "text" in block:
+            texts.append(block["text"])
+    return "".join(texts)
+
+
+def _extract_gemini_text(response: Any) -> str:
+    """Extract text content from Gemini response."""
+    # Simple property access
+    if hasattr(response, "text"):
+        text_val = response.text
+        return str(text_val) if text_val is not None else ""
+
+    # Extract from candidates
+    if not hasattr(response, "candidates") or not response.candidates:
+        return ""
+    candidate = response.candidates[0]
+    if not hasattr(candidate, "content") or not hasattr(candidate.content, "parts"):
+        return ""
+    texts = []
+    for part in candidate.content.parts:
+        if hasattr(part, "text"):
+            texts.append(part.text)
+    return "".join(texts)
+
+
 def extract_response_metadata(
     sdk_response: Any,
     provider: str,
@@ -82,25 +142,16 @@ def _extract_openai_metadata(
     provider: str,
 ) -> LLMResponse:
     """Extract metadata from OpenAI ChatCompletion response."""
-    text = ""
-    usage = None
-    model = None
-    metadata = {}
+    metadata: dict[str, Any] = {}
 
     try:
-        # Extract text from choices
-        if hasattr(response, "choices") and response.choices:
-            choice = response.choices[0]
-            if hasattr(choice, "message") and hasattr(choice.message, "content"):
-                text = choice.message.content or ""
-            elif hasattr(choice, "text"):
-                text = choice.text or ""
-
-            # Finish reason
-            if hasattr(choice, "finish_reason"):
-                metadata["finish_reason"] = choice.finish_reason
+        text = _extract_openai_text(response)
+        finish_reason = _extract_openai_finish_reason(response)
+        if finish_reason:
+            metadata["finish_reason"] = finish_reason
 
         # Extract usage
+        usage = None
         if hasattr(response, "usage") and response.usage:
             usage = {
                 "prompt_tokens": getattr(response.usage, "prompt_tokens", 0),
@@ -108,16 +159,16 @@ def _extract_openai_metadata(
                 "total_tokens": getattr(response.usage, "total_tokens", 0),
             }
 
-        # Extract model
-        if hasattr(response, "model"):
-            model = response.model
-
-        # Extract ID
-        if hasattr(response, "id"):
-            metadata["response_id"] = response.id
+        model = _safe_getattr(response, "model")
+        response_id = _safe_getattr(response, "id")
+        if response_id:
+            metadata["response_id"] = response_id
 
     except Exception as e:
         logger.debug(f"Error extracting OpenAI metadata: {e}")
+        text = ""
+        usage = None
+        model = None
 
     return LLMResponse(
         text=text,
@@ -134,45 +185,35 @@ def _extract_anthropic_metadata(
     provider: str,
 ) -> LLMResponse:
     """Extract metadata from Anthropic Message response."""
-    text = ""
-    usage = None
-    model = None
-    metadata = {}
+    metadata: dict[str, Any] = {}
 
     try:
-        # Extract text from content blocks
-        if hasattr(response, "content") and response.content:
-            texts = []
-            for block in response.content:
-                if hasattr(block, "text"):
-                    texts.append(block.text)
-                elif isinstance(block, dict) and "text" in block:
-                    texts.append(block["text"])
-            text = "".join(texts)
+        text = _extract_anthropic_text(response)
 
         # Extract usage
+        usage = None
         if hasattr(response, "usage") and response.usage:
+            input_tokens = getattr(response.usage, "input_tokens", 0)
+            output_tokens = getattr(response.usage, "output_tokens", 0)
             usage = {
-                "input_tokens": getattr(response.usage, "input_tokens", 0),
-                "output_tokens": getattr(response.usage, "output_tokens", 0),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": input_tokens + output_tokens,
             }
-            # Calculate total for consistency
-            usage["total_tokens"] = usage["input_tokens"] + usage["output_tokens"]
 
-        # Extract model
-        if hasattr(response, "model"):
-            model = response.model
-
-        # Extract stop reason
-        if hasattr(response, "stop_reason"):
-            metadata["stop_reason"] = response.stop_reason
-
-        # Extract ID
-        if hasattr(response, "id"):
-            metadata["response_id"] = response.id
+        model = _safe_getattr(response, "model")
+        stop_reason = _safe_getattr(response, "stop_reason")
+        if stop_reason:
+            metadata["stop_reason"] = stop_reason
+        response_id = _safe_getattr(response, "id")
+        if response_id:
+            metadata["response_id"] = response_id
 
     except Exception as e:
         logger.debug(f"Error extracting Anthropic metadata: {e}")
+        text = ""
+        usage = None
+        model = None
 
     return LLMResponse(
         text=text,
@@ -184,36 +225,31 @@ def _extract_anthropic_metadata(
     )
 
 
+def _extract_gemini_finish_reason(response: Any) -> str | None:
+    """Extract finish reason from Gemini response candidate."""
+    if not hasattr(response, "candidates") or not response.candidates:
+        return None
+    candidate = response.candidates[0]
+    if hasattr(candidate, "finish_reason"):
+        return str(candidate.finish_reason)
+    return None
+
+
 def _extract_gemini_metadata(
     response: Any,
     provider: str,
 ) -> LLMResponse:
     """Extract metadata from Gemini GenerateContentResponse."""
-    text = ""
-    usage = None
-    model = None
-    metadata = {}
+    metadata: dict[str, Any] = {}
 
     try:
-        # Extract text from candidates
-        if hasattr(response, "text"):
-            # Simple property access
-            text = response.text
-        elif hasattr(response, "candidates") and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
-                parts = candidate.content.parts
-                texts = []
-                for part in parts:
-                    if hasattr(part, "text"):
-                        texts.append(part.text)
-                text = "".join(texts)
-
-            # Finish reason
-            if hasattr(candidate, "finish_reason"):
-                metadata["finish_reason"] = str(candidate.finish_reason)
+        text = _extract_gemini_text(response)
+        finish_reason = _extract_gemini_finish_reason(response)
+        if finish_reason:
+            metadata["finish_reason"] = finish_reason
 
         # Extract usage metadata
+        usage = None
         if hasattr(response, "usage_metadata") and response.usage_metadata:
             um = response.usage_metadata
             usage = {
@@ -224,12 +260,14 @@ def _extract_gemini_metadata(
 
     except Exception as e:
         logger.debug(f"Error extracting Gemini metadata: {e}")
+        text = ""
+        usage = None
 
     return LLMResponse(
         text=text,
         raw=response,
         usage=usage,
-        model=model,
+        model=None,
         provider=provider,
         metadata=metadata if metadata else None,
     )

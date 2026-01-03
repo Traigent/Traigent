@@ -6,6 +6,8 @@ import argparse
 from datetime import UTC, datetime
 from pathlib import Path
 
+from traigent.utils.secure_path import PathTraversalError, safe_write_text, validate_path
+
 try:  # pragma: no cover - support execution via python path/to/script.py
     from .analysis_utils import load_coverage_map, load_lint_map, write_csv
     from .dependency_graph import ModuleIndex, build_edges, render_png, write_graphml
@@ -45,12 +47,27 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_analysis_outputs(args: argparse.Namespace) -> None:
-    project_root = args.project_root.resolve()
-    source_root = (args.project_root / args.source_root).resolve()
-    tests_root = (args.project_root / args.tests_root).resolve()
+    base_dir = Path.cwd()
+    try:
+        project_root = validate_path(args.project_root, base_dir, must_exist=True)
+        source_root = validate_path(
+            project_root / args.source_root,
+            project_root,
+            must_exist=True,
+        )
+        tests_root = validate_path(
+            project_root / args.tests_root,
+            project_root,
+            must_exist=True,
+        )
+    except (PathTraversalError, FileNotFoundError) as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
     tag = args.tag or datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    output_dir = (args.project_root / args.output_root / tag).resolve()
+    output_dir = validate_path(
+        project_root / args.output_root / tag,
+        project_root,
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
 
     coverage_xml = output_dir / "coverage.xml"
@@ -107,7 +124,11 @@ def ensure_analysis_outputs(args: argparse.Namespace) -> None:
         f"GraphML: {graphml_path}",
         f"PNG: {png_path}",
     ]
-    summary_path.write_text("\n".join(str(line) for line in summary_lines), encoding="utf-8")
+    safe_write_text(
+        summary_path,
+        "\n".join(str(line) for line in summary_lines),
+        summary_path.parent,
+    )
 
 
 def main() -> None:

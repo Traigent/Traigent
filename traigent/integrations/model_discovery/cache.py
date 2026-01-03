@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from traigent.utils.secure_path import safe_open, validate_path
+
 logger = logging.getLogger(__name__)
 
 # Default cache directory (user's cache dir or temp)
@@ -234,7 +236,10 @@ class ModelCache:
         """Save cache entry to file."""
         try:
             cache_file = self._get_cache_file(key)
-            with open(cache_file, "w") as f:
+            cache_file = validate_path(cache_file, self._cache_dir, must_exist=False)
+            with safe_open(
+                cache_file, self._cache_dir, mode="w", encoding="utf-8"
+            ) as f:
                 json.dump(entry.to_dict(), f, indent=2)
         except Exception as e:
             logger.warning(f"Failed to save cache to file for {key}: {e}")
@@ -246,7 +251,10 @@ class ModelCache:
             if not cache_file.exists():
                 return None
 
-            with open(cache_file) as f:
+            cache_file = validate_path(cache_file, self._cache_dir, must_exist=True)
+            with safe_open(
+                cache_file, self._cache_dir, mode="r", encoding="utf-8"
+            ) as f:
                 data = json.load(f)
                 return CacheEntry.from_dict(data)
         except Exception as e:

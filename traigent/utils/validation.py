@@ -23,6 +23,7 @@ from typing import Any
 
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
+from traigent.utils.secure_path import safe_open
 
 logger = get_logger(__name__)
 
@@ -513,8 +514,205 @@ class Validators:
 
     # ===== Traigent-specific Validators =====
 
+    _VALID_PARAM_TYPES: set[str] = {
+        "float",
+        "double",
+        "loguniform",
+        "qloguniform",
+        "int",
+        "integer",
+        "categorical",
+        "choice",
+        "fixed",
+        "constant",
+    }
+
+    _NUMERIC_TYPES: set[str] = {
+        "float",
+        "double",
+        "loguniform",
+        "qloguniform",
+        "int",
+        "integer",
+    }
+
+    _TYPED_KEYS: set[str] = {
+        "type",
+        "low",
+        "high",
+        "min",
+        "max",
+        "values",
+        "choices",
+        "value",
+        "step",
+        "log",
+    }
+
     @staticmethod
-    def validate_configuration_space(config_space: Any) -> ValidationResult:
+    def _validate_list_param(
+        result: ValidationResult, param_name: str, param_values: list[Any]
+    ) -> None:
+        """Validate a list parameter value."""
+        if not param_values:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Parameter list cannot be empty",
+                error_code="EMPTY_LIST",
+            )
+        elif len(param_values) == 1:
+            result.add_warning(
+                f"configuration_space.{param_name}",
+                "Single value in list - no optimization possible",
+                suggestions=["Add more values or remove this parameter"],
+            )
+
+    @staticmethod
+    def _validate_tuple_param(
+        result: ValidationResult, param_name: str, param_values: tuple[Any, ...]
+    ) -> None:
+        """Validate a tuple (range) parameter value."""
+        if len(param_values) != 2:
+            return
+        min_val, max_val = param_values
+        if not all(isinstance(v, (int, float)) for v in param_values):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Range values must be numeric",
+                error_code="INVALID_RANGE",
+            )
+        elif min_val >= max_val:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Invalid range: min ({min_val}) >= max ({max_val})",
+                error_code="INVALID_RANGE",
+            )
+
+    @staticmethod
+    def _validate_numeric_type_param(
+        result: ValidationResult,
+        param_name: str,
+        param_type: str,
+        param_values: dict[str, Any],
+    ) -> None:
+        """Validate a numeric type parameter (float, int, etc.)."""
+        low = param_values.get("low", param_values.get("min"))
+        high = param_values.get("high", param_values.get("max"))
+        if low is None or high is None:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"{param_type} parameter requires bounds (low/high or min/max)",
+                error_code="MISSING_BOUNDS",
+            )
+            return
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Range bounds must be numeric",
+                error_code="INVALID_RANGE",
+            )
+            return
+        if low >= high:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Invalid range: low ({low}) >= high ({high})",
+                error_code="INVALID_RANGE",
+            )
+            return
+
+        step = param_values.get("step")
+        if step is not None:
+            if not isinstance(step, (int, float)) or step <= 0:
+                result.add_error(
+                    f"configuration_space.{param_name}",
+                    f"Step must be a positive number, got {step!r}",
+                    error_code="INVALID_RANGE",
+                )
+            if param_values.get("log"):
+                result.add_error(
+                    f"configuration_space.{param_name}",
+                    "log=True cannot be combined with step",
+                    error_code="INVALID_RANGE",
+                )
+        if param_values.get("log") and low <= 0:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "log=True requires positive bounds",
+                error_code="INVALID_RANGE",
+            )
+
+    @staticmethod
+    def _validate_categorical_type_param(
+        result: ValidationResult, param_name: str, param_values: dict[str, Any]
+    ) -> None:
+        """Validate a categorical/choice type parameter."""
+        choices = param_values.get("choices") or param_values.get("values")
+        if not choices:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Categorical parameter requires 'choices' or 'values'",
+                error_code="INVALID_PARAM_TYPE",
+            )
+        elif isinstance(choices, (str, bytes)):
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Categorical choices must be a list or tuple",
+                error_code="INVALID_PARAM_TYPE",
+            )
+
+    @staticmethod
+    def _validate_fixed_type_param(
+        result: ValidationResult, param_name: str, param_values: dict[str, Any]
+    ) -> None:
+        """Validate a fixed/constant type parameter."""
+        if "value" not in param_values:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Fixed parameters require a 'value'",
+                error_code="INVALID_PARAM_TYPE",
+            )
+
+    @classmethod
+    def _infer_param_type(cls, param_values: dict[str, Any]) -> str:
+        """Infer parameter type from param_values dict."""
+        param_type = (param_values.get("type") or "").lower()
+        if param_type:
+            return param_type
+        if "choices" in param_values or "values" in param_values:
+            return "categorical"
+        if {"low", "high", "min", "max"} & param_values.keys():
+            return "float"
+        return "categorical"
+
+    @classmethod
+    def _validate_typed_dict_param(
+        cls, result: ValidationResult, param_name: str, param_values: dict[str, Any]
+    ) -> None:
+        """Validate a typed dictionary parameter."""
+        param_type = cls._infer_param_type(param_values)
+
+        if param_type not in cls._VALID_PARAM_TYPES:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                f"Unknown parameter type: {param_type!r}",
+                error_code="INVALID_PARAM_TYPE",
+                suggestions=[
+                    f"Valid types: {', '.join(sorted(cls._VALID_PARAM_TYPES))}"
+                ],
+            )
+            return
+
+        if param_type in cls._NUMERIC_TYPES:
+            cls._validate_numeric_type_param(
+                result, param_name, param_type, param_values
+            )
+        elif param_type in {"categorical", "choice"}:
+            cls._validate_categorical_type_param(result, param_name, param_values)
+        elif param_type in {"fixed", "constant"}:
+            cls._validate_fixed_type_param(result, param_name, param_values)
+
+    @classmethod
+    def validate_configuration_space(cls, config_space: Any) -> ValidationResult:
         """Validate Traigent configuration space."""
         result = ValidationResult()
 
@@ -540,7 +738,6 @@ class Validators:
 
         # Validate each parameter
         for param_name, param_values in config_space.items():
-            # Check parameter name
             if not isinstance(param_name, str):
                 result.add_error(
                     f"configuration_space.{param_name}",
@@ -549,180 +746,11 @@ class Validators:
                 )
                 continue
 
-            # Check parameter values
+            # Convert ParameterRange to config value
             if isinstance(param_values, ParameterRange):
                 param_values = param_values.to_config_value()
 
-            if isinstance(param_values, list):
-                if not param_values:
-                    result.add_error(
-                        f"configuration_space.{param_name}",
-                        "Parameter list cannot be empty",
-                        error_code="EMPTY_LIST",
-                    )
-                elif len(param_values) == 1:
-                    result.add_warning(
-                        f"configuration_space.{param_name}",
-                        "Single value in list - no optimization possible",
-                        suggestions=["Add more values or remove this parameter"],
-                    )
-            elif isinstance(param_values, tuple) and len(param_values) == 2:
-                # Range validation
-                min_val, max_val = param_values
-                if not all(isinstance(v, (int, float)) for v in param_values):
-                    result.add_error(
-                        f"configuration_space.{param_name}",
-                        "Range values must be numeric",
-                        error_code="INVALID_RANGE",
-                    )
-                elif min_val >= max_val:
-                    result.add_error(
-                        f"configuration_space.{param_name}",
-                        f"Invalid range: min ({min_val}) >= max ({max_val})",
-                        error_code="INVALID_RANGE",
-                    )
-            elif isinstance(param_values, dict):
-                if len(param_values) == 0:
-                    result.add_error(
-                        f"configuration_space.{param_name}",
-                        "Parameter dict cannot be empty",
-                        error_code="EMPTY_CONFIG",
-                    )
-                    continue
-
-                typed_keys = {
-                    "type",
-                    "low",
-                    "high",
-                    "min",
-                    "max",
-                    "values",
-                    "choices",
-                    "value",
-                    "step",
-                    "log",
-                }
-                if typed_keys.intersection(param_values):
-                    param_type = (param_values.get("type") or "").lower()
-                    if not param_type:
-                        if "choices" in param_values or "values" in param_values:
-                            param_type = "categorical"
-                        elif {"low", "high", "min", "max"} & param_values.keys():
-                            param_type = "float"
-                        else:
-                            param_type = "categorical"
-
-                    valid_types = {
-                        "float",
-                        "double",
-                        "loguniform",
-                        "qloguniform",
-                        "int",
-                        "integer",
-                        "categorical",
-                        "choice",
-                        "fixed",
-                        "constant",
-                    }
-                    if param_type not in valid_types:
-                        result.add_error(
-                            f"configuration_space.{param_name}",
-                            f"Unknown parameter type: {param_type!r}",
-                            error_code="INVALID_PARAM_TYPE",
-                            suggestions=[
-                                f"Valid types: {', '.join(sorted(valid_types))}"
-                            ],
-                        )
-                        continue
-
-                    if param_type in {
-                        "float",
-                        "double",
-                        "loguniform",
-                        "qloguniform",
-                        "int",
-                        "integer",
-                    }:
-                        low = param_values.get("low", param_values.get("min"))
-                        high = param_values.get("high", param_values.get("max"))
-                        if low is None or high is None:
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                f"{param_type} parameter requires bounds (low/high or min/max)",
-                                error_code="MISSING_BOUNDS",
-                            )
-                            continue
-                        if not isinstance(low, (int, float)) or not isinstance(
-                            high, (int, float)
-                        ):
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                "Range bounds must be numeric",
-                                error_code="INVALID_RANGE",
-                            )
-                            continue
-                        if low >= high:
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                f"Invalid range: low ({low}) >= high ({high})",
-                                error_code="INVALID_RANGE",
-                            )
-                            continue
-
-                        step = param_values.get("step")
-                        if step is not None:
-                            if not isinstance(step, (int, float)) or step <= 0:
-                                result.add_error(
-                                    f"configuration_space.{param_name}",
-                                    f"Step must be a positive number, got {step!r}",
-                                    error_code="INVALID_RANGE",
-                                )
-                            if param_values.get("log"):
-                                result.add_error(
-                                    f"configuration_space.{param_name}",
-                                    "log=True cannot be combined with step",
-                                    error_code="INVALID_RANGE",
-                                )
-                        if param_values.get("log") and low <= 0:
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                "log=True requires positive bounds",
-                                error_code="INVALID_RANGE",
-                            )
-                    elif param_type in {"categorical", "choice"}:
-                        choices = param_values.get("choices") or param_values.get(
-                            "values"
-                        )
-                        if not choices:
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                "Categorical parameter requires 'choices' or 'values'",
-                                error_code="INVALID_PARAM_TYPE",
-                            )
-                        elif isinstance(choices, (str, bytes)):
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                "Categorical choices must be a list or tuple",
-                                error_code="INVALID_PARAM_TYPE",
-                            )
-                    elif param_type in {"fixed", "constant"}:
-                        if "value" not in param_values:
-                            result.add_error(
-                                f"configuration_space.{param_name}",
-                                "Fixed parameters require a 'value'",
-                                error_code="INVALID_PARAM_TYPE",
-                            )
-                # Otherwise accept as nested configuration
-            else:
-                result.add_error(
-                    f"configuration_space.{param_name}",
-                    "Parameter must be a list of values or a (min, max) tuple",
-                    error_code="INVALID_PARAM_TYPE",
-                    suggestions=[
-                        "Use a list for categorical values: ['option1', 'option2']",
-                        "Use a tuple for numeric ranges: (0.0, 1.0)",
-                    ],
-                )
+            cls._validate_single_param(result, param_name, param_values)
 
         # Add suggestions for common parameters
         if "model" not in config_space:
@@ -735,6 +763,46 @@ class Validators:
             )
 
         return result
+
+    @classmethod
+    def _validate_single_param(
+        cls, result: ValidationResult, param_name: str, param_values: Any
+    ) -> None:
+        """Validate a single configuration space parameter."""
+        if isinstance(param_values, list):
+            cls._validate_list_param(result, param_name, param_values)
+        elif isinstance(param_values, tuple) and len(param_values) == 2:
+            cls._validate_tuple_param(result, param_name, param_values)
+        elif isinstance(param_values, dict):
+            cls._validate_dict_param(result, param_name, param_values)
+        else:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Parameter must be a list of values or a (min, max) tuple",
+                error_code="INVALID_PARAM_TYPE",
+                suggestions=[
+                    "Use a list for categorical values: ['option1', 'option2']",
+                    "Use a tuple for numeric ranges: (0.0, 1.0)",
+                ],
+            )
+
+    @classmethod
+    def _validate_dict_param(
+        cls, result: ValidationResult, param_name: str, param_values: dict[str, Any]
+    ) -> None:
+        """Validate a dictionary parameter value."""
+        if len(param_values) == 0:
+            result.add_error(
+                f"configuration_space.{param_name}",
+                "Parameter dict cannot be empty",
+                error_code="EMPTY_CONFIG",
+            )
+            return
+
+        # Check if this is a typed parameter definition
+        if cls._TYPED_KEYS.intersection(param_values):
+            cls._validate_typed_dict_param(result, param_name, param_values)
+        # Otherwise accept as nested configuration (no validation needed)
 
     @staticmethod
     def validate_objectives(objectives: Any) -> ValidationResult:
@@ -836,7 +904,12 @@ class Validators:
             if path_result.is_valid:
                 try:
                     path = Path(dataset_path)
-                    with open(path) as f:
+                    with safe_open(
+                        path,
+                        resolved_dataset_path.resolve().parent,
+                        mode="r",
+                        encoding="utf-8",
+                    ) as f:
                         line_count = 0
                         for line_num, line in enumerate(f, 1):
                             line_count += 1

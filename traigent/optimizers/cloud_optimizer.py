@@ -31,6 +31,9 @@ from traigent.utils.logging import get_logger
 T = TypeVar("T")
 logger = get_logger(__name__)
 
+# Error message constants
+_SESSION_NOT_INITIALIZED = "Session not initialized"
+
 
 def _run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
     """Run async coroutine from sync context, ensuring no event loop is running.
@@ -129,7 +132,8 @@ class CloudOptimizer(BaseOptimizer):
         """
         if self.session_id:
             logger.warning("Session already initialized, returning existing session")
-            assert self.session is not None, "session_id exists but session is None"
+            if self.session is None:
+                raise ServiceError("session_id exists but session is None")
             return self.session
 
         try:
@@ -204,7 +208,8 @@ class CloudOptimizer(BaseOptimizer):
         if not self.session_id:
             await self.initialize_session()
 
-        assert self.session_id is not None, "Session not initialized"
+        if self.session_id is None:
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
 
         # Try remote service first
         if not self._using_fallback:
@@ -267,7 +272,8 @@ class CloudOptimizer(BaseOptimizer):
         if not self.session_id:
             await self.initialize_session()
 
-        assert self.session_id is not None, "Session not initialized"
+        if self.session_id is None:
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
 
         # Try remote service smart suggestion first
         if not self._using_fallback:
@@ -458,7 +464,8 @@ class CloudOptimizer(BaseOptimizer):
         self, max_candidates: int, remote_context: dict[str, Any] | None
     ) -> list[dict[str, Any]]:
         """Generate candidates using remote service."""
-        assert self.session_id is not None, "Session not initialized"
+        if self.session_id is None:
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
         try:
             # Try batch suggestions first
             if hasattr(self.remote_service, "suggest_batch"):
@@ -486,7 +493,8 @@ class CloudOptimizer(BaseOptimizer):
         self, max_candidates: int, remote_context: dict[str, Any] | None
     ) -> list[dict[str, Any]]:
         """Generate candidates sequentially from remote service."""
-        assert self.session_id is not None, "Session not initialized"
+        if self.session_id is None:
+            raise ServiceError(_SESSION_NOT_INITIALIZED)
         candidates: list[dict[str, Any]] = []
         history: list[TrialResult] = []
 
