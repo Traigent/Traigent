@@ -1,6 +1,5 @@
 {"input": {"query": "If I return an item I paid for with a gift card, how do I get my money back?"}, "output": "Refunded back to a gift card"}
 {"input": {"query": "I ordered at 3pm on a weekday - when will it ship and how long until it arrives with standard shipping?"}, "output": "Ships next business day, then 5-7 business days for delivery"}
-{"input": {"query": "Can I use Klarna to buy a $25 gift card?"}, "output": "No, buy now pay later requires orders over $35"}
 {"input": {"query": "I want to buy a physical gift card for someone in Canada - can I ship it there and how much will it cost?"}, "output": "Yes, physical cards ship free domestically, international shipping rates calculated at checkout"}
 {"input": {"query": "If I order at 1pm on Saturday and choose overnight shipping, when will it arrive?"}, "output": "Weekend orders ship Monday, overnight delivery means it arrives Tuesday"}
 {"input": {"query": "I paid with PayPal and returned an item - when will I see the refund?"}, "output": "5-7 business days after inspection, refund issued to original payment method"}
@@ -11,18 +10,12 @@
 {"input": {"query": "I lost my physical gift card - can I get a replacement and use the balance online?"}, "output": "Report to support with proof of purchase, balance can be transferred to new card and used online"}
 {"input": {"query": "I ordered at 3pm Friday with express shipping - when will it arrive?"}, "output": "Ships Monday (weekend orders ship Monday), arrives Wednesday-Thursday (2-3 business days)"}
 {"input": {"query": "What payment methods can I use for an order under $35?"}, "output": "Credit/debit cards, PayPal, Apple Pay, Google Pay, Shop Pay, or gift cards (buy now pay later requires $35 minimum)"}
-{"input": {"query": "I ordered overnight shipping at 1pm EST - will it arrive tomorrow?"}, "output": "No, overnight orders must be placed by 12pm EST for next-day delivery - yours ships today but arrives in 2 days"}
 {"input": {"query": "Can I get a corporate bulk order of gift cards shipped to Canada?"}, "output": "Yes, bulk orders (10+ cards) available, international shipping rates calculated at checkout"}
 {"input": {"query": "Can I ship overnight to a PO Box in Canada?"}, "output": "No, overnight shipping is not available for PO Boxes, and international shipping uses calculated rates (not overnight option)"}
 {"input": {"query": "I returned an item 25 days after purchase - will I get a refund or store credit?"}, "output": "Full refund to original payment method - returns are accepted within 30 days"}
-{"input": {"query": "I used a gift card and Apple Pay together - if I return the item, where does the refund go?"}, "output": "Gift card portion refunds to gift card, Apple Pay portion refunds to original payment method"}
 {"input": {"query": "Can I use Affirm to buy a $30 item?"}, "output": "No, buy now pay later options require orders over $35"}
-{"input": {"query": "I want to ship a physical gift card to Mexico - is overnight available?"}, "output": "No, overnight shipping is only available domestically, international uses calculated rates"}
-{"input": {"query": "Can I pay with Afterpay for a $40 order that includes a gift card?"}, "output": "No, Afterpay is not available for gift card purchases regardless of order total"}
 {"input": {"query": "I placed an order at 2:30pm EST with overnight - when does it arrive?"}, "output": "Ships next business day since after 2pm cutoff, arrives in 2 days not tomorrow"}
-{"input": {"query": "What happens if I use Shop Pay and a gift card together for a return?"}, "output": "Gift card portion refunds to gift card, Shop Pay portion refunds to original payment method"}
 {"input": {"query": "Can I ship express to a PO Box in the US?"}, "output": "No, express and overnight shipping are not available for PO Box addresses"}
 {"input": {"query": "I want to buy a $25 item with Afterpay - is that allowed?"}, "output": "No, Afterpay requires orders over $35 minimum"}
 {"input": {"query": "My underwear arrived with a defect - can I return it even though intimates are non-returnable?"}, "output": "Yes, defective items can be returned regardless of category - contact support within 48 hours with photos"}
 {"input": {"query": "I paid with Google Pay and a gift card - where does my refund go if I return?"}, "output": "Gift card portion refunds to gift card, Google Pay portion refunds to original payment method"}
-{"input": {"query": "Can I get standard shipping to a PO Box internationally?"}, "output": "International shipping rates are calculated at checkout, PO Box delivery depends on carrier availability in destination country"}
