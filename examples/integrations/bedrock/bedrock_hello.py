@@ -12,7 +12,7 @@ import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
-MODEL_ID = "amazon.titan-text-lite-v1"  # cost-efficient, small context model
+MODEL_ID = "amazon.titan-text-express-v1"  # Updated from deprecated titan-text-lite-v1
 
 PROMPT = (
     "User: Say 'Hello, world! what is the capital of France?' and nothing else.\nBot:"

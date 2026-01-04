@@ -193,47 +193,45 @@ def create_evaluation_function(dataset: RAGDataset) -> Callable:
     return evaluate_rag_configuration
 
 
+def _create_temp_dataset() -> str:
+    """Create a temporary dataset file for the example."""
+    f = tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False)
+    f.write(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "input": {"question": "What is RAG?"},
+                        "output": "Retrieval Augmented Generation",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "input": {"question": "What is AI?"},
+                        "output": "Artificial Intelligence",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "input": {"question": "How to reduce cost?"},
+                        "output": "Use smaller context",
+                    }
+                ),
+            ]
+        )
+    )
+    f.flush()
+    f.close()
+    return f.name
+
+
+_TEMP_DATASET = _create_temp_dataset()
+
+
 # CORRECT API USAGE: Only valid decorator parameters
 @traigent.optimize(
     configuration_space=CONTEXT_ENGINEERING_SEARCH_SPACE,  # Fixed: was config_space
-    eval_dataset=(
-        (
-            lambda: (lambda p: p)(
-                (
-                    lambda f: (
-                        f.write(
-                            "\n".join(
-                                [
-                                    json.dumps(
-                                        {
-                                            "input": {"question": "What is RAG?"},
-                                            "output": "Retrieval Augmented Generation",
-                                        }
-                                    ),
-                                    json.dumps(
-                                        {
-                                            "input": {"question": "What is AI?"},
-                                            "output": "Artificial Intelligence",
-                                        }
-                                    ),
-                                    json.dumps(
-                                        {
-                                            "input": {
-                                                "question": "How to reduce cost?"
-                                            },
-                                            "output": "Use smaller context",
-                                        }
-                                    ),
-                                ]
-                            ),
-                            f.flush(),
-                            f.name,
-                        )
-                    )[2]
-                )(tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False))
-            )
-        )()
-    ),
+    eval_dataset=_TEMP_DATASET,
     objectives=[
         "answer_quality",  # Primary: maximize answer quality
         "-cost_per_query",  # Primary: minimize cost (- prefix means minimize)

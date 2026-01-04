@@ -13,7 +13,6 @@ import asyncio
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 # Add project root to path
@@ -71,11 +70,13 @@ def create_extraction_dataset() -> str:
         },
     ]
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+    # Write to example directory (not /tmp) to pass security validation
+    dataset_path = Path(__file__).parent / ".eval_dataset.jsonl"
+    with open(dataset_path, "w") as f:
         for sample in samples:
             json.dump(sample, f)
             f.write("\n")
-        return f.name
+    return str(dataset_path)
 
 
 PERSON_PATTERNS = {

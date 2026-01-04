@@ -24,31 +24,40 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-try:  # Fallbacks if langchain packages are unavailable
-    from langchain_openai import ChatOpenAI  # type: ignore
-except Exception:  # pragma: no cover - simple mock for offline envs
+MOCK_MODE = str(os.environ.get("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes"}
 
-    class _Resp:
-        def __init__(self, content: str):
-            self.content = content
-            self.response_metadata = {"response_time_ms": 0.0}
-            self.usage_metadata = {
-                "input_tokens": 0,
-                "output_tokens": 0,
-                "total_tokens": 0,
-            }
 
-    class ChatOpenAI:  # type: ignore
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
+class _MockResp:
+    def __init__(self, content: str):
+        self.content = content
+        self.response_metadata = {"response_time_ms": 0.0}
+        self.usage_metadata = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+        }
 
-        def invoke(self, messages):
-            if isinstance(messages, (list, tuple)) and messages:
-                last = messages[-1]
-                content = getattr(last, "content", str(last))
-            else:
-                content = str(messages)
-            return _Resp(f"MOCK_RESPONSE: {content}")
+
+class _MockChatOpenAI:
+    def __init__(self, **kwargs):
+        self.kwargs = kwargs
+
+    def invoke(self, messages):
+        if isinstance(messages, (list, tuple)) and messages:
+            last = messages[-1]
+            content = getattr(last, "content", str(last))
+        else:
+            content = str(messages)
+        return _MockResp(f"Let me explain that for you. MOCK_RESPONSE: {content}")
+
+
+if MOCK_MODE:
+    ChatOpenAI = _MockChatOpenAI  # type: ignore
+else:
+    try:  # Fallbacks if langchain packages are unavailable
+        from langchain_openai import ChatOpenAI  # type: ignore
+    except Exception:  # pragma: no cover - simple mock for offline envs
+        ChatOpenAI = _MockChatOpenAI  # type: ignore
 
 
 try:

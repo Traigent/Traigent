@@ -55,7 +55,7 @@ from dataset import (
 )
 from evaluator import evaluate_with_examples, select_examples
 from selection_config import (
-    EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE,
+    EXAMPLE_SELECTION_SEARCH_SPACE,
     create_selection_config,
 )
 
@@ -174,7 +174,7 @@ def _create_dummy_eval_dataset() -> str:
 
 
 @traigent.optimize(
-    configuration_space=EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE,
+    configuration_space=EXAMPLE_SELECTION_SEARCH_SPACE,
     eval_dataset=_create_dummy_eval_dataset(),
     objectives=[
         "accuracy",  # Primary: maximize accuracy
@@ -515,7 +515,7 @@ if __name__ == "__main__":
 
         # Show configuration space
         console.print("[bold]Traigent Configuration Space:[/bold]")
-        for key, values in EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE.items():
+        for key, values in EXAMPLE_SELECTION_SEARCH_SPACE.items():
             console.print(f"  {key}: {values}")
 
         console.print(

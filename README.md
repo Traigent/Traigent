@@ -390,6 +390,7 @@ pip install -e ".[all]"
    python examples/quickstart/01_simple_qa.py
    python examples/quickstart/02_customer_support_rag.py
    python examples/quickstart/03_custom_objectives.py
+   python examples/quickstart/04_llm_as_judge.py
    ```
 
    > 💡 If you see `joblib will operate in serial mode` warnings, that's harmless—see [Restricted Environments](#restricted-environments) to suppress them.
@@ -442,6 +443,67 @@ Traigent evaluates your AI agent's performance by comparing outputs to expected 
 def my_agent(question: str) -> str:
     return process_question(question)
 ```
+
+### LLM-as-Judge Evaluation
+
+For subjective outputs where multiple valid answers exist, use an LLM to judge quality via `metric_functions`:
+
+```python
+from traigent.api.decorators import EvaluationOptions
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+def llm_judge_accuracy(output: str, expected: str) -> float:
+    """Use an LLM to score correctness. Returns 0.0-1.0."""
+    from openai import OpenAI
+    client = OpenAI()
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # Cost-effective judge
+        messages=[{"role": "user", "content": f"""Score correctness (0.0-1.0):
+Expected: {expected}
+Actual: {output}
+Reply with ONLY a number."""}],
+        temperature=0.0,
+    )
+    return float(response.choices[0].message.content.strip())
+
+def llm_judge_friendliness(output: str, expected: str) -> float:
+    """Use an LLM to score friendliness. Returns 0.0-1.0."""
+    from openai import OpenAI
+    client = OpenAI()
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"""Score friendliness (0.0-1.0):
+Response: {output}
+Reply with ONLY a number."""}],
+        temperature=0.0,
+    )
+    return float(response.choices[0].message.content.strip())
+
+# Use custom metrics as optimization objectives!
+objectives = ObjectiveSchema.from_objectives([
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.4),
+    ObjectiveDefinition("friendliness", orientation="maximize", weight=0.3),  # Custom metric!
+    ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
+])
+
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.7]},
+    objectives=objectives,
+    evaluation=EvaluationOptions(
+        eval_dataset="data/qa_samples.jsonl",
+        metric_functions={
+            "accuracy": llm_judge_accuracy,       # Replaces default accuracy
+            "friendliness": llm_judge_friendliness,  # Custom metric as objective!
+        },
+    ),
+)
+def my_agent(question: str) -> str:
+    ...
+```
+
+> 💡 **Try it now:** `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python examples/quickstart/04_llm_as_judge.py`
 
 **Dataset Format (JSONL):** Each line must be valid JSON with these fields:
 
