@@ -1,0 +1,19 @@
+{"input": {"query": "How many days do I have to return an item?"}, "output": "30 days"}
+{"input": {"query": "What's the shipping cost for a $40 order?"}, "output": "$5.99"}
+{"input": {"query": "How long does express shipping take?"}, "output": "2-3 business days"}
+{"input": {"query": "Can I return swimwear?"}, "output": "cannot be returned"}
+{"input": {"query": "How long until my refund shows up on my credit card?"}, "output": "5-7 business days"}
+{"input": {"query": "Do you ship to Canada?"}, "output": "Yes, we ship to Canada"}
+{"input": {"query": "What's the cost for overnight delivery?"}, "output": "$24.99"}
+{"input": {"query": "Will you match Amazon third-party seller prices?"}, "output": "No, we don't match marketplace sellers"}
+{"input": {"query": "How do I report a damaged item?"}, "output": "Contact support within 48 hours with photos"}
+{"input": {"query": "What time do I need to order by for same-day processing?"}, "output": "2pm EST"}
+{"input": {"query": "Can I get a price match after I already bought something?"}, "output": "Yes, within 14 days of purchase"}
+{"input": {"query": "Do you match Costco prices?"}, "output": "No, we don't match wholesale clubs"}
+{"input": {"query": "What happens to my gift card balance if I don't use it all?"}, "output": "Remaining balance stays on your card"}
+{"input": {"query": "When is phone support available?"}, "output": "Monday-Friday 9am-5pm EST"}
+{"input": {"query": "What's the minimum order for free shipping?"}, "output": "$50"}
+{"input": {"query": "Do you accept Apple Pay?"}, "output": "Yes"}
+{"input": {"query": "What's the minimum order for buy now pay later?"}, "output": "$35"}
+{"input": {"query": "What's your support email address?"}, "output": "support@example.com"}
+{"input": {"query": "What's the average wait time for phone support?"}, "output": "Under 5 minutes"}

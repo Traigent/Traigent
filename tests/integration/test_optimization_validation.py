@@ -3,9 +3,8 @@
 Test script for Traigent optimization validation system.
 This file contains functions decorated with @traigent.optimize for testing.
 
-NOTE: This test file uses dataset paths that require the 'data/' directory
-to exist in the repository root. The data/ directory is in .gitignore,
-so these tests are skipped if the datasets don't exist.
+NOTE: This file requires test dataset files to exist. If they don't exist,
+the module will skip loading the decorated functions to avoid import errors.
 """
 
 import os
@@ -15,29 +14,29 @@ from typing import Any
 import pytest
 
 # Enable mock mode for testing
-os.environ["TRAIGENT_MOCK_LLM"] = "true"
+os.environ["TRAIGENT_MOCK_MODE"] = "true"
 
-# Get project root to resolve dataset paths
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA_DIR = _PROJECT_ROOT / "data"
+# Check if required dataset files exist before importing traigent
+# (the decorator validates at import time)
+_REQUIRED_DATASETS = [
+    "data/test_dataset.jsonl",
+    "data/qa_dataset.jsonl",
+    "data/simple_dataset.jsonl",
+]
+_DATASETS_EXIST = all(Path(p).exists() for p in _REQUIRED_DATASETS)
 
-# Skip this module if the data directory doesn't exist
-if not _DATA_DIR.exists():
+if not _DATASETS_EXIST:
+    # Skip the entire module if datasets don't exist
     pytest.skip(
-        "Skipping test_optimization_validation: data/ directory not found",
+        "Required test datasets not found: " + ", ".join(_REQUIRED_DATASETS),
         allow_module_level=True,
     )
 
 import traigent
 
-# Use absolute paths to avoid working directory issues
-_TEST_DATASET = str(_DATA_DIR / "test_dataset.jsonl")
-_QA_DATASET = str(_DATA_DIR / "qa_dataset.jsonl")
-_SIMPLE_DATASET = str(_DATA_DIR / "simple_dataset.jsonl")
-
 
 @traigent.optimize(
-    eval_dataset=_TEST_DATASET,
+    eval_dataset="data/test_dataset.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
         "temperature": [0.0, 0.5, 1.0],
@@ -73,7 +72,7 @@ def analyze_sentiment(
 
 
 @traigent.optimize(
-    eval_dataset=_QA_DATASET,
+    eval_dataset="data/qa_dataset.jsonl",
     objectives=["accuracy"],
     configuration_space={
         "max_tokens": [50, 100, 200],
@@ -103,7 +102,7 @@ def unoptimized_function(text: str) -> str:
 
 # Function with no default parameters
 @traigent.optimize(
-    eval_dataset=_SIMPLE_DATASET,
+    eval_dataset="data/simple_dataset.jsonl",
     objectives=["speed"],
     configuration_space={"method": ["fast", "slow"]},
 )
