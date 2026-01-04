@@ -461,6 +461,10 @@ class TestVersionParsing:
             ("v1.0.0", (1, 0, 0)),
             ("V1.2.3", (1, 2, 3)),
             ("v0.9.0-beta", (0, 9, 0)),
+            # Whitespace handling
+            ("  1.0.0  ", (1, 0, 0)),
+            (" v1.2.3", (1, 2, 3)),
+            ("1.0.0 ", (1, 0, 0)),
         ],
     )
     def test_parse_version(self, version_str: str, expected: tuple[int, ...]):

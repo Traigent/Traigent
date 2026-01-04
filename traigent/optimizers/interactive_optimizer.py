@@ -36,9 +36,12 @@ try:
     )
 
     _CLOUD_MODELS_AVAILABLE = True
-except ModuleNotFoundError:
-    _CLOUD_MODELS_AVAILABLE = False
-    # These will raise FeatureNotAvailableError when used
+except ModuleNotFoundError as err:
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    if err.name and err.name.startswith("traigent.cloud"):
+        _CLOUD_MODELS_AVAILABLE = False
+    else:
+        raise  # Re-raise for broken dependencies like missing pydantic
     if TYPE_CHECKING:
         from traigent.cloud.models import (
             NextTrialRequest,
@@ -55,6 +58,18 @@ except ModuleNotFoundError:
         )
 
 logger = get_logger(__name__)
+
+
+def _require_cloud_models() -> None:
+    """Raise FeatureNotAvailableError if cloud models are not available."""
+    if not _CLOUD_MODELS_AVAILABLE:
+        from traigent.utils.exceptions import FeatureNotAvailableError
+
+        raise FeatureNotAvailableError(
+            "Interactive optimization with remote guidance",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
 
 
 class RemoteGuidanceService(Protocol):
@@ -115,7 +130,11 @@ class InteractiveOptimizer(BaseOptimizer):
             optimization_strategy: Strategy for optimization
             context: Optional TraigentConfig for global settings
             **kwargs: Additional optimizer configuration
+
+        Raises:
+            FeatureNotAvailableError: If cloud models are not installed
         """
+        _require_cloud_models()
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.remote_service = remote_service

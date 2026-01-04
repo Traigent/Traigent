@@ -28,8 +28,12 @@ try:
     from traigent.cloud.optimizer_client import OptimizerDirectClient
 
     _CLOUD_AVAILABLE = True
-except ModuleNotFoundError:
-    _CLOUD_AVAILABLE = False
+except ModuleNotFoundError as err:
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    if err.name and err.name.startswith("traigent.cloud"):
+        _CLOUD_AVAILABLE = False
+    else:
+        raise  # Re-raise for broken dependencies like missing boto3
     if TYPE_CHECKING:
         from traigent.cloud.backend_client import (
             BackendClientConfig,
@@ -38,6 +42,18 @@ except ModuleNotFoundError:
         from traigent.cloud.optimizer_client import OptimizerDirectClient
 
 logger = get_logger(__name__)
+
+
+def _require_cloud() -> None:
+    """Raise FeatureNotAvailableError if cloud module is not available."""
+    if not _CLOUD_AVAILABLE:
+        from traigent.utils.exceptions import FeatureNotAvailableError
+
+        raise FeatureNotAvailableError(
+            "OptiGen cloud integration",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
 
 
 class OptiGenClient:
@@ -63,7 +79,11 @@ class OptiGenClient:
             backend_url: Backend URL (defaults to centralized config)
             execution_mode: 'auto', 'hybrid', 'cloud', 'edge_analytics'
             agent_builder: Agent builder instance for local execution
+
+        Raises:
+            FeatureNotAvailableError: If cloud module is not installed
         """
+        _require_cloud()
         from traigent.config.backend_config import BackendConfig
 
         # Track whether caller explicitly supplied an API key
