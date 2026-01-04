@@ -256,13 +256,56 @@ print('OK')
 
 ---
 
+## Codex Review Findings - Addressed
+
+Based on Codex review feedback, the following improvements were implemented:
+
+### High Priority (Completed ✅)
+
+1. **ModuleNotFoundError .name check**: Added comprehensive test coverage in `tests/unit/plugins/test_plugin_architecture.py::TestModuleNotFoundErrorNameCheck` verifying that only `traigent.cloud` missing modules trigger graceful degradation, while broken transitive dependencies (like missing boto3) are re-raised.
+
+2. **Re-entrant registry discovery**: Added `TestReentrantRegistryDiscovery` tests verifying the `_discovery_in_progress` guard blocks recursive discovery and concurrent discovery is serialized by the lock.
+
+### Low Priority (Completed ✅)
+
+1. **Plugin API version enforcement**: Added version compatibility checking in `register_plugin()`:
+   - New `_parse_version()` and `_is_version_compatible()` utility functions
+   - New `PluginVersionError` exception with helpful upgrade instructions
+   - `_check_version_compatibility()` method called before plugin initialization
+   - Full test coverage in `TestVersionParsing`, `TestVersionCompatibility`, `TestPluginVersionEnforcement`
+
+### New Test Coverage
+
+```text
+tests/unit/plugins/test_plugin_architecture.py: 51 tests
+- TestModuleNotFoundErrorNameCheck: 5 tests
+- TestReentrantRegistryDiscovery: 4 tests (including concurrent caller wait test)
+- TestPluginReregistration: 2 tests
+- TestLazyImportModules: 10 tests (parameterized)
+- TestVersionParsing: 14 tests (parameterized, including v prefix)
+- TestVersionCompatibility: 13 tests (parameterized + 1)
+- TestPluginVersionEnforcement: 3 tests
+```
+
+---
+
 ## Next Steps (Phase 2)
 
 After this review, planned extractions:
+
 1. `traigent-integrations` - LangChain/OpenAI framework adapters
 2. `traigent-seamless` - Seamless injection mode
 3. `traigent-parallel` - BatchInvoker, StreamingInvoker
 4. `traigent-cloud` - Cloud execution mode
+
+### Remaining Codex Findings (All Completed ✅)
+
+All Codex review findings have been addressed:
+
+- ✅ Document all lazy-import modules explicitly → Added to `PLUGIN_ARCHITECTURE.md` "Lazy Import Architecture" section
+- ✅ Consider shared protocol for tracing stub/plugin parity → Added to `PLUGIN_ARCHITECTURE.md` "Tracing Stub/Plugin Architecture" section
+- ✅ Document threat model for entry point discovery → Added to `PLUGIN_ARCHITECTURE.md` "Security Model for Plugin Discovery" section
+- ✅ Thread safety documentation → Added to `PLUGIN_ARCHITECTURE.md` "Thread Safety" section
 
 ---
 
