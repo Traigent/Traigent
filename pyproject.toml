@@ -182,14 +182,28 @@ examples = [
     "ragas[llm]>=0.3.6",
 ]
 
+# Machine Learning bundle (parallel execution, advanced algorithms, multi-objective)
+# This is the recommended bundle for production ML workloads
+ml = [
+    "traigent[bayesian,analytics]",
+    "numpy>=1.21.0",
+    "scipy>=1.7.0",
+]
+
+# Cloud bundle (cloud execution mode, advanced session management)
+cloud = [
+    "traigent[security]",
+    "boto3>=1.28.0",
+]
+
 # All optional features combined
 all = [
-    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]"
+    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test,tracing]"
 ]
 
 # Enterprise bundle with all features
 enterprise = [
-    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]",
+    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test,tracing,ml,cloud]",
 ]
 
 [project.urls]

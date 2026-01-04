@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "traigent-tracing"
+version = "0.1.0"
+description = "OpenTelemetry tracing plugin for Traigent SDK"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Traigent Team", email = "team@traigent.io"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "traigent>=0.9.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp>=1.20.0",
+]
+
+[project.optional-dependencies]
+jaeger = [
+    "opentelemetry-exporter-jaeger>=1.20.0",
+]
+zipkin = [
+    "opentelemetry-exporter-zipkin>=1.20.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.entry-points."traigent.plugins"]
+tracing = "traigent_tracing:TracingPlugin"
+
+[project.urls]
+Homepage = "https://github.com/traigent/traigent-tracing"
+Documentation = "https://docs.traigent.io/plugins/tracing"
+Repository = "https://github.com/traigent/traigent-tracing"
+
+[tool.hatch.build.targets.wheel]
+packages = ["traigent_tracing"]
