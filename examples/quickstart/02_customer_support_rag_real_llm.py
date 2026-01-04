@@ -311,16 +311,14 @@ CONSTRAINTS_DESCRIPTIONS = [
     execution=ExecutionOptions(
         execution_mode="edge_analytics",
         minimal_logging=False,
-        reps_per_trial=2,
-        reps_aggregation="mean",
+        # reps_per_trial/reps_aggregation removed - Enterprise only
     ),
     injection=InjectionOptions(
         auto_override_frameworks=True,
     ),
     max_trials=20,
-    timeout=600,
-    cost_limit=5.00,
-    cost_approved=True,
+    # Note: timeout/cost_limit/cost_approved must be set via env vars:
+    # TRAIGENT_RUN_COST_LIMIT=5.00 TRAIGENT_COST_APPROVED=true timeout 600 python ...
 )
 def customer_support_agent(
     query: str,

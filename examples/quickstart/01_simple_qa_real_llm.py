@@ -95,12 +95,11 @@ CONSTRAINTS_DESCRIPTIONS = [
     metric_functions={"accuracy": custom_accuracy_scorer},
     # Evaluation dataset
     eval_dataset=str(DATASET_PATH),
-    # Execution options with statistical stability
+    # Execution options
     execution=ExecutionOptions(
         execution_mode="edge_analytics",
         minimal_logging=False,  # Show detailed logs
-        reps_per_trial=2,  # Run each config twice for stability
-        reps_aggregation="mean",  # Average the results
+        # reps_per_trial/reps_aggregation removed - Enterprise only
     ),
     # Injection options: how configs are applied
     injection=InjectionOptions(
@@ -108,8 +107,8 @@ CONSTRAINTS_DESCRIPTIONS = [
     ),
     # Runtime controls
     max_trials=5,  # Limit trials for quick demo
-    cost_limit=10.00,  # Max $1.00 spend per optimization run
-    cost_approved=True,  # Skip cost approval prompt for demo
+    # Note: cost_limit/cost_approved must be set via env vars:
+    # TRAIGENT_RUN_COST_LIMIT=10.00 TRAIGENT_COST_APPROVED=true python ...
 )
 def simple_qa_agent(
     question: str,
