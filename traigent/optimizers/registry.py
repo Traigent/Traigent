@@ -170,16 +170,22 @@ def register_optuna_optimizers(force: bool = False) -> None:
         logger.debug("Optuna optimizers not available (requires Optuna)")
         return
 
+    # Base package optimizers (always available with Optuna)
     register_optimizer("optuna_tpe", OptunaTPEOptimizer)
     register_optimizer("optuna_random", OptunaRandomOptimizer)
+    register_optimizer("optuna_grid", OptunaGridOptimizer)
+
+    # Advanced optimizers (future: traigent-advanced-algorithms plugin)
+    # TODO: Gate these with plugin feature flag when extracted
     register_optimizer("optuna_cmaes", OptunaCMAESOptimizer)
     register_optimizer("optuna_nsga2", OptunaNSGAIIOptimizer)
-    register_optimizer("optuna_grid", OptunaGridOptimizer)
 
     # Backwards-compatible aliases (used by TVL strategy mapping and legacy configs)
     register_optimizer("optuna", OptunaTPEOptimizer)
     register_optimizer("tpe", OptunaTPEOptimizer)
-    register_optimizer("nsga2", OptunaNSGAIIOptimizer)
+    register_optimizer(
+        "nsga2", OptunaNSGAIIOptimizer
+    )  # TODO: Gate with multi-obj plugin
     logger.debug("Registered Optuna optimizers (force=%s)", force)
 
 

@@ -11,26 +11,48 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from traigent.api.types import TrialResult
-from traigent.cloud.models import (
-    NextTrialRequest,
-    NextTrialResponse,
-    OptimizationFinalizationRequest,
-    OptimizationFinalizationResponse,
-    OptimizationSession,
-    OptimizationSessionStatus,
-    SessionCreationRequest,
-    SessionCreationResponse,
-    TrialResultSubmission,
-    TrialStatus,
-    TrialSuggestion,
-)
 from traigent.config.types import TraigentConfig
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
+
+# Cloud models - required at runtime for this optimizer
+try:
+    from traigent.cloud.models import (
+        NextTrialRequest,
+        NextTrialResponse,
+        OptimizationFinalizationRequest,
+        OptimizationFinalizationResponse,
+        OptimizationSession,
+        OptimizationSessionStatus,
+        SessionCreationRequest,
+        SessionCreationResponse,
+        TrialResultSubmission,
+        TrialStatus,
+        TrialSuggestion,
+    )
+
+    _CLOUD_MODELS_AVAILABLE = True
+except ModuleNotFoundError:
+    _CLOUD_MODELS_AVAILABLE = False
+    # These will raise FeatureNotAvailableError when used
+    if TYPE_CHECKING:
+        from traigent.cloud.models import (
+            NextTrialRequest,
+            NextTrialResponse,
+            OptimizationFinalizationRequest,
+            OptimizationFinalizationResponse,
+            OptimizationSession,
+            OptimizationSessionStatus,
+            SessionCreationRequest,
+            SessionCreationResponse,
+            TrialResultSubmission,
+            TrialStatus,
+            TrialSuggestion,
+        )
 
 logger = get_logger(__name__)
 

@@ -2,22 +2,40 @@
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-CLOUD-HYBRID FUNC-INVOKERS REQ-CLOUD-009 REQ-INV-006 SYNC-CloudHybrid
 
+from __future__ import annotations
+
 import asyncio
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.adapters.execution_adapter import (
     LocalExecutionAdapter,
 )
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.cloud.backend_client import BackendClientConfig, BackendIntegratedClient
-from traigent.cloud.optimizer_client import OptimizerDirectClient
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.optimizers import get_optimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
+
+# Cloud imports - required at runtime for this integration module
+try:
+    from traigent.cloud.backend_client import (
+        BackendClientConfig,
+        BackendIntegratedClient,
+    )
+    from traigent.cloud.optimizer_client import OptimizerDirectClient
+
+    _CLOUD_AVAILABLE = True
+except ModuleNotFoundError:
+    _CLOUD_AVAILABLE = False
+    if TYPE_CHECKING:
+        from traigent.cloud.backend_client import (
+            BackendClientConfig,
+            BackendIntegratedClient,
+        )
+        from traigent.cloud.optimizer_client import OptimizerDirectClient
 
 logger = get_logger(__name__)
 

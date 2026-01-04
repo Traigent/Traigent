@@ -1,12 +1,24 @@
-"""Plugin registry system for Traigent SDK."""
+"""Plugin registry system for Traigent SDK.
+
+This module provides the unified plugin discovery and registration system.
+Plugins can register via:
+1. Entry points in pyproject.toml: [project.entry-points."traigent.plugins"]
+2. Manual registration via register_plugin()
+3. Auto-discovery from standard directories
+
+The registry provides feature flag capabilities for graceful degradation
+when optional plugins are not installed.
+"""
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-INTEGRATIONS REQ-INT-008 SYNC-IntegrationHook
 
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 import inspect
 import sys
+import threading
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from pathlib import Path
@@ -16,9 +28,40 @@ from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Feature flag constants for plugin capabilities
+FEATURE_PARALLEL = "parallel"
+FEATURE_MULTI_OBJECTIVE = "multi_objective"
+FEATURE_SEAMLESS = "seamless"
+FEATURE_CLOUD = "cloud"
+FEATURE_ADVANCED_ALGORITHMS = "advanced_algorithms"
+FEATURE_TVL = "tvl"
+FEATURE_TRACING = "tracing"
+FEATURE_ANALYTICS = "analytics"
+FEATURE_INTEGRATIONS = "integrations"
+FEATURE_SECURITY = "security"
+FEATURE_HOOKS = "hooks"
+FEATURE_EVALUATION = "evaluation"
+FEATURE_UI = "ui"
+FEATURE_EXPERIMENT_TRACKING = "experiment_tracking"
+
 
 class TraigentPlugin(ABC):
-    """Abstract base class for Traigent plugins."""
+    """Abstract base class for Traigent plugins.
+
+    Plugins must implement:
+    - name: Unique plugin identifier
+    - version: Semantic version string
+    - description: Human-readable description
+    - initialize(): Setup method called on registration
+    - provides_features(): List of feature flags this plugin enables
+
+    Optional:
+    - author: Plugin author
+    - dependencies: Required Python packages
+    - traigent_version: Minimum Traigent version
+    - cleanup(): Teardown method
+    - get_feature_impl(): Get implementation for a feature
+    """
 
     @property
     @abstractmethod
@@ -60,6 +103,31 @@ class TraigentPlugin(ABC):
 
     def cleanup(self) -> None:
         """Cleanup when plugin is unloaded."""
+        return None
+
+    def provides_features(self) -> list[str]:
+        """Return list of feature flags this plugin provides.
+
+        Override this method to declare which features your plugin enables.
+        Use the FEATURE_* constants defined in this module.
+
+        Returns:
+            List of feature flag strings (e.g., ["parallel", "batch_invoker"])
+        """
+        return []
+
+    def get_feature_impl(self, feature: str) -> Any | None:
+        """Get implementation for a specific feature.
+
+        Override this to provide feature-specific implementations that
+        other parts of the system can retrieve.
+
+        Args:
+            feature: Feature name to get implementation for
+
+        Returns:
+            Implementation object or None if not provided
+        """
         return None
 
 
@@ -142,8 +210,30 @@ class IntegrationPlugin(TraigentPlugin):
         return self.name.lower().replace(" ", "_")
 
 
+class FeaturePlugin(TraigentPlugin):
+    """Base class for feature plugins that enable optional capabilities.
+
+    Use this for plugins that add features like parallel execution,
+    multi-objective optimization, seamless injection, etc.
+    """
+
+    def provides_features(self) -> list[str]:
+        """Must be overridden to declare provided features."""
+        raise NotImplementedError("FeaturePlugin must declare provides_features()")
+
+
 class PluginRegistry:
-    """Registry for managing Traigent plugins."""
+    """Registry for managing Traigent plugins.
+
+    The registry provides:
+    - Plugin registration and lifecycle management
+    - Feature flag querying (has_feature, get_feature_impl)
+    - Entry point discovery for automatic plugin loading
+    - Specialized sub-registries for optimizers, evaluators, metrics, integrations
+    """
+
+    # Entry point group for plugin discovery
+    ENTRY_POINT_GROUP = "traigent.plugins"
 
     def __init__(self) -> None:
         """Initialize plugin registry."""
@@ -152,9 +242,17 @@ class PluginRegistry:
         self._evaluators: dict[str, Callable[..., Any]] = {}
         self._metrics: dict[str, Callable[..., Any]] = {}
         self._integrations: dict[str, dict[str, Callable[..., Any]]] = {}
+        self._features: dict[str, list[str]] = {}  # feature -> list of plugin names
+        self._entry_points_loaded = False
+        self._discovery_in_progress = False  # Re-entrancy guard
+        # Use RLock to allow reentrant calls (e.g., if plugin.initialize() calls registry methods)
+        self._discovery_lock = threading.RLock()
 
     def register_plugin(self, plugin: TraigentPlugin) -> None:
         """Register a plugin.
+
+        If a plugin with the same name is already registered, it will be
+        unregistered first to prevent stale registry entries.
 
         Args:
             plugin: Plugin to register
@@ -163,6 +261,8 @@ class PluginRegistry:
 
         if plugin_name in self._plugins:
             logger.warning(f"Plugin '{plugin_name}' already registered, replacing")
+            # Clean up existing plugin before re-registering to prevent stale entries
+            self.unregister_plugin(plugin_name)
 
         try:
             # Check dependencies
@@ -193,6 +293,13 @@ class PluginRegistry:
                 )
                 logger.info(f"Registered integration plugin: {plugin.integration_name}")
 
+            # Register feature flags
+            for feature in plugin.provides_features():
+                if feature not in self._features:
+                    self._features[feature] = []
+                self._features[feature].append(plugin_name)
+                logger.debug(f"Plugin '{plugin_name}' provides feature: {feature}")
+
             logger.info(
                 f"Successfully registered plugin: {plugin_name} v{plugin.version}"
             )
@@ -204,6 +311,9 @@ class PluginRegistry:
     def unregister_plugin(self, plugin_name: str) -> None:
         """Unregister a plugin.
 
+        Always removes registry entries even if cleanup fails to prevent
+        stale data. Cleanup errors are logged but don't prevent removal.
+
         Args:
             plugin_name: Name of plugin to unregister
         """
@@ -213,30 +323,38 @@ class PluginRegistry:
 
         plugin = self._plugins[plugin_name]
 
+        # Try cleanup but don't let it prevent removal
         try:
-            # Cleanup plugin
             plugin.cleanup()
-
-            # Remove from registries
-            if isinstance(plugin, OptimizerPlugin):
-                self._optimizers.pop(plugin.optimizer_name, None)
-
-            if isinstance(plugin, EvaluatorPlugin):
-                self._evaluators.pop(plugin.evaluator_name, None)
-
-            if isinstance(plugin, MetricPlugin):
-                self._metrics.pop(plugin.metric_name, None)
-
-            if isinstance(plugin, IntegrationPlugin):
-                self._integrations.pop(plugin.integration_name, None)
-
-            # Remove plugin
-            del self._plugins[plugin_name]
-
-            logger.info(f"Unregistered plugin: {plugin_name}")
-
         except Exception as e:
-            logger.error(f"Failed to unregister plugin '{plugin_name}': {e}")
+            logger.warning(f"Plugin '{plugin_name}' cleanup failed: {e}")
+
+        # Always remove from registries regardless of cleanup outcome
+        if isinstance(plugin, OptimizerPlugin):
+            self._optimizers.pop(plugin.optimizer_name, None)
+
+        if isinstance(plugin, EvaluatorPlugin):
+            self._evaluators.pop(plugin.evaluator_name, None)
+
+        if isinstance(plugin, MetricPlugin):
+            self._metrics.pop(plugin.metric_name, None)
+
+        if isinstance(plugin, IntegrationPlugin):
+            self._integrations.pop(plugin.integration_name, None)
+
+        # Remove feature flags
+        for feature in plugin.provides_features():
+            if feature in self._features:
+                self._features[feature] = [
+                    p for p in self._features[feature] if p != plugin_name
+                ]
+                if not self._features[feature]:
+                    del self._features[feature]
+
+        # Remove plugin
+        del self._plugins[plugin_name]
+
+        logger.info(f"Unregistered plugin: {plugin_name}")
 
     def get_plugin(self, plugin_name: str) -> TraigentPlugin | None:
         """Get plugin by name.
@@ -255,6 +373,7 @@ class PluginRegistry:
         Returns:
             List of plugin information
         """
+        self._ensure_entry_points_loaded()
         plugins_info = []
         for name, plugin in self._plugins.items():
             plugins_info.append(
@@ -275,6 +394,7 @@ class PluginRegistry:
         Returns:
             Dict mapping optimizer names to factory functions
         """
+        self._ensure_entry_points_loaded()
         return self._optimizers.copy()
 
     def get_evaluators(self) -> dict[str, Callable[..., Any]]:
@@ -283,6 +403,7 @@ class PluginRegistry:
         Returns:
             Dict mapping evaluator names to factory functions
         """
+        self._ensure_entry_points_loaded()
         return self._evaluators.copy()
 
     def get_metrics(self) -> dict[str, Callable[..., Any]]:
@@ -291,6 +412,7 @@ class PluginRegistry:
         Returns:
             Dict mapping metric names to calculation functions
         """
+        self._ensure_entry_points_loaded()
         return self._metrics.copy()
 
     def get_integrations(self) -> dict[str, dict[str, Callable[..., Any]]]:
@@ -299,7 +421,128 @@ class PluginRegistry:
         Returns:
             Dict mapping integration names to their functions
         """
+        self._ensure_entry_points_loaded()
         return self._integrations.copy()
+
+    def has_feature(self, feature: str) -> bool:
+        """Check if a feature is available via any installed plugin.
+
+        This is the primary method for checking feature availability before
+        using optional functionality.
+
+        Args:
+            feature: Feature flag name (use FEATURE_* constants)
+
+        Returns:
+            True if feature is available, False otherwise
+
+        Example:
+            if not registry.has_feature(FEATURE_PARALLEL):
+                raise FeatureNotAvailableError(
+                    "Parallel execution",
+                    plugin_name="traigent-parallel",
+                    install_hint="pip install traigent[ml]"
+                )
+        """
+        # Ensure entry points are loaded
+        self._ensure_entry_points_loaded()
+        return feature in self._features and len(self._features[feature]) > 0
+
+    def get_feature_impl(self, feature: str) -> Any | None:
+        """Get the implementation of a feature if available.
+
+        Queries all plugins that provide the feature and returns the first
+        implementation found.
+
+        Args:
+            feature: Feature flag name
+
+        Returns:
+            Implementation object or None if not available
+        """
+        self._ensure_entry_points_loaded()
+
+        if feature not in self._features:
+            return None
+
+        for plugin_name in self._features[feature]:
+            plugin = self._plugins.get(plugin_name)
+            if plugin:
+                impl = plugin.get_feature_impl(feature)
+                if impl is not None:
+                    return impl
+
+        return None
+
+    def get_available_features(self) -> dict[str, list[str]]:
+        """Get all available features and their providing plugins.
+
+        Returns:
+            Dict mapping feature names to list of plugin names providing them
+        """
+        self._ensure_entry_points_loaded()
+        return self._features.copy()
+
+    def discover_entry_points(self) -> None:
+        """Discover and load plugins from entry points.
+
+        Loads plugins registered via pyproject.toml entry points:
+        [project.entry-points."traigent.plugins"]
+        parallel = "traigent_parallel:ParallelPlugin"
+        """
+        # Entry point discovery with cross-version compatibility
+        eps: Any  # EntryPoints or list depending on Python version
+        try:
+            # Python 3.10+ API with group parameter
+            eps = importlib.metadata.entry_points(group=self.ENTRY_POINT_GROUP)
+        except TypeError:
+            # Python 3.9 fallback - entry_points() returns dict-like SelectableGroups
+            all_eps = importlib.metadata.entry_points()
+            if hasattr(all_eps, "select"):
+                # Python 3.10+ SelectableGroups
+                eps = all_eps.select(group=self.ENTRY_POINT_GROUP)
+            elif hasattr(all_eps, "get"):
+                # Python 3.9 dict-like interface
+                eps = all_eps.get(self.ENTRY_POINT_GROUP, [])
+            else:
+                eps = []
+
+        for ep in eps:
+            try:
+                plugin_class = ep.load()
+                if inspect.isclass(plugin_class) and issubclass(
+                    plugin_class, TraigentPlugin
+                ):
+                    plugin = plugin_class()
+                    self.register_plugin(plugin)
+                    logger.info(f"Loaded plugin from entry point: {ep.name}")
+                else:
+                    logger.warning(
+                        f"Entry point {ep.name} did not return a TraigentPlugin class"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to load plugin from entry point {ep.name}: {e}")
+
+        self._entry_points_loaded = True
+
+    def _ensure_entry_points_loaded(self) -> None:
+        """Ensure entry points have been discovered.
+
+        Uses double-checked locking pattern for thread safety and a
+        re-entrancy guard to prevent recursive discovery if a plugin's
+        initialize() calls registry methods.
+        """
+        # Fast path: check without lock
+        if self._entry_points_loaded or self._discovery_in_progress:
+            return
+        # Slow path: acquire lock and check again
+        with self._discovery_lock:
+            if not self._entry_points_loaded and not self._discovery_in_progress:
+                self._discovery_in_progress = True
+                try:
+                    self.discover_entry_points()
+                finally:
+                    self._discovery_in_progress = False
 
     def load_plugin_from_module(self, module_path: str, plugin_class_name: str) -> None:
         """Load plugin from module.
@@ -585,3 +828,22 @@ def get_available_integrations() -> list[str]:
         List of integration names
     """
     return list(_global_registry.get_integrations().keys())
+
+
+def has_feature(feature: str) -> bool:
+    """Check if a feature is available via any installed plugin.
+
+    Convenience function that wraps get_plugin_registry().has_feature().
+
+    Args:
+        feature: Feature flag name (use FEATURE_* constants)
+
+    Returns:
+        True if feature is available, False otherwise
+
+    Example:
+        >>> from traigent.plugins import has_feature, FEATURE_PARALLEL
+        >>> if has_feature(FEATURE_PARALLEL):
+        ...     print("Parallel execution available!")
+    """
+    return _global_registry.has_feature(feature)

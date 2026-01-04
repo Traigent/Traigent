@@ -218,9 +218,9 @@ class TestOptimizationOrchestrator:
     @pytest.fixture
     def orchestrator(self, mock_optimizer, mock_evaluator):
         """Create orchestrator with mocks."""
-        # Mock the BackendIntegratedClient to prevent actual backend connections
+        # Mock the BackendIntegratedClient at its source location (lazy imported)
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             # Setup mock backend client
             mock_client = MagicMock()
@@ -359,7 +359,7 @@ class TestOptimizationOrchestrator:
         mock_optimizer.set_max_suggestions(10)
 
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "session-default"
@@ -395,7 +395,7 @@ class TestOptimizationOrchestrator:
         mock_optimizer.set_max_suggestions(2)
 
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "session-unbounded"
@@ -431,7 +431,7 @@ class TestOptimizationOrchestrator:
         mock_optimizer.set_max_suggestions(5)
 
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "session-zero"
@@ -468,7 +468,7 @@ class TestOptimizationOrchestrator:
         mock_optimizer.set_max_suggestions(10)
 
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "session-sample-cap"
@@ -534,7 +534,7 @@ class TestOptimizationOrchestrator:
         mock_optimizer.set_max_suggestions(10)
 
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "session-sample-cap-exclude"
@@ -938,7 +938,7 @@ class TestOptimizationOrchestrator:
         # Create multiple orchestrators with mocked backend
         orchestrators = []
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             # Setup mock backend client factory - each orchestrator gets its own mock
             def create_mock_client(*args, **kwargs):
@@ -1089,7 +1089,7 @@ class TestOptimizationOrchestrator:
 
         # Mock the backend to prevent connection issues
         with patch(
-            "traigent.core.orchestrator.BackendIntegratedClient"
+            "traigent.cloud.backend_client.BackendIntegratedClient"
         ) as mock_backend:
             mock_client = MagicMock()
             mock_client.create_session.return_value = "test_session"
