@@ -2,9 +2,11 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability CONC-Quality-Security FUNC-CLOUD-HYBRID FUNC-ORCH-LIFECYCLE REQ-CLOUD-009 REQ-ORCH-003 SYNC-CloudHybrid
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import (
     OptimizationResult,
@@ -12,8 +14,10 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.config.types import TraigentConfig
+
+if TYPE_CHECKING:
+    from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext

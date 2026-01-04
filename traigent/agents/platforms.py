@@ -10,22 +10,34 @@ Integrated with unified authentication system for secure credential management.
 from __future__ import annotations
 
 import importlib.util
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.agents.executor import (
     AgentExecutor,
     CostEstimate,
     PlatformConfigValidationResult,
 )
-from traigent.cloud.auth import (
-    AuthCredentials,
-    AuthMode,
-    get_auth_manager,
-)
-from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
+
+# Cloud auth imports - required at runtime for credential management
+try:
+    from traigent.cloud.auth import (
+        AuthCredentials,
+        AuthMode,
+        get_auth_manager,
+    )
+
+    _CLOUD_AUTH_AVAILABLE = True
+except ModuleNotFoundError:
+    _CLOUD_AUTH_AVAILABLE = False
+    AuthCredentials = None  # type: ignore[misc,assignment]
+    AuthMode = None  # type: ignore[misc,assignment]
+    get_auth_manager = None  # type: ignore[misc,assignment]
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 

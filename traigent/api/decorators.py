@@ -109,7 +109,9 @@ class InjectionOptions(BaseModel):
 
     injection_mode: str | InjectionMode = InjectionMode.CONTEXT
     config_param: str | None = None
-    auto_override_frameworks: bool = True
+    # Default to False - requires traigent-integrations plugin for framework overrides
+    # Set to True explicitly when using framework integrations
+    auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
     allow_parallel_attribute: bool = False
 
@@ -268,7 +270,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "tvl": None,
     "injection_mode": InjectionMode.CONTEXT,
     "config_param": None,
-    "auto_override_frameworks": True,
+    "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
     "allow_parallel_attribute": False,
     "execution_mode": "edge_analytics",

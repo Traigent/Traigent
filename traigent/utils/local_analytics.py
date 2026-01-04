@@ -13,15 +13,17 @@ import uuid
 import warnings
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from traigent.api.types import OptimizationStatus
-from traigent.cloud.auth import MIN_TOKEN_LENGTH
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.storage.local_storage import LocalStorageManager
 
-if TYPE_CHECKING:
-    pass
+# Import constant with fallback for base-only installs (cloud module not available)
+try:
+    from traigent.cloud.auth import MIN_TOKEN_LENGTH
+except ModuleNotFoundError:
+    MIN_TOKEN_LENGTH = 20  # Default minimum acceptable token length
 
 # Note: "Unclosed client session" warnings from background analytics tasks
 # are suppressed locally in _submit_analytics_background() using catch_warnings()

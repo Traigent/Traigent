@@ -974,13 +974,21 @@ class SeamlessParameterProvider(ConfigurationProvider):
             }
 
 
-# Provider registry
+# Provider registry - base injection modes always available
 _PROVIDERS: dict[str, type[ConfigurationProvider]] = {
     "context": ContextBasedProvider,
     "parameter": ParameterBasedProvider,
     "attribute": AttributeBasedProvider,
-    "seamless": SeamlessParameterProvider,
 }
+
+# Seamless provider is included in base for now, but will move to traigent-seamless plugin
+# TODO: When extracting to plugin, use:
+#   try:
+#       from traigent_seamless import SeamlessParameterProvider
+#       _PROVIDERS["seamless"] = SeamlessParameterProvider
+#   except ImportError:
+#       pass  # Seamless not available - get_provider will raise FeatureNotAvailableError
+_PROVIDERS["seamless"] = SeamlessParameterProvider
 
 
 def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
@@ -996,12 +1004,22 @@ def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
 
     Raises:
         ConfigurationError: If injection mode is not supported
+        FeatureNotAvailableError: If seamless mode requested but plugin not installed
     """
     # Handle backward compatibility
     if injection_mode == "decorator":
         injection_mode = "attribute"
 
     if injection_mode not in _PROVIDERS:
+        # Provide helpful error for seamless mode when plugin not installed
+        if injection_mode == "seamless":
+            from traigent.utils.exceptions import FeatureNotAvailableError
+
+            raise FeatureNotAvailableError(
+                "Seamless injection mode",
+                plugin_name="traigent-seamless",
+                install_hint="pip install traigent-seamless",
+            )
         raise ConfigurationError(
             f"Unknown injection mode: {injection_mode}. "
             f"Available modes: {list(_PROVIDERS.keys())}"
