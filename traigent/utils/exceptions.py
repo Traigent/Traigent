@@ -113,6 +113,38 @@ class PluginError(TraigentError):
     """Error in plugin system."""
 
 
+class PluginVersionError(PluginError):
+    """Error raised when plugin version is incompatible with Traigent version.
+
+    Example:
+        raise PluginVersionError(
+            plugin_name="my-plugin",
+            plugin_version="1.0.0",
+            required_traigent_version="2.0.0",
+            current_traigent_version="1.5.0"
+        )
+    """
+
+    def __init__(
+        self,
+        plugin_name: str,
+        plugin_version: str,
+        required_traigent_version: str,
+        current_traigent_version: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        message = (
+            f"Plugin '{plugin_name}' v{plugin_version} requires Traigent >= "
+            f"{required_traigent_version}, but current version is {current_traigent_version}. "
+            f"Please upgrade Traigent: pip install --upgrade traigent"
+        )
+        super().__init__(message, details)
+        self.plugin_name = plugin_name
+        self.plugin_version = plugin_version
+        self.required_traigent_version = required_traigent_version
+        self.current_traigent_version = current_traigent_version
+
+
 class StorageError(TraigentError):
     """Error in storage operations."""
 

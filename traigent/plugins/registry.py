@@ -24,9 +24,118 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from ..utils.exceptions import PluginVersionError
 from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _parse_version(version_str: str) -> tuple[int, ...]:
+    """Parse a version string into a tuple of integers.
+
+    Handles versions like "1.0.0", "v1.2.3", "1.0.0-beta", "1.0.0.dev1".
+    Leading 'v' prefix and non-numeric suffixes are stripped.
+    Constraint operators (>=, ~=, etc.) are NOT supported and will
+    result in partial parsing.
+
+    Args:
+        version_str: Version string to parse
+
+    Returns:
+        Tuple of version components as integers. Returns (0,) for
+        unparseable strings.
+
+    Examples:
+        >>> _parse_version("1.2.3")
+        (1, 2, 3)
+        >>> _parse_version("v1.2.3")
+        (1, 2, 3)
+        >>> _parse_version("1.0.0-beta")
+        (1, 0, 0)
+        >>> _parse_version("0.1.0.dev1")
+        (0, 1, 0)
+    """
+    # Strip leading 'v' or 'V' prefix (common convention)
+    if version_str.startswith(("v", "V")):
+        version_str = version_str[1:]
+
+    # Strip common suffixes: -beta, +local, etc.
+    version_str = version_str.split("-")[0].split("+")[0]
+    parts = []
+    for part in version_str.split("."):
+        # Handle cases like "0.dev1" by extracting leading digits
+        numeric = ""
+        for char in part:
+            if char.isdigit():
+                numeric += char
+            else:
+                break
+        if numeric:
+            parts.append(int(numeric))
+    return tuple(parts) if parts else (0,)
+
+
+def _is_version_compatible(
+    required_version: str, current_version: str, strict: bool = False
+) -> bool:
+    """Check if current version meets the required minimum version.
+
+    Args:
+        required_version: Minimum version required
+        current_version: Current installed version
+        strict: If True, require exact major version match (for breaking changes)
+
+    Returns:
+        True if current version is >= required version
+    """
+    required = _parse_version(required_version)
+    current = _parse_version(current_version)
+
+    if strict and required and current:
+        # Strict mode: major version must match
+        if required[0] != current[0]:
+            return False
+
+    # Pad shorter tuple with zeros for comparison
+    max_len = max(len(required), len(current))
+    required = required + (0,) * (max_len - len(required))
+    current = current + (0,) * (max_len - len(current))
+
+    return current >= required
+
+
+def _get_traigent_version() -> str:
+    """Get the current Traigent version.
+
+    Uses a fallback chain to handle various installation scenarios:
+    1. Try traigent._version (canonical source)
+    2. Try traigent.__version__ (package-level export)
+    3. Fall back to "0.0.0" if neither is available
+
+    Returns:
+        Current Traigent version string
+    """
+    # Try canonical version module first
+    try:
+        from traigent._version import __version__
+
+        return str(__version__)
+    except ImportError:
+        pass
+
+    # Fallback to package-level __version__ (editable installs)
+    try:
+        import traigent
+
+        version = getattr(traigent, "__version__", None)
+        if version is not None:
+            return str(version)
+    except ImportError:
+        pass
+
+    # Last resort fallback
+    return "0.0.0"
+
 
 # Feature flag constants for plugin capabilities
 FEATURE_PARALLEL = "parallel"
@@ -244,9 +353,14 @@ class PluginRegistry:
         self._integrations: dict[str, dict[str, Callable[..., Any]]] = {}
         self._features: dict[str, list[str]] = {}  # feature -> list of plugin names
         self._entry_points_loaded = False
-        self._discovery_in_progress = False  # Re-entrancy guard
+        self._discovery_thread_id: int | None = (
+            None  # Thread doing discovery (for re-entrancy)
+        )
         # Use RLock to allow reentrant calls (e.g., if plugin.initialize() calls registry methods)
         self._discovery_lock = threading.RLock()
+        # Event to signal discovery completion - concurrent threads wait on this
+        self._discovery_complete = threading.Event()
+        self._discovery_complete.set()  # Initially set (no discovery in progress)
 
     def register_plugin(self, plugin: TraigentPlugin) -> None:
         """Register a plugin.
@@ -265,6 +379,9 @@ class PluginRegistry:
             self.unregister_plugin(plugin_name)
 
         try:
+            # Check version compatibility
+            self._check_version_compatibility(plugin)
+
             # Check dependencies
             self._check_dependencies(plugin)
 
@@ -528,21 +645,43 @@ class PluginRegistry:
     def _ensure_entry_points_loaded(self) -> None:
         """Ensure entry points have been discovered.
 
-        Uses double-checked locking pattern for thread safety and a
-        re-entrancy guard to prevent recursive discovery if a plugin's
-        initialize() calls registry methods.
+        Uses double-checked locking pattern for thread safety. Concurrent
+        callers wait on an Event until discovery completes, ensuring they
+        see the full registry state. Same-thread re-entrancy (e.g., plugin
+        initialize() calling has_feature()) is allowed via thread ID check.
         """
-        # Fast path: check without lock
-        if self._entry_points_loaded or self._discovery_in_progress:
+        # Fast path: already loaded
+        if self._entry_points_loaded:
             return
+
+        current_thread = threading.get_ident()
+
+        # Check if this is a re-entrant call from the discovery thread
+        # This allows plugins to call registry methods during initialize()
+        if self._discovery_thread_id == current_thread:
+            return
+
+        # Wait for any in-progress discovery to complete (blocks other threads)
+        # This ensures concurrent callers see complete registry state
+        self._discovery_complete.wait()
+
+        # Check again after waiting
+        if self._entry_points_loaded:
+            return
+
         # Slow path: acquire lock and check again
         with self._discovery_lock:
-            if not self._entry_points_loaded and not self._discovery_in_progress:
-                self._discovery_in_progress = True
-                try:
-                    self.discover_entry_points()
-                finally:
-                    self._discovery_in_progress = False
+            if self._entry_points_loaded:
+                return
+
+            # We're the discovery thread now
+            self._discovery_thread_id = current_thread
+            self._discovery_complete.clear()  # Signal discovery in progress
+            try:
+                self.discover_entry_points()
+            finally:
+                self._discovery_thread_id = None
+                self._discovery_complete.set()  # Signal discovery complete
 
     def load_plugin_from_module(self, module_path: str, plugin_class_name: str) -> None:
         """Load plugin from module.
@@ -634,6 +773,31 @@ class PluginRegistry:
             if plugin_dir.exists():
                 logger.info(f"Discovering plugins in: {plugin_dir}")
                 self.load_plugins_from_directory(plugin_dir)
+
+    def _check_version_compatibility(self, plugin: TraigentPlugin) -> None:
+        """Check if plugin is compatible with current Traigent version.
+
+        Args:
+            plugin: Plugin to check
+
+        Raises:
+            PluginVersionError: If plugin requires a newer Traigent version
+        """
+        required_version = plugin.traigent_version
+        current_version = _get_traigent_version()
+
+        if not _is_version_compatible(required_version, current_version):
+            raise PluginVersionError(
+                plugin_name=plugin.name,
+                plugin_version=plugin.version,
+                required_traigent_version=required_version,
+                current_traigent_version=current_version,
+            )
+
+        logger.debug(
+            f"Plugin '{plugin.name}' version check passed "
+            f"(requires traigent>={required_version}, have {current_version})"
+        )
 
     def _check_dependencies(self, plugin: TraigentPlugin) -> None:
         """Check if plugin dependencies are available.
