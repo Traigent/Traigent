@@ -1,0 +1,10 @@
+{
+  "best_score": 0.9285714285714286,
+  "best_config": {
+    "model": "gpt-4o-mini",
+    "temperature": 0.7,
+    "k": 3,
+    "chunk_size": 500,
+    "chunk_overlap": 25
+  }
+}

@@ -589,7 +589,7 @@ async def main():
     # Run optimization
     print("Starting RAG optimization...")
     print("-" * 40)
-    results = await customer_support_agent.optimize()
+    results = await customer_support_agent.optimize(timeout=600)
 
     print()
     print("=" * 60)

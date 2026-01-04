@@ -17,3 +17,12 @@
 {"input": {"query": "What's the minimum order for buy now pay later?"}, "output": "$35"}
 {"input": {"query": "What's your support email address?"}, "output": "support@example.com"}
 {"input": {"query": "What's the average wait time for phone support?"}, "output": "Under 5 minutes"}
+{"input": {"query": "If I return an item I paid for with a gift card, how do I get my money back?"}, "output": "Refunded back to a gift card"}
+{"input": {"query": "I ordered at 3pm on a weekday - when will it ship and how long until it arrives with standard shipping?"}, "output": "Ships next business day, then 5-7 business days for delivery"}
+{"input": {"query": "If I find a lower price after buying, how do I request a refund and how long until I get it?"}, "output": "Email support within 14 days, refund processed in 5-7 business days"}
+{"input": {"query": "Can I use Klarna to buy a $25 gift card?"}, "output": "No, buy now pay later requires orders over $35"}
+{"input": {"query": "If my item arrives damaged, who do I contact and within what timeframe?"}, "output": "Contact support within 48 hours with photos of the damage"}
+{"input": {"query": "I want to buy a physical gift card for someone in Canada - can I ship it there and how much will it cost?"}, "output": "Yes, physical cards ship free domestically, international shipping rates calculated at checkout"}
+{"input": {"query": "If I order at 1pm on Saturday and choose overnight shipping, when will it arrive?"}, "output": "Weekend orders ship Monday, overnight delivery means it arrives Tuesday"}
+{"input": {"query": "I paid with PayPal and returned an item - when will I see the refund?"}, "output": "5-7 business days after inspection, refund issued to original payment method"}
+{"input": {"query": "What's the total cost to ship a $40 order with express shipping?"}, "output": "$12.99 for express shipping (no free shipping since order is under $50)"}
