@@ -216,6 +216,40 @@ class TrialPrunedError(TraigentError):
         self.step = step
 
 
+class FeatureNotAvailableError(TraigentError):
+    """Error raised when a feature requires an uninstalled plugin.
+
+    This error provides helpful guidance on which plugin to install
+    to enable the requested feature.
+
+    Example:
+        raise FeatureNotAvailableError(
+            "Parallel execution",
+            plugin_name="traigent-parallel",
+            install_hint="pip install traigent[ml]"
+        )
+    """
+
+    def __init__(
+        self,
+        feature_name: str,
+        plugin_name: str | None = None,
+        install_hint: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        # Build helpful error message
+        message = f"Feature '{feature_name}' is not available."
+        if plugin_name:
+            message += f" Requires the '{plugin_name}' plugin."
+        if install_hint:
+            message += f" Install with: {install_hint}"
+
+        super().__init__(message, details)
+        self.feature_name = feature_name
+        self.plugin_name = plugin_name
+        self.install_hint = install_hint
+
+
 # =============================================================================
 # Warnings (for deprecation and discouraged patterns)
 # =============================================================================

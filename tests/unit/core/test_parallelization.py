@@ -88,10 +88,10 @@ async def test_orchestrator_parallel_trials(monkeypatch):
         def finalize_session_sync(self, *a, **k):
             return {"status": "completed"}
 
-    import traigent.core.orchestrator as orch_mod
+    import traigent.cloud.backend_client as backend_mod
 
     monkeypatch.setattr(
-        orch_mod, "BackendIntegratedClient", lambda *a, **k: _DummyBackend()
+        backend_mod, "BackendIntegratedClient", lambda *a, **k: _DummyBackend()
     )
 
     # Run sequential trials (trial_concurrency=1)

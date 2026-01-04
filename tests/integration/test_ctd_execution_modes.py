@@ -382,15 +382,17 @@ def _patch_backend(monkeypatch):
     backend_client_path = ".".join(
         ["traigent", "optigen_integration", "BackendIntegratedClient"]
     )
-    orchestrator_client_path = ".".join(
-        ["traigent", "core", "orchestrator", "BackendIntegratedClient"]
+    # Note: BackendIntegratedClient is now lazily imported in orchestrator,
+    # so we patch at the cloud module level instead
+    cloud_client_path = ".".join(
+        ["traigent", "cloud", "backend_client", "BackendIntegratedClient"]
     )
     monkeypatch.setattr(
         backend_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     monkeypatch.setattr(
-        orchestrator_client_path,
+        cloud_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     return mock_backend

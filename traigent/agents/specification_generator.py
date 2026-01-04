@@ -15,12 +15,14 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from traigent.cloud.models import AgentSpecification
 from traigent.config.types import TraigentConfig
 from traigent.core.constants import DEFAULT_MODEL
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 

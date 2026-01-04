@@ -2,6 +2,8 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import inspect
@@ -10,7 +12,7 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import (
     OptimizationResult,
@@ -19,10 +21,11 @@ from traigent.api.types import (
     TrialResult,
     TrialStatus,
 )
-from traigent.cloud.backend_client import (
-    BackendClientConfig,
-    BackendIntegratedClient,
-)
+
+# Type-only import for BackendIntegratedClient (runtime import is lazy)
+if TYPE_CHECKING:
+    from traigent.cloud.backend_client import BackendIntegratedClient
+
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
@@ -305,8 +308,40 @@ class OptimizationOrchestrator:
         if hasattr(self.evaluator, "execution_mode"):
             self.evaluator.execution_mode = self.traigent_config.execution_mode
 
-    def _initialize_backend_client(self) -> BackendIntegratedClient:
-        from traigent.config.backend_config import BackendConfig
+    def _initialize_backend_client(self) -> BackendIntegratedClient | None:
+        """Initialize backend client if cloud features are available.
+
+        Returns None when cloud plugin is not installed (graceful degradation).
+        Raises FeatureNotAvailableError only when cloud mode is explicitly
+        requested but plugin is missing.
+        """
+        # Try to import cloud module - may not be available if cloud plugin not installed
+        try:
+            from traigent.cloud.backend_client import (
+                BackendClientConfig,
+                BackendIntegratedClient,
+            )
+            from traigent.config.backend_config import BackendConfig
+        except ModuleNotFoundError as err:
+            # Cloud module not installed - check if this was the cloud module itself
+            if err.name and err.name.startswith("traigent.cloud"):
+                if self.traigent_config.execution_mode == "cloud":
+                    # User explicitly requested cloud mode but plugin not installed
+                    from traigent.utils.exceptions import FeatureNotAvailableError
+
+                    raise FeatureNotAvailableError(
+                        "Cloud execution mode",
+                        plugin_name="traigent-cloud",
+                        install_hint="pip install traigent[cloud]",
+                    ) from err
+                # For edge_analytics or other modes, gracefully degrade to local-only
+                logger.info(
+                    f"Cloud module not available for {self.traigent_config.execution_mode} mode. "
+                    "Continuing with local storage only."
+                )
+                return None
+            # Re-raise if it's a different missing module (broken install)
+            raise
 
         backend_url = BackendConfig.get_backend_url()
         api_key = BackendConfig.get_api_key()

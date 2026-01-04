@@ -561,7 +561,7 @@ def override_config(
 
 
 def set_strategy(
-    algorithm: str = "bayesian",
+    algorithm: str = "tpe",
     algorithm_config: dict[str, Any] | None = None,
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
@@ -569,7 +569,10 @@ def set_strategy(
     """Configure optimization strategy and execution parameters.
 
     Args:
-        algorithm: Optimization algorithm ("bayesian", "grid", "random", "genetic")
+        algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
+            Default is "tpe" (Tree-structured Parzen Estimator) which is always
+            available with Optuna. "bayesian" (Gaussian Process) requires
+            the traigent-advanced-algorithms plugin.
         algorithm_config: Algorithm-specific parameters
         parallel_workers: Number of parallel evaluation workers
         resource_limits: Memory, time, and compute constraints
@@ -579,10 +582,10 @@ def set_strategy(
 
     Example:
         >>> strategy = traigent.set_strategy(
-        ...     algorithm="bayesian",
+        ...     algorithm="tpe",
         ...     algorithm_config={
-        ...         "acquisition_function": "expected_improvement",
-        ...         "initial_random_samples": 5
+        ...         "n_startup_trials": 10,
+        ...         "multivariate": True
         ...     },
         ...     parallel_workers=4
         ... )
@@ -728,21 +731,45 @@ def get_version_info() -> dict[str, Any]:
         except Exception:
             algorithms = []
 
+    # Query plugin registry for available features
+    from traigent.plugins import (
+        FEATURE_ADVANCED_ALGORITHMS,
+        FEATURE_ANALYTICS,
+        FEATURE_CLOUD,
+        FEATURE_MULTI_OBJECTIVE,
+        FEATURE_PARALLEL,
+        FEATURE_SEAMLESS,
+        FEATURE_TRACING,
+        get_plugin_registry,
+    )
+
+    registry = get_plugin_registry()
+
     return {
         "version": __version__,
         "python_version": sys.version,
         "platform": platform.platform(),
         "algorithms": algorithms,
         "features": {
+            # Base features (always available)
             "grid_search": True,
             "random_search": True,
-            "bayesian_optimization": True,  # Available with scikit-learn
-            "multi_objective": True,
+            "tpe_optimization": True,  # TPE is default, always available with Optuna
             "constraint_handling": True,
             "async_evaluation": True,
-            "parallel_evaluation": True,
-            "result_persistence": True,  # Available in Sprint 2
-            "visualization": True,  # Available in Sprint 3
+            "result_persistence": True,
+            # Plugin-provided features (query registry)
+            "bayesian_optimization": (
+                registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
+                or "bayesian" in algorithms  # Fallback: check if registered
+            ),
+            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE) or True,
+            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL) or True,
+            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS) or True,
+            "cloud_execution": registry.has_feature(FEATURE_CLOUD),
+            "tracing": registry.has_feature(FEATURE_TRACING),
+            "analytics": registry.has_feature(FEATURE_ANALYTICS),
+            "visualization": True,  # Basic visualization in base
         },
         "integrations": {
             "langchain": _check_integration("traigent.integrations.llms.langchain"),
@@ -750,6 +777,7 @@ def get_version_info() -> dict[str, Any]:
             "mlflow": _check_integration("traigent.integrations.observability.mlflow"),
             "wandb": _check_integration("traigent.integrations.observability.wandb"),
         },
+        "plugins": registry.list_plugins(),  # List installed plugins
         "global_config": _GLOBAL_CONFIG.copy(),
     }
 

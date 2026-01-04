@@ -12,11 +12,13 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import ConfigurationError
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 
