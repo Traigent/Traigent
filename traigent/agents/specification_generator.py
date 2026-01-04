@@ -19,12 +19,34 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from traigent.config.types import TraigentConfig
 from traigent.core.constants import DEFAULT_MODEL
+from traigent.utils.exceptions import FeatureNotAvailableError
 from traigent.utils.logging import get_logger
 
-if TYPE_CHECKING:
+# Cloud models - required at runtime for agent specification generation
+try:
     from traigent.cloud.models import AgentSpecification
 
+    _CLOUD_MODELS_AVAILABLE = True
+except ModuleNotFoundError as err:
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    if err.name and err.name.startswith("traigent.cloud"):
+        _CLOUD_MODELS_AVAILABLE = False
+    else:
+        raise  # Re-raise for broken dependencies like missing pydantic
+    if TYPE_CHECKING:
+        from traigent.cloud.models import AgentSpecification
+
 logger = get_logger(__name__)
+
+
+def _require_cloud_models() -> None:
+    """Raise FeatureNotAvailableError if cloud models are not available."""
+    if not _CLOUD_MODELS_AVAILABLE:
+        raise FeatureNotAvailableError(
+            "Agent specification generation",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
 
 
 class PromptTemplateBuilder(Protocol):
@@ -258,7 +280,11 @@ class SpecificationGenerator:
 
         Returns:
             Complete agent specification
+
+        Raises:
+            FeatureNotAvailableError: If cloud models are not installed
         """
+        _require_cloud_models()
         logger.info(f"Generating agent specification for function {func.__name__}")
 
         # Analyze the function
@@ -324,7 +350,11 @@ class SpecificationGenerator:
 
         Returns:
             Agent specification
+
+        Raises:
+            FeatureNotAvailableError: If cloud models are not installed
         """
+        _require_cloud_models()
         logger.info(f"Generating agent specification from signature: {function_name}")
 
         # Create minimal analysis

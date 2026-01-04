@@ -30,11 +30,15 @@ try:
     )
 
     _CLOUD_AUTH_AVAILABLE = True
-except ModuleNotFoundError:
-    _CLOUD_AUTH_AVAILABLE = False
-    AuthCredentials = None  # type: ignore[misc,assignment]
-    AuthMode = None  # type: ignore[misc,assignment]
-    get_auth_manager = None  # type: ignore[misc,assignment]
+except ModuleNotFoundError as err:
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    if err.name and err.name.startswith("traigent.cloud"):
+        _CLOUD_AUTH_AVAILABLE = False
+        AuthCredentials = None  # type: ignore[misc,assignment]
+        AuthMode = None  # type: ignore[misc,assignment]
+        get_auth_manager = None  # type: ignore[misc,assignment]
+    else:
+        raise  # Re-raise for broken dependencies
 
 if TYPE_CHECKING:
     from traigent.cloud.models import AgentSpecification
@@ -376,8 +380,12 @@ class OpenAIAgentExecutor(AgentExecutor):
     async def _platform_initialize(self) -> None:
         """Initialize OpenAI components with unified auth integration."""
         try:
-            # Initialize unified auth manager
-            self.auth_manager = get_auth_manager()
+            # Initialize unified auth manager (if available)
+            if _CLOUD_AUTH_AVAILABLE and get_auth_manager is not None:
+                self.auth_manager = get_auth_manager()
+            else:
+                self.auth_manager = None
+                logger.debug("Cloud auth not available, using environment credentials")
 
             # Prepare default headers via unified auth (may be empty)
             default_headers = await self._get_authenticated_headers()
@@ -433,16 +441,16 @@ class OpenAIAgentExecutor(AgentExecutor):
                     CoreValidators.validate_string(api_key, "api_key", min_length=1)
                 )
 
+                # Authenticate to validate and enable rate limiting (if auth available)
+                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
+                    return cast(str | None, api_key)
+
                 # Create auth credentials for this API key
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=api_key,
                     metadata={"platform": "openai", "source": "platform_config"},
                 )
-
-                # Authenticate to validate and enable rate limiting
-                if self.auth_manager is None:
-                    return cast(str | None, api_key)
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
@@ -463,14 +471,14 @@ class OpenAIAgentExecutor(AgentExecutor):
                     )
                 )
 
+                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
+                    return env_api_key
+
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=env_api_key,
                     metadata={"platform": "openai", "source": "environment"},
                 )
-
-                if self.auth_manager is None:
-                    return env_api_key
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
