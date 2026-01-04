@@ -34,7 +34,7 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
     """Parse a version string into a tuple of integers.
 
     Handles versions like "1.0.0", "v1.2.3", "1.0.0-beta", "1.0.0.dev1".
-    Leading 'v' prefix and non-numeric suffixes are stripped.
+    Leading/trailing whitespace, 'v' prefix, and non-numeric suffixes are stripped.
     Constraint operators (>=, ~=, etc.) are NOT supported and will
     result in partial parsing.
 
@@ -54,7 +54,12 @@ def _parse_version(version_str: str) -> tuple[int, ...]:
         (1, 0, 0)
         >>> _parse_version("0.1.0.dev1")
         (0, 1, 0)
+        >>> _parse_version("  1.0.0  ")
+        (1, 0, 0)
     """
+    # Strip whitespace first
+    version_str = version_str.strip()
+
     # Strip leading 'v' or 'V' prefix (common convention)
     if version_str.startswith(("v", "V")):
         version_str = version_str[1:]
@@ -606,6 +611,13 @@ class PluginRegistry:
         Loads plugins registered via pyproject.toml entry points:
         [project.entry-points."traigent.plugins"]
         parallel = "traigent_parallel:ParallelPlugin"
+
+        Note:
+            This method is called automatically by _ensure_entry_points_loaded()
+            which handles thread synchronization. Direct calls to this method
+            bypass the synchronization guard and may result in partial registry
+            state if called concurrently. For public access, use has_feature()
+            or get_plugin() which trigger discovery through the guard.
         """
         # Entry point discovery with cross-version compatibility
         eps: Any  # EntryPoints or list depending on Python version
