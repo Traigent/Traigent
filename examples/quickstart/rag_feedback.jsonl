@@ -1,22 +1,3 @@
-{"input": {"query": "How many days do I have to return an item?"}, "output": "30 days"}
-{"input": {"query": "What's the shipping cost for a $40 order?"}, "output": "$5.99"}
-{"input": {"query": "How long does express shipping take?"}, "output": "2-3 business days"}
-{"input": {"query": "Can I return swimwear?"}, "output": "cannot be returned"}
-{"input": {"query": "How long until my refund shows up on my credit card?"}, "output": "5-7 business days"}
-{"input": {"query": "Do you ship to Canada?"}, "output": "Yes, we ship to Canada"}
-{"input": {"query": "What's the cost for overnight delivery?"}, "output": "$24.99"}
-{"input": {"query": "Will you match Amazon third-party seller prices?"}, "output": "No, we don't match marketplace sellers"}
-{"input": {"query": "How do I report a damaged item?"}, "output": "Contact support within 48 hours with photos"}
-{"input": {"query": "What time do I need to order by for same-day processing?"}, "output": "2pm EST"}
-{"input": {"query": "Can I get a price match after I already bought something?"}, "output": "Yes, within 14 days of purchase"}
-{"input": {"query": "Do you match Costco prices?"}, "output": "No, we don't match wholesale clubs"}
-{"input": {"query": "What happens to my gift card balance if I don't use it all?"}, "output": "Remaining balance stays on your card"}
-{"input": {"query": "When is phone support available?"}, "output": "Monday-Friday 9am-5pm EST"}
-{"input": {"query": "What's the minimum order for free shipping?"}, "output": "$50"}
-{"input": {"query": "Do you accept Apple Pay?"}, "output": "Yes"}
-{"input": {"query": "What's the minimum order for buy now pay later?"}, "output": "$35"}
-{"input": {"query": "What's your support email address?"}, "output": "support@example.com"}
-{"input": {"query": "What's the average wait time for phone support?"}, "output": "Under 5 minutes"}
 {"input": {"query": "If I return an item I paid for with a gift card, how do I get my money back?"}, "output": "Refunded back to a gift card"}
 {"input": {"query": "I ordered at 3pm on a weekday - when will it ship and how long until it arrives with standard shipping?"}, "output": "Ships next business day, then 5-7 business days for delivery"}
 {"input": {"query": "If I find a lower price after buying, how do I request a refund and how long until I get it?"}, "output": "Email support within 14 days, refund processed in 5-7 business days"}
@@ -26,3 +7,24 @@
 {"input": {"query": "If I order at 1pm on Saturday and choose overnight shipping, when will it arrive?"}, "output": "Weekend orders ship Monday, overnight delivery means it arrives Tuesday"}
 {"input": {"query": "I paid with PayPal and returned an item - when will I see the refund?"}, "output": "5-7 business days after inspection, refund issued to original payment method"}
 {"input": {"query": "What's the total cost to ship a $40 order with express shipping?"}, "output": "$12.99 for express shipping (no free shipping since order is under $50)"}
+{"input": {"query": "I want to buy a $100 gift card and pay with Afterpay - is that possible?"}, "output": "Yes, Afterpay is available for orders over $35, split into 4 interest-free payments"}
+{"input": {"query": "My swimwear arrived defective - can I return it even though it's usually non-returnable?"}, "output": "Yes, defective items can be returned regardless of category - contact support within 48 hours with photos"}
+{"input": {"query": "I placed an order at 11am EST and chose overnight shipping - what day will it arrive?"}, "output": "Tomorrow (next business day) since you ordered before 12pm EST cutoff"}
+{"input": {"query": "Can I use multiple gift cards plus Apple Pay on the same order?"}, "output": "Yes, gift cards are stackable and can be combined with digital wallet payments like Apple Pay"}
+{"input": {"query": "I bought something with Affirm and want to return it - how does the refund work?"}, "output": "Refund goes to original payment method (Affirm), processing takes 5-7 business days"}
+{"input": {"query": "What's the cheapest way to ship a $45 order that needs to arrive in 2-3 days?"}, "output": "$12.99 express shipping (standard is cheaper at $5.99 but takes 5-7 days)"}
+{"input": {"query": "I lost my physical gift card - can I get a replacement and use the balance online?"}, "output": "Report to support with proof of purchase, balance can be transferred to new card and used online"}
+{"input": {"query": "I ordered at 3pm Friday with express shipping - when will it arrive?"}, "output": "Ships Monday (weekend orders ship Monday), arrives Wednesday-Thursday (2-3 business days)"}
+{"input": {"query": "Can I return a personalized item that arrived damaged?"}, "output": "Yes, defective items are an exception - contact support within 48 hours with photos for replacement or refund"}
+{"input": {"query": "I want to send an e-gift card to someone in the UK - is that possible?"}, "output": "Yes, e-gift cards are delivered instantly via email to any email address worldwide"}
+{"input": {"query": "What payment methods can I use for an order under $35?"}, "output": "Credit/debit cards, PayPal, Apple Pay, Google Pay, Shop Pay, or gift cards (buy now pay later requires $35 minimum)"}
+{"input": {"query": "I ordered overnight shipping at 1pm EST - will it arrive tomorrow?"}, "output": "No, overnight orders must be placed by 12pm EST for next-day delivery - yours ships today but arrives in 2 days"}
+{"input": {"query": "Can I get a corporate bulk order of gift cards shipped to Canada?"}, "output": "Yes, bulk orders (10+ cards) available, international shipping rates calculated at checkout"}
+{"input": {"query": "My credit card refund has been processing for 10 business days - is that normal?"}, "output": "No, refunds process in 5-7 days plus 3-5 days for credit card - contact support if over 12 days total"}
+{"input": {"query": "I want to pay with Google Pay for a Final Sale item - can I return it if it doesn't fit?"}, "output": "No, Final Sale items cannot be returned regardless of payment method"}
+{"input": {"query": "What's the total cost if I order $60 worth of items with standard shipping to the US?"}, "output": "Free shipping - orders over $50 qualify for free standard shipping"}
+{"input": {"query": "I'm buying a $50 e-gift card with Klarna - how many payments is that split into?"}, "output": "With Klarna you can pay in 30 days or split into 4 installments"}
+{"input": {"query": "Can I ship overnight to a PO Box in Canada?"}, "output": "No, overnight shipping is not available for PO Boxes, and international shipping uses calculated rates (not overnight option)"}
+{"input": {"query": "I returned an item 25 days after purchase - will I get a refund or store credit?"}, "output": "Full refund to original payment method - returns are accepted within 30 days"}
+{"input": {"query": "How do I track my international order to the UK?"}, "output": "Use tracking link in confirmation email or log into account - tracking available within 24 hours of shipment"}
+{"input": {"query": "I used a gift card and Apple Pay together - if I return the item, where does the refund go?"}, "output": "Gift card portion refunds to gift card, Apple Pay portion refunds to original payment method"}

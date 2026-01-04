@@ -1,62 +1,20 @@
-# RAG Optimization Run - January 4, 2026
+# RAG Optimization Run - January 4, 2026 (Updated)
 
 ## Overview
 
-Ran TraiGent optimization on the Customer Support RAG example with FAISS vector store, OpenAI embeddings, and document chunking. This run includes a newly expanded dataset with **multi-source questions** designed to test RAG retrieval across multiple documents.
+Ran TraiGent optimization on the Customer Support RAG example with an **all multi-source dataset** (30 challenging questions requiring synthesis across 2-3 documents).
 
 ---
 
-## Dataset Enhancement: Multi-Source Questions
+## Dataset: All Multi-Source Questions
 
-### Motivation
+The dataset was redesigned to contain **only challenging multi-source questions**. All 19 simple single-source questions were removed and replaced with questions requiring:
+- Synthesis of information from 2-3 documents
+- Logical reasoning (e.g., $25 < $35 minimum = NO)
+- Exception handling (defective overrides non-returnable)
+- Multi-step calculations (weekend → Monday ship → Tuesday arrive)
 
-Standard RAG datasets typically test single-document retrieval. We added 9 new questions (questions 20-28) that require synthesizing information from 2+ knowledge base documents to test whether:
-
-1. The RAG system can retrieve relevant chunks from multiple documents
-2. The LLM can synthesize information across different sources
-3. Higher `k` values (more retrieved chunks) improve performance
-
-### New Multi-Source Questions Added
-
-| # | Question | Required Documents |
-|---|----------|-------------------|
-| 20 | If I return an item I paid for with a gift card, how do I get my money back? | returns_policy.md + gift_cards.md |
-| 21 | I ordered at 3pm on a weekday - when will it ship and how long until it arrives? | store_hours.md + shipping_info.md |
-| 22 | If I find a lower price after buying, how do I request a refund and how long until I get it? | price_matching.md + returns_policy.md |
-| 23 | Can I use Klarna to buy a $25 gift card? | payment_methods.md + gift_cards.md |
-| 24 | If my item arrives damaged, who do I contact and within what timeframe? | returns_policy.md + contact_support.md |
-| 25 | I want to buy a physical gift card for someone in Canada - can I ship it there? | gift_cards.md + shipping_info.md |
-| 26 | If I order at 1pm on Saturday and choose overnight shipping, when will it arrive? | store_hours.md + shipping_info.md |
-| 27 | I paid with PayPal and returned an item - when will I see the refund? | payment_methods.md + returns_policy.md |
-| 28 | What's the total cost to ship a $40 order with express shipping? | shipping_info.md (multiple facts) |
-
-### Dataset Composition
-- **Single-source questions**: 19 (questions 1-19)
-- **Multi-source questions**: 9 (questions 20-28)
-- **Total questions**: 28
-
----
-
-## Setup
-
-### Knowledge Base
-- **Documents**: 7 files, 9,830 total characters
-- **Source**: `examples/quickstart/knowledge_base/`
-- **Topics**: Gift cards, store hours, payment methods, returns, shipping, support, pricing
-
-### Configuration Space
-| Parameter | Values |
-|-----------|--------|
-| Model | gpt-3.5-turbo, gpt-4o-mini, gpt-4o |
-| Temperature | 0.1, 0.3, 0.5, 0.7 |
-| Retrieval Depth (k) | 2, 3, 5 |
-| Chunk Size | 300, 500, 800 |
-| Chunk Overlap | 25, 50, 100 |
-
-### Constraints
-1. GPT-4o: temperature <= 0.3 (expensive model, keep focused)
-2. GPT-3.5-turbo: k >= 3 (needs more context)
-3. chunk_overlap < chunk_size (must be smaller)
+**Total Questions**: 30 (all multi-source)
 
 ---
 
@@ -66,175 +24,207 @@ Standard RAG datasets typically test single-document retrieval. We added 9 new q
 ```json
 {
   "model": "gpt-4o-mini",
-  "temperature": 0.7,
+  "temperature": 0.3,
   "k": 3,
-  "chunk_size": 500,
-  "chunk_overlap": 25
+  "chunk_size": 800,
+  "chunk_overlap": 50
 }
 ```
 
-**Best Score**: 92.86% accuracy (26/28 questions passed)
+**Best Score**: 80.0% accuracy (24/30 questions)
 
 ### All Trials
 
-| Trial | Model | Temp | k | Chunk Size | Overlap | Pass Rate | Score |
-|-------|-------|------|---|------------|---------|-----------|-------|
-| 1 | gpt-3.5-turbo | 0.3 | 3 | 500 | 50 | 25/28 | 89.3% |
-| 2 | gpt-4o-mini | 0.7 | 3 | 500 | 25 | 26/28 | **92.9%** |
-| 3 | gpt-4o-mini | 0.5 | 3 | 300 | 50 | 26/28 | 92.9% |
-| 4 | gpt-3.5-turbo | 0.3 | 5 | 500 | 25 | 26/28 | 92.9% |
-| 5 | gpt-4o-mini | 0.3 | 5 | 800 | 50 | 26/28 | 92.9% |
-| 6 | gpt-4o | 0.3 | 2 | 500 | 25 | 25/28 | 89.3% |
-| 7 | gpt-4o-mini | 0.5 | 5 | 300 | 50 | 26/28 | 92.9% |
-| 8 | gpt-4o-mini | 0.3 | 3 | 300 | 50 | 26/28 | 92.9% |
-| 9 | gpt-4o | 0.7 | 3 | 800 | 50 | N/A | N/A (constraint violation) |
-| 10 | gpt-4o-mini | 0.1 | 3 | 800 | 25 | 26/28 | 92.9% |
+| Trial | Model | k | Chunk | Score | Pass Rate |
+|-------|-------|---|-------|-------|-----------|
+| T1 | gpt-3.5-turbo | 3 | 500 | 76.7% | 23/30 |
+| T2 | gpt-4o-mini | 2 | 300 | 73.3% | 22/30 |
+| T3 | gpt-4o-mini | 2 | 300 | 76.7% | 23/30 |
+| T4 | gpt-4o-mini | 3 | 300 | 76.7% | 23/30 |
+| T5 | gpt-3.5-turbo | 5 | 800 | 76.7% | 23/30 |
+| T6 | gpt-4o-mini | 3 | 800 | **80.0%** | **24/30** |
+| T7 | gpt-3.5-turbo | 2 | 500 | N/A | (constraint) |
+| T8 | gpt-4o | 3 | 500 | 73.3% | 22/30 |
+| T9 | gpt-4o-mini | 2 | 300 | 73.3% | 22/30 |
+| T10 | gpt-3.5-turbo | 3 | 800 | 73.3% | 22/30 |
 
 ---
 
-## Per-Question Analysis
+## Per-Question Performance Matrix
 
-### Questions That FAILED Across All Trials
+| # | Question Summary | Sources | T1 | T2 | T3 | T4 | T5 | T6 | T8 | T9 | T10 |
+|---|------------------|---------|----|----|----|----|----|----|----|----|-----|
+| 1 | Gift card return refund | returns + gift_cards | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 2 | 3pm weekday + standard shipping | hours + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 3 | Price match refund timing | price_match + returns | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 4 | Klarna for $25 gift card | payments + gift_cards | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 5 | Damaged item contact | returns + support | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 6 | Physical gift card to Canada | gift_cards + shipping | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ |
+| 7 | Saturday 1pm + overnight | hours + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 8 | PayPal return refund | payments + returns | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 9 | $40 + express shipping cost | shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 10 | $100 gift card + Afterpay | gift_cards + payments | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✗ | ✗ |
+| 11 | Defective swimwear return | returns (exception) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 12 | 11am EST + overnight | hours + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 13 | Multiple gift cards + Apple Pay | gift_cards + payments | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 14 | Affirm return refund | payments + returns | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 15 | Cheapest 2-3 day shipping $45 | shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 16 | Lost gift card replacement | gift_cards + support | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 17 | Friday 3pm + express | hours + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 18 | Damaged personalized item | returns (exception) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 19 | E-gift card to UK | gift_cards + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 20 | Payment methods under $35 | payments | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| 21 | Overnight at 1pm EST | shipping | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 22 | Corporate bulk to Canada | gift_cards + shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 23 | 10 day credit card refund | returns | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 24 | Google Pay + Final Sale return | payments + returns | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 25 | $60 + standard shipping | shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 26 | $50 e-gift card + Klarna | gift_cards + payments | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 27 | Overnight to PO Box Canada | shipping | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| 28 | 25-day return refund type | returns | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 29 | Track international UK order | shipping | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 30 | Split refund (gift card + Apple Pay) | gift_cards + payments + returns | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| **Total** | | | **23** | **22** | **23** | **23** | **23** | **24** | **22** | **22** | **22** |
 
-| # | Question | Expected Answer | Issue |
-|---|----------|-----------------|-------|
-| 22 | If I find a lower price after buying, how do I request a refund and how long until I get it? | "Email support within 14 days, refund processed in 5-7 business days" | **All models failed** - They confused price match refund with return refund. Said "email support" but not specifically about price matching process. |
-| 23 | Can I use Klarna to buy a $25 gift card? | "No, buy now pay later requires orders over $35" | **All models failed** - Models incorrectly said "Yes" because they found Klarna info and $35 minimum, but didn't synthesize that $25 < $35 means NO. |
+**Legend**: ✓ = Pass, ✗ = Fail, T7 omitted (constraint violation)
 
-### Questions With Mixed Results
+---
 
-| # | Question | Expected | Pass Rate | Notes |
-|---|----------|----------|-----------|-------|
-| 25 | Physical gift card to Canada - shipping cost? | "Free domestic, international calculated at checkout" | 7/9 | Trials 1 & 6 (with k=2,3) failed - didn't retrieve international shipping info |
+## Failure Analysis by Question
 
-### All Single-Source Questions (1-19): 100% Pass Rate
-Every trial passed all 19 single-source questions.
+### Consistently Failing Questions (6 questions - 0% pass rate)
 
-### Multi-Source Questions Performance (20-28)
+| # | Question | Expected Answer | Actual Behavior | Root Cause |
+|---|----------|-----------------|-----------------|------------|
+| 3 | Price match refund timing | "Email support within 14 days, 5-7 days refund" | Confused with return refund process | Multi-source synthesis failure |
+| 4 | Klarna for $25 gift card | "No, requires $35 minimum" | All said "Yes" | **Numerical reasoning failure** ($25 < $35) |
+| 21 | Overnight at 1pm EST | "No, cutoff is 12pm" | All said "Yes" | **Numerical reasoning failure** (1pm > 12pm) |
+| 23 | 10 day credit card refund | "Contact support if over 12 days total" | Said 5-7 days abnormal | Incomplete reasoning (missed 3-5 day credit card delay) |
+| 27 | Overnight to PO Box Canada | "No overnight for PO Box + no international overnight" | Only mentioned PO Box restriction | Multi-constraint synthesis failure |
+| 30 | Split refund (gift card + Apple Pay) | "Gift card → gift card, Apple Pay → original payment" | Only mentioned gift card portion | **3-source synthesis failure** |
 
-| Question | Type | T1 | T2 | T3 | T4 | T5 | T6 | T7 | T8 | T10 |
-|----------|------|----|----|----|----|----|----|----|----|-----|
-| Q20 (gift card return) | 2-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Q21 (3pm order + shipping) | 2-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Q22 (price match + refund time) | 2-doc | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Q23 (Klarna + $25 gift card) | 2-doc | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
-| Q24 (damaged + contact) | 2-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Q25 (gift card + Canada) | 2-doc | ✗ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ |
-| Q26 (Saturday + overnight) | 2-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Q27 (PayPal + return refund) | 2-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Q28 (express shipping cost) | 1-doc | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+### Partially Failing Questions (3 questions)
 
-**Multi-source success rate**: 7/9 questions reliably passed, 2/9 consistently failed.
+| # | Question | Pass Rate | Issue |
+|---|----------|-----------|-------|
+| 6 | Physical gift card to Canada | 7/9 (78%) | T2, T8 missed international shipping rates |
+| 10 | $100 gift card + Afterpay | 6/9 (67%) | T8, T9, T10 said Afterpay unavailable for gift cards |
+| 20 | Payment methods under $35 | 1/9 (11%) | Most trials missed digital wallets or gift cards |
+
+---
+
+## Failure Pattern Classification
+
+### Pattern 1: Numerical Reasoning Failures (2 questions)
+- **Q4**: $25 < $35 minimum → All models said YES
+- **Q21**: 1pm > 12pm cutoff → All models said YES
+
+**Analysis**: Models retrieve the facts ($35 minimum, 12pm cutoff) but fail to compare against the query values ($25, 1pm).
+
+### Pattern 2: Multi-Source Synthesis Failures (3 questions)
+- **Q3**: Price match process (doc A) + refund timing (doc B) → Conflated with return process
+- **Q27**: PO Box restriction + international restriction → Only mentioned one
+- **Q30**: 3-way split (gift card + Apple Pay + refund policy) → Only addressed gift card
+
+**Analysis**: Models retrieve from one source but miss or ignore the second/third required source.
+
+### Pattern 3: Incomplete Reasoning (1 question)
+- **Q23**: 5-7 days processing + 3-5 days credit card = 12 days total → Models only cited 5-7 days
+
+**Analysis**: Models retrieve facts but don't perform the addition to get total expected time.
 
 ---
 
 ## Accuracy by Parameter
 
 ### By Model
-| Model | Accuracy | Samples |
-|-------|----------|---------|
-| gpt-3.5-turbo | 91.1% | 51/56 |
-| gpt-4o | 89.3% | 25/28 |
-| gpt-4o-mini | **92.9%** | 156/168 |
+| Model | Avg Accuracy | Best | Notes |
+|-------|-------------|------|-------|
+| gpt-3.5-turbo | 75.6% | 76.7% | Consistent but lower ceiling |
+| gpt-4o | 73.3% | 73.3% | Only 1 trial, underperformed |
+| gpt-4o-mini | **76.1%** | **80.0%** | Best overall, highest ceiling |
 
 ### By Retrieval Depth (k)
-| k | Accuracy | Samples |
-|---|----------|---------|
-| 2 | 89.3% | 25/28 |
-| 3 | 92.1% | 129/140 |
-| 5 | **92.9%** | 78/84 |
-
-**Observation**: Higher k correlates with better accuracy, supporting the multi-source hypothesis.
+| k | Trials | Best Accuracy | Notes |
+|---|--------|---------------|-------|
+| 2 | T2, T3, T9 | 76.7% | Lower - fewer chunks hurts multi-source |
+| 3 | T1, T4, T6, T8, T10 | **80.0%** | Best - optimal balance |
+| 5 | T5 | 76.7% | No improvement over k=3 |
 
 ### By Chunk Size
-| Chunk Size | Accuracy | Samples |
-|------------|----------|---------|
-| 300 | **92.9%** | 78/84 |
-| 500 | 91.1% | 102/112 |
-| 800 | **92.9%** | 52/56 |
-
-### By Chunk Overlap
-| Overlap | Accuracy | Samples |
-|---------|----------|---------|
-| 25 | 92.0% | 103/112 |
-| 50 | 92.1% | 129/140 |
-
----
-
-## Cost
-
-**Total Cost**: $0.0327 USD
-
-- Initial cost limit: $2.00
-- Raised to: $25.20
-- Actual spend: ~$0.03 (very efficient)
+| Chunk Size | Best Accuracy | Notes |
+|------------|---------------|-------|
+| 300 | 76.7% | Smaller chunks fragment context |
+| 500 | 76.7% | Middle ground |
+| 800 | **80.0%** | Best - keeps related facts together |
 
 ---
 
 ## Key Findings
 
-### 1. Multi-Source Questions Reveal RAG Limitations
-- 2 out of 9 multi-source questions **consistently failed across ALL configurations**
-- These require logical reasoning (Q23: $25 < $35 minimum) or process disambiguation (Q22: price match vs return)
-- This is not a retrieval problem - it's an LLM reasoning problem
+### 1. Multi-Source Questions Are Hard
+- Previous dataset (with simple questions): **92.9%** best score
+- New all-multi-source dataset: **80.0%** best score
+- **12.9% accuracy drop** when testing only challenging questions
 
-### 2. gpt-4o-mini is Best Value
-- Highest accuracy (92.9%) at lowest cost
-- Outperformed gpt-4o (89.3%) - likely due to gpt-4o being tested with k=2
+### 2. Numerical Reasoning is the Biggest Gap
+- Q4 and Q21 require simple math ($25 < $35, 1pm > 12pm)
+- **100% failure rate** across all configurations
+- This is an LLM reasoning failure, not retrieval
 
-### 3. Higher k Helps (Slightly)
-- k=5: 92.9% vs k=2: 89.3%
-- Validates hypothesis that more context helps multi-source questions
+### 3. 3-Source Questions Are Hardest
+- Q30 (gift card + Apple Pay + returns) failed 100%
+- Models can handle 2-source but struggle with 3-source
 
-### 4. Chunk Parameters Have Minimal Impact
-- All chunk sizes achieved similar accuracy
-- Chunk overlap 25 vs 50 nearly identical
+### 4. k=3 with Large Chunks is Optimal
+- k=3 retrieves enough context for 2-source questions
+- chunk_size=800 keeps related facts together in single chunks
+- Best config: gpt-4o-mini, k=3, chunk=800
 
-### 5. gpt-4o Constraint Issue
-- Trial 9 (gpt-4o, temp=0.7) violated constraint and returned N/A
-- This is a known bug: #27 (constraint-rejected configs consume trial slots)
+### 5. gpt-4o Underperforms
+- gpt-4o (73.3%) < gpt-4o-mini (80.0%)
+- May be due to gpt-4o being more verbose and missing key details
 
 ---
 
-## Failure Analysis
+## Comparison: Previous vs Current Dataset
 
-### Q22: Price Match Refund Process
-**Expected**: "Email support within 14 days, refund processed in 5-7 business days"
-**Actual (all models)**: Confused price match with return process
+| Metric | Previous (28 Q, mixed) | Current (30 Q, all multi-source) |
+|--------|----------------------|----------------------------------|
+| Best Score | 92.9% | 80.0% |
+| Worst Score | 89.3% | 73.3% |
+| Score Range | 3.6% | 6.7% |
+| Consistently Failing Qs | 2 | 6 |
+| Numerical Reasoning Failures | 1 (Q4) | 2 (Q4, Q21) |
 
-**Root Cause**: The price_matching.md doc says "email support@example.com" but the returns_policy.md refund timing (5-7 days) is for returns, not price matches. The expected answer may be incorrect or the knowledge base is ambiguous.
-
-### Q23: Klarna for $25 Gift Card
-**Expected**: "No, buy now pay later requires orders over $35"
-**Actual (all models)**: Said "Yes, you can use Klarna"
-
-**Root Cause**: Models retrieved both facts ($35 minimum, Klarna available) but failed to reason that $25 < $35. This is an LLM reasoning failure, not a retrieval failure.
+**Conclusion**: The harder dataset better differentiates configurations and reveals systematic model limitations.
 
 ---
 
 ## Recommendations
 
-### For Production
+### For Production RAG
 ```python
 config = {
     "model": "gpt-4o-mini",
-    "temperature": 0.3,  # More consistent than 0.7
-    "k": 5,              # Better for multi-source questions
-    "chunk_size": 500,   # Middle ground
-    "chunk_overlap": 50  # Standard overlap
+    "temperature": 0.3,
+    "k": 3,
+    "chunk_size": 800,
+    "chunk_overlap": 50
 }
 ```
 
-### For Future Work
-1. **Fix Q22/Q23 expected answers** or add explicit reasoning examples
-2. **Test k=7 or k=10** to see if multi-source accuracy continues improving
-3. **Add reasoning prompts** for questions requiring numerical comparisons
-4. **Track per-question accuracy** separately for single vs multi-source
+### To Improve Accuracy on Failing Questions
+1. **Add explicit comparison prompts** for numerical questions (Q4, Q21)
+2. **Increase k to 5-7** for known 3-source questions
+3. **Add "check all constraints" instruction** in prompts for compound questions
+4. **Consider chain-of-thought prompting** for reasoning questions
 
 ---
 
-## Files Generated
-- `results/rag_optimization_results.csv` - Full trial-by-trial results with all answers
-- `results/rag_best_config.json` - Best configuration JSON
-- `rag_feedback.jsonl` - Updated dataset with 28 questions
-- `rag_feedback_sources.md` - Documentation of source documents per question
+## Files
+
+- `rag_feedback.jsonl` - 30 multi-source questions
+- `rag_feedback_sources.md` - Source documentation per question
+- `results/rag_optimization_results.csv` - Full trial results with all answers
+- `results/rag_best_config.json` - Best configuration
