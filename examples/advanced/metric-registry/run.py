@@ -64,7 +64,6 @@ _RESPONSES: dict[str, dict[str, str]] = {
         "partial_credit": partial_credit_metric,
     },
     execution_mode="edge_analytics",
-    algorithm="grid",
 )
 def answer_prompt(prompt: str) -> str:
     """Simple rule-based function whose behaviour depends on the strategy."""
@@ -83,7 +82,9 @@ def main() -> None:
     register_metric(MetricSpec(name="partial_credit", aggregator="sum"))
 
     try:
-        result = asyncio.run(answer_prompt.optimize(max_trials=len(_RESPONSES)))
+        result = asyncio.run(
+            answer_prompt.optimize(algorithm="grid", max_trials=len(_RESPONSES))
+        )
 
         print("Best strategy:", result.best_config)
         print("Aggregated metrics:")
