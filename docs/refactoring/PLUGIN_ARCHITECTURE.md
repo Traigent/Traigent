@@ -180,7 +180,7 @@ The following modules use lazy imports to allow the base package to function wit
 | `traigent.agents.specification_generator` | `TYPE_CHECKING` for cloud models | Type hints only |
 | `traigent.agents.platforms` | Runtime try/except for cloud auth | Platform-specific auth disabled |
 | `traigent.optimizers.interactive_optimizer` | Runtime try/except for cloud models | Local optimization only |
-| `traigent.optigen_integration` | Runtime try/except for cloud clients | Local integration only |
+| `traigent.traigent_client` | Runtime try/except for cloud clients | Local integration only |
 
 ### Import Patterns Used
 

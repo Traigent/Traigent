@@ -1,11 +1,11 @@
 # Traigent Cloud Integration Module
 
-This module provides the cloud integration capabilities for Traigent SDK, enabling communication with the OptiGen backend for optimization tracking and analytics.
+This module provides the cloud integration capabilities for Traigent SDK, enabling communication with the Traigent backend for optimization tracking and analytics.
 
 ## Components
 
 ### DTOs (`dtos.py`)
-Data Transfer Objects based on `optigen_schemas` that provide type-safe communication with the backend while preserving privacy:
+Data Transfer Objects that provide type-safe communication with the backend while preserving privacy:
 
 - **ExperimentDTO**: Represents optimization experiments with privacy-preserving defaults
 - **ExperimentRunDTO**: Tracks individual optimization runs
@@ -19,7 +19,7 @@ Key features:
 
 ### Backend Client (`backend_client.py`)
 The `BackendIntegratedClient` provides:
-- HTTP communication with OptiGen backend
+- HTTP communication with Traigent backend
 - Privacy-preserving session management
 - Asynchronous and synchronous interfaces
 - Automatic fallback for offline operation
@@ -28,7 +28,7 @@ The `BackendIntegratedClient` provides:
 Core data models for optimization requests, sessions, and results.
 
 ### Optimizer Client (`optimizer_client.py`)
-Direct integration with the OptiGen Optimizer service for advanced optimization strategies.
+Direct integration with the Traigent Optimizer service for advanced optimization strategies.
 
 ## Privacy-Preserving Architecture
 
@@ -96,7 +96,7 @@ pytest tests/integration/test_backend_integration.py
 ## Development
 
 When adding new DTOs:
-1. Base them on existing optigen_schemas
+1. Base them on existing Traigent schemas
 2. Include privacy-preserving defaults
 3. Add validation methods
 4. Update tests

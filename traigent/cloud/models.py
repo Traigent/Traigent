@@ -239,7 +239,7 @@ class OptimizationFinalizationResponse:
 
 @dataclass
 class AgentSpecification:
-    """Specification for an AI agent following OptiGen schema."""
+    """Specification for an AI agent following Traigent schema."""
 
     id: str | None = None
     name: str | None = None
