@@ -289,6 +289,9 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "execution": None,
     "mock": None,
     "max_trials": 50,
+    # Early stopping parameters
+    "plateau_window": None,  # Stop if no improvement for N trials
+    "plateau_epsilon": None,  # Improvement threshold for plateau detection
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())

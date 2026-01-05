@@ -41,6 +41,92 @@ class PromptInfo:
     response_length: int | None
 
 
+class _AggregatedResponses:
+    """Wrapper that aggregates metrics from multiple LLM responses.
+
+    Used when a single example makes multiple LLM calls (e.g., main response + judge).
+    Provides usage_metadata and response_metadata that sum the individual responses.
+    """
+
+    def __init__(self, responses: list[Any]) -> None:
+        self._responses = responses
+        totals = self._sum_token_usage()
+        self._build_metadata(totals)
+
+    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int]:
+        """Extract (input, output, total) tokens from a single response."""
+        usage = getattr(resp, "usage_metadata", None)
+        if usage:
+            return (
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("total_tokens", 0),
+            )
+
+        resp_meta = getattr(resp, "response_metadata", None)
+        if not resp_meta or not isinstance(resp_meta, dict):
+            return (0, 0, 0)
+
+        token_usage = resp_meta.get("token_usage", {})
+        if not isinstance(token_usage, dict):
+            return (0, 0, 0)
+
+        return (
+            token_usage.get("prompt_tokens", 0),
+            token_usage.get("completion_tokens", 0),
+            token_usage.get("total_tokens", 0),
+        )
+
+    def _sum_token_usage(self) -> tuple[int, int, int]:
+        """Sum up token usage from all responses."""
+        total_input = 0
+        total_output = 0
+        total_tokens = 0
+
+        for resp in self._responses:
+            inp, out, tot = self._extract_tokens_from_response(resp)
+            total_input += inp
+            total_output += out
+            total_tokens += tot
+
+        # Ensure total is at least sum of parts
+        if total_tokens == 0 and (total_input > 0 or total_output > 0):
+            total_tokens = total_input + total_output
+
+        return (total_input, total_output, total_tokens)
+
+    def _build_metadata(self, totals: tuple[int, int, int]) -> None:
+        """Build usage_metadata and response_metadata from totals."""
+        total_input, total_output, total_tokens = totals
+
+        self.usage_metadata = {
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "total_tokens": total_tokens,
+        }
+
+        self.response_metadata: dict[str, Any] = {
+            "token_usage": {
+                "prompt_tokens": total_input,
+                "completion_tokens": total_output,
+                "total_tokens": total_tokens,
+            }
+        }
+
+        # Copy model name from first response if available
+        if self._responses:
+            first_meta = getattr(self._responses[0], "response_metadata", None)
+            if first_meta and isinstance(first_meta, dict):
+                for key in ("model", "model_name"):
+                    if key in first_meta:
+                        self.response_metadata[key] = first_meta[key]
+
+        logger.debug(
+            f"Aggregated {len(self._responses)} LLM responses: "
+            f"input={total_input}, output={total_output}, total={total_tokens}"
+        )
+
+
 # Apply LangChain patch on module import
 patch_langchain_for_metadata_capture()
 
@@ -207,8 +293,11 @@ class LocalEvaluator(BaseEvaluator):
         Priority:
         1. If output is a dict with 'raw_response', prefer it (SDK object)
         2. Else use captured LangChain response by correlation key
-        3. Else use captured response by index
+        3. Else use captured response by index (with multi-call handling)
         4. Else fall back to output itself
+
+        When there are multiple LLM calls per example (e.g., main response + judge),
+        this method handles the mismatch by computing aggregate metrics.
 
         Args:
             output: The function output
@@ -237,6 +326,26 @@ class LocalEvaluator(BaseEvaluator):
         by_key = get_captured_response_by_key(ex_key)
         if by_key is not None:
             return by_key
+
+        # Handle case where there are more captured responses than outputs
+        # (multiple LLM calls per example, e.g., main response + judge scoring)
+        num_outputs = len(dataset.examples)
+        num_responses = len(all_captured_responses)
+
+        if num_responses > num_outputs and num_outputs > 0:
+            # Calculate how many responses per output (e.g., 2 for main + judge)
+            responses_per_output = num_responses // num_outputs
+            if responses_per_output >= 1:
+                # Get the slice of responses for this example
+                start_idx = example_index * responses_per_output
+                end_idx = start_idx + responses_per_output
+                # Return aggregated metrics wrapper if we have multiple
+                if end_idx <= num_responses and responses_per_output > 1:
+                    return _AggregatedResponses(
+                        all_captured_responses[start_idx:end_idx]
+                    )
+                elif start_idx < num_responses:
+                    return all_captured_responses[start_idx]
 
         # Fall back to index-based or output itself
         if example_index < len(all_captured_responses):

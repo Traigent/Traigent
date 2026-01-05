@@ -22,13 +22,24 @@ import os
 import sys
 from pathlib import Path
 
+# Load .env file if present
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+
 from langchain_openai import ChatOpenAI
 
 # Check for API key
 api_key = os.environ.get("OPENAI_API_KEY")
 if not api_key:
     print("ERROR: OPENAI_API_KEY environment variable not set.")
-    print("Please run: export OPENAI_API_KEY='your-key-here'")
+    print("Please either:")
+    print(
+        "  1. Create a .env file in examples/quickstart/ with OPENAI_API_KEY=your-key"
+    )
+    print("  2. Run: export OPENAI_API_KEY='your-key-here'")
     sys.exit(1)
 
 # Set results folder to local directory
