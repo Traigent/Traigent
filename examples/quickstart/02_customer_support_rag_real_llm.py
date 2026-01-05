@@ -26,11 +26,22 @@ import os
 import sys
 from pathlib import Path
 
-# Check for API key first
+# Load .env file if present
+from dotenv import load_dotenv
+
+env_path = Path(__file__).parent / ".env"
+if env_path.exists():
+    load_dotenv(env_path)
+
+# Check for API key
 api_key = os.environ.get("OPENAI_API_KEY")
 if not api_key:
     print("ERROR: OPENAI_API_KEY environment variable not set.")
-    print("Please run: export OPENAI_API_KEY='your-key-here'")
+    print("Please either:")
+    print(
+        "  1. Create a .env file in examples/quickstart/ with OPENAI_API_KEY=your-key"
+    )
+    print("  2. Run: export OPENAI_API_KEY='your-key-here'")
     sys.exit(1)
 
 # Check for FAISS and text splitter
@@ -225,8 +236,8 @@ def get_judge_llm():
     """Get or create the judge LLM (cached for efficiency)."""
     global _judge_llm
     if _judge_llm is None:
-        # Use a cheap, fast model for judging
-        _judge_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, max_tokens=10)
+        # Use the cheapest, fastest model for judging (YES/NO responses)
+        _judge_llm = ChatOpenAI(model="gpt-4.1-nano", temperature=0, max_tokens=10)
     return _judge_llm
 
 
@@ -276,65 +287,230 @@ Reply with only "YES" or "NO"."""
 
 
 # =============================================================================
-# Configuration Space - including chunk_size and chunk_overlap for RAG optimization
+# DECISION VARIABLES - Functions and strategies that significantly impact accuracy
 # =============================================================================
+
+# -----------------------------------------------------------------------------
+# 1. PROMPTING STRATEGIES - Official templates from LangChain Hub + research papers
+# Sources:
+#   - rlm/rag-prompt: https://smith.langchain.com/hub/rlm/rag-prompt
+#   - hwchase17/react: https://smith.langchain.com/hub/hwchase17/react
+#   - ReAct paper: https://arxiv.org/abs/2210.03629
+#   - Chain-of-Thought: https://arxiv.org/abs/2201.11903
+# -----------------------------------------------------------------------------
+PROMPTING_STRATEGIES = {
+    # Baseline: Minimal instruction, let model decide how to answer
+    "direct": {
+        "system_prefix": "",
+        "before_context": "",
+        "after_question": "",
+    },
+    # Official LangChain RAG prompt (rlm/rag-prompt from LangChain Hub)
+    # Concise, focused on using context only
+    "rag_langchain": {
+        "system_prefix": """You are an assistant for question-answering tasks.""",
+        "before_context": "",
+        "after_question": """
+
+Use the following pieces of retrieved context to answer the question. If you don't know the answer, just say that you don't know. Use three sentences maximum and keep the answer concise.""",
+    },
+    # Chain-of-Thought (Wei et al., 2022, https://arxiv.org/abs/2201.11903)
+    # Forces explicit step-by-step reasoning before final answer
+    "chain_of_thought": {
+        "system_prefix": "",
+        "before_context": "",
+        "after_question": """
+
+Let's think step by step.
+First, identify what the customer is asking.
+Second, find the relevant information in the context above.
+Third, reason through any conditions or exceptions.
+Finally, provide your answer.
+
+Step-by-step reasoning:""",
+    },
+    # ReAct (Yao et al., 2022, https://arxiv.org/abs/2210.03629)
+    # Official format from hwchase17/react LangChain Hub template
+    # Thought/Action/Observation pattern for reasoning with evidence
+    "react": {
+        "system_prefix": """Answer the following questions as best you can using the provided context.
+
+Use the following format:
+
+Thought: you should always think about what information you need
+Evidence: quote the relevant text from the context that helps answer
+Thought: reason about what the evidence tells you
+Evidence: quote additional relevant text if needed
+Thought: I now know the final answer
+Final Answer: the final answer to the customer's question""",
+        "before_context": "Context:\n",
+        "after_question": """
+
+Begin!
+
+Thought:""",
+    },
+}
+
+
+# -----------------------------------------------------------------------------
+# 2. CONTEXT FORMATTERS - How to present retrieved chunks to the LLM
+# -----------------------------------------------------------------------------
+def format_bullet_list(docs: list[str]) -> str:
+    """Simple bullet list format."""
+    return "\n".join(f"• {doc}" for doc in docs)
+
+
+def format_numbered_sections(docs: list[str]) -> str:
+    """Numbered sections with clear separation."""
+    sections = []
+    for i, doc in enumerate(docs, 1):
+        sections.append(f"[Document {i}]\n{doc}")
+    return "\n\n".join(sections)
+
+
+def format_xml_tags(docs: list[str]) -> str:
+    """XML-style tags for clear structure (works well with newer models)."""
+    sections = []
+    for i, doc in enumerate(docs, 1):
+        sections.append(f'<context id="{i}">\n{doc}\n</context>')
+    return "\n".join(sections)
+
+
+CONTEXT_FORMATTERS = {
+    "bullet": format_bullet_list,
+    "numbered": format_numbered_sections,
+    "xml": format_xml_tags,
+}
+
+
+# -----------------------------------------------------------------------------
+# 3. OUTPUT INSTRUCTIONS - How to structure the response
+# -----------------------------------------------------------------------------
+OUTPUT_INSTRUCTIONS = {
+    "concise": "Provide a concise, direct answer in 1-2 sentences.",
+    "detailed": "Provide a comprehensive answer that addresses all aspects of the question. Include relevant details from the knowledge base.",
+    "structured": "Answer in this format:\n- Main point: [key answer]\n- Details: [supporting information]\n- Note: [any caveats or conditions]",
+}
+
+
+# -----------------------------------------------------------------------------
+# 4. SYSTEM PERSONAS - Different expert roles (affects tone and focus)
+# -----------------------------------------------------------------------------
+SYSTEM_PERSONAS = {
+    "helpful_agent": "You are a helpful customer support agent.",
+    "expert_advisor": "You are an expert retail advisor with deep knowledge of store policies. Be precise and authoritative.",
+    "friendly_assistant": "You are a friendly and empathetic customer assistant. Be warm but accurate.",
+}
+
+
+# =============================================================================
+# Configuration Space - using only cheap models for fast optimization
+# =============================================================================
+# Model IDs from OpenAI API (2025):
+#   - gpt-4o-mini: Fast, affordable small model
+#   - gpt-4.1-mini: Outperforms GPT-4o, faster & cheaper than GPT-4o
+#   - gpt-4.1-nano: Fastest & cheapest, great for focused tasks
 CONFIGURATION_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    # Model selection
+    "model": ["gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1-nano"],
     "temperature": [0.1, 0.3, 0.5, 0.7],
+    # Retrieval parameters
     "k": [2, 3, 5],  # Number of chunks to retrieve
     "chunk_size": [300, 500, 800],  # Characters per chunk
-    "chunk_overlap": [25, 50, 100],  # Sliding window overlap (context preservation)
+    "chunk_overlap": [25, 50, 100],  # Sliding window overlap
+    # Prompt engineering parameters (HIGH IMPACT on accuracy)
+    # Official LangChain Hub + research paper prompting strategies
+    "prompting_strategy": [
+        "direct",
+        "rag_langchain",
+        "chain_of_thought",
+        "react",
+    ],
+    "context_format": ["bullet", "numbered", "xml"],
+    "output_instruction": ["concise", "detailed", "structured"],
+    "persona": ["helpful_agent", "expert_advisor", "friendly_assistant"],
 }
 
 DEFAULT_CONFIG = {
-    "model": "gpt-3.5-turbo",
+    "model": "gpt-4o-mini",
     "temperature": 0.3,
     "k": 3,
     "chunk_size": 500,
     "chunk_overlap": 50,
+    "prompting_strategy": "direct",
+    "context_format": "bullet",
+    "output_instruction": "concise",
+    "persona": "helpful_agent",
 }
 
 # Constraints as descriptive strings for printing
 CONSTRAINTS_DESCRIPTIONS = [
-    "GPT-4o: temperature <= 0.3 (expensive model, keep focused)",
-    "GPT-3.5-turbo: k >= 3 (needs more context)",
+    "gpt-4.1-nano: temperature <= 0.3 (smallest model, keep focused)",
+    "gpt-4.1-nano: only 'direct' or 'rag_langchain' prompting (complex strategies overwhelm small models)",
     "chunk_overlap < chunk_size (overlap must be smaller than chunk)",
+    "chain_of_thought/react: use 'detailed' or 'structured' output (not concise - these need room to reason)",
 ]
 
 
 @traigent.optimize(
     configuration_space=CONFIGURATION_SPACE,
     default_config=DEFAULT_CONFIG,
-    objectives=["accuracy", "cost", "latency"],
+    objectives=["accuracy"],  # Single objective enables trial-level pruning
     constraints=[
-        # Don't use high temperature with GPT-4o (expensive + unpredictable)
-        lambda cfg: cfg["temperature"] <= 0.3 if cfg["model"] == "gpt-4o" else True,
-        # GPT-3.5-turbo needs more context documents
-        lambda cfg: cfg["k"] >= 3 if cfg["model"] == "gpt-3.5-turbo" else True,
+        # Nano model: keep it simple - low temperature and simple prompting only
+        lambda cfg: (
+            cfg["temperature"] <= 0.3 if cfg["model"] == "gpt-4.1-nano" else True
+        ),
+        lambda cfg: (
+            cfg["prompting_strategy"] in ("direct", "rag_langchain")
+            if cfg["model"] == "gpt-4.1-nano"
+            else True
+        ),
         # Overlap must be smaller than chunk size
         lambda cfg: cfg["chunk_overlap"] < cfg["chunk_size"],
+        # Complex reasoning strategies (CoT, ReAct) need room to express - not concise output
+        lambda cfg: (
+            cfg["output_instruction"] != "concise"
+            if cfg["prompting_strategy"] in ("chain_of_thought", "react")
+            else True
+        ),
     ],
     metric_functions={"accuracy": rag_accuracy_scorer},
     evaluation=EvaluationOptions(eval_dataset=str(RAG_DATASET_PATH)),
     execution=ExecutionOptions(
         execution_mode="edge_analytics",
         minimal_logging=False,
-        # reps_per_trial/reps_aggregation removed - Enterprise only
     ),
     injection=InjectionOptions(
         auto_override_frameworks=True,
     ),
-    max_trials=20,
+    # Parallel execution for faster optimization
+    parallel_config={
+        "mode": "parallel",
+        "trial_concurrency": 2,  # Run 2 trials in parallel (conservative to avoid API throttling)
+        "thread_workers": 4,  # Thread pool for async operations
+    },
+    max_trials=29,  # Will get 30 total (29 + 1 baseline)
+    plateau_window=5,  # Stop early if no improvement for 5 trials
+    plateau_epsilon=0.05,  # 5% improvement threshold (more aggressive early stopping)
     # Note: timeout/cost_limit/cost_approved must be set via env vars:
     # TRAIGENT_RUN_COST_LIMIT=5.00 TRAIGENT_COST_APPROVED=true timeout 600 python ...
 )
 def customer_support_agent(
     query: str,
-    model: str = "gpt-3.5-turbo",
+    # Model parameters
+    model: str = "gpt-4o-mini",
     temperature: float = 0.3,
+    # Retrieval parameters
     k: int = 3,
     chunk_size: int = 500,
     chunk_overlap: int = 50,
+    # Prompt engineering parameters (HIGH IMPACT)
+    prompting_strategy: str = "direct",
+    context_format: str = "bullet",
+    output_instruction: str = "concise",
+    persona: str = "helpful_agent",
 ) -> str:
     """Answer customer questions using RAG with real LLM calls.
 
@@ -350,23 +526,53 @@ def customer_support_agent(
     - k: How many chunks to retrieve
     - chunk_size: Size of document chunks (affects retrieval precision)
     - chunk_overlap: Sliding window overlap (preserves context at boundaries)
+    - prompting_strategy: Official LangChain Hub + research paper templates:
+        * direct: Baseline, minimal instruction
+        * rag_langchain: Official rlm/rag-prompt from LangChain Hub
+        * chain_of_thought: "Let's think step by step" (Wei et al. 2022)
+        * react: Thought/Evidence/Answer format (Yao et al. 2022, hwchase17/react)
+    - context_format: How to present retrieved chunks (bullet/numbered/xml)
+    - output_instruction: How to structure the response (concise/detailed/structured)
+    - persona: Expert role to adopt (helpful_agent/expert_advisor/friendly_assistant)
     """
     # Get vector store for this chunk_size/overlap and retrieve relevant chunks
     vector_store = get_vector_store(chunk_size, chunk_overlap)
     docs = semantic_retriever(vector_store, query, k=k)
-    context = "\n".join(f"- {doc}" for doc in docs)
 
-    # Build prompt with retrieved context
-    prompt = f"""You are a helpful customer support agent. Answer the customer's question
-based ONLY on the following knowledge base information.
+    # Format context using the selected formatter
+    context_formatter = CONTEXT_FORMATTERS[context_format]
+    formatted_context = context_formatter(docs)
 
-Knowledge Base:
-{context}
+    # Get prompting strategy components (system_prefix, before_context, after_question)
+    strategy = PROMPTING_STRATEGIES[prompting_strategy]
+    system_prefix = strategy["system_prefix"]
+    before_context = strategy["before_context"]
+    after_question = strategy["after_question"]
+
+    # Get output instruction
+    output_instr = OUTPUT_INSTRUCTIONS[output_instruction]
+
+    # Get system persona
+    system_persona = SYSTEM_PERSONAS[persona]
+
+    # Build prompt with all configurable components
+    # Strategy system_prefix augments the persona
+    full_system = f"{system_persona} {system_prefix}".strip()
+
+    # before_context introduces the knowledge base (e.g., "Available Evidence:\n")
+    context_intro = before_context if before_context else "Knowledge Base:\n"
+
+    prompt = f"""{full_system}
+
+Answer the customer's question based ONLY on the following knowledge base information.
+
+{context_intro}{formatted_context}
 
 Customer Question: {query}
+{after_question}
+{output_instr}
 
-Provide a concise, helpful answer based on the information above. If the information
-doesn't fully answer the question, say what you can based on what's available."""
+If the information doesn't fully answer the question, say what you can based on what's available."""
 
     # Make real LLM call
     llm = ChatOpenAI(
@@ -610,7 +816,7 @@ async def main():
     test_query = "How do I get my money back?"
     retrieved = semantic_retriever(vector_store, test_query, k=2)
     print(f"  Query: '{test_query}'")
-    print(f"  Retrieved (semantic match):")
+    print("  Retrieved (semantic match):")
     for doc in retrieved:
         preview = doc[:80].replace("\n", " ")
         print(f'    - "{preview}..."')
@@ -626,6 +832,8 @@ async def main():
     print("Optimization Complete!")
     print("=" * 60)
     print()
+    print(f"Total Trials Run: {len(results.trials)}")
+    print(f"Stop Reason: {getattr(results, 'stop_reason', 'max_trials')}")
     print(f"Best Score: {results.best_score}")
     print(f"Best Configuration: {results.best_config}")
     print()

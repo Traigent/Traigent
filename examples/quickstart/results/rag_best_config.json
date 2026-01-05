@@ -1,10 +1,14 @@
 {
-  "best_score": 0.6428571428571429,
+  "best_score": 0.8095238095238095,
   "best_config": {
-    "model": "gpt-4o",
-    "temperature": 0.3,
-    "k": 3,
+    "model": "gpt-4.1-mini",
+    "temperature": 0.7,
+    "k": 2,
     "chunk_size": 300,
-    "chunk_overlap": 25
+    "chunk_overlap": 25,
+    "prompting_strategy": "rag_langchain",
+    "context_format": "xml",
+    "output_instruction": "concise",
+    "persona": "friendly_assistant"
   }
 }
