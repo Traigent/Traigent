@@ -1,6 +1,6 @@
-"""Data Transfer Objects for OptiGen Backend Integration.
+"""Data Transfer Objects for Traigent Backend Integration.
 
-This module provides DTOs that conform to optigen_schemas while supporting
+This module provides DTOs that conform to Traigent schemas while supporting
 privacy-preserving defaults for Edge Analytics mode execution.
 """
 

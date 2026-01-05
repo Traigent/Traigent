@@ -6,7 +6,7 @@
 
 This module contains **simplified, naive implementations** of platform executors for:
 
-1. **Local Testing**: Test platform integrations without OptiGen backend
+1. **Local Testing**: Test platform integrations without Traigent backend
 2. **Development**: Experiment with new platforms during development
 3. **Prototyping**: Quick validation of platform compatibility
 4. **Education**: Show how platform abstractions might work
@@ -71,10 +71,10 @@ def my_function():
 
 ## Migration Path
 
-When OptiGen backend is ready:
+When Traigent backend is ready:
 
 1. Remove this experimental module
-2. Update cloud client to use OptiGen services
+2. Update cloud client to use Traigent services
 3. Keep framework override system (the real seamless integration)
 4. Deprecate simple cloud implementations
 

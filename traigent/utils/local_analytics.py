@@ -231,9 +231,7 @@ class LocalAnalytics:
 
             api_key = BackendConfig.get_api_key()
             if not api_key:
-                logger.debug(
-                    "No OptiGen/Traigent API key found, analytics submission skipped"
-                )
+                logger.debug("No Traigent API key found, analytics submission skipped")
                 return {"success": False, "reason": "No API key available"}
 
             if len(api_key) < MIN_TOKEN_LENGTH:
