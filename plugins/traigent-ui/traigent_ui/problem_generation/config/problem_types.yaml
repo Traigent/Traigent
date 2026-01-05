@@ -1,0 +1,21 @@
+classification:
+  description: "Categorizing input text into predefined classes or labels"
+  keywords:
+    - classify
+    - categorize
+    - label
+    - sentiment
+    - intent
+  example_phrases:
+    - "classify emails as spam or not spam"
+    - "categorize customer feedback"
+    - "sentiment analysis of reviews"
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+
+generation:
+  description: "Creating new text based on prompts, context, or requirements"
+  # ... etc
