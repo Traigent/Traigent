@@ -1,0 +1,70 @@
+{
+  "categories": [
+    "bug_report",
+    "feature_request",
+    "performance_issue",
+    "security_concern",
+    "documentation_update",
+    "infrastructure"
+  ],
+  "input_patterns": {
+    "code": "Source code to analyze",
+    "language": "Programming language",
+    "context": "Code context or description"
+  },
+  "output_patterns": {
+    "issues": "List of identified issues",
+    "severity": "Issue severity level",
+    "suggestions": "Improvement suggestions"
+  },
+  "complexity_indicators": {
+    "easy": [
+      "simple bug",
+      "clear issue",
+      "standard practice"
+    ],
+    "medium": [
+      "design issue",
+      "performance concern",
+      "moderate complexity"
+    ],
+    "hard": [
+      "architectural issue",
+      "security vulnerability",
+      "complex logic"
+    ],
+    "very_hard": [
+      "system-wide impact",
+      "complex interactions",
+      "optimization"
+    ],
+    "expert": [
+      "advanced algorithms",
+      "novel approaches",
+      "research-level"
+    ]
+  },
+  "common_terms": [
+    "code",
+    "function",
+    "variable",
+    "algorithm",
+    "database",
+    "API",
+    "security",
+    "performance",
+    "bug",
+    "feature",
+    "system",
+    "architecture"
+  ],
+  "issue_types": [
+    "logic_error",
+    "null_pointer",
+    "memory_leak",
+    "race_condition",
+    "security_vulnerability",
+    "performance_bottleneck",
+    "design_flaw"
+  ]
+}
