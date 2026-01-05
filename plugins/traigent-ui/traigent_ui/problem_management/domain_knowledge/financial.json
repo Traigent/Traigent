@@ -1,0 +1,69 @@
+{
+  "categories": [
+    "loan_application",
+    "investment_advice",
+    "fraud_detection",
+    "credit_assessment",
+    "insurance_claim",
+    "tax_advice"
+  ],
+  "input_patterns": {
+    "financial_data": "Financial information or statements",
+    "transaction_details": "Transaction information",
+    "risk_profile": "Risk assessment data"
+  },
+  "output_patterns": {
+    "risk_level": "Financial risk assessment",
+    "recommendation": "Financial recommendation",
+    "approval_status": "Approval or rejection decision"
+  },
+  "complexity_indicators": {
+    "easy": [
+      "simple transaction",
+      "standard product",
+      "clear guidelines"
+    ],
+    "medium": [
+      "multiple factors",
+      "some risk",
+      "moderate complexity"
+    ],
+    "hard": [
+      "high risk",
+      "complex product",
+      "regulatory considerations"
+    ],
+    "very_hard": [
+      "institutional level",
+      "complex derivatives",
+      "regulatory overlap"
+    ],
+    "expert": [
+      "novel instruments",
+      "systemic risk",
+      "regulatory uncertainty"
+    ]
+  },
+  "common_terms": [
+    "loan",
+    "credit",
+    "investment",
+    "risk",
+    "return",
+    "portfolio",
+    "insurance",
+    "fraud",
+    "compliance",
+    "regulation",
+    "audit"
+  ],
+  "product_types": [
+    "checking_account",
+    "savings_account",
+    "credit_card",
+    "mortgage",
+    "personal_loan",
+    "investment_account",
+    "insurance_policy"
+  ]
+}
