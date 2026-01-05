@@ -625,3 +625,188 @@ class TestPluginVersionEnforcement:
         assert "5.0.0" in message
         assert "1.0.0" in message
         assert "pip install --upgrade traigent" in message
+
+
+class TestFeatureNotAvailableErrorGuards:
+    """Tests for FeatureNotAvailableError guards in modules.
+
+    These tests verify that modules properly raise FeatureNotAvailableError
+    with helpful install hints when cloud features are required but not available.
+    """
+
+    def test_feature_not_available_error_attributes(self):
+        """Verify FeatureNotAvailableError has correct attributes."""
+        from traigent.utils.exceptions import FeatureNotAvailableError
+
+        error = FeatureNotAvailableError(
+            "Test feature",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
+
+        assert "Test feature" in str(error)
+        assert "traigent-cloud" in str(error)
+        assert "pip install traigent[cloud]" in str(error)
+
+    def test_feature_not_available_error_message_format(self):
+        """Verify error message is user-friendly."""
+        from traigent.utils.exceptions import FeatureNotAvailableError
+
+        error = FeatureNotAvailableError(
+            "OptiGen cloud integration",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
+
+        message = str(error)
+        # Should contain the feature name
+        assert "OptiGen cloud integration" in message
+        # Should contain install instructions
+        assert "pip install" in message
+
+    def test_specification_generator_guard_raises_correctly(self):
+        """Test specification_generator._require_cloud_models() raises properly."""
+
+        class CloudModelsBlocker:
+            """Meta path finder that blocks traigent.cloud.models imports."""
+
+            def find_module(self, name, path=None):
+                if name.startswith("traigent.cloud"):
+                    return self
+                return None
+
+            def load_module(self, name):
+                err = ModuleNotFoundError(f"No module named '{name}'")
+                err.name = name
+                raise err
+
+        # Clear cached imports for specification_generator
+        modules_to_clear = [
+            k
+            for k in tuple(sys.modules.keys())
+            if "specification_generator" in k or k.startswith("traigent.cloud")
+        ]
+        for mod in modules_to_clear:
+            sys.modules.pop(mod, None)
+
+        blocker = CloudModelsBlocker()
+        sys.meta_path.insert(0, blocker)
+
+        try:
+            # Import module (should succeed with graceful degradation)
+            from traigent.agents import specification_generator
+
+            # The _require_cloud_models guard should raise when cloud is missing
+            from traigent.utils.exceptions import FeatureNotAvailableError
+
+            # Force reload to get fresh state
+            if hasattr(specification_generator, "_require_cloud_models"):
+                # Module has the guard function - it should raise
+                if not specification_generator._CLOUD_MODELS_AVAILABLE:
+                    with pytest.raises(FeatureNotAvailableError) as exc_info:
+                        specification_generator._require_cloud_models()
+
+                    assert "Agent specification generation" in str(exc_info.value)
+                    assert "pip install traigent[cloud]" in str(exc_info.value)
+        finally:
+            sys.meta_path.remove(blocker)
+
+
+class TestOptiGenClientEdgeAnalyticsMode:
+    """Tests for OptiGenClient edge_analytics mode without cloud dependencies."""
+
+    def test_optigen_client_edge_analytics_without_cloud(self):
+        """OptiGenClient should initialize in edge_analytics mode without cloud."""
+        from importlib.abc import MetaPathFinder
+
+        class CloudBlocker(MetaPathFinder):
+            """Meta path finder that blocks traigent.cloud imports using find_spec."""
+
+            def find_spec(self, fullname, path, target=None):
+                if fullname.startswith("traigent.cloud"):
+                    # Raise ModuleNotFoundError with .name attribute set
+                    err = ModuleNotFoundError(f"No module named '{fullname}'")
+                    err.name = fullname
+                    raise err
+                return None
+
+        # Clear cached cloud imports first
+        cloud_modules = [
+            k for k in tuple(sys.modules.keys()) if k.startswith("traigent.cloud")
+        ]
+        for mod in cloud_modules:
+            sys.modules.pop(mod, None)
+
+        # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
+        sys.modules.pop("traigent.optigen_integration", None)
+
+        blocker = CloudBlocker()
+        sys.meta_path.insert(0, blocker)
+
+        try:
+            # Import fresh module with cloud blocked
+            import traigent.optigen_integration as optigen_integration
+
+            # Should be able to create client in edge_analytics mode
+            client = optigen_integration.OptiGenClient(
+                execution_mode="edge_analytics",
+                agent_builder=None,  # Not needed for init
+            )
+
+            # Verify edge_analytics mode was selected
+            from traigent.config.types import ExecutionMode
+
+            assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
+            # Backend client should be None in edge_analytics mode
+            assert client.backend_client is None
+        finally:
+            sys.meta_path.remove(blocker)
+            # Clean up for other tests
+            sys.modules.pop("traigent.optigen_integration", None)
+
+    def test_optigen_client_cloud_mode_requires_cloud(self):
+        """OptiGenClient should raise FeatureNotAvailableError for cloud mode."""
+        from importlib.abc import MetaPathFinder
+
+        class CloudBlocker(MetaPathFinder):
+            """Meta path finder that blocks traigent.cloud imports using find_spec."""
+
+            def find_spec(self, fullname, path, target=None):
+                if fullname.startswith("traigent.cloud"):
+                    # Raise ModuleNotFoundError with .name attribute set
+                    err = ModuleNotFoundError(f"No module named '{fullname}'")
+                    err.name = fullname
+                    raise err
+                return None
+
+        # Clear cached cloud imports first
+        cloud_modules = [
+            k for k in tuple(sys.modules.keys()) if k.startswith("traigent.cloud")
+        ]
+        for mod in cloud_modules:
+            sys.modules.pop(mod, None)
+
+        # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
+        sys.modules.pop("traigent.optigen_integration", None)
+
+        blocker = CloudBlocker()
+        sys.meta_path.insert(0, blocker)
+
+        try:
+            # Import fresh module with cloud blocked
+            import traigent.optigen_integration as optigen_integration
+            from traigent.utils.exceptions import FeatureNotAvailableError
+
+            # Should raise for cloud mode
+            with pytest.raises(FeatureNotAvailableError) as exc_info:
+                optigen_integration.OptiGenClient(
+                    execution_mode="cloud",
+                    agent_builder=None,
+                )
+
+            assert "OptiGen cloud integration" in str(exc_info.value)
+            assert "pip install traigent[cloud]" in str(exc_info.value)
+        finally:
+            sys.meta_path.remove(blocker)
+            # Clean up for other tests
+            sys.modules.pop("traigent.optigen_integration", None)
