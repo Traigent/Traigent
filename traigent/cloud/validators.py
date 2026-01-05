@@ -1,7 +1,7 @@
-"""Validation functions for OptiGen Backend integration.
+"""Validation functions for Traigent Backend integration.
 
 This module contains validation functions for measures, summary statistics,
-and configuration run submissions according to OptiGen schema specifications.
+and configuration run submissions according to Traigent schema specifications.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -11,7 +11,7 @@ from typing import Any
 
 
 def validate_measure_results(measure: Any) -> bool:
-    """Validate a single MeasureResults object according to OptiGen schema.
+    """Validate a single MeasureResults object according to Traigent schema.
 
     Args:
         measure: The measure object to validate
@@ -44,7 +44,7 @@ def validate_measure_results(measure: Any) -> bool:
 
 
 def validate_measures_array(measures: Any) -> bool:
-    """Validate measures array according to OptiGen schema.
+    """Validate measures array according to Traigent schema.
 
     Args:
         measures: The measures array to validate
@@ -68,7 +68,7 @@ def validate_measures_array(measures: Any) -> bool:
 
 
 def validate_summary_stats(summary_stats: Any) -> bool:
-    """Validate summary_stats according to OptiGen schema.
+    """Validate summary_stats according to Traigent schema.
 
     Args:
         summary_stats: The summary_stats object to validate

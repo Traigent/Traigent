@@ -1,6 +1,6 @@
-"""Unit tests for traigent.optigen_integration.
+"""Unit tests for traigent.traigent_client.
 
-Tests for the OptiGenClient which provides high-level optimization
+Tests for TraigentClient which provides high-level optimization
 with multiple execution modes (edge analytics, standard/hybrid, cloud/SaaS).
 """
 
@@ -13,14 +13,14 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from traigent.config.types import ExecutionMode
-from traigent.optigen_integration import OptiGenClient
+from traigent.traigent_client import TraigentClient
 from traigent.utils.exceptions import OptimizationError
 
 
-class TestOptiGenClientInitialization:
-    """Tests for OptiGenClient initialization."""
+class TestTraigentClientInitialization:
+    """Tests for TraigentClient initialization."""
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_init_with_explicit_api_key(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -29,7 +29,7 @@ class TestOptiGenClientInitialization:
         mock_backend_config.get_api_key.return_value = "default_key"
         mock_backend_config.get_backend_url.return_value = "https://default.url"
 
-        client = OptiGenClient(
+        client = TraigentClient(
             api_key="explicit_key", backend_url="https://explicit.url"
         )
 
@@ -38,7 +38,7 @@ class TestOptiGenClientInitialization:
         assert client._explicit_api_key is True
         assert client.execution_mode == ExecutionMode.CLOUD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_init_with_default_config(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -47,13 +47,13 @@ class TestOptiGenClientInitialization:
         mock_backend_config.get_api_key.return_value = "default_key"
         mock_backend_config.get_backend_url.return_value = "https://default.url"
 
-        client = OptiGenClient()
+        client = TraigentClient()
 
         assert client.api_key == "default_key"
         assert client.backend_url == "https://default.url"
         assert client._explicit_api_key is False
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_init_with_edge_analytics_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -62,11 +62,11 @@ class TestOptiGenClientInitialization:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="edge_analytics")
+        client = TraigentClient(execution_mode="edge_analytics")
 
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_init_with_agent_builder(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -76,7 +76,7 @@ class TestOptiGenClientInitialization:
         mock_backend_config.get_backend_url.return_value = "https://url"
 
         mock_builder = Mock()
-        client = OptiGenClient(agent_builder=mock_builder)
+        client = TraigentClient(agent_builder=mock_builder)
 
         assert client.agent_builder is mock_builder
 
@@ -84,7 +84,7 @@ class TestOptiGenClientInitialization:
 class TestDetermineExecutionMode:
     """Tests for execution mode determination logic."""
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_explicit_edge_analytics_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -93,10 +93,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="edge_analytics")
+        client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_explicit_standard_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -105,10 +105,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="standard")
+        client = TraigentClient(execution_mode="standard")
         assert client.execution_mode == ExecutionMode.STANDARD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_explicit_cloud_mode(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -117,10 +117,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="cloud")
+        client = TraigentClient(execution_mode="cloud")
         assert client.execution_mode == ExecutionMode.CLOUD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_LOCAL": "1"})
     def test_auto_mode_with_force_local(
@@ -130,10 +130,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_HYBRID": "1"})
     def test_auto_mode_with_force_hybrid(
@@ -143,10 +143,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.STANDARD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_FORCE_CLOUD": "1"})
     def test_auto_mode_with_force_cloud(
@@ -156,10 +156,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.CLOUD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {}, clear=True)
     def test_auto_mode_with_explicit_api_key(
@@ -169,10 +169,10 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(api_key="explicit_key", execution_mode="auto")
+        client = TraigentClient(api_key="explicit_key", execution_mode="auto")
         assert client.execution_mode == ExecutionMode.CLOUD
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {}, clear=True)
     def test_auto_mode_without_api_key(
@@ -182,14 +182,14 @@ class TestDetermineExecutionMode:
         mock_backend_config.get_api_key.return_value = None
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
 
 class TestCheckPrivacyRequirements:
     """Tests for privacy requirements detection."""
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_PRIVATE_DATA": "1"})
     def test_privacy_with_private_data_env(
@@ -199,10 +199,10 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client._check_privacy_requirements() is True
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch.dict("os.environ", {"TRAIGENT_COMPLIANCE_MODE": "1"})
     def test_privacy_with_compliance_mode(
@@ -212,10 +212,10 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client._check_privacy_requirements() is True
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch("os.path.exists", return_value=True)
     @patch.dict("os.environ", {}, clear=True)
@@ -229,10 +229,10 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client._check_privacy_requirements() is True
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     @patch("os.path.exists", return_value=False)
     @patch.dict("os.environ", {}, clear=True)
@@ -246,14 +246,14 @@ class TestCheckPrivacyRequirements:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client._check_privacy_requirements() is False
 
 
 class TestConfigurationNormalization:
     """Tests for configuration space normalization."""
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_normalize_with_fallback_model(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -262,7 +262,7 @@ class TestConfigurationNormalization:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient()
+        client = TraigentClient()
         normalized, defaults = client._normalise_configuration_space(
             {}, fallback_model="gpt-3.5-turbo"
         )
@@ -273,7 +273,7 @@ class TestConfigurationNormalization:
         assert normalized["top_p"] == [1.0]
         assert defaults["model"] == "gpt-3.5-turbo"
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_normalize_preserves_existing_values(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -282,7 +282,7 @@ class TestConfigurationNormalization:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient()
+        client = TraigentClient()
         config_space = {
             "model": ["gpt-4"],
             "temperature": [0.5, 1.0],
@@ -296,7 +296,7 @@ class TestConfigurationNormalization:
         assert defaults["model"] == "gpt-4"
         assert defaults["temperature"] == 0.5
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_normalize_with_agent_platform(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -305,13 +305,13 @@ class TestConfigurationNormalization:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient()
+        client = TraigentClient()
         config_space = {"agent_platform": "langchain"}
         normalized, defaults = client._normalise_configuration_space(config_space)
 
         assert defaults["agent_platform"] == "langchain"
 
-    @patch("traigent.optigen_integration.BackendIntegratedClient")
+    @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
     def test_normalize_default_agent_platform(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
@@ -320,7 +320,7 @@ class TestConfigurationNormalization:
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
-        client = OptiGenClient()
+        client = TraigentClient()
         normalized, defaults = client._normalise_configuration_space({})
 
         assert defaults["agent_platform"] == "openai"
@@ -331,71 +331,71 @@ class TestStaticHelpers:
 
     def test_has_parameter_value_with_none(self) -> None:
         """Test _has_parameter_value returns False for None."""
-        assert OptiGenClient._has_parameter_value(None) is False
+        assert TraigentClient._has_parameter_value(None) is False
 
     def test_has_parameter_value_with_empty_list(self) -> None:
         """Test _has_parameter_value returns False for empty list."""
-        assert OptiGenClient._has_parameter_value([]) is False
+        assert TraigentClient._has_parameter_value([]) is False
 
     def test_has_parameter_value_with_non_empty_list(self) -> None:
         """Test _has_parameter_value returns True for non-empty list."""
-        assert OptiGenClient._has_parameter_value([1, 2, 3]) is True
+        assert TraigentClient._has_parameter_value([1, 2, 3]) is True
 
     def test_has_parameter_value_with_empty_dict(self) -> None:
         """Test _has_parameter_value returns False for empty dict."""
-        assert OptiGenClient._has_parameter_value({}) is False
+        assert TraigentClient._has_parameter_value({}) is False
 
     def test_has_parameter_value_with_non_empty_dict(self) -> None:
         """Test _has_parameter_value returns True for non-empty dict."""
-        assert OptiGenClient._has_parameter_value({"key": "value"}) is True
+        assert TraigentClient._has_parameter_value({"key": "value"}) is True
 
     def test_has_parameter_value_with_scalar(self) -> None:
         """Test _has_parameter_value returns True for scalar values."""
-        assert OptiGenClient._has_parameter_value(42) is True
-        assert OptiGenClient._has_parameter_value("value") is True
+        assert TraigentClient._has_parameter_value(42) is True
+        assert TraigentClient._has_parameter_value("value") is True
 
     def test_extract_default_value_from_none(self) -> None:
         """Test _extract_default_value returns None for None input."""
-        assert OptiGenClient._extract_default_value(None) is None
+        assert TraigentClient._extract_default_value(None) is None
 
     def test_extract_default_value_from_list(self) -> None:
         """Test _extract_default_value extracts first element from list."""
-        assert OptiGenClient._extract_default_value([1, 2, 3]) == 1
-        assert OptiGenClient._extract_default_value([]) is None
+        assert TraigentClient._extract_default_value([1, 2, 3]) == 1
+        assert TraigentClient._extract_default_value([]) is None
 
     def test_extract_default_value_from_tuple_range(self) -> None:
         """Test _extract_default_value computes midpoint for numeric tuple."""
-        assert OptiGenClient._extract_default_value((0.0, 1.0)) == 0.5
-        assert OptiGenClient._extract_default_value((10, 20)) == 15
+        assert TraigentClient._extract_default_value((0.0, 1.0)) == 0.5
+        assert TraigentClient._extract_default_value((10, 20)) == 15
 
     def test_extract_default_value_from_tuple_first(self) -> None:
         """Test _extract_default_value extracts first element from non-numeric tuple."""
-        assert OptiGenClient._extract_default_value(("a", "b", "c")) == "a"
-        assert OptiGenClient._extract_default_value(()) is None
+        assert TraigentClient._extract_default_value(("a", "b", "c")) == "a"
+        assert TraigentClient._extract_default_value(()) is None
 
     def test_extract_default_value_from_dict(self) -> None:
         """Test _extract_default_value extracts from dict with known keys."""
-        assert OptiGenClient._extract_default_value({"value": 42}) == 42
-        assert OptiGenClient._extract_default_value({"default": 100}) == 100
-        assert OptiGenClient._extract_default_value({"initial": 50}) == 50
-        assert OptiGenClient._extract_default_value({"low": 10}) == 10
-        assert OptiGenClient._extract_default_value({"min": 5}) == 5
+        assert TraigentClient._extract_default_value({"value": 42}) == 42
+        assert TraigentClient._extract_default_value({"default": 100}) == 100
+        assert TraigentClient._extract_default_value({"initial": 50}) == 50
+        assert TraigentClient._extract_default_value({"low": 10}) == 10
+        assert TraigentClient._extract_default_value({"min": 5}) == 5
 
     def test_extract_default_value_from_dict_empty(self) -> None:
         """Test _extract_default_value returns None for empty dict."""
-        assert OptiGenClient._extract_default_value({}) is None
+        assert TraigentClient._extract_default_value({}) is None
 
     def test_extract_default_value_from_scalar(self) -> None:
         """Test _extract_default_value returns scalar as-is."""
-        assert OptiGenClient._extract_default_value(42) == 42
-        assert OptiGenClient._extract_default_value("value") == "value"
+        assert TraigentClient._extract_default_value(42) == 42
+        assert TraigentClient._extract_default_value("value") == "value"
 
     def test_apply_config_defaults(self) -> None:
         """Test _apply_config_defaults merges config with defaults."""
         defaults = {"model": "gpt-3.5-turbo", "temperature": 0.7, "extra": None}
         config = {"temperature": 0.9, "max_tokens": 512}
 
-        result = OptiGenClient._apply_config_defaults(config, defaults)
+        result = TraigentClient._apply_config_defaults(config, defaults)
 
         assert result["model"] == "gpt-3.5-turbo"
         assert result["temperature"] == 0.9
@@ -407,7 +407,7 @@ class TestStaticHelpers:
         defaults = {"model": "gpt-4", "temperature": 0.5}
         config = {}
 
-        result = OptiGenClient._apply_config_defaults(config, defaults)
+        result = TraigentClient._apply_config_defaults(config, defaults)
 
         assert result == defaults
 
@@ -418,12 +418,12 @@ class TestOptimizeValidation:
     @pytest.mark.asyncio
     async def test_optimize_missing_model_raises_error(self) -> None:
         """Test optimize raises error when model is missing in standard mode."""
-        with patch("traigent.optigen_integration.BackendIntegratedClient"):
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 # Use standard mode which doesn't auto-fill model
-                client = OptiGenClient(execution_mode="standard")
+                client = TraigentClient(execution_mode="standard")
 
                 def test_func() -> str:
                     return "test"
@@ -440,12 +440,12 @@ class TestOptimizeValidation:
     @pytest.mark.asyncio
     async def test_optimize_edge_analytics_missing_agent_builder(self) -> None:
         """Test optimize raises error when agent builder is missing in edge analytics mode."""
-        with patch("traigent.optigen_integration.BackendIntegratedClient"):
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 # Create client WITHOUT agent_builder
-                client = OptiGenClient(execution_mode="edge_analytics")
+                client = TraigentClient(execution_mode="edge_analytics")
 
                 def test_func() -> str:
                     return "test"
@@ -464,19 +464,19 @@ class TestOptimizeHybrid:
     """Tests for hybrid/standard mode optimization."""
 
     @pytest.fixture
-    def mock_client(self) -> OptiGenClient:
-        """Create a mock OptiGenClient in standard mode."""
-        with patch("traigent.optigen_integration.BackendIntegratedClient"):
+    def mock_client(self) -> TraigentClient:
+        """Create a mock TraigentClient in standard mode."""
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 mock_builder = Mock()
-                return OptiGenClient(
+                return TraigentClient(
                     execution_mode="standard", agent_builder=mock_builder
                 )
 
     @pytest.mark.asyncio
-    async def test_optimize_hybrid_success(self, mock_client: OptiGenClient) -> None:
+    async def test_optimize_hybrid_success(self, mock_client: TraigentClient) -> None:
         """Test successful hybrid optimization."""
 
         def test_func() -> str:
@@ -515,11 +515,11 @@ class TestOptimizeHybrid:
         mock_optimizer.submit_metrics = AsyncMock()
 
         with patch(
-            "traigent.optigen_integration.OptimizerDirectClient",
+            "traigent.traigent_client.OptimizerDirectClient",
             return_value=mock_optimizer,
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -540,7 +540,7 @@ class TestOptimizeHybrid:
 
     @pytest.mark.asyncio
     async def test_optimize_hybrid_no_agent_builder_raises(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test hybrid optimization raises error without agent builder."""
         mock_client.agent_builder = None
@@ -565,7 +565,7 @@ class TestOptimizeHybrid:
         mock_optimizer.__aexit__ = AsyncMock(return_value=None)
 
         with patch(
-            "traigent.optigen_integration.OptimizerDirectClient",
+            "traigent.traigent_client.OptimizerDirectClient",
             return_value=mock_optimizer,
         ):
             with pytest.raises(ValueError, match="Agent builder required"):
@@ -575,7 +575,7 @@ class TestOptimizeHybrid:
 
     @pytest.mark.asyncio
     async def test_optimize_hybrid_trial_failure_continues(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test hybrid optimization continues after trial failure."""
 
@@ -618,11 +618,11 @@ class TestOptimizeHybrid:
         mock_optimizer.submit_metrics = AsyncMock()
 
         with patch(
-            "traigent.optigen_integration.OptimizerDirectClient",
+            "traigent.traigent_client.OptimizerDirectClient",
             return_value=mock_optimizer,
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -648,16 +648,16 @@ class TestOptimizeSaaS:
     """Tests for SaaS/cloud mode optimization."""
 
     @pytest.fixture
-    def mock_client(self) -> OptiGenClient:
-        """Create a mock OptiGenClient in cloud mode."""
-        with patch("traigent.optigen_integration.BackendIntegratedClient"):
+    def mock_client(self) -> TraigentClient:
+        """Create a mock TraigentClient in cloud mode."""
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
-                return OptiGenClient(execution_mode="cloud")
+                return TraigentClient(execution_mode="cloud")
 
     @pytest.mark.asyncio
-    async def test_optimize_saas_success(self, mock_client: OptiGenClient) -> None:
+    async def test_optimize_saas_success(self, mock_client: TraigentClient) -> None:
         """Test successful SaaS optimization."""
 
         def test_func() -> str:
@@ -699,7 +699,7 @@ class TestOptimizeSaaS:
 
     @pytest.mark.asyncio
     async def test_optimize_saas_missing_upload_dataset(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test SaaS optimization raises error when upload_dataset is missing."""
 
@@ -724,7 +724,7 @@ class TestOptimizeSaaS:
 
     @pytest.mark.asyncio
     async def test_optimize_saas_custom_poll_interval(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test SaaS optimization with custom poll interval."""
 
@@ -766,7 +766,7 @@ class TestOptimizeSaaS:
 
     @pytest.mark.asyncio
     async def test_optimize_saas_invalid_poll_interval(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test SaaS optimization handles invalid poll interval."""
 
@@ -810,19 +810,19 @@ class TestOptimizeLocal:
     """Tests for edge analytics/local mode optimization."""
 
     @pytest.fixture
-    def mock_client(self) -> OptiGenClient:
-        """Create a mock OptiGenClient in edge analytics mode."""
-        with patch("traigent.optigen_integration.BackendIntegratedClient"):
+    def mock_client(self) -> TraigentClient:
+        """Create a mock TraigentClient in edge analytics mode."""
+        with patch("traigent.traigent_client.BackendIntegratedClient"):
             with patch("traigent.config.backend_config.BackendConfig") as mock_config:
                 mock_config.get_api_key.return_value = "key"
                 mock_config.get_backend_url.return_value = "https://url"
                 mock_builder = Mock()
-                return OptiGenClient(
+                return TraigentClient(
                     execution_mode="edge_analytics", agent_builder=mock_builder
                 )
 
     @pytest.mark.asyncio
-    async def test_optimize_local_success(self, mock_client: OptiGenClient) -> None:
+    async def test_optimize_local_success(self, mock_client: TraigentClient) -> None:
         """Test successful local optimization."""
 
         def test_func() -> str:
@@ -841,10 +841,10 @@ class TestOptimizeLocal:
         mock_optimizer.update_best = Mock()
 
         with patch(
-            "traigent.optigen_integration.get_optimizer", return_value=mock_optimizer
+            "traigent.traigent_client.get_optimizer", return_value=mock_optimizer
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -866,7 +866,7 @@ class TestOptimizeLocal:
                 assert result["best_configuration"] is not None
 
     @pytest.mark.asyncio
-    async def test_optimize_local_no_trials(self, mock_client: OptiGenClient) -> None:
+    async def test_optimize_local_no_trials(self, mock_client: TraigentClient) -> None:
         """Test local optimization with max_trials=0."""
 
         def test_func() -> str:
@@ -887,7 +887,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_missing_agent_builder(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization raises error without agent builder."""
         mock_client.agent_builder = None
@@ -906,7 +906,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_trial_failure(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization handles trial failures."""
 
@@ -926,10 +926,10 @@ class TestOptimizeLocal:
         mock_optimizer.update_best = Mock()
 
         with patch(
-            "traigent.optigen_integration.get_optimizer", return_value=mock_optimizer
+            "traigent.traigent_client.get_optimizer", return_value=mock_optimizer
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -946,7 +946,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_optimizer_stop_condition(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization respects optimizer stop condition."""
 
@@ -963,10 +963,10 @@ class TestOptimizeLocal:
         mock_optimizer.update_best = Mock()
 
         with patch(
-            "traigent.optigen_integration.get_optimizer", return_value=mock_optimizer
+            "traigent.traigent_client.get_optimizer", return_value=mock_optimizer
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -986,7 +986,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_custom_optimizer(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization with custom optimizer algorithm."""
 
@@ -1006,10 +1006,10 @@ class TestOptimizeLocal:
         mock_optimizer.update_best = Mock()
 
         with patch(
-            "traigent.optigen_integration.get_optimizer", return_value=mock_optimizer
+            "traigent.traigent_client.get_optimizer", return_value=mock_optimizer
         ) as mock_get_optimizer:
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
@@ -1036,7 +1036,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_optimizer_initialization_failure(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization handles optimizer initialization failure."""
 
@@ -1048,7 +1048,7 @@ class TestOptimizeLocal:
         objectives = ["accuracy"]
 
         with patch(
-            "traigent.optigen_integration.get_optimizer",
+            "traigent.traigent_client.get_optimizer",
             side_effect=OptimizationError("Invalid optimizer"),
         ):
             with pytest.raises(ValueError, match="Failed to initialize optimizer"):
@@ -1058,7 +1058,7 @@ class TestOptimizeLocal:
 
     @pytest.mark.asyncio
     async def test_optimize_local_metric_extraction(
-        self, mock_client: OptiGenClient
+        self, mock_client: TraigentClient
     ) -> None:
         """Test local optimization metric extraction logic."""
 
@@ -1080,10 +1080,10 @@ class TestOptimizeLocal:
         mock_optimizer.update_best = Mock()
 
         with patch(
-            "traigent.optigen_integration.get_optimizer", return_value=mock_optimizer
+            "traigent.traigent_client.get_optimizer", return_value=mock_optimizer
         ):
             with patch(
-                "traigent.optigen_integration.LocalExecutionAdapter"
+                "traigent.traigent_client.LocalExecutionAdapter"
             ) as mock_adapter_class:
                 mock_adapter = AsyncMock()
                 mock_adapter.execute_configuration = AsyncMock(
