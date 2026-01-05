@@ -1,0 +1,28 @@
+# Traigent Quickstart Demo Requirements
+#
+# Install with: pip install -r requirements.txt
+# Or install traigent with examples: pip install traigent[examples]
+
+# Core traigent (install from parent directory or PyPI)
+# pip install -e ../..  # For local development
+# pip install traigent  # For PyPI release
+
+# LLM Providers
+openai>=1.0.0
+langchain-openai>=0.3.30
+
+# RAG Components
+faiss-cpu>=1.7.0  # Vector search (not available on Windows, use faiss-gpu or skip)
+langchain-community>=0.3.27
+langchain-text-splitters>=0.3.8  # Document chunking
+
+# Jupyter Notebook
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Environment
+python-dotenv>=1.0.0  # Load .env files
+
+# Data Processing (for notebook visualizations)
+pandas>=1.5.0
+numpy>=1.21.0

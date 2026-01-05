@@ -113,7 +113,8 @@ KNOWLEDGE_BASE = [
         "temperature": [0.1, 0.5, 0.9],
         "k": [3, 5, 10]  # RAG retrieval depth
     },
-    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl")  # Provide your dataset
+    objectives=["accuracy", "cost"],  # What to optimize for
+    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl"),  # Provide your dataset
 )
 def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
@@ -176,7 +177,7 @@ custom_objectives = ObjectiveSchema.from_objectives(
         "top_p": (0.1, 1.0),        # Continuous range
         "model": ["gpt-3.5-turbo", "gpt-4o-mini"],  # Categorical
     },
-    eval_dataset="data/qa_samples.jsonl",
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
 )
 def weighted_agent(question: str) -> str:
     ...
@@ -334,7 +335,7 @@ import traigent
         "temperature": [0.1, 0.5, 0.9]
     },
     objectives=["accuracy", "cost"],
-    eval_dataset="data/qa_samples.jsonl"
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
 )
 def multi_provider_agent(question: str) -> str:
     config = traigent.get_config()

@@ -1147,6 +1147,8 @@ class OptimizedFunction:
             "parallel_config",
             "max_total_examples",
             "samples_include_pruned",
+            "plateau_window",
+            "plateau_epsilon",
         ):
             if key in overrides and key not in algorithm_kwargs:
                 algorithm_kwargs[key] = overrides[key]
