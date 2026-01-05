@@ -470,7 +470,7 @@ def sync_to_cloud(
         # Check for API key before creating SyncManager
         if not api_key and not dry_run:
             click.echo(
-                "❌ API key required for cloud sync. Use --api-key or set TRAIGENT_API_KEY (or legacy OPTIGEN_API_KEY) environment variable.",
+                "❌ API key required for cloud sync. Use --api-key or set TRAIGENT_API_KEY environment variable.",
                 err=True,
             )
             click.echo("💡 Get your API key at: https://traigent.ai/api-keys")

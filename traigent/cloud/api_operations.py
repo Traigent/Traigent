@@ -505,8 +505,8 @@ class ApiOperations:
             return False
 
         try:
-            # Convert metrics to backend measures format per OptiGen schema
-            # Map Traigent metrics to OptiGen standard measure IDs
+            # Convert metrics to backend measures format per Traigent schema
+            # Map Traigent metrics to standard measure IDs
             mapped_metrics = {}
 
             # Helper function to ensure value is a valid number
@@ -519,7 +519,7 @@ class ApiOperations:
                 except (TypeError, ValueError):
                     return 0.0
 
-            # Standard OptiGen measure mappings
+            # Standard Traigent measure mappings
             if "accuracy" in metrics and metrics["accuracy"] is not None:
                 mapped_metrics["accuracy"] = ensure_numeric(metrics["accuracy"])
             if "score" in metrics and metrics["score"] is not None:
@@ -546,7 +546,7 @@ class ApiOperations:
                 if key not in mapped_metrics and value is not None:
                     mapped_metrics[key] = ensure_numeric(value)
 
-            # Build measures data in the correct OptiGen format
+            # Build measures data in the correct Traigent format
             measures_data = {"measures": {"metrics": mapped_metrics, "metadata": {}}}
 
             # Add execution time if provided

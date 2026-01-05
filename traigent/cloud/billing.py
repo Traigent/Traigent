@@ -2,7 +2,7 @@
 
 This module provides comprehensive billing and cost tracking functionality,
 combining usage tracking, billing management, and detailed cost monitoring
-for Traigent SDK and OptiGen Backend integration.
+for Traigent SDK and Traigent Backend integration.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid

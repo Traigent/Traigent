@@ -5,9 +5,9 @@ This is NOT the real Traigent cloud implementation and does NOT represent
 Traigent's proprietary IP.
 
 This module provides a simple orchestrator for testing platform integrations
-locally while the OptiGen backend is under development.
+locally while the Traigent backend is under development.
 
-Real Traigent cloud execution happens in the OptiGen backend (proprietary).
+Real Traigent cloud execution happens in the Traigent backend (proprietary).
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -50,7 +50,7 @@ class SimpleCloudSimulator:
     🚨 WARNING: This is NOT the real Traigent cloud!
 
     This is a simplified simulator that helps test platform integrations
-    locally while the OptiGen backend is being developed.
+    locally while the Traigent backend is being developed.
 
     Features that are MISSING (present in real Traigent cloud):
     - Advanced optimization algorithms
@@ -208,11 +208,11 @@ REAL TRAIGENT FEATURES (not in this simulator):
 
 For production use:
 1. Use @traigent.optimize(auto_override_frameworks=True) for seamless integration
-2. Use Traigent cloud services (via OptiGen backend) when available
+2. Use Traigent cloud services (via Traigent backend) when available
 3. Do NOT rely on this experimental simulator
 
 This module exists only to help with local development and testing
-while the OptiGen backend is being built.
+while the Traigent backend is being built.
         """
 
 
