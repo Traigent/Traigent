@@ -80,10 +80,10 @@ class OptiGenClient:
             execution_mode: 'auto', 'hybrid', 'cloud', 'edge_analytics'
             agent_builder: Agent builder instance for local execution
 
-        Raises:
-            FeatureNotAvailableError: If cloud module is not installed
+        Note:
+            Cloud module is only required for 'hybrid', 'standard', and 'cloud' modes.
+            Edge analytics mode works without cloud dependencies installed.
         """
-        _require_cloud()
         from traigent.config.backend_config import BackendConfig
 
         # Track whether caller explicitly supplied an API key
@@ -93,17 +93,22 @@ class OptiGenClient:
         self.api_key = api_key or BackendConfig.get_api_key()
         self.backend_url = backend_url or BackendConfig.get_backend_url()
 
-        # Initialize backend client
-        self.backend_client = BackendIntegratedClient(
-            api_key=self.api_key,
-            backend_config=BackendClientConfig(backend_base_url=self.backend_url),
-        )
-
-        # Determine execution mode
+        # Determine execution mode first (before initializing cloud components)
         self.execution_mode = self._determine_execution_mode(execution_mode)
         logger.info(
             f"OptiGen client initialized with execution mode: {self.execution_mode}"
         )
+
+        # Initialize backend client only if needed for non-edge_analytics modes
+        # Edge analytics mode runs fully locally without any cloud dependencies
+        if self.execution_mode != ExecutionMode.EDGE_ANALYTICS:
+            _require_cloud()
+            self.backend_client = BackendIntegratedClient(
+                api_key=self.api_key,
+                backend_config=BackendClientConfig(backend_base_url=self.backend_url),
+            )
+        else:
+            self.backend_client = None  # type: ignore[assignment]
 
         # Initialize execution adapter
         self.execution_adapter = None
