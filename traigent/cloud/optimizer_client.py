@@ -1,4 +1,4 @@
-"""Direct client for OptiGen Optimizer metric submission in hybrid mode."""
+"""Direct client for Traigent Optimizer metric submission in hybrid mode."""
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
