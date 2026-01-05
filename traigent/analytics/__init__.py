@@ -1,60 +1,132 @@
-"""Advanced analytics and intelligence module for Traigent SDK."""
+"""Backward compatibility shim for traigent.analytics.
+
+.. deprecated:: 0.9.0
+    This module is deprecated. Install and use ``traigent-analytics`` plugin instead:
+    ``pip install traigent-analytics`` or ``pip install traigent[analytics]``
+
+The analytics functionality has been moved to the traigent-analytics plugin
+for better modularity. This shim provides backward compatibility by:
+1. Trying to import from traigent-analytics plugin (preferred)
+2. Falling back to embedded implementation (deprecated)
+"""
 
 # Traceability: CONC-Layer-Core CONC-Quality-Observability CONC-Quality-Maintainability
 
 from __future__ import annotations
 
-# Anomaly detection
-from .anomaly import (
-    AlertManager,
-    AlertSeverity,
-    AnomalyDetector,
-    AnomalyType,
-    PerformanceMonitor,
-    RegressionDetector,
-)
+import warnings as _warnings
 
-# Cost optimization (from split module)
-from .cost_optimization import (
-    BudgetAllocation,
-    BudgetAllocator,
-    CostOptimizationAction,
-    OptimizationStrategy,
-    Priority,
-    ResourceOptimizer,
-    ResourceType,
-    ResourceUsage,
-)
+_PLUGIN_AVAILABLE = False
 
-# Main AI intelligence (refactored)
-from .intelligence import CostOptimizationAI
+# Try to import from the plugin first
+try:
+    from traigent_analytics import (  # Anomaly detection; Cost optimization; Meta-learning; Predictive analytics; Scheduling
+        AlertManager,
+        AlertSeverity,
+        AlgorithmSelector,
+        AnomalyDetector,
+        AnomalyType,
+        BudgetAllocation,
+        BudgetAllocator,
+        CostForecaster,
+        CostOptimizationAction,
+        CostOptimizationAI,
+        JobPriority,
+        MetaLearningEngine,
+        OptimizationHistory,
+        OptimizationStrategy,
+        PerformanceForecaster,
+        PerformanceMonitor,
+        PerformancePredictor,
+        PredictiveAnalytics,
+        Priority,
+        RegressionDetector,
+        ResourceOptimizer,
+        ResourceType,
+        ResourceUsage,
+        ScheduledJob,
+        ScheduleType,
+        ScheduleWindow,
+        SchedulingPolicy,
+        SmartScheduler,
+        TrendAnalyzer,
+        UsageMetric,
+    )
 
-# Meta-learning
-from .meta_learning import (
-    AlgorithmSelector,
-    MetaLearningEngine,
-    OptimizationHistory,
-    PerformancePredictor,
-)
+    _PLUGIN_AVAILABLE = True
 
-# Predictive analytics
-from .predictive import (
-    CostForecaster,
-    PerformanceForecaster,
-    PredictiveAnalytics,
-    TrendAnalyzer,
-    UsageMetric,
-)
+except ImportError:
+    # Plugin not installed, use embedded implementation (deprecated)
+    # Anomaly detection
+    from .anomaly import (
+        AlertManager,
+        AlertSeverity,
+        AnomalyDetector,
+        AnomalyType,
+        PerformanceMonitor,
+        RegressionDetector,
+    )
 
-# Scheduling (from split module)
-from .scheduling import (
-    JobPriority,
-    ScheduledJob,
-    ScheduleType,
-    ScheduleWindow,
-    SchedulingPolicy,
-    SmartScheduler,
-)
+    # Cost optimization
+    from .cost_optimization import (
+        BudgetAllocation,
+        BudgetAllocator,
+        CostOptimizationAction,
+        OptimizationStrategy,
+        Priority,
+        ResourceOptimizer,
+        ResourceType,
+        ResourceUsage,
+    )
+
+    # Main AI intelligence
+    from .intelligence import CostOptimizationAI
+
+    # Meta-learning
+    from .meta_learning import (
+        AlgorithmSelector,
+        MetaLearningEngine,
+        OptimizationHistory,
+        PerformancePredictor,
+    )
+
+    # Predictive analytics
+    from .predictive import (
+        CostForecaster,
+        PerformanceForecaster,
+        PredictiveAnalytics,
+        TrendAnalyzer,
+        UsageMetric,
+    )
+
+    # Scheduling
+    from .scheduling import (
+        JobPriority,
+        ScheduledJob,
+        ScheduleType,
+        ScheduleWindow,
+        SchedulingPolicy,
+        SmartScheduler,
+    )
+
+    _warnings.warn(
+        "traigent.analytics embedded implementation is deprecated. "
+        "Install traigent-analytics plugin for better support: "
+        "pip install traigent-analytics",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+
+
+def is_analytics_available() -> bool:
+    """Check if analytics is available (either via plugin or embedded)."""
+    return True  # Always available through embedded fallback
+
+
+def is_plugin_installed() -> bool:
+    """Check if the analytics plugin is installed."""
+    return _PLUGIN_AVAILABLE
+
 
 __all__ = [
     # Meta-learning
@@ -93,4 +165,7 @@ __all__ = [
     "UsageMetric",
     "AlertSeverity",
     "AnomalyType",
+    # Helpers
+    "is_analytics_available",
+    "is_plugin_installed",
 ]
