@@ -712,11 +712,11 @@ class TestFeatureNotAvailableErrorGuards:
             sys.meta_path.remove(blocker)
 
 
-class TestOptiGenClientEdgeAnalyticsMode:
-    """Tests for OptiGenClient edge_analytics mode without cloud dependencies."""
+class TestTraigentClientEdgeAnalyticsMode:
+    """Tests for TraigentClient edge_analytics mode without cloud dependencies."""
 
-    def test_optigen_client_edge_analytics_without_cloud(self):
-        """OptiGenClient should initialize in edge_analytics mode without cloud."""
+    def test_traigent_client_edge_analytics_without_cloud(self):
+        """TraigentClient should initialize in edge_analytics mode without cloud."""
         from importlib.abc import MetaPathFinder
 
         class CloudBlocker(MetaPathFinder):
@@ -738,17 +738,17 @@ class TestOptiGenClientEdgeAnalyticsMode:
             sys.modules.pop(mod, None)
 
         # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
-        sys.modules.pop("traigent.optigen_integration", None)
+        sys.modules.pop("traigent.traigent_client", None)
 
         blocker = CloudBlocker()
         sys.meta_path.insert(0, blocker)
 
         try:
             # Import fresh module with cloud blocked
-            import traigent.optigen_integration as optigen_integration
+            import traigent.traigent_client as traigent_client
 
             # Should be able to create client in edge_analytics mode
-            client = optigen_integration.OptiGenClient(
+            client = traigent_client.TraigentClient(
                 execution_mode="edge_analytics",
                 agent_builder=None,  # Not needed for init
             )
@@ -762,10 +762,10 @@ class TestOptiGenClientEdgeAnalyticsMode:
         finally:
             sys.meta_path.remove(blocker)
             # Clean up for other tests
-            sys.modules.pop("traigent.optigen_integration", None)
+            sys.modules.pop("traigent.traigent_client", None)
 
-    def test_optigen_client_cloud_mode_requires_cloud(self):
-        """OptiGenClient should raise FeatureNotAvailableError for cloud mode."""
+    def test_traigent_client_cloud_mode_requires_cloud(self):
+        """TraigentClient should raise FeatureNotAvailableError for cloud mode."""
         from importlib.abc import MetaPathFinder
 
         class CloudBlocker(MetaPathFinder):
@@ -787,26 +787,26 @@ class TestOptiGenClientEdgeAnalyticsMode:
             sys.modules.pop(mod, None)
 
         # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
-        sys.modules.pop("traigent.optigen_integration", None)
+        sys.modules.pop("traigent.traigent_client", None)
 
         blocker = CloudBlocker()
         sys.meta_path.insert(0, blocker)
 
         try:
             # Import fresh module with cloud blocked
-            import traigent.optigen_integration as optigen_integration
+            import traigent.traigent_client as traigent_client
             from traigent.utils.exceptions import FeatureNotAvailableError
 
             # Should raise for cloud mode
             with pytest.raises(FeatureNotAvailableError) as exc_info:
-                optigen_integration.OptiGenClient(
+                traigent_client.TraigentClient(
                     execution_mode="cloud",
                     agent_builder=None,
                 )
 
-            assert "OptiGen cloud integration" in str(exc_info.value)
+            assert "Traigent cloud integration" in str(exc_info.value)
             assert "pip install traigent[cloud]" in str(exc_info.value)
         finally:
             sys.meta_path.remove(blocker)
             # Clean up for other tests
-            sys.modules.pop("traigent.optigen_integration", None)
+            sys.modules.pop("traigent.traigent_client", None)
