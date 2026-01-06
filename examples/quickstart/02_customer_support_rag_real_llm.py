@@ -59,6 +59,9 @@ from traigent.api.decorators import (
 # Create a simple RAG dataset for customer support
 RAG_DATASET_PATH = Path(__file__).parent / "rag_feedback.jsonl"
 
+# Retrieval log for debugging which chunks are retrieved
+RETRIEVAL_LOG_PATH = Path(__file__).parent / "results" / "retrieval_log.jsonl"
+
 # Create the dataset if it doesn't exist
 if not RAG_DATASET_PATH.exists():
     rag_data = [
@@ -209,6 +212,49 @@ def semantic_retriever(vector_store: FAISS, query: str, k: int = 3) -> list[str]
     return [doc.page_content for doc in docs]
 
 
+def semantic_retriever_with_logging(
+    vector_store: FAISS,
+    query: str,
+    k: int,
+    chunk_size: int,
+    chunk_overlap: int,
+) -> list[str]:
+    """Retrieve documents and log retrieval details for debugging.
+
+    Same as semantic_retriever but also logs to RETRIEVAL_LOG_PATH.
+    """
+    docs_with_scores = vector_store.similarity_search_with_score(query, k=k)
+    contents = []
+    chunk_details = []
+
+    for doc, score in docs_with_scores:
+        contents.append(doc.page_content)
+        chunk_details.append({
+            "content": doc.page_content,
+            "source": doc.metadata.get("source", "unknown"),
+            "category": doc.metadata.get("category", "unknown"),
+            "chunk_index": doc.metadata.get("chunk_index", -1),
+            "score": float(score),
+        })
+
+    # Log retrieval
+    try:
+        RETRIEVAL_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        log_entry = {
+            "query": query,
+            "k": k,
+            "chunk_size": chunk_size,
+            "chunk_overlap": chunk_overlap,
+            "retrieved_chunks": chunk_details,
+        }
+        with open(RETRIEVAL_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps(log_entry) + "\n")
+    except Exception:
+        pass  # Don't let logging break the main flow
+
+    return contents
+
+
 # LLM-as-Judge for accurate scoring
 _judge_llm = None
 
@@ -345,7 +391,7 @@ def customer_support_agent(
     """
     # Get vector store for this chunk_size/overlap and retrieve relevant chunks
     vector_store = get_vector_store(chunk_size, chunk_overlap)
-    docs = semantic_retriever(vector_store, query, k=k)
+    docs = semantic_retriever_with_logging(vector_store, query, k, chunk_size, chunk_overlap)
     context = "\n".join(f"- {doc}" for doc in docs)
 
     # Build prompt with retrieved context
@@ -589,6 +635,12 @@ async def main():
     # Run optimization
     print("Starting RAG optimization...")
     print("-" * 40)
+
+    # Clear retrieval log before optimization
+    if RETRIEVAL_LOG_PATH.exists():
+        RETRIEVAL_LOG_PATH.unlink()
+    print(f"Retrieval log: {RETRIEVAL_LOG_PATH}")
+
     results = await customer_support_agent.optimize(timeout=600)
 
     print()
