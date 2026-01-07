@@ -6,7 +6,6 @@ import os
 from unittest.mock import patch
 
 
-
 class TestLLMPresets:
     """Tests for LLMPresets factory methods."""
 

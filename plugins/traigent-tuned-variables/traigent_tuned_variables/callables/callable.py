@@ -108,11 +108,17 @@ class TunedCallable:
         return self.parameters.get(name, {})
 
     def get_full_space(self) -> dict[str, ParameterRange]:
-        """Get full configuration space including callable choice and all dependent params.
+        """Get configuration space with callable choice and per-callable params.
 
         Returns a configuration space with:
         - The callable choice as a Choices parameter
-        - All per-callable parameters with conditional constraints
+        - All per-callable parameters using dotted naming convention
+
+        Note:
+            This does NOT automatically generate Traigent constraints. The dotted
+            naming convention (`retriever.mmr.lambda_mult`) is for organization only.
+            Use `extract_callable_params()` at runtime to get only the relevant
+            parameters for the selected callable.
 
         Example:
             ```python
@@ -130,7 +136,12 @@ class TunedCallable:
             # }
 
             @traigent.optimize(**space)
-            def my_agent(...): ...
+            def my_agent(...):
+                config = traigent.get_config()
+                # Extract only the params relevant to selected callable
+                params = retrievers.extract_callable_params(config)
+                fn = retrievers.get_callable(config["retriever"])
+                result = fn(**params)
             ```
 
         Returns:
