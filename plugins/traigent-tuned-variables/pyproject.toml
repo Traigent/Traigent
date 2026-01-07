@@ -33,16 +33,24 @@ keywords = [
 ]
 dependencies = [
     "traigent>=0.9.0",
-    "numpy>=1.21.0",
 ]
 
 [project.optional-dependencies]
+# numpy enables more precise percentile calculations
+numpy = [
+    "numpy>=1.21.0",
+]
 dspy = [
     "dspy-ai>=2.0.0",
 ]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
+    "numpy>=1.21.0",  # For testing percentile calculations
+]
+all = [
+    "numpy>=1.21.0",
+    "dspy-ai>=2.0.0",
 ]
 
 [project.entry-points."traigent.plugins"]
