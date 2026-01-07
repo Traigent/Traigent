@@ -107,6 +107,107 @@ class TunedCallable:
             return {}
         return self.parameters.get(name, {})
 
+    def get_full_space(self) -> dict[str, ParameterRange]:
+        """Get full configuration space including callable choice and all dependent params.
+
+        Returns a configuration space with:
+        - The callable choice as a Choices parameter
+        - All per-callable parameters with conditional constraints
+
+        Example:
+            ```python
+            retrievers = TunedCallable(
+                name="retriever",
+                callables={"similarity": sim_fn, "mmr": mmr_fn},
+                parameters={"mmr": {"lambda_mult": Range(0.0, 1.0)}},
+            )
+
+            # Get full space for optimization
+            space = retrievers.get_full_space()
+            # Returns: {
+            #     "retriever": Choices(["similarity", "mmr"]),
+            #     "retriever.mmr.lambda_mult": Range(0.0, 1.0),
+            # }
+
+            @traigent.optimize(**space)
+            def my_agent(...): ...
+            ```
+
+        Returns:
+            Dictionary of parameter names to ParameterRange objects
+        """
+        space: dict[str, ParameterRange] = {}
+
+        # Add the main callable choice
+        space[self.name] = self.as_choices()
+
+        # Add conditional parameters for each callable
+        if self.parameters:
+            for callable_name, params in self.parameters.items():
+                for param_name, param_range in params.items():
+                    # Use dotted naming: {tuned_callable_name}.{callable_name}.{param_name}
+                    full_name = f"{self.name}.{callable_name}.{param_name}"
+                    space[full_name] = param_range
+
+        return space
+
+    def get_active_parameters(
+        self, config: dict[str, Any]
+    ) -> dict[str, ParameterRange]:
+        """Get parameters that are active for the selected callable.
+
+        Given a configuration dict, returns only the parameters relevant
+        to the currently selected callable.
+
+        Args:
+            config: Configuration dict containing at least {self.name: selected_callable}
+
+        Returns:
+            Dictionary of active parameter names to ParameterRange
+        """
+        selected = config.get(self.name)
+        if selected is None:
+            return {}
+
+        return self.get_parameters(selected)
+
+    def extract_callable_params(self, config: dict[str, Any]) -> dict[str, Any]:
+        """Extract callable-specific parameter values from a config dict.
+
+        Given a full config dict with dotted names like "retriever.mmr.lambda_mult",
+        extracts just the values relevant to the selected callable.
+
+        Args:
+            config: Full configuration dictionary
+
+        Returns:
+            Dictionary of parameter values for the selected callable
+
+        Example:
+            ```python
+            config = {
+                "retriever": "mmr",
+                "retriever.mmr.lambda_mult": 0.7,
+                "retriever.similarity.threshold": 0.5,  # ignored
+            }
+            params = retrievers.extract_callable_params(config)
+            # Returns: {"lambda_mult": 0.7}
+            ```
+        """
+        selected = config.get(self.name)
+        if selected is None:
+            return {}
+
+        prefix = f"{self.name}.{selected}."
+        result: dict[str, Any] = {}
+
+        for key, value in config.items():
+            if key.startswith(prefix):
+                param_name = key[len(prefix) :]
+                result[param_name] = value
+
+        return result
+
     def register(
         self,
         name: str,
