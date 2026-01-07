@@ -7,7 +7,6 @@ This module provides secure access to environment variables and configuration.
 
 import os
 import secrets
-import warnings
 from pathlib import Path
 from typing import Literal, overload
 
@@ -32,32 +31,6 @@ if os.environ.get("TRAIGENT_MOCK_MODE"):
 env_file = Path(__file__).parent.parent.parent / ".env"
 if env_file.exists():
     load_dotenv(env_file)
-else:
-    # Try to load from configs/env-templates/.env.local.template as fallback (development only)
-    template_file = (
-        Path(__file__).parent.parent.parent
-        / "configs"
-        / "env-templates"
-        / ".env.local.template"
-    )
-    if template_file.exists():
-        # Suppress warning in mock LLM mode or when running examples/tests
-        # (When mocking LLMs, you don't need real API keys)
-        mock_llm = os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
-        suppress_warning = (
-            os.getenv("TRAIGENT_SUPPRESS_ENV_WARNING", "false").lower() == "true"
-        )
-        if not mock_llm and not suppress_warning:
-            # Only warn for non-demo usage - check if running interactively
-            import sys
-
-            if sys.stderr.isatty():
-                warnings.warn(
-                    "No .env file found. Using template defaults. "
-                    "For production, create a .env file with your configuration.",
-                    UserWarning,
-                    stacklevel=2,
-                )
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
