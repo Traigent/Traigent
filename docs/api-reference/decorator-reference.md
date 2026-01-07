@@ -416,7 +416,7 @@ def my_function(prompt: str) -> str:
     ...
 ```
 
-Complete Example: See [06_custom_evaluator.py](../../walkthrough/examples/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation using GPT-4o-mini.
+Complete Example: See [06_custom_evaluator.py](../../walkthrough/examples/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
 
 #### `injection`
 
