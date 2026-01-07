@@ -11,16 +11,73 @@ Provides post-optimization analysis including:
 from __future__ import annotations
 
 import logging
+import math
+import statistics
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Literal
 
-import numpy as np
+# numpy is optional - only needed for percentile calculation
+try:
+    import numpy as np
+
+    HAS_NUMPY = True
+except ImportError:
+    HAS_NUMPY = False
 
 if TYPE_CHECKING:
+    from traigent.api.parameter_ranges import ParameterRange
     from traigent.core.result_types import OptimizationResult
 
 logger = logging.getLogger(__name__)
+
+
+def _mean(values: list[float]) -> float:
+    """Calculate mean using statistics stdlib."""
+    if not values:
+        return 0.0
+    return statistics.mean(values)
+
+
+def _stdev(values: list[float]) -> float:
+    """Calculate sample standard deviation using statistics stdlib."""
+    if len(values) < 2:
+        return 0.0
+    return statistics.stdev(values)
+
+
+def _variance(values: list[float]) -> float:
+    """Calculate sample variance using statistics stdlib."""
+    if len(values) < 2:
+        return 0.0
+    return statistics.variance(values)
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """Calculate percentile.
+
+    Uses numpy if available for exact calculation,
+    falls back to linear interpolation otherwise.
+    """
+    if not values:
+        return 0.0
+
+    if HAS_NUMPY:
+        return float(np.percentile(values, p))
+
+    # Fallback: simple linear interpolation
+    sorted_values = sorted(values)
+    n = len(sorted_values)
+    k = (n - 1) * p / 100.0
+    f = math.floor(k)
+    c = math.ceil(k)
+
+    if f == c:
+        return sorted_values[int(k)]
+
+    d0 = sorted_values[int(f)] * (c - k)
+    d1 = sorted_values[int(c)] * (k - f)
+    return d0 + d1
 
 
 class EliminationAction(str, Enum):
@@ -199,8 +256,9 @@ class VariableAnalyzer:
                 results = analyzer.analyze_permutation_based(objective)
 
             importance = {r.parameter: r.importance for r in results}
-        except ImportError:
-            # Fallback to simple variance-based importance
+        except (ImportError, AttributeError, TypeError):
+            # Fallback to simple variance-based importance if core analyzer fails
+            # This can happen if trials don't have expected format (e.g., mock trials)
             importance = self._compute_variance_importance(objective)
 
         self._importance_cache[objective] = importance
@@ -227,12 +285,12 @@ class VariableAnalyzer:
             if len(scores) < self.min_trials_per_value:
                 continue
 
-            mean_score = float(np.mean(scores))
-            std_score = float(np.std(scores)) if len(scores) > 1 else 0.0
+            mean_score = _mean(scores)
+            std_score = _stdev(scores)
 
             # Calculate confidence interval
             n = len(scores)
-            se = std_score / np.sqrt(n) if n > 1 else 0.0
+            se = std_score / math.sqrt(n) if n > 1 else 0.0
             ci = (mean_score - 1.96 * se, mean_score + 1.96 * se)
 
             rankings.append(
@@ -289,7 +347,7 @@ class VariableAnalyzer:
             for value, scores in stats.items():
                 if value not in value_stats:
                     value_stats[value] = {}
-                value_stats[value][obj] = np.mean(scores) if scores else 0.0
+                value_stats[value][obj] = _mean(scores) if scores else 0.0
 
         # Check Pareto dominance
         dominated = []
@@ -349,7 +407,7 @@ class VariableAnalyzer:
             return None
 
         # Find values in top 25% of scores
-        threshold = np.percentile(all_scores, 75)
+        threshold = _percentile(all_scores, 75)
         top_values = [
             v for v, s in zip(all_values, all_scores, strict=True) if s >= threshold
         ]
@@ -368,7 +426,8 @@ class VariableAnalyzer:
         prune_low_importance: bool = True,
         prune_dominated_values: bool = True,
         narrow_ranges: bool = True,
-    ) -> dict[str, Any]:
+        return_typed: bool = True,
+    ) -> dict[str, ParameterRange] | dict[str, Any]:
         """Return pruned configuration space for next optimization.
 
         Args:
@@ -376,15 +435,17 @@ class VariableAnalyzer:
             prune_low_importance: Remove variables with low importance
             prune_dominated_values: Remove dominated categorical values
             narrow_ranges: Narrow numeric ranges to promising regions
+            return_typed: If True, return typed ParameterRange objects;
+                         if False, return raw values (lists, tuples)
 
         Returns:
-            Refined configuration space
+            Refined configuration space with ParameterRange objects or raw values
         """
         config_space = self._get_config_space()
         if not config_space:
             return {}
 
-        refined = {}
+        refined: dict[str, Any] = {}
         primary_objective = objectives[0] if objectives else None
 
         for var_name, var_config in config_space.items():
@@ -407,12 +468,22 @@ class VariableAnalyzer:
                     if dominated and isinstance(var_config, (list, tuple)):
                         remaining = [v for v in var_config if v not in dominated]
                         if remaining:
-                            refined[var_name] = remaining
+                            refined[var_name] = (
+                                self._to_parameter_range(
+                                    var_name, remaining, "categorical"
+                                )
+                                if return_typed
+                                else remaining
+                            )
                             logger.info(
                                 f"Pruned {var_name}: removed {dominated}, keeping {remaining}"
                             )
                             continue
-                refined[var_name] = var_config
+                refined[var_name] = (
+                    self._to_parameter_range(var_name, var_config, "categorical")
+                    if return_typed
+                    else var_config
+                )
 
             elif var_type == "numeric":
                 if narrow_ranges and primary_objective:
@@ -420,15 +491,66 @@ class VariableAnalyzer:
                         var_name, primary_objective
                     )
                     if suggested:
-                        refined[var_name] = suggested
+                        refined[var_name] = (
+                            self._to_parameter_range(var_name, suggested, "numeric")
+                            if return_typed
+                            else suggested
+                        )
                         logger.info(f"Narrowed {var_name}: {suggested}")
                         continue
-                refined[var_name] = var_config
+                refined[var_name] = (
+                    self._to_parameter_range(var_name, var_config, "numeric")
+                    if return_typed
+                    else var_config
+                )
 
             else:
-                refined[var_name] = var_config
+                refined[var_name] = (
+                    self._to_parameter_range(var_name, var_config, "categorical")
+                    if return_typed
+                    else var_config
+                )
 
         return refined
+
+    def _to_parameter_range(
+        self,
+        name: str,
+        value: Any,
+        var_type: Literal["numeric", "categorical"],
+    ) -> ParameterRange:
+        """Convert raw value to typed ParameterRange.
+
+        Args:
+            name: Variable name
+            value: Raw value (list, tuple, etc.)
+            var_type: Variable type
+
+        Returns:
+            Typed ParameterRange object
+        """
+        from traigent.api.parameter_ranges import Choices, IntRange, Range
+
+        if var_type == "categorical":
+            if isinstance(value, (list, tuple)):
+                return Choices(list(value), name=name)
+            return Choices([value], name=name)
+
+        elif var_type == "numeric":
+            if isinstance(value, tuple) and len(value) == 2:
+                low, high = value
+                # Check if integer or float
+                if isinstance(low, int) and isinstance(high, int):
+                    return IntRange(low, high, name=name)
+                return Range(float(low), float(high), name=name)
+            elif isinstance(value, (int, float)):
+                # Single value - return as tight range
+                return Range(float(value), float(value), name=name)
+
+        # Fallback: treat as categorical
+        if isinstance(value, (list, tuple)):
+            return Choices(list(value), name=name)
+        return Choices([value], name=name)
 
     # === Private helpers ===
 
@@ -455,17 +577,26 @@ class VariableAnalyzer:
         config_space = self._get_config_space()
         var_config = config_space.get(var_name)
 
+        # Tuple of exactly 2 numbers = numeric range (low, high)
+        if (
+            isinstance(var_config, tuple)
+            and len(var_config) == 2
+            and all(isinstance(v, (int, float)) for v in var_config)
+        ):
+            return "numeric"
+
+        # List of numbers - could be categorical or discrete numeric
         if isinstance(var_config, (list, tuple)) and all(
             isinstance(v, (int, float)) for v in var_config
         ):
-            # List of numbers - could be categorical or discrete numeric
             if len(var_config) <= 5:
                 return "categorical"
             return "numeric"
-        elif isinstance(var_config, list):
+
+        # Plain list = categorical
+        if isinstance(var_config, list):
             return "categorical"
-        elif isinstance(var_config, tuple) and len(var_config) == 2:
-            return "numeric"
+
         return "categorical"
 
     def _get_value_stats(self, variable: str, objective: str) -> dict[Any, list[float]]:
@@ -504,14 +635,14 @@ class VariableAnalyzer:
                 continue
 
             # Calculate between-group variance
-            group_means = [np.mean(scores) for scores in value_stats.values() if scores]
+            group_means = [_mean(scores) for scores in value_stats.values() if scores]
             if len(group_means) < 2:
                 importance[var_name] = 0.0
                 continue
 
-            between_var = np.var(group_means)
+            between_var = _variance(group_means) if len(group_means) > 1 else 0.0
             all_scores = [s for scores in value_stats.values() for s in scores]
-            total_var = np.var(all_scores) if all_scores else 1.0
+            total_var = _variance(all_scores) if len(all_scores) > 1 else 1.0
 
             importance[var_name] = (
                 float(between_var / total_var) if total_var > 0 else 0.0
