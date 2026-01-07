@@ -66,6 +66,13 @@ def optimize(
 - **Default**: `["accuracy"]`
 - **Description**: Target metrics to optimize
 
+> **Understanding Accuracy**: The meaning of "accuracy" depends on your use case:
+> - **Classification**: Exact match percentage (e.g., sentiment classification)
+> - **Semantic Similarity**: Embedding-based comparison (default, requires `OPENAI_API_KEY`)
+> - **Custom Metrics**: ROUGE, BLEU, or business-specific calculations
+>
+> See the [Evaluation Guide](../user-guide/evaluation_guide.md#understanding-accuracy) for detailed explanations and examples.
+
 **String List Form** (Simple):
 
 ```python
@@ -379,6 +386,38 @@ from traigent.api.decorators import EvaluationOptions
 - `scoring_function`: Custom scoring function
 - `metric_functions`: Dict of metric name to evaluator functions
 
+##### Evaluation Methods
+
+Traigent supports multiple evaluation approaches through its parameters:
+
+| Method | Parameter | Use Case |
+|--------|-----------|----------|
+| Semantic Similarity | Default (no param needed) | Q&A, summarization, translation |
+| Exact Match | `scoring_function` | Classification, yes/no, categories |
+| LLM-as-Judge | `custom_evaluator` | Complex quality assessment, code review |
+| Multi-Metric | `metric_functions` | Multiple evaluation dimensions |
+
+##### LLM-as-Judge Example
+
+For tasks requiring nuanced evaluation (code quality, writing style, factual accuracy), implement an LLM-based evaluator:
+
+```python
+def llm_evaluator(output: str, expected: str, **kwargs) -> float:
+    """Use an LLM to evaluate output quality."""
+    # Your LLM evaluation logic here
+    # See 06_custom_evaluator.py for complete implementation
+    return 0.8  # Replace: return your calculated score (0.0 to 1.0)
+
+@traigent.optimize(
+    custom_evaluator=llm_evaluator,
+    # ... other parameters
+)
+def my_function(prompt: str) -> str:
+    ...
+```
+
+Complete Example: See [06_custom_evaluator.py](../../walkthrough/examples/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation using GPT-4o-mini.
+
 #### `injection`
 
 - **Type**: `InjectionOptions | dict[str, Any] | None`
@@ -601,7 +640,9 @@ def my_agent(query: str) -> str:
 ## Related Documentation
 
 - [Complete Function Specification](./complete-function-specification.md) - Full API reference
+- [Evaluation Guide](../user-guide/evaluation_guide.md) - Understanding accuracy metrics, evaluation methods, and troubleshooting
 - [Injection Modes Guide](../user-guide/injection_modes.md) - Configuration injection patterns
 - [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
+- [Custom Evaluator Example](../../walkthrough/examples/real/06_custom_evaluator.py) - LLM-as-Judge implementation
