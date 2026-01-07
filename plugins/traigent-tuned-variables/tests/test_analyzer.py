@@ -315,3 +315,137 @@ class TestStatisticsHelpers:
         assert p25 < p75
         assert p25 == pytest.approx(25.75, abs=1)
         assert p75 == pytest.approx(75.25, abs=1)
+
+
+class TestCodexFixes:
+    """Tests for issues found in Codex review."""
+
+    def test_explicit_config_space(self):
+        """Test analyzer accepts explicit configuration_space arg."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        trials = [
+            MockTrial(config={"model": "a"}, metrics={"acc": 0.9}),
+            MockTrial(config={"model": "b"}, metrics={"acc": 0.7}),
+        ]
+
+        # Result without config space
+        result = MockOptimizationResult(trials=trials, configuration_space=None)
+
+        # Provide explicit config space
+        explicit_space = {"model": ["a", "b"]}
+        analyzer = VariableAnalyzer(result, configuration_space=explicit_space)
+
+        # Should work despite result lacking config space
+        importance = analyzer.get_variable_importance("acc")
+        assert "model" in importance
+
+    def test_objective_direction_minimize(self):
+        """Test analyzer respects 'minimize' direction for rankings."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        # Lower scores are better for latency
+        trials = [
+            MockTrial(config={"model": "fast"}, metrics={"latency": 10.0}),
+            MockTrial(config={"model": "fast"}, metrics={"latency": 12.0}),
+            MockTrial(config={"model": "fast"}, metrics={"latency": 11.0}),
+            MockTrial(config={"model": "slow"}, metrics={"latency": 50.0}),
+            MockTrial(config={"model": "slow"}, metrics={"latency": 55.0}),
+            MockTrial(config={"model": "slow"}, metrics={"latency": 52.0}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["fast", "slow"]},
+        )
+
+        # Without direction, assumes maximize (wrong for latency)
+        analyzer_wrong = VariableAnalyzer(result)
+        rankings_wrong = analyzer_wrong.get_value_rankings("model", "latency")
+        # Would rank "slow" first (higher values)
+        assert rankings_wrong[0].value == "slow"
+
+        # With correct direction
+        analyzer_correct = VariableAnalyzer(result, directions={"latency": "minimize"})
+        rankings_correct = analyzer_correct.get_value_rankings("model", "latency")
+        # Should rank "fast" first (lower is better)
+        assert rankings_correct[0].value == "fast"
+
+    def test_collapsed_range_handling(self):
+        """Test _to_parameter_range handles low==high case."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.parameter_ranges import Range
+
+        trials = [
+            MockTrial(config={"temp": 0.7}, metrics={"acc": 0.9}),
+            MockTrial(config={"temp": 0.7}, metrics={"acc": 0.85}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"temp": (0.0, 1.0)},
+        )
+
+        analyzer = VariableAnalyzer(result, elimination_threshold=0.0)
+
+        # This would previously crash if suggest_range_adjustment returned (0.7, 0.7)
+        # Now it should expand to a small range
+        refined = analyzer.get_refined_space(["acc"], return_typed=True)
+
+        assert "temp" in refined
+        temp_range = refined["temp"]
+        assert isinstance(temp_range, Range)
+        # Should be a valid range with low < high
+        assert temp_range.low < temp_range.high
+
+    def test_config_metrics_name_collision(self):
+        """Test that name collisions between config and metrics are handled."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        # This trial has "score" as both config param and metric
+        trials = [
+            MockTrial(
+                config={"score": "high"},  # categorical config param
+                metrics={"score": 0.9},  # numeric metric with same name
+            ),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"score": ["high", "low"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+
+        # Should not crash and should handle collision gracefully
+        # The metric should be available as "metric_score"
+        trial_dicts = analyzer._get_trials_as_dicts()
+        assert len(trial_dicts) == 1
+        assert trial_dicts[0]["score"] == "high"  # Config wins
+        assert trial_dicts[0]["metric_score"] == pytest.approx(0.9)  # Metric renamed
+
+    def test_dominated_values_minimize_direction(self):
+        """Test dominated value detection respects minimize direction."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        # For cost, lower is better
+        trials = [
+            MockTrial(config={"provider": "cheap"}, metrics={"cost": 1.0}),
+            MockTrial(config={"provider": "cheap"}, metrics={"cost": 1.2}),
+            MockTrial(config={"provider": "cheap"}, metrics={"cost": 1.1}),
+            MockTrial(config={"provider": "expensive"}, metrics={"cost": 10.0}),
+            MockTrial(config={"provider": "expensive"}, metrics={"cost": 12.0}),
+            MockTrial(config={"provider": "expensive"}, metrics={"cost": 11.0}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"provider": ["cheap", "expensive"]},
+        )
+
+        analyzer = VariableAnalyzer(result, directions={"cost": "minimize"})
+        dominated = analyzer.get_dominated_values("provider", ["cost"])
+
+        # "expensive" should be dominated (higher cost is worse)
+        assert "expensive" in dominated
