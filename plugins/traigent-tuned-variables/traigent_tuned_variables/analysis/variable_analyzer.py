@@ -27,7 +27,7 @@ except ImportError:
 
 if TYPE_CHECKING:
     from traigent.api.parameter_ranges import ParameterRange
-    from traigent.core.result_types import OptimizationResult
+    from traigent.api.types import OptimizationResult
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +152,9 @@ class VariableAnalyzer:
         self,
         result: OptimizationResult,
         *,
+        configuration_space: dict[str, Any] | None = None,
+        objectives: list[str] | None = None,
+        directions: dict[str, Literal["maximize", "minimize"]] | None = None,
         importance_method: Literal[
             "variance", "correlation", "permutation"
         ] = "variance",
@@ -162,13 +165,23 @@ class VariableAnalyzer:
         """Initialize the analyzer.
 
         Args:
-            result: OptimizationResult containing trials and configuration space
+            result: OptimizationResult containing trials (and optionally config space)
+            configuration_space: Explicit configuration space. If not provided,
+                extracted from result.configuration_space or result.config_space.
+                Use this when analyzing results that don't include their config space.
+            objectives: List of objective names. If not provided, extracted from result.
+            directions: Dictionary mapping objective names to "maximize" or "minimize".
+                If not provided, defaults to "maximize" for all objectives.
+                Used for ranking values and detecting dominance.
             importance_method: Method for calculating variable importance
             significance_threshold: P-value threshold for significance tests
             min_trials_per_value: Minimum trials needed per value for analysis
             elimination_threshold: Importance below this suggests elimination
         """
         self.result = result
+        self._explicit_config_space = configuration_space
+        self._explicit_objectives = objectives
+        self._directions = directions or {}
         self.importance_method = importance_method
         self.significance_threshold = significance_threshold
         self.min_trials_per_value = min_trials_per_value
@@ -276,7 +289,9 @@ class VariableAnalyzer:
             objective: Name of the objective
 
         Returns:
-            List of ValueRanking sorted by mean score (descending)
+            List of ValueRanking sorted by performance (best first).
+            For "maximize" objectives, higher scores rank first.
+            For "minimize" objectives, lower scores rank first.
         """
         value_stats = self._get_value_stats(variable, objective)
         rankings = []
@@ -303,21 +318,29 @@ class VariableAnalyzer:
                 )
             )
 
-        # Sort by mean score (descending)
-        rankings.sort(key=lambda r: r.mean_score, reverse=True)
+        # Sort by mean score (direction-aware)
+        direction = self._get_direction(objective)
+        is_maximize = direction == "maximize"
+        rankings.sort(key=lambda r: r.mean_score, reverse=is_maximize)
 
-        # Mark dominated values
+        # Mark dominated values (direction-aware)
         if rankings:
-            best_lower_bound = (
-                rankings[0].confidence_interval[0]
-                if rankings[0].confidence_interval
-                else rankings[0].mean_score
-            )
-            for ranking in rankings[1:]:
-                if ranking.confidence_interval:
-                    # Value is dominated if its upper CI bound < best's lower CI bound
-                    if ranking.confidence_interval[1] < best_lower_bound:
-                        ranking.is_dominated = True
+            best_ci = rankings[0].confidence_interval
+            if best_ci:
+                # For maximize: best's lower bound is the threshold
+                # For minimize: best's upper bound is the threshold
+                best_threshold = best_ci[0] if is_maximize else best_ci[1]
+
+                for ranking in rankings[1:]:
+                    if ranking.confidence_interval:
+                        # For maximize: dominated if upper CI < best's lower CI
+                        # For minimize: dominated if lower CI > best's upper CI
+                        if is_maximize:
+                            if ranking.confidence_interval[1] < best_threshold:
+                                ranking.is_dominated = True
+                        else:
+                            if ranking.confidence_interval[0] > best_threshold:
+                                ranking.is_dominated = True
 
         return rankings
 
@@ -327,6 +350,9 @@ class VariableAnalyzer:
         objectives: list[str],
     ) -> list[Any]:
         """Find values that are Pareto-dominated across objectives.
+
+        Respects objective directions: for "maximize" objectives, higher is better;
+        for "minimize" objectives, lower is better.
 
         Args:
             variable: Name of the categorical variable
@@ -349,7 +375,7 @@ class VariableAnalyzer:
                     value_stats[value] = {}
                 value_stats[value][obj] = _mean(scores) if scores else 0.0
 
-        # Check Pareto dominance
+        # Check Pareto dominance (direction-aware)
         dominated = []
         values = list(value_stats.keys())
 
@@ -358,17 +384,30 @@ class VariableAnalyzer:
             for j, v2 in enumerate(values):
                 if i == j:
                     continue
-                # Check if v2 dominates v1 (v2 >= v1 in all objectives, > in at least one)
+                # Check if v2 dominates v1 (v2 is "better or equal" in all, "better" in at least one)
                 dominates = True
                 strictly_better = False
                 for obj in objectives:
                     s1 = value_stats[v1].get(obj, 0.0)
                     s2 = value_stats[v2].get(obj, 0.0)
-                    if s2 < s1:
-                        dominates = False
-                        break
-                    if s2 > s1:
-                        strictly_better = True
+                    direction = self._get_direction(obj)
+
+                    # Compare based on direction
+                    if direction == "maximize":
+                        # v2 dominates if v2 >= v1
+                        if s2 < s1:
+                            dominates = False
+                            break
+                        if s2 > s1:
+                            strictly_better = True
+                    else:  # minimize
+                        # v2 dominates if v2 <= v1
+                        if s2 > s1:
+                            dominates = False
+                            break
+                        if s2 < s1:
+                            strictly_better = True
+
                 if dominates and strictly_better:
                     is_dominated = True
                     break
@@ -521,6 +560,9 @@ class VariableAnalyzer:
     ) -> ParameterRange:
         """Convert raw value to typed ParameterRange.
 
+        Handles edge cases like collapsed ranges (low == high) by adding
+        a small epsilon to create a valid range.
+
         Args:
             name: Variable name
             value: Raw value (list, tuple, etc.)
@@ -539,13 +581,26 @@ class VariableAnalyzer:
         elif var_type == "numeric":
             if isinstance(value, tuple) and len(value) == 2:
                 low, high = value
+
+                # Handle collapsed range (low == high)
+                if low == high:
+                    # Add small epsilon to create valid range
+                    epsilon = abs(low) * 0.01 if low != 0 else 0.01
+                    if isinstance(low, int) and isinstance(high, int):
+                        # For integers, expand by 1 in each direction
+                        return IntRange(low - 1, high + 1, name=name)
+                    return Range(float(low) - epsilon, float(high) + epsilon, name=name)
+
                 # Check if integer or float
                 if isinstance(low, int) and isinstance(high, int):
                     return IntRange(low, high, name=name)
                 return Range(float(low), float(high), name=name)
             elif isinstance(value, (int, float)):
-                # Single value - return as tight range
-                return Range(float(value), float(value), name=name)
+                # Single value - expand to small range around it
+                epsilon = abs(value) * 0.01 if value != 0 else 0.01
+                if isinstance(value, int):
+                    return IntRange(value - 1, value + 1, name=name)
+                return Range(float(value) - epsilon, float(value) + epsilon, name=name)
 
         # Fallback: treat as categorical
         if isinstance(value, (list, tuple)):
@@ -555,20 +610,65 @@ class VariableAnalyzer:
     # === Private helpers ===
 
     def _get_config_space(self) -> dict[str, Any]:
-        """Extract configuration space from result."""
+        """Extract configuration space from explicit arg or result."""
+        # Prefer explicit config space if provided
+        if self._explicit_config_space is not None:
+            return self._explicit_config_space
+
+        # Try to extract from result
         if hasattr(self.result, "configuration_space"):
             return self.result.configuration_space or {}
         if hasattr(self.result, "config_space"):
             return self.result.config_space or {}
         return {}
 
+    def _get_direction(self, objective: str) -> Literal["maximize", "minimize"]:
+        """Get optimization direction for an objective.
+
+        Args:
+            objective: Name of the objective
+
+        Returns:
+            "maximize" or "minimize"
+        """
+        # Check explicit directions first
+        if objective in self._directions:
+            return self._directions[objective]
+
+        # Try to get from result's objectives metadata
+        if hasattr(self.result, "objectives") and self.result.objectives:
+            for obj in self.result.objectives:
+                if hasattr(obj, "name") and obj.name == objective:
+                    if hasattr(obj, "direction"):
+                        return obj.direction
+
+        # Default to maximize
+        return "maximize"
+
     def _get_trials_as_dicts(self) -> list[dict]:
-        """Convert trials to list of dicts for analysis."""
+        """Convert trials to list of dicts for analysis.
+
+        Handles potential name collisions between config and metrics
+        by prefixing metrics with 'metric_' if there's a collision.
+        """
         trials = []
         if hasattr(self.result, "trials"):
             for trial in self.result.trials:
                 if hasattr(trial, "config") and hasattr(trial, "metrics"):
-                    trial_dict = {**trial.config, **trial.metrics}
+                    trial_dict = dict(trial.config)
+
+                    # Add metrics, handling potential collisions
+                    for metric_name, metric_value in trial.metrics.items():
+                        if metric_name in trial_dict:
+                            # Collision detected - prefix metric with 'metric_'
+                            logger.debug(
+                                f"Name collision for '{metric_name}' between "
+                                f"config and metrics. Using 'metric_{metric_name}'."
+                            )
+                            trial_dict[f"metric_{metric_name}"] = metric_value
+                        else:
+                            trial_dict[metric_name] = metric_value
+
                     trials.append(trial_dict)
         return trials
 
