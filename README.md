@@ -35,7 +35,7 @@ def llm_judge(output: str, expected: str, **kwargs) -> float:
             "content": f"Score 0-1. Expected: {expected}\nActual: {output}\nScore:",
         }],
     )
-    return float(judge.choices[0].message.content.strip())
+    return float(str(judge.choices[0].message.content).strip())
 
 @traigent.optimize(
     configuration_space={
@@ -50,10 +50,10 @@ def llm_judge(output: str, expected: str, **kwargs) -> float:
 )
 def support_router(ticket: str) -> str:
     cfg = traigent.get_config()
-    route = completion(
+    route = str(completion(
         model=cfg["router_model"],
         messages=[{"role": "user", "content": f"Route: {ticket}\nAnswer: billing|tech"}],
-    ).choices[0].message.content.lower()
+    ).choices[0].message.content).lower()
 
     system = "You are a billing specialist." if "billing" in route else "You are a tech specialist."
     response = completion(
@@ -61,7 +61,7 @@ def support_router(ticket: str) -> str:
         temperature=cfg["temperature"],
         messages=[{"role": "system", "content": system}, {"role": "user", "content": ticket}],
     )
-    return response.choices[0].message.content
+    return str(response.choices[0].message.content)
 
 results = await support_router.optimize(algorithm="bayesian", max_trials=20)
 print(results.best_config, results.best_score)
