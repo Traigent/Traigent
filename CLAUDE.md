@@ -400,3 +400,92 @@ When writing tests, avoid these anti-patterns identified in our meta-analysis:
 
 ### Reference
 See `tests/optimizer_validation/META_ANALYSIS_REPORT.md` and `tests/optimizer_validation/INDEPENDENT_META_ANALYSIS.md` for detailed analysis of test quality issues.
+
+## 📊 Statistical Rigor for Experiment Results
+
+**NEVER claim a hypothesis is "confirmed" or "proven" without proper statistical validation.**
+
+When reporting experimental results:
+
+### 1. Single-run experiments are INCONCLUSIVE by default
+- One random seed = anecdotal evidence, not proof
+- Always label single-run results as "preliminary" or "suggestive"
+
+### 2. Required for claiming statistical significance
+- Multiple independent runs (minimum 5, preferably 10+)
+- Appropriate statistical test (t-test, bootstrap CI, McNemar's, etc.)
+- Reported p-value < 0.05 (or stated significance threshold)
+- Effect size calculation (Cohen's d or equivalent)
+
+### 3. Language guidelines
+- ❌ "The hypothesis is confirmed"
+- ❌ "Results prove that X outperforms Y"
+- ❌ "We demonstrate that..."
+- ✅ "Results suggest..." (single run)
+- ✅ "Preliminary evidence indicates..." (single run)
+- ✅ "With p < 0.05, we reject the null hypothesis..." (validated)
+
+### 4. Always acknowledge limitations
+- Sample size and its implications
+- Number of random seeds used
+- Whether null hypothesis testing was performed
+- Potential confounds
+
+## 🤖 AutoCoder Operational Rules
+
+### 1. "RUN" means RUN - No modifications
+- "Commence", "Run it", "Execute", "Go ahead" = RUN THE SCRIPT AS-IS
+- Do NOT make any code changes before, during, or after execution
+- Do NOT ask "Want me to fix this?" or present accept/reject prompts
+- **After the run**: Inform about issues/improvements, but WAIT for user to explicitly initiate changes
+- Key shift: **I inform, you initiate.** Modifications require explicit user initiation.
+
+### 2. No hardcoded values in print statements
+- All printed configuration info MUST come from actual variables
+- BAD: `print("Models: gpt-3.5-turbo, gpt-4o-mini")`
+- GOOD: `print(f"Models: {', '.join(config_space['model'])}")`
+
+### 3. Don't change approved formats
+- Once a format/output is tested and approved, DO NOT modify it
+- If you need to add features, ADD NEW functions/files
+- Never silently change existing approved behavior
+
+### 4. Ask before expensive operations
+- Before running anything that costs money (API calls, cloud resources)
+- Confirm the exact code that will run
+- Confirm cost limits are set correctly
+- Do NOT make last-minute code changes before expensive runs
+
+### 5. Single source of truth
+- Configuration values should be defined ONCE
+- All references (prints, logs, docs) must read from that source
+- Never duplicate configuration values as strings elsewhere
+
+### 6. Test runs must be representative
+- Test runs should use the same code path as production runs
+- If test passes, production should work identically
+- Do NOT add features between test and production runs
+
+### 7. Documentation must reference source of truth
+- Docstrings, comments, README files must NOT hardcode config values
+- BAD: "Supports models: gpt-3.5-turbo, gpt-4o" (hardcoded in docstring)
+- GOOD: "Supports models: see SUPPORTED_MODELS constant" (references source)
+
+### 8. Do NOT modify Traigent core code
+- Never modify files under `traigent/` directory (the SDK core)
+- OK to modify: `examples/`, `tests/`, `docs/`, `scripts/`, `paper_experiments/`
+- If Traigent has a bug, work around it in customer code
+- Known workarounds:
+  - `cost_limit=`/`cost_approved=` decorator params don't work → use env vars instead
+  - `evaluator=` param doesn't work → use `metric_functions=` instead
+
+### 9. Mock mode status
+- `.env` has `TRAIGENT_MOCK_MODE=false` (real scoring for RAG examples)
+- If VS Code test discovery breaks, set it back to true
+- Prompt the user: "Mock mode is currently OFF. Want me to enable it for tests?"
+
+### 10. Never push to main
+- NEVER run `git push` to the main branch
+- Always create a feature/dev branch for changes
+- Use pull requests to merge into main
+- If on main, checkout a new branch before committing
