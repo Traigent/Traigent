@@ -75,7 +75,7 @@ from langchain_openai import ChatOpenAI
 def answer_question(question: str) -> str:
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
     response = llm.invoke(f"Answer this question concisely: {question}")
-    return response.content
+    return str(response.content)
 ```
 
 Now add Traigent optimization - **your code stays exactly the same**:
@@ -95,7 +95,7 @@ def answer_question(question: str) -> str:
     # EXACT SAME CODE - NO CHANGES!
     llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
     response = llm.invoke(f"Answer this question concisely: {question}")
-    return response.content
+    return str(response.content)
 ```
 
 ### Create Your Evaluation Dataset
@@ -278,7 +278,7 @@ def customer_support(query: str, knowledge_base: list) -> str:
     context = "\n".join([doc.page_content for doc in docs])
     prompt = f"Context: {context}\n\nQuestion: {query}\n\nAnswer:"
 
-    return llm.invoke(prompt).content
+    return str(llm.invoke(prompt).content)
 ```
 
 ### 🧪 Try Example 6: RAG Optimization
@@ -435,7 +435,7 @@ def production_agent(
     """
 
     # Get response
-    response = llm.invoke(prompt).content
+    response = str(llm.invoke(prompt).content)
 
     # Return structured output
     return {
