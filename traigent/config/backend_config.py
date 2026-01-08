@@ -185,7 +185,7 @@ class BackendConfig:
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
-            logger.warning(
+            logger.debug(
                 "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
             )
         return None

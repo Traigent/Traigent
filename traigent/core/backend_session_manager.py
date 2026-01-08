@@ -176,7 +176,7 @@ class BackendSessionManager:
                     session_id not in _warned_missing_mapping
                     and not is_backend_offline()
                 ):
-                    logger.warning(
+                    logger.debug(
                         "Backend mapping missing for session %s (%s). "
                         "This strongly suggests the Traigent API rejected the session "
                         "creation request and the SDK fell back to local tracking. "
@@ -286,8 +286,8 @@ class BackendSessionManager:
         if not has_api_key:
             # Only warn once; suppress in offline mode to reduce log noise
             if not _warned_no_api_key and not is_backend_offline():
-                logger.warning(
-                    "⚠️ Skipping backend trial submissions (no API key detected). "
+                logger.debug(
+                    "Skipping backend trial submissions (no API key detected). "
                     "Results will be saved locally only."
                 )
                 _warned_no_api_key = True

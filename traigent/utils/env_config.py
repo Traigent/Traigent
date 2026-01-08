@@ -8,7 +8,7 @@ This module provides secure access to environment variables and configuration.
 import os
 import secrets
 from pathlib import Path
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from dotenv import load_dotenv
 
@@ -39,6 +39,9 @@ logger = get_logger(__name__)
 
 # Cache generated development secrets so repeated calls stay consistent per process.
 _GENERATED_DEV_JWT_SECRET: str | None = None
+
+if TYPE_CHECKING:
+    from traigent.config.types import TraigentConfig
 
 
 def _normalize_str(value: str | None) -> str | None:
@@ -207,6 +210,18 @@ def is_mock_llm() -> bool:
         - is_backend_offline(): Check if Traigent backend calls should be skipped
     """
     return get_env_var("TRAIGENT_MOCK_LLM", "false").lower() == "true"
+
+
+def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
+    """Return True when the cloud API key notice should be shown."""
+    if is_mock_llm() or is_backend_offline():
+        return False
+    if traigent_config.is_edge_analytics_mode():
+        return False
+
+    from traigent.config.backend_config import BackendConfig
+
+    return not BackendConfig.get_api_key()
 
 
 def is_backend_offline() -> bool:
