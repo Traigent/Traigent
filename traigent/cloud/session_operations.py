@@ -278,7 +278,7 @@ class SessionOperations:
                     and not is_backend_offline()
                 ):
                     if isinstance(e, CloudServiceError):
-                        logger.warning(
+                        logger.debug(
                             "Backend tracking unavailable for function '%s' (%s). "
                             "Results will be saved locally. reason=%s",
                             function_name,
@@ -286,7 +286,7 @@ class SessionOperations:
                             str(e),
                         )
                     else:
-                        logger.warning(
+                        logger.debug(
                             "Backend tracking unavailable for function '%s' (%s). "
                             "Results will be saved locally.",
                             function_name,

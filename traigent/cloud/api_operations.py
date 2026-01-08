@@ -26,7 +26,7 @@ from traigent.cloud.models import (
     TrialSuggestion,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_backend_offline
+from traigent.utils.env_config import is_backend_offline, is_mock_llm
 from traigent.utils.logging import get_logger
 
 # Optional aiohttp dependency handling
@@ -64,9 +64,17 @@ except ImportError:
 
 # Track whether we've already warned about backend unavailability (per session)
 _backend_unavailable_warned: bool = False
+_api_key_error_shown: bool = False
 
 # Common log message for fallback to local optimization
 _LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
+
+_API_KEY_ERROR_MESSAGES = {
+    401: "⚠️ API key invalid or expired. Check at https://traigent.ai",
+    402: "⚠️ API key needs more budget. Manage at https://traigent.ai",
+    403: "⚠️ API key lacks permission. Check at https://traigent.ai",
+}
+_DEFAULT_API_KEY_ERROR_MESSAGE = "⚠️ API key issue. Verify at https://traigent.ai"
 
 # Content-Type header for JSON requests
 _JSON_CONTENT_TYPE = "application/json"
@@ -75,6 +83,12 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+
+def reset_api_key_error_state() -> None:
+    """Reset API key error message state for a new optimization run."""
+    global _api_key_error_shown
+    _api_key_error_shown = False
 
 
 class ApiOperations:
@@ -344,6 +358,7 @@ class ApiOperations:
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
         """Log and raise appropriate errors for non-success HTTP responses."""
+        self._handle_api_key_error(status_code)
 
         if status_code == 500:
             logger.warning("⚡ Cloud backend returned server error (HTTP 500)")
@@ -389,12 +404,20 @@ class ApiOperations:
             logger.debug(f"Backend connection failed (offline mode): {error}")
         # Only show full warning once per session to reduce log noise
         elif not _backend_unavailable_warned:
-            logger.warning(f"⚡ Cloud backend unavailable (connection failed): {error}")
-            if "localhost" in str(error) or "127.0.0.1" in str(error):
-                logger.info(
-                    "💡 This is normal for local development - backend tracking unavailable"
+            has_api_key = self.client.auth_manager.has_api_key()
+            if has_api_key:
+                logger.warning(
+                    f"⚡ Cloud backend unavailable (connection failed): {error}"
                 )
-                logger.info("   Results will be saved to local storage only")
+                if "localhost" in str(error) or "127.0.0.1" in str(error):
+                    logger.info(
+                        "💡 This is normal for local development - backend tracking unavailable"
+                    )
+                    logger.info("   Results will be saved to local storage only")
+            else:
+                logger.debug(
+                    f"Cloud backend unavailable (connection failed, no API key): {error}"
+                )
             _backend_unavailable_warned = True
         else:
             logger.debug(f"Backend connection failed: {error}")
@@ -433,6 +456,27 @@ class ApiOperations:
 
         logger.error(f"Error creating Traigent session: {error}")
         raise error
+
+    def _handle_api_key_error(self, status_code: int) -> bool:
+        """Log a user-facing notice for API key errors once per optimization run."""
+        global _api_key_error_shown
+
+        if status_code not in _API_KEY_ERROR_MESSAGES:
+            return False
+        if is_mock_llm() or is_backend_offline():
+            return False
+        if _api_key_error_shown:
+            return False
+        if not self.client.auth_manager.has_api_key():
+            return False
+
+        message = _API_KEY_ERROR_MESSAGES.get(
+            status_code, _DEFAULT_API_KEY_ERROR_MESSAGE
+        )
+        print(message)
+        logger.info(message)
+        _api_key_error_shown = True
+        return True
 
     async def update_config_run_status(self, config_run_id: str, status: str) -> bool:
         """Update configuration run status in the backend.

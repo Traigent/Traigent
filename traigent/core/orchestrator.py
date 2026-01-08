@@ -71,6 +71,7 @@ from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
+from traigent.utils.env_config import should_show_cloud_notice
 from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
@@ -81,6 +82,12 @@ from .tracing import (
 )
 
 logger = get_logger(__name__)
+
+CLOUD_UNAVAILABLE_NOTICE = (
+    "⚠️ Full insights unavailable without Traigent Cloud API key.\n"
+    "  You're missing: AI recommendations • trade-off analysis • cost tracking • audit features.\n"
+    "  Get yours now at https://traigent.ai"
+)
 
 # Orchestrator constants
 PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
@@ -373,6 +380,7 @@ class OptimizationOrchestrator:
         self._failed_trials = 0
         self._best_trial_cached: TrialResult | None = None
         self._consumed_examples = 0
+        self._cloud_notice_shown = False
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
 
@@ -1231,6 +1239,15 @@ class OptimizationOrchestrator:
         if self.cost_enforcer is not None:
             self.cost_enforcer.reset()
 
+        self._cloud_notice_shown = False
+        from traigent.cloud.api_operations import reset_api_key_error_state
+
+        reset_api_key_error_state()
+        if should_show_cloud_notice(self.traigent_config):
+            print(CLOUD_UNAVAILABLE_NOTICE)
+            logger.info(CLOUD_UNAVAILABLE_NOTICE)
+            self._cloud_notice_shown = True
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
 
@@ -1518,6 +1535,9 @@ class OptimizationOrchestrator:
             f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
+        if self._cloud_notice_shown:
+            print(f"\n{CLOUD_UNAVAILABLE_NOTICE}")
+            logger.info(CLOUD_UNAVAILABLE_NOTICE)
 
     async def _run_optimization_with_tracing(
         self,
