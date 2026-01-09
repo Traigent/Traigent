@@ -715,6 +715,7 @@ class TestAutoNamingFromKwargs:
         returned_param = _process_param_entry("temp", r, result, defaults)
 
         assert returned_param is not None
+        assert isinstance(returned_param, Range)
         assert returned_param.name == "temp"
         assert returned_param.low == 0.0
         assert returned_param.high == 2.0

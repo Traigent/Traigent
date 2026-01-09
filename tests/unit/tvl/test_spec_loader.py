@@ -112,7 +112,7 @@ def test_compiled_constraints_attach_metadata() -> None:
     meta = getattr(constraint, "__tvl_constraint__", {})
     # TVL 0.9 structural constraints use id from the constraint definition
     assert meta["id"] == "campus-hour-latency"
-    assert isinstance(constraint({"response_latency_ms": 800}), bool)
+    assert isinstance(constraint({"response_latency_ms": 800}, None), bool)
 
 
 def test_legacy_formats_emit_deprecation_warnings() -> None:
@@ -375,6 +375,7 @@ objectives:
             assert temp_tvar.type == "float"
             assert temp_tvar.domain.kind == "range"
             assert temp_tvar.domain.range == (0.0, 2.0)
+            assert temp_tvar.domain.resolution is not None
             assert abs(temp_tvar.domain.resolution - 0.1) < 1e-10
             assert temp_tvar.unit == "unitless"
 

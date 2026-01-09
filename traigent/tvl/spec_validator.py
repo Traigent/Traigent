@@ -10,14 +10,12 @@ from __future__ import annotations
 import warnings
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-
-    from traigent.tvl.spec_loader import TVLSpecArtifact
 
 logger = get_logger(__name__)
 
@@ -135,8 +133,14 @@ def extract_decorator_params(func: Callable[..., Any]) -> set[str]:
     return set()
 
 
+class SpecArtifactLike(Protocol):
+    """Protocol for spec-like objects consumed by drift validators."""
+
+    configuration_space: dict[str, Any] | None
+
+
 def validate_spec_code_alignment(
-    spec: TVLSpecArtifact,
+    spec: SpecArtifactLike,
     configuration_space: dict[str, Any] | None = None,
     *,
     decorated_func: Callable[..., Any] | None = None,
@@ -227,7 +231,7 @@ def validate_spec_code_alignment(
 
 
 def validate_tvar_types_match(
-    spec: TVLSpecArtifact,
+    spec: SpecArtifactLike,
     configuration_space: dict[str, Any] | None,
 ) -> SpecDriftReport:
     """Validate that TVL spec tvar types match code configuration types.
