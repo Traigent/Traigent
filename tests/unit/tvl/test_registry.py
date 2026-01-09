@@ -886,3 +886,77 @@ class TestBooleanFilterLogic:
         # m1: openai, fast -> match
         # m2: openai, version=2 -> match
         assert set(result) == {"m1", "m2"}
+
+    def test_quoted_values_with_parentheses(self) -> None:
+        """Test that parentheses inside quoted values don't break parsing."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "gpt-4 (preview)", "tier": "fast"},
+                    {"id": "gpt-4 (stable)", "tier": "quality"},
+                    {"id": "claude-3", "tier": "fast"},
+                ],
+            }
+        )
+
+        # Value contains parentheses - should not confuse depth tracking
+        result = resolver.resolve(
+            "models", filter_expr="id == 'gpt-4 (preview)' OR tier == 'quality'"
+        )
+        assert set(result) == {"gpt-4 (preview)", "gpt-4 (stable)"}
+
+    def test_quoted_values_with_nested_parens(self) -> None:
+        """Test values with multiple/nested parentheses in quotes."""
+        resolver = DictRegistryResolver(
+            {
+                "functions": [
+                    {"id": "func(a, b)", "type": "binary"},
+                    {"id": "func((a))", "type": "nested"},
+                    {"id": "simple", "type": "none"},
+                ],
+            }
+        )
+
+        # Complex parentheses in value
+        result = resolver.resolve(
+            "functions", filter_expr="id == 'func((a))' OR type == 'binary'"
+        )
+        assert set(result) == {"func(a, b)", "func((a))"}
+
+    def test_mixed_quotes_and_parentheses(self) -> None:
+        """Test expression with both quote styles and parentheses."""
+        resolver = DictRegistryResolver(
+            {
+                "items": [
+                    {"id": "a", "name": "Item (A)", "desc": 'Has "quotes"'},
+                    {"id": "b", "name": "Item (B)", "desc": "Normal"},
+                    {"id": "c", "name": "Item C", "desc": "Normal"},
+                ],
+            }
+        )
+
+        # Double quotes in filter, parentheses in value
+        result = resolver.resolve(
+            "items", filter_expr='name == "Item (A)" OR id == "c"'
+        )
+        assert set(result) == {"a", "c"}
+
+    def test_and_or_keywords_in_quoted_values(self) -> None:
+        """Test that AND/OR keywords inside quoted values are not treated as operators."""
+        resolver = DictRegistryResolver(
+            {
+                "items": [
+                    {"id": "1", "name": "Black AND White"},
+                    {"id": "2", "name": "Red OR Blue"},
+                    {"id": "3", "name": "Simple"},
+                ],
+            }
+        )
+
+        # AND in the value should not split
+        result = resolver.resolve("items", filter_expr="name == 'Black AND White'")
+        assert result == ["1"]
+
+        # OR in the value should not split
+        result = resolver.resolve("items", filter_expr="name == 'Red OR Blue'")
+        assert result == ["2"]
