@@ -87,6 +87,11 @@ integrations = [
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
 ]
 
+# DSPy prompt optimization integration
+dspy = [
+    "dspy-ai>=2.5.0",
+]
+
 # Enterprise security features (Sprint 7)
 security = [
     "pyjwt>=2.4.0",
