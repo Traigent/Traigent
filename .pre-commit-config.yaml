@@ -59,6 +59,17 @@ repos:
           - traigent/
         pass_filenames: false
 
+  # TVL specification validation (G-2)
+  - repo: local
+    hooks:
+      - id: validate-tvl-specs
+        name: Validate TVL specs
+        entry: python -m traigent.tvl --strict
+        language: python
+        files: '\.tvl\.ya?ml$'
+        types: [file]
+        additional_dependencies: ['pyyaml>=6.0']
+
 # Configuration for detect-secrets
 # Run: detect-secrets scan > .secrets.baseline
 # to create initial baseline
