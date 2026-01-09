@@ -39,7 +39,12 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 if TYPE_CHECKING:
-    from traigent.api.constraints import Condition
+    from traigent.api.config_space import ConfigSpace
+
+from traigent.api.constraint_builders import (
+    CategoricalConstraintBuilderMixin,
+    NumericConstraintBuilderMixin,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +98,7 @@ class ParameterRange(ABC):
 
 
 @dataclass(frozen=True, slots=True)
-class Range(ParameterRange):
+class Range(NumericConstraintBuilderMixin, ParameterRange):
     """Continuous float range for optimization.
 
     Args:
@@ -180,56 +185,8 @@ class Range(ParameterRange):
         """Return as simple (low, high) tuple for backward compatibility."""
         return (self.low, self.high)
 
-    # =========================================================================
-    # Constraint Builder Methods
-    # =========================================================================
-
-    def equals(self, value: float) -> Condition:
-        """Create condition: this parameter equals value.
-
-        Example:
-            >>> temp = Range(0.0, 2.0)
-            >>> cond = temp.equals(0.5)  # temp == 0.5
-        """
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="==", value=value)
-
-    def not_equals(self, value: float) -> Condition:
-        """Create condition: this parameter does not equal value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="!=", value=value)
-
-    def gt(self, value: float) -> Condition:
-        """Create condition: this parameter > value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">", value=value)
-
-    def gte(self, value: float) -> Condition:
-        """Create condition: this parameter >= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">=", value=value)
-
-    def lt(self, value: float) -> Condition:
-        """Create condition: this parameter < value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<", value=value)
-
-    def lte(self, value: float) -> Condition:
-        """Create condition: this parameter <= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<=", value=value)
-
-    def in_range(self, low: float, high: float) -> Condition:
-        """Create condition: low <= this parameter <= high."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="in_range", value=(low, high))
+    # Constraint builder methods (equals, not_equals, gt, gte, lt, lte,
+    # in_range, is_in, not_in) are provided by NumericConstraintBuilderMixin
 
     # =========================================================================
     # Factory Methods - Domain Presets
@@ -341,7 +298,7 @@ class Range(ParameterRange):
 
 
 @dataclass(frozen=True, slots=True)
-class IntRange(ParameterRange):
+class IntRange(NumericConstraintBuilderMixin, ParameterRange):
     """Integer range for optimization.
 
     Args:
@@ -431,51 +388,8 @@ class IntRange(ParameterRange):
         """Return as simple (low, high) tuple."""
         return (self.low, self.high)
 
-    # =========================================================================
-    # Constraint Builder Methods
-    # =========================================================================
-
-    def equals(self, value: int) -> Condition:
-        """Create condition: this parameter equals value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="==", value=value)
-
-    def not_equals(self, value: int) -> Condition:
-        """Create condition: this parameter does not equal value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="!=", value=value)
-
-    def gt(self, value: int) -> Condition:
-        """Create condition: this parameter > value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">", value=value)
-
-    def gte(self, value: int) -> Condition:
-        """Create condition: this parameter >= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">=", value=value)
-
-    def lt(self, value: int) -> Condition:
-        """Create condition: this parameter < value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<", value=value)
-
-    def lte(self, value: int) -> Condition:
-        """Create condition: this parameter <= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<=", value=value)
-
-    def in_range(self, low: int, high: int) -> Condition:
-        """Create condition: low <= this parameter <= high."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="in_range", value=(low, high))
+    # Constraint builder methods (equals, not_equals, gt, gte, lt, lte,
+    # in_range, is_in, not_in) are provided by NumericConstraintBuilderMixin
 
     # =========================================================================
     # Factory Methods - Domain Presets
@@ -593,7 +507,7 @@ class IntRange(ParameterRange):
 
 
 @dataclass(frozen=True, slots=True)
-class LogRange(ParameterRange):
+class LogRange(NumericConstraintBuilderMixin, ParameterRange):
     """Log-scale float range for optimization.
 
     Convenience class for Range(low, high, log=True). Useful for parameters
@@ -659,55 +573,12 @@ class LogRange(ParameterRange):
         """Return as simple (low, high) tuple (loses log information)."""
         return (self.low, self.high)
 
-    # =========================================================================
-    # Constraint Builder Methods (same as Range)
-    # =========================================================================
-
-    def equals(self, value: float) -> Condition:
-        """Create condition: this parameter equals value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="==", value=value)
-
-    def not_equals(self, value: float) -> Condition:
-        """Create condition: this parameter does not equal value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="!=", value=value)
-
-    def gt(self, value: float) -> Condition:
-        """Create condition: this parameter > value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">", value=value)
-
-    def gte(self, value: float) -> Condition:
-        """Create condition: this parameter >= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator=">=", value=value)
-
-    def lt(self, value: float) -> Condition:
-        """Create condition: this parameter < value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<", value=value)
-
-    def lte(self, value: float) -> Condition:
-        """Create condition: this parameter <= value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="<=", value=value)
-
-    def in_range(self, low: float, high: float) -> Condition:
-        """Create condition: low <= this parameter <= high."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="in_range", value=(low, high))
+    # Constraint builder methods (equals, not_equals, gt, gte, lt, lte,
+    # in_range, is_in, not_in) are provided by NumericConstraintBuilderMixin
 
 
 @dataclass(frozen=True, slots=True)
-class Choices(ParameterRange, Generic[T]):
+class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
     """Categorical choices for optimization.
 
     Args:
@@ -777,7 +648,7 @@ class Choices(ParameterRange, Generic[T]):
             return  # Single type or all None
 
         # Get types, treating bool specially (before int check since bool is subclass)
-        def get_type_category(v: object) -> str:
+        def _get_type_category(v: object) -> str:
             if isinstance(v, bool):
                 return "bool"
             if isinstance(v, int):
@@ -786,7 +657,7 @@ class Choices(ParameterRange, Generic[T]):
                 return "float"
             return type(v).__name__
 
-        type_categories = {get_type_category(v) for v in non_none_values}
+        type_categories = {_get_type_category(v) for v in non_none_values}
 
         # Allow int and float to coexist (both are numbers)
         numeric_types = {"int", "float"}
@@ -828,43 +699,8 @@ class Choices(ParameterRange, Generic[T]):
         """Check if item is in choices."""
         return item in self.values
 
-    # =========================================================================
-    # Constraint Builder Methods
-    # =========================================================================
-
-    def equals(self, value: T) -> Condition:
-        """Create condition: this parameter equals value.
-
-        Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5"])
-            >>> cond = model.equals("gpt-4")  # model == "gpt-4"
-        """
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="==", value=value)
-
-    def not_equals(self, value: T) -> Condition:
-        """Create condition: this parameter does not equal value."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="!=", value=value)
-
-    def is_in(self, values: Sequence[T]) -> Condition:
-        """Create condition: this parameter is in the given values.
-
-        Example:
-            >>> model = Choices(["gpt-4", "gpt-3.5", "claude"])
-            >>> cond = model.is_in(["gpt-4", "gpt-3.5"])  # model in ["gpt-4", "gpt-3.5"]
-        """
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="in", value=tuple(values))
-
-    def not_in(self, values: Sequence[T]) -> Condition:
-        """Create condition: this parameter is not in the given values."""
-        from traigent.api.constraints import Condition
-
-        return Condition(_tvar=self, operator="not_in", value=tuple(values))
+    # Constraint builder methods (equals, not_equals, is_in, not_in)
+    # are provided by CategoricalConstraintBuilderMixin
 
     # =========================================================================
     # Factory Methods - Domain Presets
@@ -1136,7 +972,7 @@ def _process_param_entry(
 
 
 def normalize_configuration_space(
-    config_space: dict[str, Any] | None,
+    config_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Normalize a configuration space and extract defaults.
