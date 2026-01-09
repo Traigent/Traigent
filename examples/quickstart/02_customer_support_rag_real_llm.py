@@ -432,6 +432,37 @@ CONFIGURATION_SPACE = {
     "persona": ["helpful_agent", "expert_advisor", "friendly_assistant"],
 }
 
+
+def semantic_retriever1(vector_store: FAISS, query: str, k: int = 3) -> list[str]:
+    """Retrieve documents using semantic similarity search.
+
+    Unlike keyword matching, this finds semantically similar content
+    even if the exact words don't match.
+    """
+    docs = vector_store.similarity_search(query, k=k)
+    return [doc.page_content for doc in docs]
+
+
+def semantic_retriever2(vector_store: FAISS, query: str, k: int = 3) -> list[str]:
+    """Retrieve documents using semantic similarity search.
+
+    Unlike keyword matching, this finds semantically similar content
+    even if the exact words don't match.
+    """
+    docs = vector_store.similarity_search(query, k=k)
+    return [doc.page_content for doc in docs]
+
+
+def semantic_retriever3(vector_store: FAISS, query: str, k: int = 3) -> list[str]:
+    """Retrieve documents using semantic similarity search.
+
+    Unlike keyword matching, this finds semantically similar content
+    even if the exact words don't match.
+    """
+    docs = vector_store.similarity_search(query, k=k)
+    return [doc.page_content for doc in docs]
+
+
 DEFAULT_CONFIG = {
     "model": "gpt-4o-mini",
     "temperature": 0.3,
