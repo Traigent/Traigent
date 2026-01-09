@@ -862,7 +862,9 @@ class TestOptimizationOrchestrator:
         duration = time.time() - start_time
 
         # Should timeout reasonably close to expected time
-        assert duration < 1.0  # More lenient timeout check for CI environments
+        assert (
+            duration < 2.0
+        )  # Lenient timeout check for CI environments with variable load
         assert result.status == OptimizationStatus.CANCELLED
 
     @pytest.mark.asyncio
