@@ -137,6 +137,33 @@ class OptimizationAnalysis:
     refined_space: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class MultiObjectiveVariableAnalysis:
+    """Analysis for a single variable across multiple objectives."""
+
+    name: str
+    var_type: Literal["numeric", "categorical"]
+    importance_by_objective: dict[str, float]
+    aggregate_importance: float
+    pareto_dominated_values: list[Any] | None = None
+    suggestion: EliminationSuggestion | None = None
+
+
+@dataclass
+class MultiObjectiveAnalysis:
+    """Post-optimization analysis across multiple objectives.
+
+    Provides unified analysis considering all objectives simultaneously,
+    including Pareto dominance and aggregated importance scores.
+    """
+
+    objectives: list[str] = field(default_factory=list)
+    variables: dict[str, MultiObjectiveVariableAnalysis] = field(default_factory=dict)
+    elimination_suggestions: list[EliminationSuggestion] = field(default_factory=list)
+    pareto_frontier_values: dict[str, list[Any]] = field(default_factory=dict)
+    refined_space: dict[str, Any] = field(default_factory=dict)
+
+
 class VariableAnalyzer:
     """Centralized analysis of optimization results.
 
@@ -244,6 +271,203 @@ class VariableAnalyzer:
 
         return analysis
 
+    def analyze_multi_objective(
+        self,
+        objectives: list[str],
+        *,
+        aggregation: Literal["mean", "max", "min"] = "mean",
+    ) -> MultiObjectiveAnalysis:
+        """Run full analysis across multiple objectives.
+
+        Analyzes variable importance and value performance across all objectives
+        simultaneously, using Pareto dominance for value elimination.
+
+        Args:
+            objectives: List of objective names to analyze
+            aggregation: Method to aggregate importance scores across objectives.
+                - "mean": Average importance (default, balanced view)
+                - "max": Maximum importance (keep if important for any objective)
+                - "min": Minimum importance (eliminate only if unimportant for all)
+
+        Returns:
+            MultiObjectiveAnalysis with unified results across all objectives
+        """
+        if not objectives:
+            return MultiObjectiveAnalysis()
+
+        config_space = self._get_config_space()
+        if not config_space:
+            logger.warning("No configuration space found in result")
+            return MultiObjectiveAnalysis(objectives=objectives)
+
+        # Build analysis
+        analysis = MultiObjectiveAnalysis(objectives=objectives)
+        importance_by_var = self._compute_importance_by_variable(
+            config_space, objectives
+        )
+
+        # Analyze each variable
+        for var_name in config_space:
+            var_analysis = self._analyze_variable_multi_objective(
+                var_name, objectives, importance_by_var[var_name], aggregation
+            )
+            analysis.variables[var_name] = var_analysis
+
+            if var_analysis.suggestion and var_analysis.suggestion.action != EliminationAction.KEEP:
+                analysis.elimination_suggestions.append(var_analysis.suggestion)
+
+        # Sort and finalize
+        analysis.elimination_suggestions.sort(key=lambda s: s.importance_score)
+        analysis.pareto_frontier_values = self._compute_pareto_frontiers(
+            analysis.variables
+        )
+        analysis.refined_space = self.get_refined_space(
+            objectives,
+            prune_low_importance=True,
+            prune_dominated_values=True,
+            narrow_ranges=True,
+        )
+
+        return analysis
+
+    def _compute_importance_by_variable(
+        self,
+        config_space: dict[str, Any],
+        objectives: list[str],
+    ) -> dict[str, dict[str, float]]:
+        """Compute importance for each variable across all objectives."""
+        importance_by_var: dict[str, dict[str, float]] = {}
+        for var_name in config_space:
+            importance_by_var[var_name] = {
+                obj: self.get_variable_importance(obj).get(var_name, 0.0)
+                for obj in objectives
+            }
+        return importance_by_var
+
+    def _analyze_variable_multi_objective(
+        self,
+        var_name: str,
+        objectives: list[str],
+        obj_importance: dict[str, float],
+        aggregation: Literal["mean", "max", "min"],
+    ) -> MultiObjectiveVariableAnalysis:
+        """Analyze a single variable across multiple objectives."""
+        var_type = self._get_variable_type(var_name)
+        aggregate_imp = self._aggregate_importance(obj_importance, aggregation)
+
+        pareto_dominated = None
+        if var_type == "categorical":
+            pareto_dominated = self.get_dominated_values(var_name, objectives)
+
+        var_analysis = MultiObjectiveVariableAnalysis(
+            name=var_name,
+            var_type=var_type,
+            importance_by_objective=obj_importance,
+            aggregate_importance=aggregate_imp,
+            pareto_dominated_values=pareto_dominated,
+        )
+
+        var_analysis.suggestion = self._generate_multi_objective_suggestion(
+            var_name, objectives, var_analysis
+        )
+        return var_analysis
+
+    def _aggregate_importance(
+        self,
+        obj_importance: dict[str, float],
+        aggregation: Literal["mean", "max", "min"],
+    ) -> float:
+        """Aggregate importance values using specified method."""
+        values = list(obj_importance.values())
+        if not values:
+            return 0.0
+        if aggregation == "mean":
+            return _mean(values)
+        if aggregation == "max":
+            return max(values)
+        return min(values)  # aggregation == "min"
+
+    def _compute_pareto_frontiers(
+        self,
+        variables: dict[str, MultiObjectiveVariableAnalysis],
+    ) -> dict[str, list[Any]]:
+        """Compute Pareto frontier values for each categorical variable."""
+        frontiers: dict[str, list[Any]] = {}
+        for var_name, var_analysis in variables.items():
+            if var_analysis.var_type == "categorical":
+                all_values = self._get_all_values(var_name)
+                dominated = var_analysis.pareto_dominated_values or []
+                frontiers[var_name] = [v for v in all_values if v not in dominated]
+        return frontiers
+
+    def _generate_multi_objective_suggestion(
+        self,
+        var_name: str,
+        objectives: list[str],
+        var_analysis: MultiObjectiveVariableAnalysis,
+    ) -> EliminationSuggestion:
+        """Generate elimination suggestion for multi-objective analysis."""
+        importance = var_analysis.aggregate_importance
+
+        # Low aggregate importance -> suggest elimination
+        if importance < self.elimination_threshold:
+            return EliminationSuggestion(
+                variable=var_name,
+                action=EliminationAction.ELIMINATE,
+                reason=(
+                    f"Low aggregate importance ({importance:.3f} < "
+                    f"{self.elimination_threshold}) across {len(objectives)} objectives"
+                ),
+                importance_score=importance,
+            )
+
+        # Categorical with Pareto-dominated values -> suggest pruning
+        if (
+            var_analysis.var_type == "categorical"
+            and var_analysis.pareto_dominated_values
+        ):
+            dominated = var_analysis.pareto_dominated_values
+            all_values = self._get_all_values(var_name)
+            remaining = [v for v in all_values if v not in dominated]
+
+            return EliminationSuggestion(
+                variable=var_name,
+                action=EliminationAction.PRUNE_VALUES,
+                reason=(
+                    f"Values {dominated} are Pareto-dominated across "
+                    f"{len(objectives)} objectives"
+                ),
+                importance_score=importance,
+                dominated_values=dominated,
+                suggested_values=remaining,
+            )
+
+        # Default: keep
+        return EliminationSuggestion(
+            variable=var_name,
+            action=EliminationAction.KEEP,
+            reason=(
+                f"Important variable (aggregate: {importance:.3f}) "
+                f"across {len(objectives)} objectives"
+            ),
+            importance_score=importance,
+        )
+
+    def _get_all_values(self, variable: str) -> list[Any]:
+        """Get all possible values for a categorical variable."""
+        config_space = self._get_config_space()
+        var_config = config_space.get(variable)
+
+        # Handle Choices type
+        if hasattr(var_config, "values"):
+            return list(getattr(var_config, "values", []))
+
+        # Handle raw list/tuple
+        if isinstance(var_config, (list, tuple)):
+            return list(var_config)
+
+        return []
+
     def get_variable_importance(self, objective: str) -> dict[str, float]:
         """Get importance scores for all variables.
 
@@ -260,18 +484,32 @@ class VariableAnalyzer:
         try:
             from traigent.utils.importance import ParameterImportanceAnalyzer
 
-            analyzer = ParameterImportanceAnalyzer(self._get_trials_as_dicts())
-            if self.importance_method == "variance":
-                results = analyzer.analyze_variance_based(objective)
-            elif self.importance_method == "correlation":
-                results = analyzer.analyze_correlation_based(objective)
+            # Get trials as TrialResult objects (required by core analyzer)
+            trials = self._get_trial_results()
+            if not trials:
+                importance = self._compute_variance_importance(objective)
             else:
-                results = analyzer.analyze_permutation_based(objective)
+                # Core API: constructor takes objective name, method takes TrialResult list
+                analyzer = ParameterImportanceAnalyzer(objective)
+                if self.importance_method == "variance":
+                    results = analyzer.analyze_variance_based(trials)
+                elif self.importance_method == "correlation":
+                    results = analyzer.analyze_correlation_based(trials)
+                else:
+                    results = analyzer.analyze_permutation_based(trials)
 
-            importance = {r.parameter: r.importance for r in results}
-        except (ImportError, AttributeError, TypeError):
+                # Results is dict[str, ImportanceResult], extract importance_score
+                importance = {
+                    name: result.importance_score for name, result in results.items()
+                }
+
+                # If core analyzer returned no results (insufficient data), use fallback
+                if not importance:
+                    importance = self._compute_variance_importance(objective)
+        except (ImportError, AttributeError, TypeError) as e:
             # Fallback to simple variance-based importance if core analyzer fails
             # This can happen if trials don't have expected format (e.g., mock trials)
+            logger.debug(f"Core analyzer failed, using fallback: {e}")
             importance = self._compute_variance_importance(objective)
 
         self._importance_cache[objective] = importance
@@ -367,7 +605,7 @@ class VariableAnalyzer:
             return [r.value for r in rankings if r.is_dominated]
 
         # For multiple objectives, compute Pareto dominance
-        value_stats = {}
+        value_stats: dict[Any, dict[str, float]] = {}
         for obj in objectives:
             stats = self._get_value_stats(variable, obj)
             for value, scores in stats.items():
@@ -423,6 +661,10 @@ class VariableAnalyzer:
     ) -> tuple[float, float] | None:
         """Suggest narrowed range based on best trials.
 
+        Respects objective direction: for "maximize" objectives, finds values
+        in the top 25% of scores; for "minimize" objectives, finds values
+        in the bottom 25% of scores.
+
         Args:
             variable: Name of the numeric variable
             objective: Name of the objective
@@ -434,7 +676,7 @@ class VariableAnalyzer:
         if not value_stats:
             return None
 
-        # Get values from top quartile of trials
+        # Get values from best quartile of trials (direction-aware)
         all_values = []
         all_scores = []
         for value, scores in value_stats.items():
@@ -445,17 +687,29 @@ class VariableAnalyzer:
         if len(all_values) < 4:
             return None
 
-        # Find values in top 25% of scores
-        threshold = _percentile(all_scores, 75)
-        top_values = [
-            v for v, s in zip(all_values, all_scores, strict=True) if s >= threshold
-        ]
+        # Find values in best 25% of scores based on direction
+        direction = self._get_direction(objective)
+        if direction == "maximize":
+            # Top 25% (high scores are better)
+            threshold = _percentile(all_scores, 75)
+            top_values = [
+                v for v, s in zip(all_values, all_scores, strict=True) if s >= threshold
+            ]
+        else:
+            # Bottom 25% (low scores are better)
+            threshold = _percentile(all_scores, 25)
+            top_values = [
+                v for v, s in zip(all_values, all_scores, strict=True) if s <= threshold
+            ]
 
         if not top_values:
             return None
 
         # Suggest range covering top values with some margin
         margin = 0.1 * (max(top_values) - min(top_values))
+        # Ensure margin is non-zero if all top values are the same
+        if margin == 0:
+            margin = abs(top_values[0]) * 0.1 if top_values[0] != 0 else 0.1
         return (min(top_values) - margin, max(top_values) + margin)
 
     def get_refined_space(
@@ -502,10 +756,13 @@ class VariableAnalyzer:
                     continue
 
             if var_type == "categorical":
+                # Normalize config to list for value manipulation
+                normalized_config = self._normalize_config_value(var_config)
+
                 if prune_dominated_values:
                     dominated = self.get_dominated_values(var_name, objectives)
-                    if dominated and isinstance(var_config, (list, tuple)):
-                        remaining = [v for v in var_config if v not in dominated]
+                    if dominated and isinstance(normalized_config, (list, tuple)):
+                        remaining = [v for v in normalized_config if v not in dominated]
                         if remaining:
                             refined[var_name] = (
                                 self._to_parameter_range(
@@ -519,9 +776,9 @@ class VariableAnalyzer:
                             )
                             continue
                 refined[var_name] = (
-                    self._to_parameter_range(var_name, var_config, "categorical")
+                    self._to_parameter_range(var_name, normalized_config, "categorical")
                     if return_typed
-                    else var_config
+                    else normalized_config
                 )
 
             elif var_type == "numeric":
@@ -537,17 +794,21 @@ class VariableAnalyzer:
                         )
                         logger.info(f"Narrowed {var_name}: {suggested}")
                         continue
+                # Normalize numeric config for consistent handling
+                normalized_numeric = self._normalize_config_value(var_config)
                 refined[var_name] = (
-                    self._to_parameter_range(var_name, var_config, "numeric")
+                    self._to_parameter_range(var_name, normalized_numeric, "numeric")
                     if return_typed
-                    else var_config
+                    else normalized_numeric
                 )
 
             else:
+                # Normalize other config types for consistent handling
+                normalized_other = self._normalize_config_value(var_config)
                 refined[var_name] = (
-                    self._to_parameter_range(var_name, var_config, "categorical")
+                    self._to_parameter_range(var_name, normalized_other, "categorical")
                     if return_typed
-                    else var_config
+                    else normalized_other
                 )
 
         return refined
@@ -640,10 +901,33 @@ class VariableAnalyzer:
             for obj in self.result.objectives:
                 if hasattr(obj, "name") and obj.name == objective:
                     if hasattr(obj, "direction"):
-                        return obj.direction
+                        direction = obj.direction
+                        # Validate and return if valid
+                        if direction in ("maximize", "minimize"):
+                            return direction  # type: ignore[return-value]
 
         # Default to maximize
         return "maximize"
+
+    def _get_trial_results(self) -> list[Any]:
+        """Get trials as TrialResult objects for use with core analyzer.
+
+        Returns the raw trial objects if they appear to be TrialResult-like
+        (have config, metrics, and status attributes).
+        """
+        if not hasattr(self.result, "trials"):
+            return []
+
+        trials = []
+        for trial in self.result.trials:
+            # Check if trial looks like a TrialResult
+            if (
+                hasattr(trial, "config")
+                and hasattr(trial, "metrics")
+                and hasattr(trial, "status")
+            ):
+                trials.append(trial)
+        return trials
 
     def _get_trials_as_dicts(self) -> list[dict]:
         """Convert trials to list of dicts for analysis.
@@ -673,9 +957,27 @@ class VariableAnalyzer:
         return trials
 
     def _get_variable_type(self, var_name: str) -> Literal["numeric", "categorical"]:
-        """Determine if variable is numeric or categorical."""
+        """Determine if variable is numeric or categorical.
+
+        Handles both raw config values (lists, tuples) and typed ParameterRange
+        objects (Range, IntRange, Choices, etc.).
+        """
         config_space = self._get_config_space()
         var_config = config_space.get(var_name)
+
+        # Handle typed ParameterRange objects
+        # Check for Range/IntRange/LogRange (numeric types)
+        if hasattr(var_config, "low") and hasattr(var_config, "high"):
+            return "numeric"
+
+        # Check for Choices (categorical type)
+        if hasattr(var_config, "values") and isinstance(
+            getattr(var_config, "values", None), (list, tuple)
+        ):
+            return "categorical"
+
+        # Normalize ParameterRange to raw value for further checks
+        var_config = self._normalize_config_value(var_config)
 
         # Tuple of exactly 2 numbers = numeric range (low, high)
         if (
@@ -699,8 +1001,33 @@ class VariableAnalyzer:
 
         return "categorical"
 
+    def _normalize_config_value(self, config_value: Any) -> Any:
+        """Normalize a config value from ParameterRange to raw type.
+
+        Converts Range -> (low, high) tuple, Choices -> list of values, etc.
+        """
+        if config_value is None:
+            return None
+
+        # Handle Range/IntRange/LogRange - extract (low, high) tuple
+        if hasattr(config_value, "low") and hasattr(config_value, "high"):
+            return (config_value.low, config_value.high)
+
+        # Handle Choices - extract values list
+        if hasattr(config_value, "values"):
+            values = getattr(config_value, "values", None)
+            if isinstance(values, (list, tuple)):
+                return list(values)
+
+        # Already a raw value
+        return config_value
+
     def _get_value_stats(self, variable: str, objective: str) -> dict[Any, list[float]]:
-        """Get per-value statistics from trials."""
+        """Get per-value statistics from trials.
+
+        Handles metric/config name collisions: if the objective was renamed
+        to 'metric_{objective}' due to collision, looks for that key as fallback.
+        """
         cache_key = f"{variable}:{objective}"
         if cache_key in self._value_stats_cache:
             return self._value_stats_cache[cache_key]
@@ -709,9 +1036,20 @@ class VariableAnalyzer:
         trials = self._get_trials_as_dicts()
 
         for trial in trials:
-            if variable in trial and objective in trial:
-                value = trial[variable]
+            if variable not in trial:
+                continue
+
+            # Handle potential metric/config name collision
+            # If objective was renamed to 'metric_{objective}', use that
+            score = None
+            if objective in trial:
                 score = trial[objective]
+            elif f"metric_{objective}" in trial:
+                # Collision case: metric was renamed
+                score = trial[f"metric_{objective}"]
+
+            if score is not None:
+                value = trial[variable]
                 if value not in stats:
                     stats[value] = []
                 stats[value].append(float(score))

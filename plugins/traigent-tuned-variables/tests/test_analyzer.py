@@ -449,3 +449,344 @@ class TestCodexFixes:
 
         # "expensive" should be dominated (higher cost is worse)
         assert "expensive" in dominated
+
+    def test_get_refined_space_typed_range_return_typed_true(self):
+        """Test get_refined_space with typed Range in config_space, return_typed=True."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.parameter_ranges import IntRange, Range
+
+        # Config space has typed ParameterRange objects
+        trials = [
+            MockTrial(config={"temp": 0.5, "tokens": 100}, metrics={"acc": 0.8}),
+            MockTrial(config={"temp": 0.7, "tokens": 200}, metrics={"acc": 0.9}),
+            MockTrial(config={"temp": 0.6, "tokens": 150}, metrics={"acc": 0.85}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={
+                "temp": Range(0.0, 1.0),  # Typed Range
+                "tokens": IntRange(50, 500),  # Typed IntRange
+            },
+        )
+
+        analyzer = VariableAnalyzer(result, elimination_threshold=0.0)
+        refined = analyzer.get_refined_space(
+            ["acc"], prune_low_importance=False, return_typed=True
+        )
+
+        # Should return Range objects, not nested Range(Range(...))
+        assert "temp" in refined
+        assert isinstance(refined["temp"], Range)
+        # Check it's a valid Range, not corrupted
+        assert isinstance(refined["temp"].low, (int, float))
+        assert isinstance(refined["temp"].high, (int, float))
+        assert refined["temp"].low < refined["temp"].high
+
+        assert "tokens" in refined
+        assert isinstance(refined["tokens"], IntRange)
+        assert isinstance(refined["tokens"].low, int)
+        assert isinstance(refined["tokens"].high, int)
+        assert refined["tokens"].low < refined["tokens"].high
+
+    def test_get_refined_space_typed_range_return_typed_false(self):
+        """Test get_refined_space with typed Range in config_space, return_typed=False."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        from traigent.api.parameter_ranges import IntRange, Range
+
+        # Config space has typed ParameterRange objects
+        trials = [
+            MockTrial(config={"temp": 0.5, "tokens": 100}, metrics={"acc": 0.8}),
+            MockTrial(config={"temp": 0.7, "tokens": 200}, metrics={"acc": 0.9}),
+            MockTrial(config={"temp": 0.6, "tokens": 150}, metrics={"acc": 0.85}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={
+                "temp": Range(0.0, 1.0),  # Typed Range
+                "tokens": IntRange(50, 500),  # Typed IntRange
+            },
+        )
+
+        analyzer = VariableAnalyzer(result, elimination_threshold=0.0)
+        refined = analyzer.get_refined_space(
+            ["acc"], prune_low_importance=False, return_typed=False
+        )
+
+        # Should return raw tuples, not Range objects or nested structures
+        assert "temp" in refined
+        assert isinstance(refined["temp"], tuple)
+        assert len(refined["temp"]) == 2
+        # Values should be numeric, not Range objects
+        assert isinstance(refined["temp"][0], (int, float))
+        assert isinstance(refined["temp"][1], (int, float))
+
+        assert "tokens" in refined
+        assert isinstance(refined["tokens"], tuple)
+        assert len(refined["tokens"]) == 2
+        assert isinstance(refined["tokens"][0], (int, float))
+        assert isinstance(refined["tokens"][1], (int, float))
+
+
+class TestMultiObjectiveAnalysis:
+    """Tests for multi-objective analysis functionality (P-2)."""
+
+    def test_analyze_multi_objective_empty_objectives(self):
+        """Test multi-objective analysis with empty objectives list."""
+        from traigent_tuned_variables import VariableAnalyzer
+        from traigent_tuned_variables.analysis import MultiObjectiveAnalysis
+
+        result = MockOptimizationResult(
+            trials=[],
+            configuration_space={"model": ["a", "b"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective([])
+
+        assert isinstance(analysis, MultiObjectiveAnalysis)
+        assert analysis.objectives == []
+        assert analysis.variables == {}
+
+    def test_analyze_multi_objective_single_objective(self):
+        """Test multi-objective analysis with single objective (same as analyze)."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        trials = [
+            MockTrial(config={"model": "a"}, metrics={"acc": 0.9}),
+            MockTrial(config={"model": "a"}, metrics={"acc": 0.85}),
+            MockTrial(config={"model": "a"}, metrics={"acc": 0.88}),
+            MockTrial(config={"model": "b"}, metrics={"acc": 0.4}),
+            MockTrial(config={"model": "b"}, metrics={"acc": 0.45}),
+            MockTrial(config={"model": "b"}, metrics={"acc": 0.42}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["a", "b"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective(["acc"])
+
+        assert analysis.objectives == ["acc"]
+        assert "model" in analysis.variables
+        var_analysis = analysis.variables["model"]
+        assert var_analysis.name == "model"
+        assert "acc" in var_analysis.importance_by_objective
+        assert var_analysis.aggregate_importance > 0
+
+    def test_analyze_multi_objective_two_objectives(self):
+        """Test multi-objective analysis with two objectives."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        trials = [
+            MockTrial(config={"model": "fast"}, metrics={"acc": 0.7, "latency": 10}),
+            MockTrial(config={"model": "fast"}, metrics={"acc": 0.65, "latency": 12}),
+            MockTrial(config={"model": "fast"}, metrics={"acc": 0.68, "latency": 11}),
+            MockTrial(config={"model": "slow"}, metrics={"acc": 0.9, "latency": 50}),
+            MockTrial(config={"model": "slow"}, metrics={"acc": 0.88, "latency": 55}),
+            MockTrial(config={"model": "slow"}, metrics={"acc": 0.92, "latency": 52}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["fast", "slow"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective(["acc", "latency"])
+
+        assert analysis.objectives == ["acc", "latency"]
+        assert "model" in analysis.variables
+        var_analysis = analysis.variables["model"]
+
+        # Should have importance for both objectives
+        assert "acc" in var_analysis.importance_by_objective
+        assert "latency" in var_analysis.importance_by_objective
+
+    def test_analyze_multi_objective_aggregation_methods(self):
+        """Test different importance aggregation methods."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        trials = [
+            MockTrial(config={"model": "a"}, metrics={"obj1": 0.9, "obj2": 0.1}),
+            MockTrial(config={"model": "a"}, metrics={"obj1": 0.85, "obj2": 0.15}),
+            MockTrial(config={"model": "a"}, metrics={"obj1": 0.88, "obj2": 0.12}),
+            MockTrial(config={"model": "b"}, metrics={"obj1": 0.3, "obj2": 0.8}),
+            MockTrial(config={"model": "b"}, metrics={"obj1": 0.35, "obj2": 0.85}),
+            MockTrial(config={"model": "b"}, metrics={"obj1": 0.32, "obj2": 0.82}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"model": ["a", "b"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+
+        # Mean aggregation
+        analysis_mean = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="mean")
+        mean_imp = analysis_mean.variables["model"].aggregate_importance
+
+        # Max aggregation (keep if important for any)
+        analysis_max = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="max")
+        max_imp = analysis_max.variables["model"].aggregate_importance
+
+        # Min aggregation (eliminate only if unimportant for all)
+        analysis_min = analyzer.analyze_multi_objective(["obj1", "obj2"], aggregation="min")
+        min_imp = analysis_min.variables["model"].aggregate_importance
+
+        # Max should be >= mean >= min
+        assert max_imp >= mean_imp >= min_imp
+
+    def test_analyze_multi_objective_pareto_dominated(self):
+        """Test Pareto dominance detection in multi-objective analysis."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        # "dominated" is worse on BOTH objectives
+        trials = [
+            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.9, "speed": 0.8}),
+            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.88, "speed": 0.85}),
+            MockTrial(config={"strategy": "good"}, metrics={"acc": 0.92, "speed": 0.82}),
+            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.3, "speed": 0.2}),
+            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.32, "speed": 0.22}),
+            MockTrial(config={"strategy": "dominated"}, metrics={"acc": 0.28, "speed": 0.18}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"strategy": ["good", "dominated"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective(["acc", "speed"])
+
+        var_analysis = analysis.variables["strategy"]
+        assert var_analysis.pareto_dominated_values is not None
+        assert "dominated" in var_analysis.pareto_dominated_values
+
+        # Pareto frontier should only contain "good"
+        assert "strategy" in analysis.pareto_frontier_values
+        assert "good" in analysis.pareto_frontier_values["strategy"]
+        assert "dominated" not in analysis.pareto_frontier_values["strategy"]
+
+    def test_analyze_multi_objective_pareto_tradeoff(self):
+        """Test that trade-off values are NOT Pareto dominated."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        # Trade-off: "fast" is good at speed, "accurate" is good at accuracy
+        trials = [
+            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.6, "speed": 0.9}),
+            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.58, "speed": 0.92}),
+            MockTrial(config={"strategy": "fast"}, metrics={"acc": 0.62, "speed": 0.88}),
+            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.95, "speed": 0.4}),
+            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.93, "speed": 0.42}),
+            MockTrial(config={"strategy": "accurate"}, metrics={"acc": 0.97, "speed": 0.38}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={"strategy": ["fast", "accurate"]},
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective(["acc", "speed"])
+
+        # Neither should be dominated (they're on the Pareto frontier)
+        var_analysis = analysis.variables["strategy"]
+        dominated = var_analysis.pareto_dominated_values or []
+        assert "fast" not in dominated
+        assert "accurate" not in dominated
+
+    def test_analyze_multi_objective_refined_space(self):
+        """Test that refined space is generated for multi-objective."""
+        from traigent_tuned_variables import VariableAnalyzer
+
+        trials = [
+            MockTrial(config={"model": "good", "temp": 0.7}, metrics={"acc": 0.9, "cost": 1.0}),
+            MockTrial(config={"model": "good", "temp": 0.8}, metrics={"acc": 0.88, "cost": 1.1}),
+            MockTrial(config={"model": "good", "temp": 0.75}, metrics={"acc": 0.92, "cost": 0.9}),
+            MockTrial(config={"model": "bad", "temp": 0.1}, metrics={"acc": 0.3, "cost": 5.0}),
+            MockTrial(config={"model": "bad", "temp": 0.2}, metrics={"acc": 0.32, "cost": 4.8}),
+            MockTrial(config={"model": "bad", "temp": 0.15}, metrics={"acc": 0.28, "cost": 5.2}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={
+                "model": ["good", "bad"],
+                "temp": (0.0, 1.0),
+            },
+        )
+
+        analyzer = VariableAnalyzer(result)
+        analysis = analyzer.analyze_multi_objective(["acc", "cost"])
+
+        # Should have refined space
+        assert analysis.refined_space is not None
+        assert len(analysis.refined_space) > 0
+
+    def test_analyze_multi_objective_elimination_suggestions(self):
+        """Test elimination suggestions in multi-objective analysis."""
+        from traigent_tuned_variables import VariableAnalyzer
+        from traigent_tuned_variables.analysis import EliminationAction
+
+        trials = [
+            MockTrial(config={"model": "good", "unused": "x"}, metrics={"acc": 0.9, "speed": 0.8}),
+            MockTrial(config={"model": "good", "unused": "y"}, metrics={"acc": 0.9, "speed": 0.8}),
+            MockTrial(config={"model": "bad", "unused": "x"}, metrics={"acc": 0.3, "speed": 0.2}),
+            MockTrial(config={"model": "bad", "unused": "y"}, metrics={"acc": 0.3, "speed": 0.2}),
+        ]
+
+        result = MockOptimizationResult(
+            trials=trials,
+            configuration_space={
+                "model": ["good", "bad"],
+                "unused": ["x", "y"],  # Same performance regardless of value
+            },
+        )
+
+        analyzer = VariableAnalyzer(result, elimination_threshold=0.01)
+        analysis = analyzer.analyze_multi_objective(["acc", "speed"])
+
+        # "model" should have suggestions (either prune or keep)
+        model_analysis = analysis.variables["model"]
+        assert model_analysis.suggestion is not None
+
+        # Check if "bad" is suggested for pruning
+        if model_analysis.suggestion.action == EliminationAction.PRUNE_VALUES:
+            assert "bad" in (model_analysis.suggestion.dominated_values or [])
+
+    def test_multi_objective_analysis_dataclass_fields(self):
+        """Test that MultiObjectiveAnalysis dataclass has expected fields."""
+        from traigent_tuned_variables.analysis import (
+            MultiObjectiveAnalysis,
+            MultiObjectiveVariableAnalysis,
+        )
+
+        # Test empty initialization
+        analysis = MultiObjectiveAnalysis()
+        assert analysis.objectives == []
+        assert analysis.variables == {}
+        assert analysis.elimination_suggestions == []
+        assert analysis.pareto_frontier_values == {}
+        assert analysis.refined_space == {}
+
+        # Test MultiObjectiveVariableAnalysis
+        var_analysis = MultiObjectiveVariableAnalysis(
+            name="test",
+            var_type="categorical",
+            importance_by_objective={"acc": 0.5, "cost": 0.3},
+            aggregate_importance=0.4,
+        )
+        assert var_analysis.name == "test"
+        assert var_analysis.var_type == "categorical"
+        assert var_analysis.importance_by_objective["acc"] == pytest.approx(0.5)
+        assert var_analysis.importance_by_objective["cost"] == pytest.approx(0.3)
+        assert var_analysis.aggregate_importance == pytest.approx(0.4)
+        assert var_analysis.pareto_dominated_values is None
+        assert var_analysis.suggestion is None
