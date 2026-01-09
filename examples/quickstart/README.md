@@ -61,11 +61,64 @@ These examples use `data/qa_samples.jsonl` located at:
 
 - `data/qa_samples.jsonl`
 
+## DSPy Integration
+
+Traigent integrates with DSPy for automatic prompt optimization. Combine DSPy's prompt engineering with Traigent's hyperparameter optimization.
+
+```bash
+# Install DSPy support
+pip install traigent[dspy]
+```
+
+### Quick Example
+
+```python
+from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
+import traigent
+
+@traigent.optimize(
+    # DSPy generates prompt variants that Traigent explores
+    prompt=DSPyPromptOptimizer.create_prompt_choices([
+        "You are a helpful assistant. Answer concisely.",
+        "Think step by step before answering.",
+        "Answer only with the most relevant information.",
+    ]),
+    model=["gpt-3.5-turbo", "gpt-4o-mini"],
+    temperature=[0.1, 0.3, 0.5],
+    objectives=["accuracy", "cost", "latency"],
+    eval_dataset="validation.jsonl",
+)
+def qa_agent(question: str) -> str:
+    config = traigent.get_config()
+    # ... implementation
+```
+
+### Important: Dataset Separation
+
+Use **different datasets** for DSPy and Traigent to avoid overfitting:
+
+| Dataset        | Purpose                                          |
+| -------------- | ------------------------------------------------ |
+| `trainset`     | DSPy prompt optimization (small, ~10-50 examples)|
+| `eval_dataset` | Traigent config optimization (validation set)    |
+| `test_dataset` | Final evaluation (held-out, never seen)          |
+
+See the full [DSPy Integration Guide](../docs/DSPY_INTEGRATION.md) for detailed patterns.
+
+## Interactive Notebook
+
+For a visual walkthrough, run the Jupyter notebook:
+
+```bash
+jupyter notebook examples/quickstart/demo_walkthrough.ipynb
+```
+
 ## Next Steps
 
 After trying these quickstart examples:
 
 1. Explore `examples/core/` for more comprehensive examples
 2. Check `examples/advanced/` for specialized patterns
-3. Read the [Evaluation Guide](../../docs/guides/evaluation.md)
-4. Try the CLI: `traigent --help`
+3. Read the [DSPy Integration Guide](../docs/DSPY_INTEGRATION.md) for prompt optimization
+4. Read the [Evaluation Guide](../../docs/guides/evaluation.md)
+5. Try the CLI: `traigent --help`

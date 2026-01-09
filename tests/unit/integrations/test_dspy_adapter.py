@@ -368,32 +368,58 @@ class TestOptimizePromptMethod:
         finally:
             dspy_adapter.DSPY_AVAILABLE = original
 
-    def test_optimize_prompt_mipro_fallback_to_legacy(
-        self, setup_dspy_available
-    ) -> None:
-        """Should fallback to legacy MIPRO when MIPROv2 not available."""
-        from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
 
-        mock_dspy = setup_dspy_available
-        # Make MIPROv2 raise AttributeError
-        mock_dspy.MIPROv2.side_effect = AttributeError("MIPROv2 not found")
+class TestCompileWithTeacher:
+    """Test the _compile_with_teacher helper method."""
 
-        # Setup legacy MIPRO mock
-        mock_legacy_mipro = MagicMock()
-        mock_legacy_mipro.compile.return_value = MagicMock(name="legacy_optimized")
-        mock_dspy.MIPRO.return_value = mock_legacy_mipro
+    @pytest.fixture
+    def mock_dspy(self):
+        """Create DSPy mock."""
+        mock = MagicMock()
+        mock.context.return_value.__enter__ = MagicMock()
+        mock.context.return_value.__exit__ = MagicMock()
+        return mock
 
-        optimizer = DSPyPromptOptimizer(method="mipro")
+    def test_compile_without_teacher(self, mock_dspy) -> None:
+        """Should compile directly without teacher."""
+        with patch("traigent.integrations.dspy_adapter.DSPY_AVAILABLE", True):
+            with patch("traigent.integrations.dspy_adapter.dspy", mock_dspy):
+                from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
 
-        result = optimizer.optimize_prompt(
-            module=MagicMock(),
-            trainset=[MagicMock()],
-            metric=lambda x, y: 1.0,
-        )
+                optimizer = DSPyPromptOptimizer(method="mipro")
+                mock_optimizer = MagicMock()
+                mock_module = MagicMock()
+                trainset = [MagicMock()]
 
-        # Verify fallback to legacy MIPRO
-        mock_dspy.MIPRO.assert_called_once()
-        assert result.metadata.get("method") == "mipro_legacy"
+                optimizer._compile_with_teacher(
+                    mock_optimizer, mock_module, trainset, teacher=None
+                )
+
+                # Should compile directly without context
+                mock_optimizer.compile.assert_called_once_with(
+                    mock_module, trainset=trainset
+                )
+                mock_dspy.context.assert_not_called()
+
+    def test_compile_with_teacher(self, mock_dspy) -> None:
+        """Should use context manager with teacher."""
+        with patch("traigent.integrations.dspy_adapter.DSPY_AVAILABLE", True):
+            with patch("traigent.integrations.dspy_adapter.dspy", mock_dspy):
+                from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
+
+                optimizer = DSPyPromptOptimizer(method="mipro")
+                mock_optimizer = MagicMock()
+                mock_module = MagicMock()
+                trainset = [MagicMock()]
+                teacher = MagicMock(name="teacher_lm")
+
+                optimizer._compile_with_teacher(
+                    mock_optimizer, mock_module, trainset, teacher=teacher
+                )
+
+                # Should use context with teacher
+                mock_dspy.context.assert_called_once_with(lm=teacher)
+                mock_optimizer.compile.assert_called_once()
 
 
 class TestCountDemos:
@@ -549,15 +575,8 @@ class TestRunMipro:
                 assert metadata["auto_setting"] == "heavy"
                 assert metadata["num_candidates"] == 5
 
-    def test_run_mipro_legacy_fallback_with_teacher(self, mock_dspy) -> None:
-        """Legacy MIPRO fallback should still use teacher model."""
-        # Make MIPROv2 raise AttributeError to trigger legacy fallback
-        mock_dspy.MIPROv2.side_effect = AttributeError("MIPROv2 not found")
-
-        mock_legacy_mipro = MagicMock()
-        mock_legacy_mipro.compile.return_value = MagicMock(name="legacy_optimized")
-        mock_dspy.MIPRO.return_value = mock_legacy_mipro
-
+    def test_run_mipro_with_teacher(self, mock_dspy) -> None:
+        """_run_mipro should use teacher context when teacher is provided."""
         with patch("traigent.integrations.dspy_adapter.DSPY_AVAILABLE", True):
             with patch("traigent.integrations.dspy_adapter.dspy", mock_dspy):
                 from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
@@ -565,22 +584,17 @@ class TestRunMipro:
                 optimizer = DSPyPromptOptimizer(method="mipro")
                 teacher = MagicMock(name="teacher_lm")
 
-                _, metadata = optimizer._run_mipro(
+                optimizer._run_mipro(
                     module=MagicMock(),
                     trainset=[MagicMock()],
-                    metric=lambda x, y: 1.0,
+                    metric=_always_one_metric,
                     num_candidates=5,
                     requires_permission_to_run=True,
                     teacher=teacher,
                 )
 
-                # Verify legacy MIPRO was used
-                mock_dspy.MIPRO.assert_called_once()
                 # Verify context was used with teacher
                 mock_dspy.context.assert_called_with(lm=teacher)
-                # Verify metadata indicates legacy and unsupported params
-                assert metadata["method"] == "mipro_legacy"
-                assert "unsupported_params" in metadata
 
     def test_run_mipro_returns_best_score(self, mock_dspy) -> None:
         """_run_mipro should populate best_score in metadata."""
