@@ -960,3 +960,29 @@ class TestBooleanFilterLogic:
         # OR in the value should not split
         result = resolver.resolve("items", filter_expr="name == 'Red OR Blue'")
         assert result == ["2"]
+
+    def test_outer_parens_with_quoted_parens_inside(self) -> None:
+        """Test that outer parentheses containing quoted parens work correctly.
+
+        This tests _strip_outer_parens() behavior when quoted values contain parens.
+        The expression (id == 'val(ue)') should have outer parens stripped,
+        not be confused by the parens inside the quoted value.
+        """
+        resolver = DictRegistryResolver(
+            {
+                "items": [
+                    {"id": "val(ue)", "type": "a"},
+                    {"id": "other", "type": "b"},
+                ],
+            }
+        )
+
+        # Expression with outer parens wrapping a filter with quoted parens
+        result = resolver.resolve("items", filter_expr="(id == 'val(ue)')")
+        assert result == ["val(ue)"]
+
+        # Combined with OR
+        result = resolver.resolve(
+            "items", filter_expr="(id == 'val(ue)' OR type == 'b')"
+        )
+        assert set(result) == {"val(ue)", "other"}

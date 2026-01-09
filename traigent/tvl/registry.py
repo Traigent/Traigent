@@ -362,6 +362,8 @@ class FileRegistryResolver:
     def _strip_outer_parens(self, expr: str) -> tuple[str, bool]:
         """Strip outer parentheses if they wrap the entire expression.
 
+        Correctly ignores parentheses inside quoted strings.
+
         Args:
             expr: Expression string.
 
@@ -373,12 +375,21 @@ class FileRegistryResolver:
             return stripped, False
 
         # Check if parens are balanced and wrap the whole expression
+        # Track quote state to ignore parens inside quoted strings
         depth = 0
+        in_quote: str | None = None
         for i, char in enumerate(stripped):
-            if char == "(":
+            # Handle quote state transitions
+            if char in ("'", '"') and in_quote is None:
+                in_quote = char
+            elif char == in_quote:
+                in_quote = None
+            # Only track parentheses when NOT inside quotes
+            elif in_quote is None and char == "(":
                 depth += 1
-            elif char == ")":
+            elif in_quote is None and char == ")":
                 depth -= 1
+
             if depth == 0 and i < len(stripped) - 1:
                 return stripped, False
 
