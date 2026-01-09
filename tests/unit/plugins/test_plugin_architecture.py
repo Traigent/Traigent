@@ -420,16 +420,15 @@ class TestLazyImportModules:
                 err.name = name
                 raise err
 
-        # Clear any cached imports - both the target module AND traigent.cloud*
-        # to ensure test isolation (earlier tests may have imported cloud)
-        # Note: we need to snapshot keys() since we're modifying the dict
+        # Save original modules for restoration
+        saved_modules = {}
         modules_to_clear = [
             k
             for k in tuple(sys.modules.keys())
             if k.startswith(module_path) or k.startswith("traigent.cloud")
         ]
         for mod in modules_to_clear:
-            sys.modules.pop(mod, None)
+            saved_modules[mod] = sys.modules.pop(mod, None)
 
         blocker = CloudBlocker()
         sys.meta_path.insert(0, blocker)
@@ -439,6 +438,14 @@ class TestLazyImportModules:
             __import__(module_path)
         finally:
             sys.meta_path.remove(blocker)
+            # Clear the test's version of the modules
+            for mod in list(sys.modules.keys()):
+                if mod.startswith(module_path) or mod.startswith("traigent.cloud"):
+                    sys.modules.pop(mod, None)
+            # Restore original modules for other tests
+            for mod, module_obj in saved_modules.items():
+                if module_obj is not None:
+                    sys.modules[mod] = module_obj
 
 
 class TestVersionParsing:
@@ -680,14 +687,15 @@ class TestFeatureNotAvailableErrorGuards:
                 err.name = name
                 raise err
 
-        # Clear cached imports for specification_generator
+        # Save original modules for restoration
+        saved_modules = {}
         modules_to_clear = [
             k
             for k in tuple(sys.modules.keys())
             if "specification_generator" in k or k.startswith("traigent.cloud")
         ]
         for mod in modules_to_clear:
-            sys.modules.pop(mod, None)
+            saved_modules[mod] = sys.modules.pop(mod, None)
 
         blocker = CloudModelsBlocker()
         sys.meta_path.insert(0, blocker)
@@ -710,6 +718,14 @@ class TestFeatureNotAvailableErrorGuards:
                     assert "pip install traigent[cloud]" in str(exc_info.value)
         finally:
             sys.meta_path.remove(blocker)
+            # Clear the test's version of the modules
+            for mod in list(sys.modules.keys()):
+                if "specification_generator" in mod or mod.startswith("traigent.cloud"):
+                    sys.modules.pop(mod, None)
+            # Restore original modules for other tests
+            for mod, module_obj in saved_modules.items():
+                if module_obj is not None:
+                    sys.modules[mod] = module_obj
 
 
 class TestTraigentClientEdgeAnalyticsMode:
@@ -730,15 +746,15 @@ class TestTraigentClientEdgeAnalyticsMode:
                     raise err
                 return None
 
-        # Clear cached cloud imports first
-        cloud_modules = [
-            k for k in tuple(sys.modules.keys()) if k.startswith("traigent.cloud")
+        # Save original modules for restoration
+        saved_modules = {}
+        modules_to_clear = [
+            k
+            for k in tuple(sys.modules.keys())
+            if k.startswith("traigent.cloud") or k == "traigent.traigent_client"
         ]
-        for mod in cloud_modules:
-            sys.modules.pop(mod, None)
-
-        # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
-        sys.modules.pop("traigent.traigent_client", None)
+        for mod in modules_to_clear:
+            saved_modules[mod] = sys.modules.pop(mod, None)
 
         blocker = CloudBlocker()
         sys.meta_path.insert(0, blocker)
@@ -761,8 +777,17 @@ class TestTraigentClientEdgeAnalyticsMode:
             assert client.backend_client is None
         finally:
             sys.meta_path.remove(blocker)
-            # Clean up for other tests
-            sys.modules.pop("traigent.traigent_client", None)
+            # Clear the test's version of the modules
+            for mod in list(sys.modules.keys()):
+                if (
+                    mod.startswith("traigent.cloud")
+                    or mod == "traigent.traigent_client"
+                ):
+                    sys.modules.pop(mod, None)
+            # Restore original modules for other tests
+            for mod, module_obj in saved_modules.items():
+                if module_obj is not None:
+                    sys.modules[mod] = module_obj
 
     def test_traigent_client_cloud_mode_requires_cloud(self):
         """TraigentClient should raise FeatureNotAvailableError for cloud mode."""
@@ -779,15 +804,15 @@ class TestTraigentClientEdgeAnalyticsMode:
                     raise err
                 return None
 
-        # Clear cached cloud imports first
-        cloud_modules = [
-            k for k in tuple(sys.modules.keys()) if k.startswith("traigent.cloud")
+        # Save original modules for restoration
+        saved_modules = {}
+        modules_to_clear = [
+            k
+            for k in tuple(sys.modules.keys())
+            if k.startswith("traigent.cloud") or k == "traigent.traigent_client"
         ]
-        for mod in cloud_modules:
-            sys.modules.pop(mod, None)
-
-        # Also clear optigen_integration to force re-evaluation of _CLOUD_AVAILABLE
-        sys.modules.pop("traigent.traigent_client", None)
+        for mod in modules_to_clear:
+            saved_modules[mod] = sys.modules.pop(mod, None)
 
         blocker = CloudBlocker()
         sys.meta_path.insert(0, blocker)
@@ -808,5 +833,14 @@ class TestTraigentClientEdgeAnalyticsMode:
             assert "pip install traigent[cloud]" in str(exc_info.value)
         finally:
             sys.meta_path.remove(blocker)
-            # Clean up for other tests
-            sys.modules.pop("traigent.traigent_client", None)
+            # Clear the test's version of the modules
+            for mod in list(sys.modules.keys()):
+                if (
+                    mod.startswith("traigent.cloud")
+                    or mod == "traigent.traigent_client"
+                ):
+                    sys.modules.pop(mod, None)
+            # Restore original modules for other tests
+            for mod, module_obj in saved_modules.items():
+                if module_obj is not None:
+                    sys.modules[mod] = module_obj
