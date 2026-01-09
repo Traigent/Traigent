@@ -14,7 +14,13 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from traigent.api.agent_inference import (
+    build_agent_configuration,
+    extract_parameter_agents,
+)
 from traigent.api.types import (
+    AgentConfiguration,
+    AgentDefinition,
     OptimizationResult,
     OptimizationStatus,
     StopReason,
@@ -166,6 +172,44 @@ class OptimizationOrchestrator:
 
         # TVL 0.9 tie-breaker configuration
         self._tie_breakers: dict[str, str] = kwargs.pop("tie_breakers", None) or {}
+
+        # Multi-agent configuration
+        explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
+        agent_prefixes: list[str] | None = kwargs.pop("agent_prefixes", None)
+        agent_measures: dict[str, list[str]] | None = kwargs.pop("agent_measures", None)
+        global_measures: list[str] | None = kwargs.pop("global_measures", None)
+        # TVL parameter_agents are pre-extracted from TVL spec (since TVL uses raw
+        # values in configuration_space, not ParameterRange objects)
+        tvl_parameter_agents: dict[str, str] | None = kwargs.pop(
+            "tvl_parameter_agents", None
+        )
+
+        # Build agent configuration if any multi-agent params provided
+        self._agent_configuration: AgentConfiguration | None = None
+        has_multi_agent_config = (
+            explicit_agents
+            or agent_prefixes
+            or agent_measures
+            or global_measures
+            or tvl_parameter_agents
+        )
+        if has_multi_agent_config:
+            # Extract parameter agents from Range(..., agent="x") parameters
+            parameter_agents = extract_parameter_agents(self.optimizer.config_space)
+            # Merge with TVL parameter_agents (TVL takes lower priority - decorator
+            # Range(..., agent="x") can override TVL if needed)
+            if tvl_parameter_agents:
+                merged_agents = dict(tvl_parameter_agents)
+                merged_agents.update(parameter_agents)  # Decorator overrides TVL
+                parameter_agents = merged_agents
+            self._agent_configuration = build_agent_configuration(
+                configuration_space=self.optimizer.config_space,
+                explicit_agents=explicit_agents,
+                agent_prefixes=agent_prefixes,
+                agent_measures=agent_measures,
+                global_measures=global_measures,
+                parameter_agents=parameter_agents,
+            )
 
         # Derive band_target from objective_schema if available
         self._band_target: float | None = None
@@ -344,6 +388,14 @@ class OptimizationOrchestrator:
     def trial_count(self) -> int:
         """Get the number of completed trials."""
         return len(self._trials)
+
+    @property
+    def agent_configuration(self) -> AgentConfiguration | None:
+        """Get the agent configuration for multi-agent experiments.
+
+        Returns None for single-agent experiments (no grouping needed).
+        """
+        return self._agent_configuration
 
     def _configure_evaluator_execution_mode(self) -> None:
         if hasattr(self.evaluator, "execution_mode"):
@@ -1325,6 +1377,7 @@ class OptimizationOrchestrator:
             max_trials=self.max_trials,
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
+            agent_configuration=self._agent_configuration,
         )
         session_id: str | None = session_context.session_id
 

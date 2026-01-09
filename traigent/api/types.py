@@ -1341,6 +1341,194 @@ class OptimizationJob:
         raise NotImplementedError("Background jobs not yet implemented")
 
 
+# =============================================================================
+# Multi-Agent Configuration Types
+# =============================================================================
+
+# Agent type for semantic grouping in multi-agent experiments
+AgentType = Literal["llm", "retriever", "router", "tool", "custom"]
+
+
+@dataclass
+class AgentMeta:
+    """Optional UI metadata for agent visualization.
+
+    Attributes:
+        color: Hex color code for charts and separators (e.g., "#4299E1")
+        icon: Icon identifier for UI display (e.g., "robot", "search")
+        description: Tooltip description for the agent
+    """
+
+    color: str | None = None
+    icon: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class AgentDefinition:
+    """Definition for a single agent within a multi-agent experiment.
+
+    Attributes:
+        display_name: Human-readable name shown in UI (e.g., "Financial Agent")
+        parameter_keys: List of parameter names belonging to this agent
+        measure_ids: List of measure/metric IDs belonging to this agent
+        primary_model: Key of the primary model parameter (for Trade-off Analysis)
+        order: Display order (lower values appear first)
+        agent_type: Semantic type of the agent
+        meta: Optional UI metadata
+    """
+
+    display_name: str
+    parameter_keys: list[str] = field(default_factory=list)
+    measure_ids: list[str] = field(default_factory=list)
+    primary_model: str | None = None
+    order: int | None = None
+    agent_type: AgentType | None = None
+    meta: AgentMeta | None = None
+
+
+@dataclass
+class GlobalConfiguration:
+    """Global (non-agent-specific) parameters and measures.
+
+    Attributes:
+        parameter_keys: Parameters not tied to any specific agent
+        measure_ids: Measures not tied to any specific agent (e.g., total_cost)
+        order: Display order (default: last)
+    """
+
+    parameter_keys: list[str] = field(default_factory=list)
+    measure_ids: list[str] = field(default_factory=list)
+    order: int | None = None
+
+
+@dataclass
+class AgentConfiguration:
+    """Complete agent configuration for a multi-agent experiment.
+
+    This configuration is provided by the SDK in experiment_parameters to
+    explicitly map parameters and measures to agents, replacing fragile
+    label-parsing in the frontend.
+
+    Attributes:
+        version: Schema version for compatibility (currently "1.0")
+        agents: Map of agent_id to AgentDefinition
+        global_config: Configuration for global (non-agent) params/measures
+        auto_inferred: True if SDK auto-generated from naming patterns
+
+    Example:
+        >>> config = AgentConfiguration(
+        ...     agents={
+        ...         "financial": AgentDefinition(
+        ...             display_name="Financial Agent",
+        ...             parameter_keys=["financial_model", "financial_temperature"],
+        ...             measure_ids=["financial_accuracy"],
+        ...         ),
+        ...         "legal": AgentDefinition(
+        ...             display_name="Legal Agent",
+        ...             parameter_keys=["legal_model"],
+        ...             measure_ids=["legal_accuracy"],
+        ...         ),
+        ...     },
+        ...     global_config=GlobalConfiguration(
+        ...         measure_ids=["total_cost", "total_latency"],
+        ...     ),
+        ... )
+        >>> payload = config.to_dict()
+    """
+
+    version: str = "1.0"
+    agents: dict[str, AgentDefinition] = field(default_factory=dict)
+    global_config: GlobalConfiguration | None = None
+    auto_inferred: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization.
+
+        Returns:
+            Dictionary suitable for inclusion in experiment_parameters.
+        """
+        from dataclasses import asdict
+
+        result: dict[str, Any] = {
+            "version": self.version,
+            "auto_inferred": self.auto_inferred,
+            "agents": {},
+        }
+
+        for agent_id, agent in self.agents.items():
+            agent_dict: dict[str, Any] = {
+                "display_name": agent.display_name,
+                "parameter_keys": agent.parameter_keys,
+                "measure_ids": agent.measure_ids,
+            }
+            if agent.primary_model is not None:
+                agent_dict["primary_model"] = agent.primary_model
+            if agent.order is not None:
+                agent_dict["order"] = agent.order
+            if agent.agent_type is not None:
+                agent_dict["agent_type"] = agent.agent_type
+            if agent.meta is not None:
+                agent_dict["meta"] = asdict(agent.meta)
+            result["agents"][agent_id] = agent_dict
+
+        if self.global_config is not None:
+            global_dict: dict[str, Any] = {
+                "parameter_keys": self.global_config.parameter_keys,
+                "measure_ids": self.global_config.measure_ids,
+            }
+            if self.global_config.order is not None:
+                global_dict["order"] = self.global_config.order
+            result["global"] = global_dict
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgentConfiguration:
+        """Reconstruct AgentConfiguration from a dictionary.
+
+        Args:
+            data: Dictionary from to_dict() or backend response.
+
+        Returns:
+            AgentConfiguration instance.
+        """
+        agents: dict[str, AgentDefinition] = {}
+        for agent_id, agent_data in data.get("agents", {}).items():
+            meta = None
+            if "meta" in agent_data:
+                meta = AgentMeta(
+                    color=agent_data["meta"].get("color"),
+                    icon=agent_data["meta"].get("icon"),
+                    description=agent_data["meta"].get("description"),
+                )
+            agents[agent_id] = AgentDefinition(
+                display_name=agent_data.get("display_name", agent_id),
+                parameter_keys=agent_data.get("parameter_keys", []),
+                measure_ids=agent_data.get("measure_ids", []),
+                primary_model=agent_data.get("primary_model"),
+                order=agent_data.get("order"),
+                agent_type=agent_data.get("agent_type"),
+                meta=meta,
+            )
+
+        global_config = None
+        global_data = data.get("global")
+        if global_data:
+            global_config = GlobalConfiguration(
+                parameter_keys=global_data.get("parameter_keys", []),
+                measure_ids=global_data.get("measure_ids", []),
+                order=global_data.get("order"),
+            )
+
+        return cls(
+            version=data.get("version", "1.0"),
+            agents=agents,
+            global_config=global_config,
+            auto_inferred=data.get("auto_inferred", False),
+        )
+
+
 # Type aliases for convenience
 ConfigSpace = dict[str, list[Any] | tuple[Any, Any] | Any]
 Metrics = dict[str, float]

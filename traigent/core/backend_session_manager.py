@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import (
+    AgentConfiguration,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
@@ -107,6 +108,7 @@ class BackendSessionManager:
         max_trials: int | None,
         start_time: float,
         max_total_examples: int | None = None,
+        agent_configuration: AgentConfiguration | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -116,6 +118,8 @@ class BackendSessionManager:
             function_descriptor: Descriptor for the function being optimized
             max_trials: Maximum number of trials
             start_time: Optimization start timestamp
+            max_total_examples: Maximum total examples across all trials
+            agent_configuration: Multi-agent configuration for parameter grouping
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -141,22 +145,27 @@ class BackendSessionManager:
                 function_slug,
             )
 
+            # Build metadata including agent configuration if present
+            session_metadata: dict[str, Any] = {
+                "optimization_id": self._optimization_id,
+                "max_trials": max_trials_value,
+                "max_total_examples": max_samples_value,
+                "dataset_size": len(dataset),
+                "function_name": function_identifier,
+                "function_display_name": function_display_name,
+                "function_module": function_descriptor.module,
+                "function_relative_path": function_descriptor.relative_path,
+                "function_slug": function_slug,
+                "evaluation_set": evaluation_set_name,
+            }
+            if agent_configuration is not None:
+                session_metadata["agent_configuration"] = agent_configuration.to_dict()
+
             session_id = self._backend_client.create_session(
                 function_name=function_slug,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
-                metadata={
-                    "optimization_id": self._optimization_id,
-                    "max_trials": max_trials_value,
-                    "max_total_examples": max_samples_value,
-                    "dataset_size": len(dataset),
-                    "function_name": function_identifier,
-                    "function_display_name": function_display_name,
-                    "function_module": function_descriptor.module,
-                    "function_relative_path": function_descriptor.relative_path,
-                    "function_slug": function_slug,
-                    "evaluation_set": evaluation_set_name,
-                },
+                metadata=session_metadata,
             )
             logger.info("Created backend session: %s", session_id)
 
