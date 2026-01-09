@@ -481,7 +481,7 @@ class HypervolumeConvergenceStopCondition(StopCondition):
         if self._computed_reference is None:
             # Initialize with first point + margin
             self._computed_reference = []
-            for i, (val, direction) in enumerate(zip(point, self._directions)):
+            for val, direction in zip(point, self._directions, strict=True):
                 if direction == "maximize":
                     # For maximize, reference should be below all observed values
                     self._computed_reference.append(val - abs(val) * 0.1 - 0.1)
@@ -490,7 +490,9 @@ class HypervolumeConvergenceStopCondition(StopCondition):
                     self._computed_reference.append(val + abs(val) * 0.1 + 0.1)
         else:
             # Update to ensure reference is dominated by all observed points
-            for i, (val, direction) in enumerate(zip(point, self._directions)):
+            for i, (val, direction) in enumerate(
+                zip(point, self._directions, strict=True)
+            ):
                 if direction == "maximize":
                     self._computed_reference[i] = min(
                         self._computed_reference[i], val - abs(val) * 0.1 - 0.1
@@ -509,7 +511,7 @@ class HypervolumeConvergenceStopCondition(StopCondition):
         # (flip minimize objectives so all are maximize)
         def normalize(p: list[float]) -> list[float]:
             result = []
-            for val, direction in zip(p, self._directions):
+            for val, direction in zip(p, self._directions, strict=True):
                 if direction == "minimize":
                     result.append(-val)
                 else:
@@ -540,7 +542,7 @@ class HypervolumeConvergenceStopCondition(StopCondition):
     def _dominates(self, a: list[float], b: list[float]) -> bool:
         """Check if point a dominates point b (all maximize)."""
         at_least_one_better = False
-        for av, bv in zip(a, b):
+        for av, bv in zip(a, b, strict=True):
             if av < bv:
                 return False
             if av > bv:
@@ -571,7 +573,7 @@ class HypervolumeConvergenceStopCondition(StopCondition):
         max_contribution = 0.0
         for point in front:
             volume = 1.0
-            for pv, rv in zip(point, reference):
+            for pv, rv in zip(point, reference, strict=True):
                 volume *= max(0.0, pv - rv)
             max_contribution = max(max_contribution, volume)
         return max_contribution
@@ -607,7 +609,7 @@ class HypervolumeConvergenceStopCondition(StopCondition):
         # Normalize for comparison (flip minimize objectives)
         def normalize(p: list[float]) -> list[float]:
             result = []
-            for val, direction in zip(p, self._directions):
+            for val, direction in zip(p, self._directions, strict=True):
                 if direction == "minimize":
                     result.append(-val)
                 else:
