@@ -80,6 +80,7 @@ class MockOrchestrator:
         self.cost_enforcer = None  # Added for sequential permit enforcement
         self._default_config = None
         self._default_config_used = False
+        self.objective_schema = None  # For band-based pruning support
 
     def _consume_default_config(self):
         return None

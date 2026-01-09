@@ -2,12 +2,15 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance FUNC-OPT-ALGORITHMS FUNC-ORCH-LIFECYCLE REQ-OPT-ALG-004 REQ-ORCH-003 SYNC-OptimizationFlow
 
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.evaluators.base import Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TrialPrunedError
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.tvl.models import BandTarget
 
 logger = get_logger(__name__)
 
@@ -20,7 +23,12 @@ class PruningProgressTracker:
     2. Collects objective values (with cost projection for stronger signals)
     3. Reports intermediate values to Optuna
     4. Triggers pruning when optimizer decides trial should stop
+    5. For banded objectives, triggers pruning when values are far outside band
     """
+
+    # Multiplier for band width to determine pruning threshold
+    # Values more than BAND_PRUNE_THRESHOLD * band_width from band center are pruned
+    BAND_PRUNE_THRESHOLD = 2.0
 
     def __init__(
         self,
@@ -28,6 +36,8 @@ class PruningProgressTracker:
         dataset: Dataset,
         trial_id: str,
         optuna_trial_id: int,
+        *,
+        band_target: "BandTarget | None" = None,
     ) -> None:
         """Initialize pruning progress tracker.
 
@@ -36,11 +46,13 @@ class PruningProgressTracker:
             dataset: Evaluation dataset
             trial_id: Trial identifier for logging
             optuna_trial_id: Optuna trial identifier
+            band_target: Optional band target for banded objective pruning
         """
         self.optimizer = optimizer
         self.dataset = dataset
         self.trial_id = trial_id
         self.optuna_trial_id = optuna_trial_id
+        self.band_target = band_target
 
         total_examples = len(dataset.examples) if hasattr(dataset, "examples") else 0
 
@@ -88,8 +100,14 @@ class PruningProgressTracker:
             value=report_value,
         )
 
+        # Check band-based pruning if we have a band target
+        band_prune = self._should_prune_for_band(report_value)
+        if band_prune:
+            should_prune = True
+
         if should_prune:
-            logger.info("   → Pruning decision: prune")
+            prune_reason = "band-based" if band_prune else "optuna"
+            logger.info("   → Pruning decision: prune (%s)", prune_reason)
         else:
             logger.debug("   → Pruning decision: keep")
 
@@ -257,6 +275,63 @@ class PruningProgressTracker:
             return cast(float | None, self.state.get("total_cost"))
 
         return None
+
+    def _should_prune_for_band(self, value: float | list[float]) -> bool:
+        """Check if value is far enough outside the band to trigger pruning.
+
+        For banded objectives, we prune trials that produce values far outside
+        the target band. This helps focus the search on configurations that
+        can realistically achieve the band target.
+
+        Args:
+            value: Current objective value(s) from the trial
+
+        Returns:
+            True if the trial should be pruned based on band deviation
+        """
+        if self.band_target is None:
+            return False
+
+        # Extract single value for band check
+        if isinstance(value, list):
+            if not value:
+                return False
+            check_value = value[0]  # Use first objective value
+        else:
+            check_value = value
+
+        # Only prune after a few evaluations to allow for noisy starts
+        evaluated = cast(int, self.state.get("evaluated", 0))
+        if evaluated < 3:
+            return False
+
+        # Calculate band width and deviation threshold
+        band = self.band_target
+        if band.low is not None and band.high is not None:
+            band_width = band.high - band.low
+            band_center = (band.low + band.high) / 2.0
+        elif band.center is not None and band.tol is not None:
+            band_width = 2 * band.tol
+            band_center = band.center
+        else:
+            return False
+
+        # Compute distance from band center
+        distance_from_center = abs(check_value - band_center)
+
+        # Prune if value is more than BAND_PRUNE_THRESHOLD * band_width from center
+        prune_threshold = self.BAND_PRUNE_THRESHOLD * band_width
+        if distance_from_center > prune_threshold:
+            logger.debug(
+                "Band pruning: value=%.4f, center=%.4f, distance=%.4f, threshold=%.4f",
+                check_value,
+                band_center,
+                distance_from_center,
+                prune_threshold,
+            )
+            return True
+
+        return False
 
     def _optimistic_accuracy(self) -> float:
         """Calculate optimistic accuracy assuming remaining examples are correct."""
