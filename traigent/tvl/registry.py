@@ -553,7 +553,7 @@ class DictRegistryResolver:
         ```
     """
 
-    def __init__(self, registries: dict[str, list[dict[str, Any]]]) -> None:
+    def __init__(self, registries: dict[str, list[dict[str, Any] | Any]]) -> None:
         """Initialize with registry data.
 
         Args:

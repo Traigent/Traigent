@@ -45,7 +45,7 @@ Example:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -922,7 +922,7 @@ def constraints_to_callables(
 
 
 def normalize_constraints(
-    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
+    constraints: Sequence[Constraint | BoolExpr | Callable[..., Any]] | None,
     var_names: dict[int, str] | None = None,
 ) -> list[Callable[[dict[str, Any]], bool]]:
     """Normalize mixed Constraint/BoolExpr/Callable list to pure callables.
