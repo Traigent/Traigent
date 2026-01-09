@@ -166,6 +166,16 @@ class TVLSpecArtifact:
         if self.exploration_parallelism is not None:
             overrides.setdefault("parallel_trials", self.exploration_parallelism)
 
+        # TVL 0.9 convergence criteria
+        if self.convergence is not None:
+            overrides["convergence_metric"] = self.convergence.metric
+            overrides["convergence_window"] = self.convergence.window
+            overrides["convergence_threshold"] = self.convergence.threshold
+
+        # TVL 0.9 promotion policy: tie_breakers
+        if self.promotion_policy is not None and self.promotion_policy.tie_breakers:
+            overrides["tie_breakers"] = self.promotion_policy.tie_breakers
+
         # Convert parallel_trials to unified parallel_config structure
         self._convert_parallel_trials_to_config(overrides)
 
@@ -315,6 +325,22 @@ def load_tvl_spec(
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
     ]
+
+    # Compile derived constraints and add to constraint_wrappers for runtime evaluation
+    if derived_constraints:
+        for dc in derived_constraints:
+            label = f"derived_constraint_{dc.index}"
+            try:
+                compiled_derived = compile_constraint_expression(
+                    dc.require, label=label
+                )
+                constraint_wrappers.append(compiled_derived)
+            except TVLValidationError as exc:
+                # Re-raise with more context about derived constraint
+                raise TVLValidationError(
+                    f"Invalid derived constraint at index {dc.index}: "
+                    f"expression '{dc.require}' is not valid"
+                ) from exc
 
     # Parse exploration section
     budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (

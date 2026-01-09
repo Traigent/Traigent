@@ -232,6 +232,98 @@ objectives:
         artifact = load_tvl_spec(spec_path=FIXTURE_SPEC)
         assert artifact.derived_constraints is None
 
+    def test_derived_constraints_compiled_to_callables(self) -> None:
+        """Derived constraints using params are compiled to runtime callables."""
+        spec_content = """
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 2.0]
+  - name: top_p
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+constraints:
+  derived:
+    - require: "params.temperature + params.top_p <= 1.5"
+      description: "Combined temperature and top_p should not exceed 1.5"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            artifact = load_tvl_spec(spec_path=f.name)
+
+            # Derived constraints should be parsed AND compiled as callables
+            assert artifact.derived_constraints is not None
+            assert len(artifact.derived_constraints) == 1
+
+            # The derived constraint should also be in the constraints list
+            # (structural constraints count + derived constraints count)
+            assert len(artifact.constraints) == 1  # 1 derived constraint compiled
+
+            # Test that the constraint callable works correctly
+            constraint_callable = artifact.constraints[0]
+
+            # Should pass: 0.5 + 0.5 = 1.0 <= 1.5
+            assert constraint_callable({"temperature": 0.5, "top_p": 0.5}, None) is True
+
+            # Should fail: 1.0 + 0.8 = 1.8 > 1.5
+            assert (
+                constraint_callable({"temperature": 1.0, "top_p": 0.8}, None) is False
+            )
+
+    def test_derived_constraints_combined_with_structural(self) -> None:
+        """Both structural and derived constraints are included in constraints list."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4", "gpt-3.5"]
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 4096]
+
+constraints:
+  structural:
+    - when: "params.model == 'gpt-4'"
+      then: "params.max_tokens <= 2048"
+  derived:
+    - require: "params.max_tokens >= 512"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            artifact = load_tvl_spec(spec_path=f.name)
+
+            # Should have both structural and derived constraints compiled
+            assert len(artifact.constraints) == 2  # 1 structural + 1 derived
+
+            # Test derived constraint callable (the second one)
+            derived_constraint = artifact.constraints[1]
+
+            # Should pass: 1024 >= 512
+            assert derived_constraint({"max_tokens": 1024}, None) is True
+
+            # Should fail: 256 < 512
+            assert derived_constraint({"max_tokens": 256}, None) is False
+
 
 class TestTVL09FormatParsing:
     """Tests for TVL 0.9 format with tvars."""
@@ -875,6 +967,396 @@ class TestParseExplorationParallelism:
         )
         # Current behavior: True passes the int check
         assert result is True
+
+
+class TestTVLHeaderParsing:
+    """Tests for TVL 0.9 header (tvl section) parsing."""
+
+    def test_parses_module_namespace(self, tmp_path: Path) -> None:
+        """Test that tvl.module is correctly parsed."""
+        spec_content = """
+tvl:
+  module: corp.product.spec
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is not None
+        assert artifact.tvl_header.module == "corp.product.spec"
+
+    def test_parses_validation_flags(self, tmp_path: Path) -> None:
+        """Test that validation flags are correctly parsed."""
+        spec_content = """
+tvl:
+  module: test.spec
+  validation:
+    skip_budget_checks: true
+    skip_cost_estimation: true
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is not None
+        assert artifact.tvl_header.skip_budget_checks is True
+        assert artifact.tvl_header.skip_cost_estimation is True
+
+    def test_missing_module_raises_error(self, tmp_path: Path) -> None:
+        """Test that missing tvl.module raises TVLValidationError."""
+        spec_content = """
+tvl:
+  validation:
+    skip_budget_checks: true
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(TVLValidationError, match="'module' string"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_no_tvl_header_returns_none(self, tmp_path: Path) -> None:
+        """Test that missing tvl section returns None for tvl_header."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is None
+
+
+class TestEvaluationSetParsing:
+    """Tests for TVL 0.9 evaluation_set section parsing."""
+
+    def test_parses_dataset_and_seed(self, tmp_path: Path) -> None:
+        """Test parsing evaluation_set with dataset and seed."""
+        spec_content = """
+tvl:
+  module: test.eval
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://datasets/eval.jsonl
+  seed: 42
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is not None
+        assert artifact.evaluation_set.dataset == "s3://datasets/eval.jsonl"
+        assert artifact.evaluation_set.seed == 42
+
+    def test_seed_optional(self, tmp_path: Path) -> None:
+        """Test that evaluation_set.seed is optional."""
+        spec_content = """
+tvl:
+  module: test.eval
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://datasets/eval.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is not None
+        assert artifact.evaluation_set.dataset == "s3://datasets/eval.jsonl"
+        assert artifact.evaluation_set.seed is None
+
+    def test_missing_dataset_raises_error(self, tmp_path: Path) -> None:
+        """Test that missing evaluation_set.dataset raises error."""
+        spec_content = """
+tvl:
+  module: test.eval
+evaluation_set:
+  seed: 42
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(TVLValidationError, match="'dataset' string"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_no_evaluation_set_returns_none(self, tmp_path: Path) -> None:
+        """Test that missing evaluation_set returns None."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is None
+
+
+class TestBandedObjectiveCenterTol:
+    """Tests for banded objectives with center/tolerance format."""
+
+    def test_parses_banded_objective_with_center_tol(self, tmp_path: Path) -> None:
+        """Test parsing banded objective with {center, tol} format."""
+        spec_content = """
+tvl:
+  module: test.banded
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: cost_per_query
+    band:
+      target:
+        center: 0.01
+        tol: 0.005
+      test: TOST
+      alpha: 0.05
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.objective_schema is not None
+        obj = artifact.objective_schema.objectives[0]
+        assert obj.name == "cost_per_query"
+        assert obj.orientation == "band"
+        assert obj.band is not None
+        # center=0.01, tol=0.005 -> low=0.005, high=0.015
+        assert obj.band.low == pytest.approx(0.005)
+        assert obj.band.high == pytest.approx(0.015)
+        assert obj.band_alpha == 0.05
+
+    def test_mixed_standard_and_banded_objectives(self, tmp_path: Path) -> None:
+        """Test parsing spec with both standard and banded objectives."""
+        spec_content = """
+tvl:
+  module: test.mixed
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4", "gpt-3.5"]
+objectives:
+  - name: quality
+    direction: maximize
+  - name: latency
+    direction: minimize
+  - name: response_length
+    band:
+      target: [100, 200]
+      test: TOST
+      alpha: 0.05
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.objective_schema is not None
+        objectives = artifact.objective_schema.objectives
+        assert len(objectives) == 3
+
+        # Standard objectives
+        assert objectives[0].name == "quality"
+        assert objectives[0].orientation == "maximize"
+        assert objectives[0].band is None
+
+        assert objectives[1].name == "latency"
+        assert objectives[1].orientation == "minimize"
+        assert objectives[1].band is None
+
+        # Banded objective
+        assert objectives[2].name == "response_length"
+        assert objectives[2].orientation == "band"
+        assert objectives[2].band is not None
+        assert objectives[2].band.low == 100
+        assert objectives[2].band.high == 200
+
+
+class TestConvergenceCriteriaWiring:
+    """Tests for TVL 0.9 convergence criteria in runtime overrides."""
+
+    def test_convergence_included_in_runtime_overrides(self, tmp_path: Path) -> None:
+        """Test that convergence criteria are included in runtime_overrides."""
+        spec_content = """
+tvl:
+  module: test.convergence
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+exploration:
+  convergence:
+    metric: hypervolume_improvement
+    window: 15
+    threshold: 0.005
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: quality
+    direction: maximize
+  - name: latency
+    direction: minimize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert overrides["convergence_metric"] == "hypervolume_improvement"
+        assert overrides["convergence_window"] == 15
+        assert overrides["convergence_threshold"] == 0.005
+
+    def test_no_convergence_when_not_specified(self, tmp_path: Path) -> None:
+        """Test that convergence keys are absent when not specified."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert "convergence_metric" not in overrides
+        assert "convergence_window" not in overrides
+        assert "convergence_threshold" not in overrides
+
+    def test_convergence_default_values(self, tmp_path: Path) -> None:
+        """Test that convergence defaults are applied when partially specified."""
+        spec_content = """
+tvl:
+  module: test.defaults
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+exploration:
+  convergence:
+    window: 10
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Defaults are: metric=hypervolume_improvement, threshold=0.01
+        overrides = artifact.runtime_overrides()
+        assert overrides["convergence_metric"] == "hypervolume_improvement"
+        assert overrides["convergence_window"] == 10
+        assert overrides["convergence_threshold"] == 0.01  # default
 
 
 class TestResolveAlgorithm:
