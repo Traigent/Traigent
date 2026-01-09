@@ -288,6 +288,7 @@ class FileRegistryResolver:
         """Split expression by operator only when at parenthesis depth 0.
 
         This ensures that operators inside parentheses are not used as split points.
+        Also correctly ignores parentheses inside quoted strings.
 
         Args:
             expr: The expression to split.
@@ -299,6 +300,7 @@ class FileRegistryResolver:
         parts: list[str] = []
         current_part: list[str] = []
         depth = 0
+        in_quote: str | None = None  # Track which quote char we're inside
         i = 0
         expr_upper = expr.upper()
         op_len = len(operator)
@@ -306,20 +308,34 @@ class FileRegistryResolver:
         while i < len(expr):
             char = expr[i]
 
-            if char == "(":
+            # Handle quote state transitions
+            if char in ("'", '"') and in_quote is None:
+                in_quote = char
+                current_part.append(char)
+                i += 1
+            elif char == in_quote:
+                in_quote = None
+                current_part.append(char)
+                i += 1
+            # Only track parentheses when NOT inside quotes
+            elif in_quote is None and char == "(":
                 depth += 1
                 current_part.append(char)
                 i += 1
-            elif char == ")":
+            elif in_quote is None and char == ")":
                 depth -= 1
                 current_part.append(char)
                 i += 1
-            elif depth == 0 and expr_upper[i : i + op_len] == operator:
+            elif (
+                in_quote is None
+                and depth == 0
+                and expr_upper[i : i + op_len] == operator
+            ):
                 # Check if it's surrounded by whitespace (word boundary)
                 before_ok = i == 0 or expr[i - 1].isspace()
                 after_ok = (i + op_len >= len(expr)) or expr[i + op_len].isspace()
                 if before_ok and after_ok:
-                    # Found operator at depth 0
+                    # Found operator at depth 0, outside quotes
                     parts.append("".join(current_part).strip())
                     current_part = []
                     i += op_len
