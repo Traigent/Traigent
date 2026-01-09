@@ -35,7 +35,7 @@ def optimize(
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Constraint | Callable[..., Any]] | None = None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
 
     # TVL integration
     tvl_spec: str | Path | None = None,
@@ -156,7 +156,7 @@ Banded objectives use TOST (Two One-Sided Tests) to statistically verify that th
 - **Default**: `None`
 - **Description**: Search space describing tunable parameters
 
-> ⚠️ **Deprecation Notice (TVL 0.9)**: The `configuration_space` parameter is deprecated in favor of the `tvars` section in TVL spec files. When using TVL specs, define your search space using `tvars` (typed variables) for full TVL 0.9 support including type safety, units, and registry domains. A `DeprecationWarning` is raised when loading specs with `configuration_space`.
+> ⚠️ **Deprecation Notice (TVL 0.9)**: When using TVL spec files, the `configuration_space` key inside the spec is deprecated in favor of `tvars` (typed variables). The decorator parameter itself remains valid. Define your search space using `tvars` for full TVL 0.9 support including type safety, units, and registry domains.
 
 **Discrete Choices** (List):
 
