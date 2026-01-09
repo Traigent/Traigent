@@ -164,6 +164,37 @@ try:
 except ImportError:
     OPENAI_SDK_INTEGRATION_AVAILABLE = False
 
+# DSPy integration
+try:
+    from .dspy_adapter import (
+        DSPY_AVAILABLE,
+        DSPyPromptOptimizer,
+        PromptOptimizationResult,
+        create_dspy_integration,
+    )
+
+    DSPY_INTEGRATION_AVAILABLE = DSPY_AVAILABLE
+except ImportError:
+    DSPY_INTEGRATION_AVAILABLE = False
+    DSPY_AVAILABLE = False
+
+    def _dspy_unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError(
+            "DSPy integration is unavailable. Install the optional `dspy-ai` dependency."
+        )
+
+    DSPyPromptOptimizer = _dspy_unavailable  # type: ignore[assignment, misc]
+    PromptOptimizationResult = _dspy_unavailable  # type: ignore[assignment, misc]
+    create_dspy_integration = _dspy_unavailable
+
+# Provider-based model selection
+from .providers import (
+    get_all_tiers,
+    get_models_for_tier,
+    list_available_providers,
+    register_provider_tiers,
+)
+
 __all__ = [
     # Core framework override (primary API)
     "FrameworkOverrideManager",
@@ -252,3 +283,24 @@ if OPENAI_SDK_INTEGRATION_AVAILABLE:
             "enable_tools_optimization",
         ]
     )
+
+# Add DSPy exports if available
+if DSPY_INTEGRATION_AVAILABLE:
+    __all__.extend(
+        [
+            "DSPyPromptOptimizer",
+            "PromptOptimizationResult",
+            "create_dspy_integration",
+            "DSPY_AVAILABLE",
+        ]
+    )
+
+# Add provider exports (always available)
+__all__.extend(
+    [
+        "get_models_for_tier",
+        "list_available_providers",
+        "get_all_tiers",
+        "register_provider_tiers",
+    ]
+)
