@@ -1149,6 +1149,7 @@ class OptimizedFunction:
             "samples_include_pruned",
             "plateau_window",
             "plateau_epsilon",
+            "tie_breakers",
         ):
             if key in overrides and key not in algorithm_kwargs:
                 algorithm_kwargs[key] = overrides[key]
@@ -1506,6 +1507,10 @@ class OptimizedFunction:
             orchestrator_kwargs["cost_limit"] = algorithm_kwargs["cost_limit"]
         if "cost_approved" in algorithm_kwargs:
             orchestrator_kwargs["cost_approved"] = algorithm_kwargs["cost_approved"]
+
+        # Pass TVL 0.9 tie-breaker configuration
+        if "tie_breakers" in algorithm_kwargs:
+            orchestrator_kwargs["tie_breakers"] = algorithm_kwargs["tie_breakers"]
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,

@@ -1084,6 +1084,98 @@ class OptimizationResult:
 
         return total_duration, total_cost, total_examples, trials_per_model
 
+    def analyze(
+        self,
+        objective: str | None = None,
+        *,
+        importance_method: Literal[
+            "variance", "correlation", "permutation"
+        ] = "variance",
+        elimination_threshold: float = 0.05,
+        min_trials_per_value: int = 3,
+        directions: dict[str, Literal["maximize", "minimize"]] | None = None,
+        configuration_space: dict[str, Any] | None = None,
+    ) -> Any:
+        """Analyze this optimization result to get variable insights and elimination suggestions.
+
+        This method provides post-optimization analysis to help understand which
+        parameters matter, which values are dominated, and suggests refinements
+        to the configuration space for future optimization runs.
+
+        Requires the traigent-tuned-variables plugin to be installed for full
+        functionality. Install with: pip install traigent-tuned-variables
+
+        Args:
+            objective: Primary objective to analyze. Defaults to first objective.
+            importance_method: Method for importance calculation:
+                - "variance": Variance-based (default, fast)
+                - "correlation": Correlation-based
+                - "permutation": Permutation-based (more accurate, slower)
+            elimination_threshold: Threshold below which variables are considered
+                unimportant (default: 0.05)
+            min_trials_per_value: Minimum trials per value for reliable statistics
+                (default: 3)
+            directions: Dictionary mapping objective names to "maximize" or "minimize".
+                If not specified, auto-detects based on naming patterns.
+            configuration_space: Explicit configuration space. If not provided,
+                attempts to infer from trial configs.
+
+        Returns:
+            OptimizationAnalysis object containing:
+                - variables: Dict of VariableAnalysis for each parameter
+                - elimination_suggestions: List of suggested eliminations
+                - refined_space: Auto-pruned configuration space for next run
+
+        Raises:
+            ImportError: If traigent-tuned-variables plugin is not installed
+
+        Example:
+            >>> result = my_agent.optimize()
+            >>> analysis = result.analyze("accuracy")
+            >>> for var_name, var_analysis in analysis.variables.items():
+            ...     print(f"{var_name}: importance={var_analysis.importance:.3f}")
+            >>> # Get refined space for next optimization
+            >>> refined = analysis.get_refined_space(["accuracy"])
+        """
+        try:
+            from traigent_tuned_variables import VariableAnalyzer
+        except ImportError:
+            raise ImportError(
+                "The analyze() method requires the traigent-tuned-variables plugin. "
+                "Install with: pip install traigent-tuned-variables"
+            ) from None
+
+        # Use first objective if not specified
+        objective_name = objective or (self.objectives[0] if self.objectives else None)
+        if objective_name is None:
+            raise ValueError(
+                "No objective specified and no objectives found in result. "
+                "Please specify an objective to analyze."
+            )
+
+        # Auto-detect directions if not provided
+        if directions is None:
+            directions = {}
+            minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
+            for obj in self.objectives:
+                lowered = obj.lower()
+                if any(pattern in lowered for pattern in minimize_patterns):
+                    directions[obj] = "minimize"
+                else:
+                    directions[obj] = "maximize"
+
+        # Create analyzer
+        analyzer = VariableAnalyzer(
+            self,
+            importance_method=importance_method,
+            elimination_threshold=elimination_threshold,
+            min_trials_per_value=min_trials_per_value,
+            directions=directions,
+            configuration_space=configuration_space,
+        )
+
+        return analyzer.analyze(objective_name)
+
     def get_summary(self) -> dict[str, Any]:
         """Compute high-level summary statistics about the optimization run."""
 
