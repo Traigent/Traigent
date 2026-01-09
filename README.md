@@ -103,6 +103,19 @@ def your_agent(...):
 
 Requirements: Python 3.11+ on Linux, macOS, or Windows.
 
+#### Feature Sets
+
+| Feature Set | Description | Use Case |
+|-------------|-------------|----------|
+| `[core]` | Basic functionality (default) | Minimal install |
+| `[analytics]` | Analytics and visualization | View optimization results |
+| `[bayesian]` | Bayesian optimization | Advanced optimization algorithms |
+| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic |
+| `[playground]` | Interactive UI | Streamlit control center |
+| `[examples]` | Example dependencies | Run all demo scripts |
+| `[dev]` | Development tools | pytest, black, ruff, mypy |
+| `[all]` | Complete installation | Everything above |
+
 ### Run Bundled Examples / Dev Setup
 
 ```bash
@@ -202,6 +215,50 @@ See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ---
 
+## 🌐 Execution Modes
+
+Traigent supports local execution with cloud modes planned:
+
+| Mode | Status | Privacy | Algorithm | Best For |
+| ---- | ------ | ------- | --------- | -------- |
+| **Local** (`edge_analytics`) | Available | Complete | Random/Grid/Bayesian | All use cases |
+| **Cloud** | Coming Soon | Metadata | Bayesian | Production, teams |
+| **Hybrid** | Coming Soon | Execution local | Bayesian | Balanced approach |
+
+---
+
+## 🎯 Quick Capability Matrix
+
+| Feature | What It Does | Why It's Amazing |
+| ------- | ------------ | ---------------- |
+| Seamless Injection | Override params without code changes | Zero migration effort |
+| Budget Rails | Real-time cost enforcement with approval | Never exceed $2 by accident |
+| Multi-Agent Tuning | Tune entire pipelines together | 1 run vs N sequential runs |
+| TVL Specs | Declarative optimization intent | Version control your optimization strategy |
+| RAGAS Integration | RAG-specific metrics built-in | Faithfulness, relevance, precision |
+| Parallel Batching | Cost-aware concurrent execution | Smart budget distribution |
+
+---
+
+## ✨ Unique Capabilities
+
+Beyond the basics, Traigent includes powerful features such as:
+
+| Capability | Description |
+| ---------- | ----------- |
+| **Dual Injection Modes** | Seamless (zero-code via RuntimeShim) or Parameter (explicit `config.get()`) |
+| **3-Tier Evaluation** | Exact match (default) → Custom scorers → LLM-as-Judge/RAGAS |
+| **Budget Rails** | `TRAIGENT_RUN_COST_LIMIT` + handshake approval + EMA estimation |
+| **2-Level Parallelism** | `example_concurrency` (per trial) + `trial_concurrency` (simultaneous configs) |
+| **Multi-Objective Aggregation** | WEIGHTED_SUM, HARMONIC, CHEBYSHEV + BANDED objectives with TOST testing |
+| **TVL (Traigent Validation Language)** | YAML specs for objectives, constraints, budgets - optimizer-agnostic |
+| **Constraint DSL** | Functional, operator, or fluent syntax for config constraints |
+| **Smart Pruning** | Median/Percentile/Threshold/Timeout pruners + adaptive early stopping |
+| **Sample Budget Leasing** | `max_total_examples` + `reps_per_trial` = 60-80% cost reduction |
+| **100+ LLM Providers** | Via LiteLLM - optimize across providers in a single run |
+
+---
+
 ## License
 
 Apache 2.0 - See [LICENSE](LICENSE)
@@ -209,3 +266,7 @@ Apache 2.0 - See [LICENSE](LICENSE)
 ---
 
 **[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discord](https://discord.gg/traigent)**
+
+---
+
+**Current Version**: 0.9.0 (Beta)

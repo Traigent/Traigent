@@ -392,10 +392,10 @@ Traigent supports multiple evaluation approaches through its parameters:
 
 | Method | Parameter | Use Case |
 |--------|-----------|----------|
-| Semantic Similarity | Default (no param needed) | Q&A, summarization, translation |
-| Exact Match | `scoring_function` | Classification, yes/no, categories |
-| LLM-as-Judge | `custom_evaluator` | Complex quality assessment, code review |
-| Multi-Metric | `metric_functions` | Multiple evaluation dimensions |
+| Exact Match | Default (no param needed) | Classification, yes/no, categories (binary pass/fail) |
+| Graded Scoring | `scoring_function` | Custom graded evaluation (0.0-1.0) - partial matches, fuzzy matching |
+| LLM-as-Judge | `custom_evaluator` | Complex quality assessment - nuanced evaluation, code review |
+| Multi-Metric / RAGAS | `metric_functions` | Multiple dimensions, semantic similarity (via RAGAS) |
 
 ##### LLM-as-Judge Example
 
