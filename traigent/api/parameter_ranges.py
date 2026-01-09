@@ -35,7 +35,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 if TYPE_CHECKING:
@@ -51,6 +51,25 @@ class ParameterRange(ABC):
 
     All range classes inherit from this to enable isinstance() checks
     and provide a common interface for normalization.
+
+    Default Value Precedence:
+        When multiple defaults are specified, they are resolved in this order
+        (highest precedence first):
+
+        1. Explicit ``default_config`` dict values in ``@traigent.optimize()``
+        2. ``ParameterRange.default`` values (e.g., ``Range(0.0, 1.0, default=0.7)``)
+        3. Optimizer-suggested defaults (e.g., Optuna's suggest_* midpoint)
+
+    Auto-Naming:
+        When a ParameterRange is used as a decorator kwarg without an explicit
+        ``name`` attribute, the kwarg key is automatically assigned as the name.
+        This enables constraint building and TVL spec generation.
+
+        Example::
+
+            @traigent.optimize(
+                temperature=Range(0.0, 1.0),  # name auto-assigned as "temperature"
+            )
     """
 
     # Name attribute - set by subclasses or assigned from decorator kwarg
@@ -86,6 +105,9 @@ class Range(ParameterRange):
         default: Optional default value (populates default_config)
         name: Optional TVAR name (auto-assigned from decorator kwarg if not set)
         unit: Optional unit of measurement (e.g., "ratio", "seconds", "USD")
+        agent: Optional agent identifier for multi-agent experiments.
+            When set, this parameter will be grouped with other parameters
+            belonging to the same agent in the UI.
 
     Example:
         >>> temperature = Range(0.0, 2.0)
@@ -93,6 +115,8 @@ class Range(ParameterRange):
         >>> learning_rate = Range(1e-5, 1e-1, log=True)
         >>> # With TVL features
         >>> temp = Range(0.0, 2.0, unit="ratio")
+        >>> # Multi-agent: assign to specific agent
+        >>> financial_temp = Range(0.0, 1.0, agent="financial")
 
     Raises:
         ValueError: If low >= high, step <= 0, log with non-positive low,
@@ -107,6 +131,8 @@ class Range(ParameterRange):
     # TVL fields
     name: str | None = None
     unit: str | None = None
+    # Multi-agent support
+    agent: str | None = None
 
     def __post_init__(self) -> None:
         if self.low >= self.high:
@@ -327,12 +353,17 @@ class IntRange(ParameterRange):
         default: Optional default value (populates default_config)
         name: Optional TVAR name (auto-assigned from decorator kwarg if not set)
         unit: Optional unit of measurement (e.g., "count", "tokens")
+        agent: Optional agent identifier for multi-agent experiments.
+            When set, this parameter will be grouped with other parameters
+            belonging to the same agent in the UI.
 
     Example:
         >>> max_tokens = IntRange(100, 4096)
         >>> batch_size = IntRange(16, 256, step=16)
         >>> # With TVL features
         >>> tokens = IntRange(100, 4096, unit="tokens")
+        >>> # Multi-agent: assign to specific agent
+        >>> financial_tokens = IntRange(100, 4096, agent="financial")
 
     Raises:
         TypeError: If low/high are not integers
@@ -347,6 +378,8 @@ class IntRange(ParameterRange):
     # TVL fields
     name: str | None = None
     unit: str | None = None
+    # Multi-agent support
+    agent: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.low, int) or not isinstance(self.high, int):
@@ -572,10 +605,15 @@ class LogRange(ParameterRange):
         default: Optional default value (populates default_config)
         name: Optional TVAR name (auto-assigned from decorator kwarg if not set)
         unit: Optional unit of measurement
+        agent: Optional agent identifier for multi-agent experiments.
+            When set, this parameter will be grouped with other parameters
+            belonging to the same agent in the UI.
 
     Example:
         >>> learning_rate = LogRange(1e-5, 1e-1)
         >>> regularization = LogRange(0.001, 10.0)
+        >>> # Multi-agent: assign to specific agent
+        >>> financial_lr = LogRange(1e-5, 1e-1, agent="financial")
 
     Raises:
         ValueError: If bounds are not positive or low >= high
@@ -587,6 +625,8 @@ class LogRange(ParameterRange):
     # TVL fields
     name: str | None = None
     unit: str | None = None
+    # Multi-agent support
+    agent: str | None = None
 
     def __post_init__(self) -> None:
         if self.low <= 0 or self.high <= 0:
@@ -675,6 +715,9 @@ class Choices(ParameterRange, Generic[T]):
         default: Optional default value (must be in values, populates default_config)
         name: Optional TVAR name (auto-assigned from decorator kwarg if not set)
         unit: Optional unit of measurement (rarely needed for categorical)
+        agent: Optional agent identifier for multi-agent experiments.
+            When set, this parameter will be grouped with other parameters
+            belonging to the same agent in the UI.
         enforce_type: If True (default), validates all values have the same type.
             Set to False to allow mixed types (e.g., [None, "default", 1]).
 
@@ -682,6 +725,8 @@ class Choices(ParameterRange, Generic[T]):
         >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-2"])
         >>> use_cache = Choices([True, False], default=True)
         >>> temperature = Choices([0.0, 0.3, 0.7, 1.0])
+        >>> # Multi-agent: assign to specific agent
+        >>> financial_model = Choices(["gpt-4", "gpt-3.5"], agent="financial")
 
     Raises:
         TypeError: If values is a string or bytes, or if enforce_type=True and
@@ -694,6 +739,8 @@ class Choices(ParameterRange, Generic[T]):
     # TVL fields
     name: str | None = None
     unit: str | None = None
+    # Multi-agent support
+    agent: str | None = None
     # Type enforcement (D-2 fix)
     enforce_type: bool = True
 
@@ -1054,15 +1101,38 @@ def _process_param_entry(
     value: Any,
     result: dict[str, Any],
     defaults: dict[str, Any],
-) -> None:
-    """Process a single parameter entry, updating result and defaults dicts."""
+) -> ParameterRange | None:
+    """Process a single parameter entry, updating result and defaults dicts.
+
+    Args:
+        key: The parameter name from the decorator kwarg
+        value: The parameter definition (ParameterRange or primitive)
+        result: Dict to update with normalized config values
+        defaults: Dict to update with default values
+
+    Returns:
+        The ParameterRange with name auto-assigned if applicable, None otherwise.
+        This allows callers to use the named parameter for constraint building.
+    """
     if isinstance(value, ParameterRange):
-        result[key] = value.to_config_value()
-        default_val = value.get_default()
+        # D-1: Auto-assign name from decorator kwarg if not already set
+        param = value
+        if param.name is None:
+            try:
+                param = replace(param, name=key)
+            except TypeError:
+                # Fallback if replace fails (shouldn't happen with our dataclasses)
+                logger.debug(
+                    f"Could not auto-assign name '{key}' to {type(value).__name__}"
+                )
+        result[key] = param.to_config_value()
+        default_val = param.get_default()
         if default_val is not None:
             defaults[key] = default_val
+        return param
     else:
         result[key] = normalize_config_value(value)
+        return None
 
 
 def normalize_configuration_space(

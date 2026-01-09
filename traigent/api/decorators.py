@@ -1045,6 +1045,18 @@ def optimize(
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
             and provided as the ``config`` argument.
+
+            Default Value Precedence (highest to lowest):
+                1. Explicit ``default_config`` dict values
+                2. ``ParameterRange.default`` values (e.g., ``Range(0.0, 1.0, default=0.7)``)
+                3. Optimizer-suggested defaults (e.g., Optuna's suggest_* midpoint)
+
+            Example showing precedence:
+                >>> @traigent.optimize(
+                ...     temperature=Range(0.0, 1.0, default=0.5),  # Precedence 2
+                ...     default_config={"temperature": 0.7},      # Precedence 1 (wins)
+                ... )
+                ... def my_func(): ...
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it.
 
