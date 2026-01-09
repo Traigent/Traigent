@@ -109,6 +109,8 @@ class TVLSpecArtifact:
     convergence: ConvergenceCriteria | None = None
     exploration_budgets: ExplorationBudgets | None = None
     exploration_parallelism: int | None = None
+    # Multi-agent support: parameter name -> agent ID mappings
+    parameter_agents: dict[str, str] | None = None
 
     def _apply_legacy_budget_overrides(self, overrides: dict[str, Any]) -> None:
         """Apply legacy budget fields to overrides."""
@@ -175,6 +177,10 @@ class TVLSpecArtifact:
         # TVL 0.9 promotion policy: tie_breakers
         if self.promotion_policy is not None and self.promotion_policy.tie_breakers:
             overrides["tie_breakers"] = self.promotion_policy.tie_breakers
+
+        # Multi-agent: pass TVL parameter_agents for agent configuration
+        if self.parameter_agents:
+            overrides["tvl_parameter_agents"] = self.parameter_agents
 
         # Convert parallel_trials to unified parallel_config structure
         self._convert_parallel_trials_to_config(overrides)
@@ -584,6 +590,9 @@ def load_tvl_spec(
         resolved, registry_resolver
     )
 
+    # Extract multi-agent parameter mappings from tvars
+    parameter_agents = _extract_parameter_agents_from_tvars(tvars)
+
     objective_schema = _parse_objectives(resolved)
 
     # Warn about legacy constraints format
@@ -656,6 +665,7 @@ def load_tvl_spec(
         convergence=convergence,
         exploration_budgets=exploration_budgets,
         exploration_parallelism=exploration_parallelism,
+        parameter_agents=parameter_agents,
     )
 
 
@@ -830,8 +840,12 @@ def _resolve_registry_domain(
 
 def _parse_single_tvar(
     idx: int, decl: dict[str, Any]
-) -> tuple[str, TVarType, str, DomainSpec, Any, str | None]:
-    """Parse a single TVAR declaration and validate its fields."""
+) -> tuple[str, TVarType, str, DomainSpec, Any, str | None, str | None]:
+    """Parse a single TVAR declaration and validate its fields.
+
+    Returns:
+        Tuple of (name, tvar_type, raw_type, domain, default, unit, agent).
+    """
     if not isinstance(decl, dict):
         raise TVLValidationError(f"TVAR declaration at index {idx} must be a mapping")
 
@@ -855,8 +869,9 @@ def _parse_single_tvar(
 
     unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
     default = decl.get("default")
+    agent = decl.get("agent") if isinstance(decl.get("agent"), str) else None
 
-    return name, tvar_type, raw_type, domain, default, unit
+    return name, tvar_type, raw_type, domain, default, unit, agent
 
 
 def _parse_tvars(
@@ -883,7 +898,9 @@ def _parse_tvars(
     units: dict[str, str] = {}
 
     for idx, decl in enumerate(tvars_section):
-        name, tvar_type, raw_type, domain, default, unit = _parse_single_tvar(idx, decl)
+        name, tvar_type, raw_type, domain, default, unit, agent = _parse_single_tvar(
+            idx, decl
+        )
 
         if unit:
             units[name] = unit
@@ -895,6 +912,7 @@ def _parse_tvars(
             domain=domain,
             default=default,
             unit=unit,
+            agent=agent,
         )
         tvars.append(tvar)
 
@@ -910,6 +928,29 @@ def _parse_tvars(
             defaults[name] = default
 
     return tvars, configuration_space, defaults, units
+
+
+def _extract_parameter_agents_from_tvars(
+    tvars: list[TVarDecl] | None,
+) -> dict[str, str] | None:
+    """Extract parameter-to-agent mappings from TVarDecl objects.
+
+    Args:
+        tvars: List of parsed TVarDecl objects from TVL spec.
+
+    Returns:
+        Dictionary mapping parameter names to agent IDs for parameters
+        that have explicit agent assignments, or None if no agents specified.
+    """
+    if not tvars:
+        return None
+
+    result: dict[str, str] = {}
+    for tvar in tvars:
+        if tvar.agent:
+            result[tvar.name] = tvar.agent
+
+    return result if result else None
 
 
 def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:

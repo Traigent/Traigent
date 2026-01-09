@@ -30,10 +30,10 @@ from __future__ import annotations
 
 import inspect
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
-from collections.abc import Callable
 
 
 @dataclass(frozen=True, slots=True)
