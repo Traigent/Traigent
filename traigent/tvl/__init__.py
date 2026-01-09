@@ -34,11 +34,22 @@ from .promotion_gate import (
     PromotionDecision,
     PromotionGate,
 )
+from .registry import (
+    DictRegistryResolver,
+    FileRegistryResolver,
+)
 from .spec_loader import (
     TVLBudget,
     TVLSpecArtifact,
     compile_constraint_expression,
     load_tvl_spec,
+)
+from .spec_validator import (
+    DriftSeverity,
+    SpecDriftIssue,
+    SpecDriftReport,
+    validate_spec_code_alignment,
+    validate_tvar_types_match,
 )
 from .statistics import (
     PairedComparisonResult,
@@ -87,4 +98,13 @@ __all__ = [
     "ObjectiveSpec",
     "PromotionDecision",
     "PromotionGate",
+    # Registry resolvers
+    "DictRegistryResolver",
+    "FileRegistryResolver",
+    # Spec validation
+    "DriftSeverity",
+    "SpecDriftIssue",
+    "SpecDriftReport",
+    "validate_spec_code_alignment",
+    "validate_tvar_types_match",
 ]
