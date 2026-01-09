@@ -37,7 +37,7 @@ def _create_test_module() -> ModuleType:
         return []
 
     retrieve_documents.__module__ = "test_module"
-    module.retrieve_documents = retrieve_documents
+    setattr(module, "retrieve_documents", retrieve_documents)
 
     # Another public function matching pattern
     def search_index(query: str, limit: int = 10) -> list:
@@ -45,7 +45,7 @@ def _create_test_module() -> ModuleType:
         return []
 
     search_index.__module__ = "test_module"
-    module.search_index = search_index
+    setattr(module, "search_index", search_index)
 
     # Public function with different signature
     def format_context(documents: list) -> str:
@@ -53,7 +53,7 @@ def _create_test_module() -> ModuleType:
         return ""
 
     format_context.__module__ = "test_module"
-    module.format_context = format_context
+    setattr(module, "format_context", format_context)
 
     # Private function
     def _internal_helper(x: int) -> int:
@@ -61,34 +61,34 @@ def _create_test_module() -> ModuleType:
         return x * 2
 
     _internal_helper.__module__ = "test_module"
-    module._internal_helper = _internal_helper
+    setattr(module, "_internal_helper", _internal_helper)
 
     # Function with __tags__ attribute
     def tagged_function(data: Any) -> Any:
         """A function with tags attribute."""
         return data
 
-    tagged_function.__tags__ = ["custom", "tagged"]
+    setattr(tagged_function, "__tags__", ["custom", "tagged"])
     tagged_function.__module__ = "test_module"
-    module.tagged_function = tagged_function
+    setattr(module, "tagged_function", tagged_function)
 
     # Function marked with decorator attribute
     def decorated_callable(query: str) -> str:
         """A function marked for discovery."""
         return query
 
-    decorated_callable.__traigent_callable__ = True
+    setattr(decorated_callable, "__traigent_callable__", True)
     decorated_callable.__module__ = "test_module"
-    module.decorated_callable = decorated_callable
+    setattr(module, "decorated_callable", decorated_callable)
 
     # Another decorated function
     def another_decorated(query: str, context: str) -> str:
         """Another decorated function."""
         return query + context
 
-    another_decorated.__traigent_callable__ = True
+    setattr(another_decorated, "__traigent_callable__", True)
     another_decorated.__module__ = "test_module"
-    module.another_decorated = another_decorated
+    setattr(module, "another_decorated", another_decorated)
 
     # Function that returns specific type
     def get_count() -> int:
@@ -96,14 +96,14 @@ def _create_test_module() -> ModuleType:
         return 0
 
     get_count.__module__ = "test_module"
-    module.get_count = get_count
+    setattr(module, "get_count", get_count)
 
     # Function imported from another module (should be skipped)
     def imported_function() -> None:
         pass
 
     imported_function.__module__ = "other_module"
-    module.imported_function = imported_function
+    setattr(module, "imported_function", imported_function)
 
     return module
 
@@ -227,7 +227,7 @@ class TestCallableInfo:
         info = CallableInfo(name="func", callable=func, signature=sig, module="test")
 
         with pytest.raises(AttributeError):
-            info.name = "new_name"
+            setattr(info, "name", "new_name")
 
 
 # =============================================================================
@@ -423,7 +423,7 @@ class TestFilterBySignature:
 
         # Create exact target signature
         def target(query: str, k: int = 5) -> list:
-            pass
+            return []
 
         target_sig = inspect.signature(target)
         filtered = filter_by_signature(callables, target_sig, strict=True)

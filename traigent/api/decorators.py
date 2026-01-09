@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
+    from traigent.api.config_space import ConfigSpace
     from traigent.api.constraints import BoolExpr, Constraint
 
 from pydantic import BaseModel, ConfigDict
@@ -977,7 +978,7 @@ def _process_runtime_overrides(
 
 
 def _process_config_space_constraints(
-    configuration_space: dict[str, Any] | None,
+    configuration_space: dict[str, Any] | ConfigSpace | None,
     constraints: list[Any] | None,
 ) -> tuple[Any, Any, Any]:
     """Process ConfigSpace constraints, returning constraints and var_names."""
@@ -1003,7 +1004,7 @@ def _process_config_space_constraints(
 
 
 def _normalize_config_space_and_defaults(
-    configuration_space: dict[str, Any] | None,
+    configuration_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any],
     default_config: dict[str, Any] | None,
     config_space_constraints: Any,
@@ -1026,7 +1027,7 @@ def _normalize_config_space_and_defaults(
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
-    configuration_space: dict[str, Any] | None = None,
+    configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     tvl_spec: str | Path | None = None,
