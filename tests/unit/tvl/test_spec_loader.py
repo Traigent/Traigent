@@ -1662,3 +1662,176 @@ objectives:
 
         issues = validate_tvl_schema(data)
         assert any("threshold" in issue and "numeric" in issue for issue in issues)
+
+
+class TestTVLMultiAgentSupport:
+    """Tests for multi-agent parameter mapping in TVL specs."""
+
+    def test_tvar_agent_field_parsed_and_stored(self, tmp_path: Path) -> None:
+        """Agent field on tvar is parsed and stored in TVarDecl."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: financial_model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini"]
+    agent: financial
+
+  - name: financial_temperature
+    type: float
+    domain: [0.0, 1.0]
+    agent: financial
+
+  - name: legal_model
+    type: enum[str]
+    domain: ["claude-3-opus"]
+    agent: legal
+
+  - name: max_retries
+    type: int
+    domain: [1, 5]
+    # No agent - global parameter
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "multi_agent.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Verify tvars have agent field
+        assert artifact.tvars is not None
+        assert len(artifact.tvars) == 4
+
+        financial_model = next(t for t in artifact.tvars if t.name == "financial_model")
+        financial_temp = next(
+            t for t in artifact.tvars if t.name == "financial_temperature"
+        )
+        legal_model = next(t for t in artifact.tvars if t.name == "legal_model")
+        max_retries = next(t for t in artifact.tvars if t.name == "max_retries")
+
+        assert financial_model.agent == "financial"
+        assert financial_temp.agent == "financial"
+        assert legal_model.agent == "legal"
+        assert max_retries.agent is None
+
+    def test_parameter_agents_extracted_from_tvars(self, tmp_path: Path) -> None:
+        """parameter_agents dict is extracted from tvars with agent field."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model_a
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: agent_a
+
+  - name: model_b
+    type: enum[str]
+    domain: ["claude-3"]
+    agent: agent_b
+
+  - name: global_param
+    type: int
+    domain: [1, 10]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Verify parameter_agents is extracted
+        assert artifact.parameter_agents is not None
+        assert artifact.parameter_agents == {
+            "model_a": "agent_a",
+            "model_b": "agent_b",
+        }
+        # global_param should not be in parameter_agents (no agent field)
+        assert "global_param" not in artifact.parameter_agents
+
+    def test_parameter_agents_none_when_no_agents(self, tmp_path: Path) -> None:
+        """parameter_agents is None when no tvars have agent field."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # No agents specified, so parameter_agents should be None
+        assert artifact.parameter_agents is None
+
+    def test_parameter_agents_in_runtime_overrides(self, tmp_path: Path) -> None:
+        """parameter_agents flows through runtime_overrides for orchestrator."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: financial_model
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: financial
+
+  - name: legal_model
+    type: enum[str]
+    domain: ["claude-3"]
+    agent: legal
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        # tvl_parameter_agents should be in runtime_overrides
+        assert "tvl_parameter_agents" in overrides
+        assert overrides["tvl_parameter_agents"] == {
+            "financial_model": "financial",
+            "legal_model": "legal",
+        }
+
+    def test_invalid_agent_field_type_ignored(self, tmp_path: Path) -> None:
+        """Non-string agent field is ignored (not stored)."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: 123  # Invalid - should be string
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Invalid agent type should be ignored
+        assert artifact.tvars is not None
+        model_tvar = artifact.tvars[0]
+        assert model_tvar.agent is None
+        assert artifact.parameter_agents is None

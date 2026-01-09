@@ -611,6 +611,18 @@ class OptimizedFunction:
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
 
+        # Multi-agent configuration
+        self.agents = self._store_optional_param(kwargs, sentinel, "agents", None)
+        self.agent_prefixes = self._store_optional_param(
+            kwargs, sentinel, "agent_prefixes", None
+        )
+        self.agent_measures = self._store_optional_param(
+            kwargs, sentinel, "agent_measures", None
+        )
+        self.global_measures = self._store_optional_param(
+            kwargs, sentinel, "global_measures", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -626,6 +638,11 @@ class OptimizedFunction:
             "mock_mode_config",
             "max_total_examples",
             "samples_include_pruned",
+            # Multi-agent configuration
+            "agents",
+            "agent_prefixes",
+            "agent_measures",
+            "global_measures",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -1150,6 +1167,7 @@ class OptimizedFunction:
             "plateau_window",
             "plateau_epsilon",
             "tie_breakers",
+            "tvl_parameter_agents",
         ):
             if key in overrides and key not in algorithm_kwargs:
                 algorithm_kwargs[key] = overrides[key]
@@ -1511,6 +1529,21 @@ class OptimizedFunction:
         # Pass TVL 0.9 tie-breaker configuration
         if "tie_breakers" in algorithm_kwargs:
             orchestrator_kwargs["tie_breakers"] = algorithm_kwargs["tie_breakers"]
+
+        # Pass multi-agent configuration
+        if self.agents is not None:
+            orchestrator_kwargs["agents"] = self.agents
+        if self.agent_prefixes is not None:
+            orchestrator_kwargs["agent_prefixes"] = self.agent_prefixes
+        if self.agent_measures is not None:
+            orchestrator_kwargs["agent_measures"] = self.agent_measures
+        if self.global_measures is not None:
+            orchestrator_kwargs["global_measures"] = self.global_measures
+        # Pass TVL parameter_agents if provided from TVL spec
+        if "tvl_parameter_agents" in algorithm_kwargs:
+            orchestrator_kwargs["tvl_parameter_agents"] = algorithm_kwargs[
+                "tvl_parameter_agents"
+            ]
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,

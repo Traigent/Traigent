@@ -59,6 +59,7 @@ from traigent.api.parameter_ranges import (
     is_inline_param_definition,
     normalize_configuration_space,
 )
+from traigent.api.types import AgentDefinition
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -292,6 +293,11 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Early stopping parameters
     "plateau_window": None,  # Stop if no improvement for N trials
     "plateau_epsilon": None,  # Improvement threshold for plateau detection
+    # Multi-agent configuration
+    "agents": None,  # Explicit agent definitions
+    "agent_prefixes": None,  # Prefix-based agent inference
+    "agent_measures": None,  # Agent-to-measures mapping
+    "global_measures": None,  # Global (non-agent) measures
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -345,6 +351,11 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None
+    agent_prefixes: list[str] | None = None
+    agent_measures: dict[str, list[str]] | None = None
+    global_measures: list[str] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -403,6 +414,10 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("mock", self.mock),
+            ("agents", self.agents),
+            ("agent_prefixes", self.agent_prefixes),
+            ("agent_measures", self.agent_measures),
+            ("global_measures", self.global_measures),
         ]
 
 
@@ -1021,6 +1036,11 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None,
+    agent_prefixes: list[str] | None = None,
+    agent_measures: dict[str, list[str]] | None = None,
+    global_measures: list[str] | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -1222,6 +1242,10 @@ def optimize(
         "injection": injection,
         "execution": execution,
         "mock": mock,
+        "agents": agents,
+        "agent_prefixes": agent_prefixes,
+        "agent_measures": agent_measures,
+        "global_measures": global_measures,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1279,6 +1303,11 @@ def optimize(
     metric_functions = combined_settings["metric_functions"]
     tvl_spec_value = combined_settings["tvl_spec"]
     tvl_environment_value = combined_settings["tvl_environment"]
+    # Multi-agent configuration
+    agents_config = combined_settings["agents"]
+    agent_prefixes_config = combined_settings["agent_prefixes"]
+    agent_measures_config = combined_settings["agent_measures"]
+    global_measures_config = combined_settings["global_measures"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1449,6 +1478,11 @@ def optimize(
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             requested_execution_mode=requested_execution_mode,
+            # Multi-agent configuration
+            agents=agents_config,
+            agent_prefixes=agent_prefixes_config,
+            agent_measures=agent_measures_config,
+            global_measures=global_measures_config,
             **combined_runtime_overrides,
         )
 
