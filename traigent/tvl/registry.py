@@ -240,6 +240,9 @@ class FileRegistryResolver:
     ) -> list[dict[str, Any]]:
         """Apply a filter expression with boolean logic (AND/OR).
 
+        Correctly handles parentheses by only splitting on operators at depth 0.
+        AND has higher precedence than OR.
+
         Args:
             items: List of registry items.
             filter_expr: Filter expression with AND/OR operators.
@@ -247,12 +250,13 @@ class FileRegistryResolver:
         Returns:
             Filtered list of items.
         """
-        # First, handle parentheses by processing innermost groups first
-        # For simplicity, we handle a flat structure: A AND B OR C
-        # AND has higher precedence than OR
+        # First, strip outer parentheses if they wrap the entire expression
+        stripped, was_stripped = self._strip_outer_parens(filter_expr)
+        if was_stripped:
+            return self._apply_filter(items, stripped)
 
-        # Split by OR first (lower precedence)
-        or_parts = re.split(r"\s+OR\s+", filter_expr, flags=re.IGNORECASE)
+        # Split by OR first (lower precedence), respecting parentheses
+        or_parts = self._split_at_depth_zero(filter_expr, "OR")
 
         if len(or_parts) > 1:
             # OR: union of results from each part
@@ -267,18 +271,77 @@ class FileRegistryResolver:
 
             return [items[idx] for idx in sorted(result_set)]
 
-        # Split by AND (higher precedence)
-        and_parts = re.split(r"\s+AND\s+", filter_expr, flags=re.IGNORECASE)
+        # Split by AND (higher precedence), respecting parentheses
+        and_parts = self._split_at_depth_zero(filter_expr, "AND")
 
         if len(and_parts) > 1:
             # AND: intersection - apply filters sequentially
             result = items
             for part in and_parts:
-                result = self._apply_simple_filter(result, part.strip())
+                result = self._apply_filter(result, part.strip())
             return result
 
-        # No AND/OR found, apply as simple filter
+        # No AND/OR found at depth 0, apply as simple filter
         return self._apply_simple_filter(items, filter_expr)
+
+    def _split_at_depth_zero(self, expr: str, operator: str) -> list[str]:
+        """Split expression by operator only when at parenthesis depth 0.
+
+        This ensures that operators inside parentheses are not used as split points.
+
+        Args:
+            expr: The expression to split.
+            operator: The operator to split on ("AND" or "OR").
+
+        Returns:
+            List of expression parts. If no split occurs, returns [expr].
+        """
+        parts: list[str] = []
+        current_part: list[str] = []
+        depth = 0
+        i = 0
+        expr_upper = expr.upper()
+        op_len = len(operator)
+
+        while i < len(expr):
+            char = expr[i]
+
+            if char == "(":
+                depth += 1
+                current_part.append(char)
+                i += 1
+            elif char == ")":
+                depth -= 1
+                current_part.append(char)
+                i += 1
+            elif depth == 0 and expr_upper[i : i + op_len] == operator:
+                # Check if it's surrounded by whitespace (word boundary)
+                before_ok = i == 0 or expr[i - 1].isspace()
+                after_ok = (i + op_len >= len(expr)) or expr[i + op_len].isspace()
+                if before_ok and after_ok:
+                    # Found operator at depth 0
+                    parts.append("".join(current_part).strip())
+                    current_part = []
+                    i += op_len
+                    # Skip trailing whitespace
+                    while i < len(expr) and expr[i].isspace():
+                        i += 1
+                else:
+                    current_part.append(char)
+                    i += 1
+            else:
+                current_part.append(char)
+                i += 1
+
+        # Add the last part
+        if current_part:
+            parts.append("".join(current_part).strip())
+
+        # If no split occurred, return original expression as single-element list
+        if len(parts) <= 1:
+            return [expr]
+
+        return parts
 
     def _strip_outer_parens(self, expr: str) -> tuple[str, bool]:
         """Strip outer parentheses if they wrap the entire expression.

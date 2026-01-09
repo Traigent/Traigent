@@ -782,3 +782,107 @@ class TestBooleanFilterLogic:
 
         result = resolver.resolve("models", filter_expr="type == 'a' OR type == 'b'")
         assert result == ["m1", "m2", "m3", "m4"]
+
+    def test_parentheses_with_or_inside(self) -> None:
+        """Test parentheses containing OR expression.
+
+        This was a bug identified by Codex review - expressions like
+        'A AND (B OR C)' would incorrectly split on the inner OR.
+        """
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x", "b": "y"},  # a=x AND b=y -> match
+                    {"id": "m2", "a": "x", "b": "z"},  # a=x AND b=z -> match
+                    {"id": "m3", "a": "x", "b": "w"},  # a=x but b!=y,z -> no match
+                    {"id": "m4", "a": "n", "b": "y"},  # a!=x -> no match
+                ],
+            }
+        )
+
+        # a == 'x' AND (b == 'y' OR b == 'z')
+        result = resolver.resolve(
+            "models", filter_expr="a == 'x' AND (b == 'y' OR b == 'z')"
+        )
+        assert set(result) == {"m1", "m2"}
+
+    def test_parentheses_with_and_inside(self) -> None:
+        """Test parentheses containing AND expression."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {
+                        "id": "m1",
+                        "a": "x",
+                        "b": "y",
+                        "c": "z",
+                    },  # (a=x AND b=y) -> match
+                    {"id": "m2", "a": "n", "c": "z"},  # c=z -> match
+                    {"id": "m3", "a": "x", "b": "n"},  # a=x but b!=y -> no match
+                    {"id": "m4", "a": "n", "c": "w"},  # no match
+                ],
+            }
+        )
+
+        # (a == 'x' AND b == 'y') OR c == 'z'
+        result = resolver.resolve(
+            "models", filter_expr="(a == 'x' AND b == 'y') OR c == 'z'"
+        )
+        assert set(result) == {"m1", "m2"}
+
+    def test_nested_parentheses(self) -> None:
+        """Test nested parentheses expressions."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x", "b": "y", "c": "z"},
+                    {"id": "m2", "a": "x", "b": "n", "c": "z"},
+                    {"id": "m3", "a": "n", "b": "y", "c": "z"},
+                ],
+            }
+        )
+
+        # a == 'x' AND (b == 'y' OR (c == 'z'))
+        result = resolver.resolve(
+            "models", filter_expr="a == 'x' AND (b == 'y' OR (c == 'z'))"
+        )
+        # m1: a=x, b=y -> match
+        # m2: a=x, c=z -> match
+        assert set(result) == {"m1", "m2"}
+
+    def test_complex_mixed_expression(self) -> None:
+        """Test complex expression with multiple operators and parentheses."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "provider": "openai", "tier": "fast", "version": "1"},
+                    {
+                        "id": "m2",
+                        "provider": "openai",
+                        "tier": "quality",
+                        "version": "2",
+                    },
+                    {
+                        "id": "m3",
+                        "provider": "anthropic",
+                        "tier": "fast",
+                        "version": "2",
+                    },
+                    {
+                        "id": "m4",
+                        "provider": "anthropic",
+                        "tier": "quality",
+                        "version": "1",
+                    },
+                ],
+            }
+        )
+
+        # provider == 'openai' AND (tier == 'fast' OR version == '2')
+        result = resolver.resolve(
+            "models",
+            filter_expr="provider == 'openai' AND (tier == 'fast' OR version == '2')",
+        )
+        # m1: openai, fast -> match
+        # m2: openai, version=2 -> match
+        assert set(result) == {"m1", "m2"}
