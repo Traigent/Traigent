@@ -47,10 +47,11 @@ def simple_qa_agent(question: str) -> str:
     With real API keys, it would call the actual LLM.
     """
     # In real usage, you would use:
-    # from langchain_openai import ChatOpenAI
-    # llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-    # response = llm.invoke(f"Question: {question}\nAnswer:")
-    # return response.content
+    from langchain_openai import ChatOpenAI
+
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    response = llm.invoke(f"Question: {question}\nAnswer:")
+    return response.content
 
     # For this demo, we return a mock response
     mock_answers = {
