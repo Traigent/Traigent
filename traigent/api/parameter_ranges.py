@@ -31,13 +31,17 @@ Example:
 
 from __future__ import annotations
 
+import logging
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 if TYPE_CHECKING:
     from traigent.api.constraints import Condition
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
@@ -201,6 +205,114 @@ class Range(ParameterRange):
 
         return Condition(_tvar=self, operator="in_range", value=(low, high))
 
+    # =========================================================================
+    # Factory Methods - Domain Presets
+    # =========================================================================
+
+    @classmethod
+    def temperature(
+        cls,
+        *,
+        conservative: bool = False,
+        creative: bool = False,
+    ) -> Range:
+        """Pre-configured temperature for LLM optimization.
+
+        Args:
+            conservative: Use narrow range [0.0, 0.5] for factual tasks
+            creative: Use higher range [0.7, 1.5] for creative tasks
+
+        Returns:
+            Range configured for the specified temperature profile
+
+        Example:
+            >>> temp = Range.temperature()  # Default: [0.0, 1.0]
+            >>> temp_factual = Range.temperature(conservative=True)  # [0.0, 0.5]
+            >>> temp_creative = Range.temperature(creative=True)  # [0.7, 1.5]
+        """
+        if conservative and creative:
+            raise ValueError("Cannot specify both conservative=True and creative=True")
+        if conservative:
+            return cls(0.0, 0.5, default=0.2, name="temperature")
+        elif creative:
+            return cls(0.7, 1.5, default=1.0, name="temperature")
+        return cls(0.0, 1.0, default=0.7, name="temperature")
+
+    @classmethod
+    def top_p(cls) -> Range:
+        """Pre-configured top_p (nucleus sampling) parameter.
+
+        Returns:
+            Range [0.1, 1.0] with default 0.9
+
+        Example:
+            >>> top_p = Range.top_p()
+        """
+        return cls(0.1, 1.0, default=0.9, name="top_p")
+
+    @classmethod
+    def frequency_penalty(cls) -> Range:
+        """Pre-configured frequency penalty parameter.
+
+        Returns:
+            Range [0.0, 2.0] with default 0.0
+
+        Example:
+            >>> freq_pen = Range.frequency_penalty()
+        """
+        return cls(0.0, 2.0, default=0.0, name="frequency_penalty")
+
+    @classmethod
+    def presence_penalty(cls) -> Range:
+        """Pre-configured presence penalty parameter.
+
+        Returns:
+            Range [0.0, 2.0] with default 0.0
+
+        Example:
+            >>> pres_pen = Range.presence_penalty()
+        """
+        return cls(0.0, 2.0, default=0.0, name="presence_penalty")
+
+    @classmethod
+    def similarity_threshold(cls) -> Range:
+        """Pre-configured similarity threshold for RAG retrieval.
+
+        Returns:
+            Range [0.0, 1.0] with default 0.5
+
+        Example:
+            >>> threshold = Range.similarity_threshold()
+        """
+        return cls(0.0, 1.0, default=0.5, name="similarity_threshold")
+
+    @classmethod
+    def mmr_lambda(cls) -> Range:
+        """Pre-configured MMR (Maximal Marginal Relevance) lambda parameter.
+
+        Lambda controls the trade-off between relevance and diversity.
+        Higher values favor relevance, lower values favor diversity.
+
+        Returns:
+            Range [0.0, 1.0] with default 0.5
+
+        Example:
+            >>> mmr = Range.mmr_lambda()
+        """
+        return cls(0.0, 1.0, default=0.5, name="mmr_lambda")
+
+    @classmethod
+    def chunk_overlap_ratio(cls) -> Range:
+        """Pre-configured chunk overlap ratio for RAG document splitting.
+
+        Returns:
+            Range [0.0, 0.5] with default 0.1
+
+        Example:
+            >>> overlap = Range.chunk_overlap_ratio()
+        """
+        return cls(0.0, 0.5, default=0.1, name="chunk_overlap_ratio")
+
 
 @dataclass(frozen=True, slots=True)
 class IntRange(ParameterRange):
@@ -332,6 +444,120 @@ class IntRange(ParameterRange):
 
         return Condition(_tvar=self, operator="in_range", value=(low, high))
 
+    # =========================================================================
+    # Factory Methods - Domain Presets
+    # =========================================================================
+
+    @classmethod
+    def max_tokens(
+        cls,
+        *,
+        task: Literal["short", "medium", "long"] = "medium",
+    ) -> IntRange:
+        """Pre-configured max_tokens by task type.
+
+        Args:
+            task: Type of task - "short" (50-256), "medium" (256-1024),
+                  or "long" (1024-4096)
+
+        Returns:
+            IntRange configured for the specified task type
+
+        Example:
+            >>> tokens = IntRange.max_tokens()  # medium: [256, 1024]
+            >>> tokens_short = IntRange.max_tokens(task="short")  # [50, 256]
+            >>> tokens_long = IntRange.max_tokens(task="long")  # [1024, 4096]
+        """
+        ranges: dict[str, tuple[int, int, int]] = {
+            "short": (50, 256, 128),
+            "medium": (256, 1024, 512),
+            "long": (1024, 4096, 2048),
+        }
+        if task not in ranges:
+            raise ValueError(f"task must be 'short', 'medium', or 'long', got '{task}'")
+        low, high, default = ranges[task]
+        return cls(low, high, step=64, default=default, name="max_tokens")
+
+    @classmethod
+    def k_retrieval(cls, *, max_k: int = 10) -> IntRange:
+        """Number of documents to retrieve in RAG.
+
+        Args:
+            max_k: Maximum k value (default: 10)
+
+        Returns:
+            IntRange [1, max_k] with default 3
+
+        Example:
+            >>> k = IntRange.k_retrieval()  # [1, 10]
+            >>> k_large = IntRange.k_retrieval(max_k=20)  # [1, 20]
+        """
+        return cls(1, max_k, default=3, name="k")
+
+    @classmethod
+    def chunk_size(cls) -> IntRange:
+        """Document chunk size for RAG document splitting.
+
+        Returns:
+            IntRange [100, 1000] with step 100 and default 500
+
+        Example:
+            >>> chunk = IntRange.chunk_size()
+        """
+        return cls(100, 1000, step=100, default=500, name="chunk_size")
+
+    @classmethod
+    def chunk_overlap(cls) -> IntRange:
+        """Document chunk overlap for RAG document splitting.
+
+        Returns:
+            IntRange [0, 200] with step 25 and default 50
+
+        Example:
+            >>> overlap = IntRange.chunk_overlap()
+        """
+        return cls(0, 200, step=25, default=50, name="chunk_overlap")
+
+    @classmethod
+    def few_shot_count(cls, *, max_examples: int = 10) -> IntRange:
+        """Number of few-shot examples to include in prompt.
+
+        Args:
+            max_examples: Maximum number of examples (default: 10)
+
+        Returns:
+            IntRange [0, max_examples] with default 3
+
+        Example:
+            >>> few_shot = IntRange.few_shot_count()  # [0, 10]
+            >>> few_shot_limited = IntRange.few_shot_count(max_examples=5)  # [0, 5]
+        """
+        return cls(0, max_examples, default=3, name="few_shot_count")
+
+    @classmethod
+    def batch_size(
+        cls,
+        *,
+        min_size: int = 1,
+        max_size: int = 64,
+        default: int = 16,
+    ) -> IntRange:
+        """Batch size for parallel processing.
+
+        Args:
+            min_size: Minimum batch size (default: 1)
+            max_size: Maximum batch size (default: 64)
+            default: Default batch size (default: 16)
+
+        Returns:
+            IntRange configured for batch processing
+
+        Example:
+            >>> batch = IntRange.batch_size()  # [1, 64]
+            >>> batch_large = IntRange.batch_size(max_size=128)  # [1, 128]
+        """
+        return cls(min_size, max_size, default=default, name="batch_size")
+
 
 @dataclass(frozen=True, slots=True)
 class LogRange(ParameterRange):
@@ -449,6 +675,8 @@ class Choices(ParameterRange, Generic[T]):
         default: Optional default value (must be in values, populates default_config)
         name: Optional TVAR name (auto-assigned from decorator kwarg if not set)
         unit: Optional unit of measurement (rarely needed for categorical)
+        enforce_type: If True (default), validates all values have the same type.
+            Set to False to allow mixed types (e.g., [None, "default", 1]).
 
     Example:
         >>> model = Choices(["gpt-4", "gpt-3.5-turbo", "claude-2"])
@@ -456,7 +684,8 @@ class Choices(ParameterRange, Generic[T]):
         >>> temperature = Choices([0.0, 0.3, 0.7, 1.0])
 
     Raises:
-        TypeError: If values is a string or bytes
+        TypeError: If values is a string or bytes, or if enforce_type=True and
+            values contain mixed types
         ValueError: If values is empty or default is not in values
     """
 
@@ -465,6 +694,8 @@ class Choices(ParameterRange, Generic[T]):
     # TVL fields
     name: str | None = None
     unit: str | None = None
+    # Type enforcement (D-2 fix)
+    enforce_type: bool = True
 
     def __post_init__(self) -> None:
         # Reject str/bytes which are technically sequences but not valid choices
@@ -480,6 +711,50 @@ class Choices(ParameterRange, Generic[T]):
         if self.default is not None and self.default not in self.values:
             raise ValueError(
                 f"default {self.default!r} is not in choices {list(self.values)}"
+            )
+        # Type enforcement: validate all values have the same type
+        if self.enforce_type and len(self.values) > 1:
+            self._validate_type_consistency()
+
+    def _validate_type_consistency(self) -> None:
+        """Validate all values have consistent types.
+
+        Handles special cases:
+        - bool and int are treated as distinct types (bool is subclass of int)
+        - None values are allowed alongside any type
+        - Numbers (int, float) are allowed together
+        """
+        # Filter out None values for type checking
+        non_none_values = [v for v in self.values if v is not None]
+        if len(non_none_values) <= 1:
+            return  # Single type or all None
+
+        # Get types, treating bool specially (before int check since bool is subclass)
+        def get_type_category(v: object) -> str:
+            if isinstance(v, bool):
+                return "bool"
+            if isinstance(v, int):
+                return "int"
+            if isinstance(v, float):
+                return "float"
+            return type(v).__name__
+
+        type_categories = {get_type_category(v) for v in non_none_values}
+
+        # Allow int and float to coexist (both are numbers)
+        numeric_types = {"int", "float"}
+        if type_categories <= numeric_types:
+            return  # All numeric, OK
+
+        # Check for type consistency
+        if len(type_categories) > 1:
+            # Get actual types for error message
+            types_found = sorted(type_categories)
+            raise TypeError(
+                f"Choices values must have consistent types. "
+                f"Found mixed types: {types_found}. "
+                f"Values: {list(self.values)[:5]}{'...' if len(self.values) > 5 else ''}. "
+                f"Set enforce_type=False to allow mixed types."
             )
 
     def to_config_value(self) -> list[T]:
@@ -543,6 +818,169 @@ class Choices(ParameterRange, Generic[T]):
         from traigent.api.constraints import Condition
 
         return Condition(_tvar=self, operator="not_in", value=tuple(values))
+
+    # =========================================================================
+    # Factory Methods - Domain Presets
+    # =========================================================================
+
+    @classmethod
+    def model(
+        cls,
+        *,
+        provider: str | None = None,
+        tier: Literal["fast", "balanced", "quality"] = "balanced",
+    ) -> Choices[str]:
+        """Pre-configured model selection using provider registry.
+
+        Uses environment variable TRAIGENT_MODELS_{PROVIDER}_{TIER} if set,
+        otherwise falls back to sensible defaults.
+
+        Args:
+            provider: Provider name (e.g., "openai", "anthropic"). If None,
+                     returns models from all providers.
+            tier: Performance tier - "fast", "balanced", or "quality"
+
+        Returns:
+            Choices instance with model names
+
+        Example:
+            >>> model = Choices.model()  # Default balanced models
+            >>> model_fast = Choices.model(provider="openai", tier="fast")
+            >>> model_quality = Choices.model(provider="anthropic", tier="quality")
+        """
+        # Check for environment-based model list
+        env_key = f"TRAIGENT_MODELS_{(provider or 'DEFAULT').upper()}_{tier.upper()}"
+        env_models = os.environ.get(env_key)
+        if env_models:
+            models = [m.strip() for m in env_models.split(",") if m.strip()]
+            if models:
+                return cls(models, name="model")
+
+        # Fallback defaults
+        fallbacks: dict[tuple[str | None, str], list[str]] = {
+            ("openai", "fast"): ["gpt-4o-mini"],
+            ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
+            ("openai", "quality"): ["gpt-4o", "o1-preview"],
+            ("anthropic", "fast"): ["claude-3-haiku-20240307"],
+            ("anthropic", "balanced"): ["claude-3-5-sonnet-20241022"],
+            ("anthropic", "quality"): ["claude-3-opus-20240229"],
+            (None, "fast"): ["gpt-4o-mini", "claude-3-haiku-20240307"],
+            (None, "balanced"): ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet-20241022"],
+            (None, "quality"): ["gpt-4o", "claude-3-opus-20240229"],
+        }
+
+        models = fallbacks.get((provider, tier))
+        if not models:
+            logger.warning(
+                f"No model list found for provider={provider}, tier={tier}. "
+                f"Using default models. Set {env_key} for explicit control."
+            )
+            models = ["gpt-4o-mini"]
+
+        return cls(models, name="model")
+
+    @classmethod
+    def prompting_strategy(cls) -> Choices[str]:
+        """Pre-configured prompting strategies.
+
+        Returns:
+            Choices with common prompting strategy options
+
+        Example:
+            >>> strategy = Choices.prompting_strategy()
+        """
+        return cls(
+            ["direct", "chain_of_thought", "react", "self_consistency"],
+            default="direct",
+            name="prompting_strategy",
+        )
+
+    @classmethod
+    def context_format(cls) -> Choices[str]:
+        """Pre-configured context formatting options for RAG.
+
+        Returns:
+            Choices with common context format options
+
+        Example:
+            >>> fmt = Choices.context_format()
+        """
+        return cls(
+            ["bullet", "numbered", "xml", "markdown", "json"],
+            default="bullet",
+            name="context_format",
+        )
+
+    @classmethod
+    def retriever_type(cls) -> Choices[str]:
+        """Pre-configured retriever types for RAG.
+
+        Returns:
+            Choices with common retriever type options
+
+        Example:
+            >>> retriever = Choices.retriever_type()
+        """
+        return cls(
+            ["similarity", "mmr", "bm25", "hybrid"],
+            default="similarity",
+            name="retriever",
+        )
+
+    @classmethod
+    def embedding_model(
+        cls,
+        *,
+        provider: str | None = None,
+    ) -> Choices[str]:
+        """Pre-configured embedding model selection.
+
+        Args:
+            provider: Provider name (e.g., "openai"). If None,
+                     returns models from common providers.
+
+        Returns:
+            Choices with embedding model names
+
+        Example:
+            >>> embedding = Choices.embedding_model()
+            >>> embedding_openai = Choices.embedding_model(provider="openai")
+        """
+        fallbacks: dict[str | None, list[str]] = {
+            "openai": [
+                "text-embedding-3-small",
+                "text-embedding-3-large",
+                "text-embedding-ada-002",
+            ],
+            None: [
+                "text-embedding-3-small",
+                "text-embedding-3-large",
+            ],
+        }
+
+        models = fallbacks.get(provider, fallbacks[None])
+        return cls(models, name="embedding_model")
+
+    @classmethod
+    def reranker_model(cls) -> Choices[str]:
+        """Pre-configured reranker models for RAG.
+
+        Returns:
+            Choices with common reranker model options
+
+        Example:
+            >>> reranker = Choices.reranker_model()
+        """
+        return cls(
+            [
+                "none",
+                "cohere-rerank-v3",
+                "cross-encoder/ms-marco-MiniLM-L-6-v2",
+                "llm-rerank",
+            ],
+            default="none",
+            name="reranker",
+        )
 
 
 # =============================================================================

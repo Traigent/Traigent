@@ -352,6 +352,51 @@ class TestChoices:
         c = Choices(["a", "b"])
         assert isinstance(c.values, tuple)
 
+    # Type enforcement tests (D-2 fix)
+    def test_choices_mixed_types_raises(self):
+        """Test validation: mixed types raise TypeError by default."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices(["string", 123])  # str and int mixed
+
+    def test_choices_mixed_str_bool_raises(self):
+        """Test validation: mixing str and bool raises."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices(["yes", True, "no", False])
+
+    def test_choices_mixed_int_bool_raises(self):
+        """Test validation: mixing int and bool raises (bool is subclass of int)."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices([0, 1, True, False])
+
+    def test_choices_int_float_allowed(self):
+        """Test validation: int and float can coexist (both numeric)."""
+        c = Choices([1, 2.5, 3, 4.0])  # Should not raise
+        assert len(c) == 4
+
+    def test_choices_none_with_type_allowed(self):
+        """Test validation: None can coexist with any type."""
+        c = Choices([None, "default", "option"])  # Should not raise
+        assert None in c
+        assert "default" in c
+
+    def test_choices_all_none_allowed(self):
+        """Test validation: all None values allowed."""
+        c = Choices([None, None])
+        assert len(c) == 2
+
+    def test_choices_enforce_type_false(self):
+        """Test enforce_type=False allows mixed types."""
+        c = Choices(["string", 123, True], enforce_type=False)
+        assert len(c) == 3
+        assert "string" in c
+        assert 123 in c
+        assert True in c
+
+    def test_choices_single_value_no_validation(self):
+        """Test single value doesn't trigger type validation."""
+        c = Choices([42])  # Single value, no type comparison needed
+        assert len(c) == 1
+
 
 class TestIsParameterRange:
     """Tests for is_parameter_range function."""
