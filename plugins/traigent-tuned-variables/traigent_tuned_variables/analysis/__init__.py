@@ -6,6 +6,8 @@ Provides centralized analysis of optimization results with elimination suggestio
 from .variable_analyzer import (
     EliminationAction,
     EliminationSuggestion,
+    MultiObjectiveAnalysis,
+    MultiObjectiveVariableAnalysis,
     OptimizationAnalysis,
     ValueRanking,
     VariableAnalysis,
@@ -19,4 +21,6 @@ __all__ = [
     "EliminationSuggestion",
     "EliminationAction",
     "ValueRanking",
+    "MultiObjectiveAnalysis",
+    "MultiObjectiveVariableAnalysis",
 ]
