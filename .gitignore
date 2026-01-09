@@ -43,7 +43,7 @@ MANIFEST
 *.whl
 *.tar.gz
 .build/
-
+_bmad/
 # PyInstaller
 #  Usually these files are written by a python script from a template
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
@@ -261,6 +261,7 @@ htmlcov/
 
 # Code reviews and internal documentation (user-specific)
 code_reviews/
+tmp/code-review/
 CLAUDE.local.md
 
 # Cleanup/fix scripts (temporary)
