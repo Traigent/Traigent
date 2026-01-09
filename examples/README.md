@@ -88,9 +88,28 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 
 Production-ready integrations with popular platforms and workflows:
 
-- **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline)
-- **`bedrock/`** - AWS Bedrock integration patterns
-- **More coming soon:** LangChain, OpenAI SDK, Azure OpenAI, Google Vertex AI
+| Integration | Description | Key Features |
+|-------------|-------------|--------------|
+| **`ci-cd/`** | Continuous integration examples | Math Q&A pipeline, pre-commit hooks |
+| **`bedrock/`** | AWS Bedrock integration | Cloud deployment patterns |
+| **`dspy-hotpotqa/`** | DSPy + Traigent workflow | HotPotQA dataset, 3-stage optimization |
+
+### DSPy Integration (New!)
+
+The `dspy-hotpotqa/` example demonstrates the recommended workflow:
+
+```bash
+cd examples/integrations/dspy-hotpotqa
+python download_data.py   # Download HotPotQA dataset
+python run.py             # Run 3-stage optimization
+```
+
+**Three-Stage Pipeline:**
+1. **DSPy Stage**: Generate 3 prompt variants from trainset (200 examples)
+2. **Traigent Stage**: Optimize prompts + hyperparams on devset (100 examples)
+3. **Validation**: Evaluate on held-out testset (50 examples)
+
+See [DSPy Integration Guide](docs/DSPY_INTEGRATION.md) for detailed documentation.
 
 ## 📊 Working With Datasets
 
@@ -219,6 +238,7 @@ Follow these best practices when contributing new examples:
 - **[START_HERE.md](docs/START_HERE.md)** - Quick navigation guide
 - **[EXAMPLES_GUIDE.md](docs/EXAMPLES_GUIDE.md)** - Comprehensive walkthrough
 - **[QUICK_REFERENCE.md](docs/QUICK_REFERENCE.md)** - Command reference
+- **[DSPY_INTEGRATION.md](docs/DSPY_INTEGRATION.md)** - DSPy prompt optimization guide
 - **[TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)** - Common issues and solutions
 - **[API_PATTERNS.md](docs/API_PATTERNS.md)** - API usage patterns
 

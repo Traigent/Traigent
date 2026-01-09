@@ -5,9 +5,9 @@ allowing Traigent users to leverage DSPy's MIPRO and BootstrapFewShot optimizers
 for automatic prompt engineering.
 
 Example:
-    >>> from traigent.integrations.dspy_adapter import DSPyPromptOptimizer
-    >>> optimizer = DSPyPromptOptimizer(method="mipro")
-    >>> optimized_module = optimizer.optimize_prompt(
+    >>> from traigent.integrations.dspy_adapter import DSPyPromptOptimizer  # doctest: +SKIP
+    >>> optimizer = DSPyPromptOptimizer(method="mipro")  # doctest: +SKIP
+    >>> optimized_module = optimizer.optimize_prompt(  # doctest: +SKIP
     ...     module=my_dspy_module,
     ...     trainset=train_examples,
     ...     metric=accuracy_metric,
@@ -64,13 +64,13 @@ class DSPyPromptOptimizer:
     Enables automatic prompt engineering as part of the optimization workflow.
 
     Example:
-        >>> optimizer = DSPyPromptOptimizer(method="mipro")
-        >>> result = optimizer.optimize_prompt(
+        >>> optimizer = DSPyPromptOptimizer(method="mipro")  # doctest: +SKIP
+        >>> result = optimizer.optimize_prompt(  # doctest: +SKIP
         ...     module=qa_module,
         ...     trainset=train_data,
         ...     metric=exact_match,
         ... )
-        >>> optimized_qa = result.optimized_module
+        >>> optimized_qa = result.optimized_module  # doctest: +SKIP
     """
 
     def __init__(
@@ -132,9 +132,9 @@ class DSPyPromptOptimizer:
             PromptOptimizationResult containing the optimized module and metadata
 
         Example:
-            >>> def accuracy(example, pred):
+            >>> def accuracy(example, pred):  # doctest: +SKIP
             ...     return float(example.answer == pred.answer)
-            >>> result = optimizer.optimize_prompt(
+            >>> result = optimizer.optimize_prompt(  # doctest: +SKIP
             ...     module=QAModule(),
             ...     trainset=examples,
             ...     metric=accuracy,
@@ -180,6 +180,22 @@ class DSPyPromptOptimizer:
             metadata=metadata,
         )
 
+    def _compile_with_teacher(
+        self,
+        optimizer: Any,
+        module: Any,
+        trainset: list[Any],
+        teacher: Any | None,
+    ) -> Any:
+        """Compile module with optional teacher context.
+
+        Helper to reduce repetition when compiling with/without teacher model.
+        """
+        if teacher:
+            with dspy.context(lm=teacher):
+                return optimizer.compile(module, trainset=trainset)
+        return optimizer.compile(module, trainset=trainset)
+
     def _run_mipro(
         self,
         module: Any,
@@ -190,62 +206,22 @@ class DSPyPromptOptimizer:
         teacher: Any | None,
     ) -> tuple[Any, dict[str, Any]]:
         """Run MIPROv2 optimization."""
-        try:
-            optimizer = dspy.MIPROv2(
-                metric=metric,
-                auto=self.auto_setting,
-                num_candidates=num_candidates,
-                requires_permission_to_run=requires_permission_to_run,
-            )
+        optimizer = dspy.MIPROv2(
+            metric=metric,
+            auto=self.auto_setting,
+            num_candidates=num_candidates,
+            requires_permission_to_run=requires_permission_to_run,
+        )
 
-            if teacher:
-                with dspy.context(lm=teacher):
-                    optimized = optimizer.compile(module, trainset=trainset)
-            else:
-                optimized = optimizer.compile(module, trainset=trainset)
+        optimized = self._compile_with_teacher(optimizer, module, trainset, teacher)
+        best_score = self._compute_best_score(optimized, trainset, metric)
 
-            # Compute best_score by evaluating optimized module on trainset
-            best_score = self._compute_best_score(optimized, trainset, metric)
-
-            metadata = {
-                "method": "mipro",
-                "auto_setting": self.auto_setting,
-                "num_candidates": num_candidates,
-                "best_score": best_score,
-            }
-
-            return optimized, metadata
-
-        except AttributeError:
-            # Fallback to older MIPRO API if MIPROv2 not available
-            # Note: Legacy MIPRO has limited parameter support
-            logger.warning(
-                "MIPROv2 not available, falling back to legacy MIPRO. "
-                "Note: auto_setting and requires_permission_to_run are not "
-                "supported in legacy MIPRO."
-            )
-            optimizer = dspy.MIPRO(
-                metric=metric,
-                num_candidates=num_candidates,
-            )
-
-            # Still respect teacher model in legacy fallback
-            if teacher:
-                with dspy.context(lm=teacher):
-                    optimized = optimizer.compile(module, trainset=trainset)
-            else:
-                optimized = optimizer.compile(module, trainset=trainset)
-
-            # Compute best_score for legacy path too
-            best_score = self._compute_best_score(optimized, trainset, metric)
-
-            metadata = {
-                "method": "mipro_legacy",
-                "num_candidates": num_candidates,
-                "best_score": best_score,
-                "unsupported_params": ["auto_setting", "requires_permission_to_run"],
-            }
-            return optimized, metadata
+        return optimized, {
+            "method": "mipro",
+            "auto_setting": self.auto_setting,
+            "num_candidates": num_candidates,
+            "best_score": best_score,
+        }
 
     def _run_bootstrap(
         self,
@@ -263,23 +239,15 @@ class DSPyPromptOptimizer:
             max_labeled_demos=max_labeled_demos,
         )
 
-        if teacher:
-            with dspy.context(lm=teacher):
-                optimized = optimizer.compile(module, trainset=trainset)
-        else:
-            optimized = optimizer.compile(module, trainset=trainset)
-
-        # Compute best_score by evaluating optimized module on trainset
+        optimized = self._compile_with_teacher(optimizer, module, trainset, teacher)
         best_score = self._compute_best_score(optimized, trainset, metric)
 
-        metadata = {
+        return optimized, {
             "method": "bootstrap",
             "max_bootstrapped_demos": max_bootstrapped_demos,
             "max_labeled_demos": max_labeled_demos,
             "best_score": best_score,
         }
-
-        return optimized, metadata
 
     def _compute_best_score(
         self,
@@ -420,7 +388,7 @@ def create_dspy_integration(
         ImportError: If DSPy is not installed
 
     Example:
-        >>> optimizer = create_dspy_integration(method="mipro", auto_setting="light")
+        >>> optimizer = create_dspy_integration(method="mipro", auto_setting="light")  # doctest: +SKIP
     """
     return DSPyPromptOptimizer(method=method, **kwargs)
 
