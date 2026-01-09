@@ -574,3 +574,211 @@ class TestDictRegistryResolver:
 
         result = resolver.resolve("versions", filter_expr="rank < '3'")
         assert result == ["v1", "v2"]
+
+
+class TestBooleanFilterLogic:
+    """Tests for T-2: Boolean logic (AND/OR) in registry filters."""
+
+    def test_and_operator(self) -> None:
+        """Test AND operator: both conditions must match."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "gpt-4o", "provider": "openai", "tier": "quality"},
+                    {"id": "gpt-4o-mini", "provider": "openai", "tier": "fast"},
+                    {"id": "claude-3-opus", "provider": "anthropic", "tier": "quality"},
+                    {"id": "claude-3-haiku", "provider": "anthropic", "tier": "fast"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="provider == 'openai' AND tier == 'quality'"
+        )
+        assert result == ["gpt-4o"]
+
+    def test_or_operator(self) -> None:
+        """Test OR operator: either condition can match."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "gpt-4o", "provider": "openai"},
+                    {"id": "claude-3", "provider": "anthropic"},
+                    {"id": "llama-3", "provider": "meta"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="provider == 'openai' OR provider == 'anthropic'"
+        )
+        assert set(result) == {"gpt-4o", "claude-3"}
+
+    def test_and_operator_case_insensitive(self) -> None:
+        """Test that AND is case-insensitive."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x", "b": "y"},
+                    {"id": "m2", "a": "x", "b": "z"},
+                ],
+            }
+        )
+
+        result = resolver.resolve("models", filter_expr="a == 'x' and b == 'y'")
+        assert result == ["m1"]
+
+        result = resolver.resolve("models", filter_expr="a == 'x' And b == 'y'")
+        assert result == ["m1"]
+
+    def test_or_operator_case_insensitive(self) -> None:
+        """Test that OR is case-insensitive."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "type": "a"},
+                    {"id": "m2", "type": "b"},
+                    {"id": "m3", "type": "c"},
+                ],
+            }
+        )
+
+        result = resolver.resolve("models", filter_expr="type == 'a' or type == 'b'")
+        assert set(result) == {"m1", "m2"}
+
+    def test_multiple_and_conditions(self) -> None:
+        """Test multiple AND conditions chained."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x", "b": "y", "c": "z"},
+                    {"id": "m2", "a": "x", "b": "y", "c": "w"},
+                    {"id": "m3", "a": "x", "b": "n", "c": "z"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="a == 'x' AND b == 'y' AND c == 'z'"
+        )
+        assert result == ["m1"]
+
+    def test_multiple_or_conditions(self) -> None:
+        """Test multiple OR conditions chained."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "type": "a"},
+                    {"id": "m2", "type": "b"},
+                    {"id": "m3", "type": "c"},
+                    {"id": "m4", "type": "d"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="type == 'a' OR type == 'b' OR type == 'c'"
+        )
+        assert set(result) == {"m1", "m2", "m3"}
+
+    def test_and_with_comparison_operators(self) -> None:
+        """Test AND with comparison operators."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "v1", "version": "1.0", "tier": "fast"},
+                    {"id": "v2", "version": "2.0", "tier": "fast"},
+                    {"id": "v3", "version": "2.0", "tier": "quality"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="version >= '2.0' AND tier == 'fast'"
+        )
+        assert result == ["v2"]
+
+    def test_or_with_in_operator(self) -> None:
+        """Test OR with 'in' operator in one clause."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "provider": "openai", "type": "chat"},
+                    {"id": "m2", "provider": "anthropic", "type": "chat"},
+                    {"id": "m3", "provider": "openai", "type": "embedding"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="provider in ['anthropic'] OR type == 'embedding'"
+        )
+        assert set(result) == {"m2", "m3"}
+
+    def test_parentheses_simple(self) -> None:
+        """Test parentheses wrapping a simple expression."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "type": "a"},
+                    {"id": "m2", "type": "b"},
+                ],
+            }
+        )
+
+        result = resolver.resolve("models", filter_expr="(type == 'a')")
+        assert result == ["m1"]
+
+    def test_and_has_precedence_over_or(self) -> None:
+        """Test that AND has higher precedence than OR.
+
+        Expression: A OR B AND C should be parsed as A OR (B AND C)
+        """
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x", "b": "y", "c": "z"},  # a=x matches first OR
+                    {"id": "m2", "a": "n", "b": "y", "c": "z"},  # b=y AND c=z matches
+                    {"id": "m3", "a": "n", "b": "y", "c": "w"},  # only b=y, no match
+                    {"id": "m4", "a": "n", "b": "n", "c": "n"},  # no match
+                ],
+            }
+        )
+
+        # a == 'x' OR (b == 'y' AND c == 'z')
+        result = resolver.resolve(
+            "models", filter_expr="a == 'x' OR b == 'y' AND c == 'z'"
+        )
+        assert set(result) == {"m1", "m2"}
+
+    def test_empty_result_with_and(self) -> None:
+        """Test AND that results in no matches."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "a": "x"},
+                    {"id": "m2", "a": "y"},
+                ],
+            }
+        )
+
+        result = resolver.resolve(
+            "models", filter_expr="a == 'x' AND a == 'y'"  # Impossible
+        )
+        assert result == []
+
+    def test_preserves_order(self) -> None:
+        """Test that filter results preserve original item order."""
+        resolver = DictRegistryResolver(
+            {
+                "models": [
+                    {"id": "m1", "type": "a"},
+                    {"id": "m2", "type": "b"},
+                    {"id": "m3", "type": "a"},
+                    {"id": "m4", "type": "b"},
+                ],
+            }
+        )
+
+        result = resolver.resolve("models", filter_expr="type == 'a' OR type == 'b'")
+        assert result == ["m1", "m2", "m3", "m4"]

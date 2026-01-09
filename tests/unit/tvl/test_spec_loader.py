@@ -1452,3 +1452,213 @@ class TestResolveAlgorithm:
             }
         )
         assert result == "bayesian"
+
+
+# T-5: Early Schema Validation Tests
+
+
+class TestSchemaValidation:
+    """Tests for T-5: Early schema validation at parse time."""
+
+    def test_validate_tvl_schema_valid_spec(self) -> None:
+        """Valid spec returns empty issues list."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvl_version": "0.9",
+            "tvars": {
+                "temperature": {"domain": {"type": "range", "low": 0.0, "high": 1.0}}
+            },
+            "objectives": [{"name": "accuracy", "direction": "maximize"}],
+        }
+
+        issues = validate_tvl_schema(data)
+        assert issues == []
+
+    def test_validate_unknown_top_level_sections(self) -> None:
+        """Unknown top-level sections are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvl_version": "0.9",
+            "tvars": {"temperature": {"domain": [0.0, 1.0]}},
+            "unknown_section": "should warn",
+            "also_unknown": {"nested": "data"},
+        }
+
+        issues = validate_tvl_schema(data)
+        assert len(issues) == 1
+        assert "Unknown top-level sections" in issues[0]
+        assert "also_unknown" in issues[0]
+        assert "unknown_section" in issues[0]
+
+    def test_validate_wrong_section_type(self) -> None:
+        """Wrong type for known section is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": "should be dict",  # Wrong type
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("tvars" in issue and "dict" in issue for issue in issues)
+
+    def test_validate_tvar_missing_domain(self) -> None:
+        """TVAR without domain field is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": {
+                "temperature": {"description": "missing domain"},
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("temperature" in issue and "domain" in issue for issue in issues)
+
+    def test_validate_invalid_domain_type(self) -> None:
+        """Invalid domain type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": {
+                "model": {"domain": {"type": "invalid_type", "values": ["a", "b"]}}
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("invalid_type" in issue for issue in issues)
+
+    def test_validate_invalid_objective_direction(self) -> None:
+        """Invalid objective direction is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "objectives": [{"name": "accuracy", "direction": "increase"}]  # Invalid
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("direction" in issue and "increase" in issue for issue in issues)
+
+    def test_validate_constraint_missing_require(self) -> None:
+        """Structural constraint without require field is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "constraints": [
+                {"type": "structural", "description": "missing require field"}
+            ]
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("require" in issue for issue in issues)
+
+    def test_validate_invalid_constraint_type(self) -> None:
+        """Invalid constraint type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"constraints": [{"type": "unknown_type", "require": "x > 0"}]}
+
+        issues = validate_tvl_schema(data)
+        assert any("unknown_type" in issue for issue in issues)
+
+    def test_validate_strict_mode_raises(self) -> None:
+        """Strict mode raises TVLValidationError."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": "wrong type",
+            "unknown_field": "should error",
+        }
+
+        from traigent.utils.exceptions import TVLValidationError
+
+        with pytest.raises(TVLValidationError, match="schema validation failed"):
+            validate_tvl_schema(data, strict=True)
+
+    def test_load_tvl_spec_with_validate_schema_true(self, tmp_path: Path) -> None:
+        """load_tvl_spec validates schema and logs warnings."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+unknown_section: should_warn
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        # Should complete without raising
+        artifact = load_tvl_spec(spec_path=spec_file, validate_schema=True)
+        assert artifact is not None
+        assert "temperature" in artifact.configuration_space
+
+    def test_load_tvl_spec_with_validate_schema_false(self, tmp_path: Path) -> None:
+        """load_tvl_spec can skip schema validation."""
+        spec_content = """
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        # Should complete without validation
+        artifact = load_tvl_spec(spec_path=spec_file, validate_schema=False)
+        assert artifact is not None
+
+    def test_validate_dict_objectives_invalid_direction(self) -> None:
+        """Dict-style objectives with invalid direction are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "objectives": {
+                "accuracy": {"direction": "up"},  # Invalid
+                "latency": {"direction": "minimize"},  # Valid
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("accuracy" in issue and "direction" in issue for issue in issues)
+        # Valid one should not be flagged
+        assert not any("latency" in issue for issue in issues)
+
+    def test_validate_constraints_dict_structure(self) -> None:
+        """Dict-style constraints with wrong inner types are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "constraints": {
+                "structural": "should be list",  # Wrong type
+                "derived": [{"require": "valid"}],
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("structural" in issue and "list" in issue for issue in issues)
+
+    def test_validate_exploration_budget_wrong_type(self) -> None:
+        """exploration.budget.max_trials with wrong type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"exploration": {"budget": {"max_trials": "not_an_int"}}}
+
+        issues = validate_tvl_schema(data)
+        assert any("max_trials" in issue and "integer" in issue for issue in issues)
+
+    def test_validate_convergence_threshold_wrong_type(self) -> None:
+        """exploration.convergence.threshold with wrong type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"exploration": {"convergence": {"threshold": "not_numeric"}}}
+
+        issues = validate_tvl_schema(data)
+        assert any("threshold" in issue and "numeric" in issue for issue in issues)

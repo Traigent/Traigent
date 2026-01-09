@@ -197,6 +197,273 @@ def _load_and_parse_yaml(path: Path) -> dict:
     return raw_data
 
 
+# ===== T-5: Early Schema Validation =====
+
+# Known TVL 0.9 section names
+_KNOWN_TVL_SECTIONS = frozenset(
+    {
+        "tvl",
+        "tvl_version",
+        "tvars",
+        "exploration",
+        "objectives",
+        "constraints",
+        "defaults",
+        "metadata",
+        "environments",
+        "env_snapshot",
+        "evaluation_set",
+        "promotion_policy",
+        # Legacy sections (deprecated but still valid)
+        "configuration_space",
+        "optimization",
+    }
+)
+
+# Required types for top-level sections
+_SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
+    "tvl": dict,
+    "tvl_version": (str, int, float),
+    "tvars": dict,
+    "exploration": dict,
+    "objectives": (list, dict),
+    "constraints": (list, dict),
+    "defaults": dict,
+    "metadata": dict,
+    "environments": dict,
+    "env_snapshot": dict,
+    "evaluation_set": dict,
+    "promotion_policy": dict,
+    "configuration_space": dict,
+    "optimization": dict,
+}
+
+
+def validate_tvl_schema(
+    data: dict[str, Any],
+    *,
+    strict: bool = False,
+) -> list[str]:
+    """Validate TVL spec structure before detailed parsing (T-5).
+
+    Performs early validation to catch obvious errors like invalid section
+    names, missing required fields, incorrect types, etc. This provides
+    clearer error messages than later parsing failures.
+
+    Args:
+        data: Parsed YAML data (raw dictionary).
+        strict: If True, raise TVLValidationError on any issue.
+                If False, return list of warnings but don't raise.
+
+    Returns:
+        List of validation warnings/errors found.
+
+    Raises:
+        TVLValidationError: If strict=True and validation fails.
+
+    Example:
+        >>> data = yaml.safe_load(path.read_text())
+        >>> issues = validate_tvl_schema(data)
+        >>> if issues:
+        ...     print("Warnings:", issues)
+    """
+    issues: list[str] = []
+
+    # Check for unknown top-level sections
+    unknown_sections = set(data.keys()) - _KNOWN_TVL_SECTIONS
+    if unknown_sections:
+        issues.append(
+            f"Unknown top-level sections: {sorted(unknown_sections)}. "
+            f"Valid sections: {sorted(_KNOWN_TVL_SECTIONS)}"
+        )
+
+    # Check types of known sections
+    for section, expected_type in _SECTION_TYPES.items():
+        if section in data:
+            value = data[section]
+            if not isinstance(value, expected_type):
+                type_names = (
+                    expected_type.__name__
+                    if isinstance(expected_type, type)
+                    else " or ".join(t.__name__ for t in expected_type)
+                )
+                issues.append(
+                    f"Section '{section}' should be {type_names}, "
+                    f"got {type(value).__name__}"
+                )
+
+    # Validate tvars structure if present
+    if "tvars" in data:
+        tvars = data["tvars"]
+        if isinstance(tvars, dict):
+            issues.extend(_validate_tvars_structure(tvars))
+
+    # Validate objectives structure if present
+    if "objectives" in data:
+        objectives = data["objectives"]
+        issues.extend(_validate_objectives_structure(objectives))
+
+    # Validate constraints structure if present
+    if "constraints" in data:
+        constraints = data["constraints"]
+        issues.extend(_validate_constraints_structure(constraints))
+
+    # Validate exploration section if present
+    if "exploration" in data:
+        exploration = data["exploration"]
+        if isinstance(exploration, dict):
+            issues.extend(_validate_exploration_structure(exploration))
+
+    if strict and issues:
+        raise TVLValidationError(
+            "TVL schema validation failed:\n  - " + "\n  - ".join(issues)
+        )
+
+    return issues
+
+
+def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
+    """Validate structure of tvars section."""
+    issues: list[str] = []
+
+    for name, tvar_def in tvars.items():
+        if not isinstance(name, str):
+            issues.append(f"TVAR name must be string, got {type(name).__name__}")
+            continue
+
+        if not isinstance(tvar_def, dict):
+            issues.append(f"TVAR '{name}' definition must be a dict")
+            continue
+
+        # Check for required fields
+        if "domain" not in tvar_def:
+            issues.append(f"TVAR '{name}' missing required 'domain' field")
+
+        # Validate domain structure
+        domain = tvar_def.get("domain")
+        if domain is not None:
+            if isinstance(domain, dict):
+                if "type" in domain:
+                    valid_types = {"range", "choices", "registry"}
+                    if domain["type"] not in valid_types:
+                        issues.append(
+                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
+                            f"Valid: {valid_types}"
+                        )
+            elif not isinstance(domain, (list, tuple)):
+                issues.append(
+                    f"TVAR '{name}' domain should be dict, list, or tuple, "
+                    f"got {type(domain).__name__}"
+                )
+
+    return issues
+
+
+def _validate_objectives_structure(objectives: Any) -> list[str]:
+    """Validate structure of objectives section."""
+    issues: list[str] = []
+
+    if isinstance(objectives, list):
+        for i, obj in enumerate(objectives):
+            if isinstance(obj, dict):
+                if "name" not in obj:
+                    issues.append(f"Objective {i} missing 'name' field")
+                if "direction" in obj and obj["direction"] not in {
+                    "maximize",
+                    "minimize",
+                }:
+                    issues.append(
+                        f"Objective {i} has invalid direction '{obj['direction']}'"
+                    )
+            elif not isinstance(obj, str):
+                issues.append(
+                    f"Objective {i} should be string or dict, got {type(obj).__name__}"
+                )
+    elif isinstance(objectives, dict):
+        for name, obj_def in objectives.items():
+            if isinstance(obj_def, dict) and "direction" in obj_def:
+                if obj_def["direction"] not in {"maximize", "minimize"}:
+                    issues.append(
+                        f"Objective '{name}' has invalid direction '{obj_def['direction']}'"
+                    )
+
+    return issues
+
+
+def _validate_constraints_structure(constraints: Any) -> list[str]:
+    """Validate structure of constraints section."""
+    issues: list[str] = []
+
+    if isinstance(constraints, list):
+        for i, constraint in enumerate(constraints):
+            if isinstance(constraint, dict):
+                if "type" in constraint:
+                    valid_types = {"structural", "derived"}
+                    if constraint["type"] not in valid_types:
+                        issues.append(
+                            f"Constraint {i} has invalid type '{constraint['type']}'"
+                        )
+                if (
+                    constraint.get("type") == "structural"
+                    and "require" not in constraint
+                ):
+                    issues.append(f"Structural constraint {i} missing 'require' field")
+                if constraint.get("type") == "derived" and "require" not in constraint:
+                    issues.append(f"Derived constraint {i} missing 'require' field")
+            elif not isinstance(constraint, str):
+                issues.append(
+                    f"Constraint {i} should be string or dict, got {type(constraint).__name__}"
+                )
+    elif isinstance(constraints, dict):
+        if "structural" in constraints and not isinstance(
+            constraints["structural"], list
+        ):
+            issues.append("constraints.structural should be a list")
+        if "derived" in constraints and not isinstance(constraints["derived"], list):
+            issues.append("constraints.derived should be a list")
+
+    return issues
+
+
+def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
+    """Validate structure of exploration section."""
+    issues: list[str] = []
+
+    # Known exploration fields
+    known_fields = {
+        "budget",
+        "algorithm",
+        "convergence",
+        "budgets",
+        "parallelism",
+        "max_trials",
+        "timeout",
+        "parallel_trials",
+    }
+    unknown = set(exploration.keys()) - known_fields
+    if unknown:
+        # Just a warning, not critical
+        pass  # Allow unknown fields for extensibility
+
+    # Validate budget if present
+    if "budget" in exploration:
+        budget = exploration["budget"]
+        if isinstance(budget, dict):
+            if "max_trials" in budget and not isinstance(budget["max_trials"], int):
+                issues.append("exploration.budget.max_trials should be integer")
+
+    # Validate convergence if present
+    if "convergence" in exploration:
+        convergence = exploration["convergence"]
+        if isinstance(convergence, dict):
+            if "threshold" in convergence and not isinstance(
+                convergence["threshold"], (int, float)
+            ):
+                issues.append("exploration.convergence.threshold should be numeric")
+
+    return issues
+
+
 def _parse_config_space_format(
     resolved: dict,
     registry_resolver: RegistryResolver | None,
@@ -272,6 +539,7 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    validate_schema: bool = True,
     registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
     """Load and normalize a TVL specification from disk.
@@ -283,12 +551,22 @@ def load_tvl_spec(
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
         validate_constraints: Whether to compile and validate structural constraints.
+        validate_schema: Whether to perform early schema validation (T-5).
+            When True, validates the TVL spec structure before detailed parsing
+            to catch errors early with clearer error messages.
         registry_resolver: Optional resolver used to materialize registry domains
             into concrete configuration values. If a spec contains a registry
             domain and no resolver is provided, spec loading fails fast.
     """
     path = Path(spec_path).expanduser()
     raw_data = _load_and_parse_yaml(path)
+
+    # T-5: Early schema validation before detailed parsing
+    if validate_schema:
+        schema_issues = validate_tvl_schema(raw_data, strict=False)
+        for issue in schema_issues:
+            logger.warning("TVL schema issue in %s: %s", path.name, issue)
+
     resolved = _apply_environment(raw_data, environment)
 
     # Parse TVL 0.9 header (tvl section)

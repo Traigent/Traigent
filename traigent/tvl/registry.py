@@ -212,6 +212,13 @@ class FileRegistryResolver:
         - Comparison: "field >= 'value'", "field <= 'value'", etc.
         - Contains: "field in ['a', 'b']"
 
+        Boolean Logic (T-2):
+        - AND: "field1 == 'a' AND field2 == 'b'" (all conditions must match)
+        - OR: "field1 == 'a' OR field2 == 'b'" (any condition can match)
+        - Mixed: "field1 == 'a' AND (field2 == 'b' OR field2 == 'c')"
+
+        Note: AND has higher precedence than OR. Use parentheses for explicit grouping.
+
         Args:
             items: List of registry items.
             filter_expr: Filter expression string.
@@ -222,16 +229,124 @@ class FileRegistryResolver:
         Raises:
             ValueError: If the filter expression is invalid.
         """
+        # Check for boolean logic (AND/OR)
+        if re.search(r"\b(AND|OR)\b", filter_expr, re.IGNORECASE):
+            return self._apply_boolean_filter(items, filter_expr)
+
+        return self._apply_simple_filter(items, filter_expr)
+
+    def _apply_boolean_filter(
+        self, items: list[dict[str, Any]], filter_expr: str
+    ) -> list[dict[str, Any]]:
+        """Apply a filter expression with boolean logic (AND/OR).
+
+        Args:
+            items: List of registry items.
+            filter_expr: Filter expression with AND/OR operators.
+
+        Returns:
+            Filtered list of items.
+        """
+        # First, handle parentheses by processing innermost groups first
+        # For simplicity, we handle a flat structure: A AND B OR C
+        # AND has higher precedence than OR
+
+        # Split by OR first (lower precedence)
+        or_parts = re.split(r"\s+OR\s+", filter_expr, flags=re.IGNORECASE)
+
+        if len(or_parts) > 1:
+            # OR: union of results from each part
+            result_set: set[int] = set()
+            item_indices = {id(item): idx for idx, item in enumerate(items)}
+
+            for part in or_parts:
+                part_items = self._apply_filter(items, part.strip())
+                for item in part_items:
+                    if id(item) in item_indices:
+                        result_set.add(item_indices[id(item)])
+
+            return [items[idx] for idx in sorted(result_set)]
+
+        # Split by AND (higher precedence)
+        and_parts = re.split(r"\s+AND\s+", filter_expr, flags=re.IGNORECASE)
+
+        if len(and_parts) > 1:
+            # AND: intersection - apply filters sequentially
+            result = items
+            for part in and_parts:
+                result = self._apply_simple_filter(result, part.strip())
+            return result
+
+        # No AND/OR found, apply as simple filter
+        return self._apply_simple_filter(items, filter_expr)
+
+    def _strip_outer_parens(self, expr: str) -> tuple[str, bool]:
+        """Strip outer parentheses if they wrap the entire expression.
+
+        Args:
+            expr: Expression string.
+
+        Returns:
+            Tuple of (stripped_expr, was_stripped).
+        """
+        stripped = expr.strip()
+        if not (stripped.startswith("(") and stripped.endswith(")")):
+            return stripped, False
+
+        # Check if parens are balanced and wrap the whole expression
+        depth = 0
+        for i, char in enumerate(stripped):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+            if depth == 0 and i < len(stripped) - 1:
+                return stripped, False
+
+        return stripped[1:-1], True
+
+    def _apply_equality_filter(
+        self, items: list[dict[str, Any]], field: str, op: str, value: str
+    ) -> list[dict[str, Any]]:
+        """Apply equality/inequality filter."""
+        if op in ("==", "="):
+            return [i for i in items if i.get(field) == value]
+        return [i for i in items if i.get(field) != value]
+
+    def _apply_in_filter(
+        self, items: list[dict[str, Any]], field: str, values_str: str
+    ) -> list[dict[str, Any]]:
+        """Apply 'in' list filter."""
+        values = [v.strip().strip("'\"") for v in values_str.split(",") if v.strip()]
+        return [i for i in items if i.get(field) in values]
+
+    def _apply_simple_filter(
+        self, items: list[dict[str, Any]], filter_expr: str
+    ) -> list[dict[str, Any]]:
+        """Apply a simple (non-boolean) filter expression.
+
+        Args:
+            items: List of registry items.
+            filter_expr: Simple filter expression (no AND/OR).
+
+        Returns:
+            Filtered list of items.
+
+        Raises:
+            ValueError: If the filter expression is invalid.
+        """
+        # Handle parentheses
+        stripped, was_stripped = self._strip_outer_parens(filter_expr)
+        if was_stripped:
+            return self._apply_filter(items, stripped)
+
         # Parse simple equality: field == 'value' or field = 'value'
         equality_match = re.match(
             r"^\s*(\w+)\s*(==|=|!=)\s*['\"]([^'\"]+)['\"]\s*$", filter_expr
         )
         if equality_match:
             field, op, value = equality_match.groups()
-            if op in ("==", "="):
-                return [i for i in items if i.get(field) == value]
-            else:  # !=
-                return [i for i in items if i.get(field) != value]
+            return self._apply_equality_filter(items, field, op, value)
 
         # Parse comparison: field >= 'value'
         comparison_match = re.match(
@@ -247,16 +362,13 @@ class FileRegistryResolver:
         )
         if in_match:
             field, values_str = in_match.groups()
-            # Parse values list
-            values = [
-                v.strip().strip("'\"") for v in values_str.split(",") if v.strip()
-            ]
-            return [i for i in items if i.get(field) in values]
+            return self._apply_in_filter(items, field, values_str)
 
         raise ValueError(
             f"Unsupported filter expression: '{filter_expr}'. "
             "Supported: 'field == \"value\"', 'field != \"value\"', "
-            '\'field >= "value"\', \'field in ["a", "b"]\''
+            '\'field >= "value"\', \'field in ["a", "b"]\', '
+            "'expr1 AND expr2', 'expr1 OR expr2'"
         )
 
     def _apply_comparison(
