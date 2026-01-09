@@ -15,6 +15,7 @@ from traigent.core.objectives import ObjectiveSchema
 from traigent.core.stop_conditions import (
     BudgetStopCondition,
     CostLimitStopCondition,
+    HypervolumeConvergenceStopCondition,
     MaxSamplesStopCondition,
     MaxTrialsStopCondition,
     PlateauAfterNStopCondition,
@@ -163,3 +164,36 @@ class StopConditionManager:
             condition: The stop condition to add.
         """
         self._conditions.append(condition)
+
+    def add_convergence_condition(
+        self,
+        window: int,
+        threshold: float,
+        objective_names: list[str],
+        directions: list[str],
+        reference_point: list[float] | None = None,
+    ) -> HypervolumeConvergenceStopCondition:
+        """Add a hypervolume convergence stop condition.
+
+        This condition stops optimization when hypervolume improvement
+        falls below the threshold for a sliding window of trials.
+
+        Args:
+            window: Number of trials to consider for convergence detection.
+            threshold: Minimum hypervolume improvement required to continue.
+            objective_names: Names of the objectives being optimized.
+            directions: Optimization direction for each objective.
+            reference_point: Optional reference point for hypervolume calculation.
+
+        Returns:
+            The registered condition for reference.
+        """
+        condition = HypervolumeConvergenceStopCondition(
+            window=window,
+            threshold=threshold,
+            objective_names=objective_names,
+            directions=directions,
+            reference_point=reference_point,
+        )
+        self._conditions.append(condition)
+        return condition

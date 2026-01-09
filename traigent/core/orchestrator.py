@@ -164,6 +164,20 @@ class OptimizationOrchestrator:
             objectives, objective_schema
         )
 
+        # TVL 0.9 tie-breaker configuration
+        self._tie_breakers: dict[str, str] = kwargs.pop("tie_breakers", None) or {}
+
+        # Derive band_target from objective_schema if available
+        self._band_target: float | None = None
+        if self.objective_schema is not None and self.objective_schema.objectives:
+            primary_obj = self.objective_schema.objectives[0]
+            if hasattr(primary_obj, "band") and primary_obj.band is not None:
+                band = primary_obj.band
+                if band.center is not None:
+                    self._band_target = band.center
+                elif band.low is not None and band.high is not None:
+                    self._band_target = (band.low + band.high) / 2.0
+
         self._default_config: dict[str, Any] | None = None
         self._default_config_used = False
         if isinstance(default_config, dict) and default_config:
@@ -252,6 +266,33 @@ class OptimizationOrchestrator:
             budget_metric=budget_metric,
             include_pruned=include_pruned,
         )
+
+        # TVL 0.9 convergence criteria (hypervolume-based early stopping)
+        convergence_metric = self.config.get("convergence_metric")
+        convergence_window = self.config.get("convergence_window")
+        convergence_threshold = self.config.get("convergence_threshold")
+        if (
+            convergence_metric == "hypervolume_improvement"
+            and convergence_window is not None
+            and convergence_threshold is not None
+            and self.objective_schema is not None
+        ):
+            # Skip hypervolume convergence if any objective has band orientation
+            # Hypervolume requires maximize/minimize directions only
+            directions = [obj.orientation for obj in self.objective_schema.objectives]
+            if "band" in directions:
+                logger.info(
+                    "Skipping hypervolume convergence: band objectives are not "
+                    "compatible with hypervolume computation"
+                )
+            else:
+                objective_names = [obj.name for obj in self.objective_schema.objectives]
+                self._stop_condition_manager.add_convergence_condition(
+                    window=int(convergence_window),
+                    threshold=float(convergence_threshold),
+                    objective_names=objective_names,
+                    directions=directions,
+                )
 
         # Initialize cost enforcer for cost limit enforcement
         # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_LLM
@@ -1647,89 +1688,108 @@ class OptimizationOrchestrator:
 
         self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
+    def _extract_prune_step(self, metadata: dict[str, Any] | None) -> int:
+        """Extract prune step from trial metadata."""
+        if not metadata:
+            return 0
+        for key in ("pruned_step", "pruned_at_step", "step"):
+            raw_value = metadata.get(key)
+            if raw_value is not None:
+                try:
+                    return int(raw_value)
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    def _extract_objective_values(self, metrics: dict[str, Any]) -> list[float]:
+        """Extract objective values from trial metrics."""
+        values: list[float] = []
+        for objective in self.optimizer.objectives:
+            metric_value = metrics.get(objective)
+            # Fallback for common objective aliases
+            if metric_value is None and objective in {"accuracy", "success_rate"}:
+                metric_value = metrics.get("accuracy") or metrics.get("success_rate")
+            if metric_value is None and objective in {"cost", "latency", "error"}:
+                metric_value = metrics.get(objective, 0.0)
+            values.append(float(metric_value if metric_value is not None else 0.0))
+        return values
+
+    def _notify_pruned_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of pruned/cancelled trial. Returns True if handled."""
+        metadata = trial_result.metadata or {}
+        prune_step = self._extract_prune_step(metadata)
+        reason = (
+            trial_result.error_message or metadata.get("stop_reason") or "trial_pruned"
+        )
+
+        if hasattr(self.optimizer, "report_trial_pruned"):
+            self.optimizer.report_trial_pruned(optuna_trial_id, prune_step)  # type: ignore[attr-defined]
+            return True
+
+        if hasattr(self.optimizer, "report_trial_result"):
+            self.optimizer.report_trial_result(  # type: ignore[arg-type, attr-defined]
+                optuna_trial_id,
+                None,
+                metadata={
+                    "state": "pruned",
+                    "pruned_at_step": prune_step,
+                    "reason": reason,
+                },
+            )
+            return True
+
+        if hasattr(self.optimizer, "report_trial_failure"):
+            self.optimizer.report_trial_failure(optuna_trial_id, reason)  # type: ignore[attr-defined]
+            return True
+
+        return False
+
+    def _notify_completed_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of completed trial. Returns True if handled."""
+        if not hasattr(self.optimizer, "report_trial_result"):
+            return False
+
+        metrics = trial_result.metrics or {}
+        values = self._extract_objective_values(metrics)
+        payload: float | list[float] = values if len(values) > 1 else values[0]
+        self.optimizer.report_trial_result(optuna_trial_id, payload)
+        return True
+
+    def _notify_failed_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of failed trial. Returns True if handled."""
+        if not hasattr(self.optimizer, "report_trial_failure"):
+            return False
+
+        self.optimizer.report_trial_failure(
+            optuna_trial_id, trial_result.error_message or "Unknown error"
+        )
+        return True
+
     def _notify_optimizer_of_result(
         self, trial_result: TrialResult, optuna_trial_id: int | None
     ) -> None:
         """Notify optimizers that support ask/tell about trial outcomes."""
-
-        if optuna_trial_id is None:
-            return
-        if not isinstance(optuna_trial_id, int):
-            logger.debug(
-                "Skipping optimizer notification for non-int optuna_trial_id=%r",
-                optuna_trial_id,
-            )
-            return
-
-        if trial_result.status in {TrialStatus.PRUNED, TrialStatus.CANCELLED}:
-            metadata = trial_result.metadata or {}
-            prune_step = 0
-            for key in ("pruned_step", "pruned_at_step", "step"):
-                raw_value = metadata.get(key)
-                if raw_value is None:
-                    continue
-                try:
-                    prune_step = int(raw_value)
-                    break
-                except (TypeError, ValueError):
-                    continue
-
-            if hasattr(self.optimizer, "report_trial_pruned"):
-                self.optimizer.report_trial_pruned(optuna_trial_id, prune_step)  # type: ignore[attr-defined]
-                return
-
-            if hasattr(self.optimizer, "report_trial_result"):
-                self.optimizer.report_trial_result(  # type: ignore[arg-type, attr-defined]
+        if optuna_trial_id is None or not isinstance(optuna_trial_id, int):
+            if optuna_trial_id is not None:
+                logger.debug(
+                    "Skipping optimizer notification for non-int optuna_trial_id=%r",
                     optuna_trial_id,
-                    None,
-                    metadata={
-                        "state": "pruned",
-                        "pruned_at_step": prune_step,
-                        "reason": trial_result.error_message
-                        or metadata.get("stop_reason")
-                        or "trial_pruned",
-                    },
                 )
-                return
-
-            if hasattr(self.optimizer, "report_trial_failure"):
-                self.optimizer.report_trial_failure(  # type: ignore[attr-defined]
-                    optuna_trial_id,
-                    trial_result.error_message
-                    or metadata.get("stop_reason")
-                    or "trial_pruned",
-                )
-                return
-
-        if (
-            hasattr(self.optimizer, "report_trial_result")
-            and trial_result.status == TrialStatus.COMPLETED
-        ):
-            metrics = trial_result.metrics or {}
-            values: list[float] = []
-            for objective in self.optimizer.objectives:
-                metric_value = metrics.get(objective)
-                if metric_value is None and objective in {"accuracy", "success_rate"}:
-                    metric_value = metrics.get("accuracy") or metrics.get(
-                        "success_rate"
-                    )
-                if metric_value is None and objective in {"cost", "latency", "error"}:
-                    metric_value = metrics.get(objective, 0.0)
-                if metric_value is None:
-                    metric_value = 0.0
-                values.append(float(metric_value))
-
-            payload: float | list[float] = values if len(values) > 1 else values[0]
-            self.optimizer.report_trial_result(optuna_trial_id, payload)
             return
 
-        if (
-            hasattr(self.optimizer, "report_trial_failure")
-            and trial_result.status == TrialStatus.FAILED
-        ):
-            self.optimizer.report_trial_failure(
-                optuna_trial_id, trial_result.error_message or "Unknown error"
-            )
+        status = trial_result.status
+        if status in {TrialStatus.PRUNED, TrialStatus.CANCELLED}:
+            self._notify_pruned_trial(trial_result, optuna_trial_id)
+        elif status == TrialStatus.COMPLETED:
+            self._notify_completed_trial(trial_result, optuna_trial_id)
+        elif status == TrialStatus.FAILED:
+            self._notify_failed_trial(trial_result, optuna_trial_id)
 
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.
@@ -1959,6 +2019,8 @@ class OptimizationOrchestrator:
             primary_objective=self.optimizer.objectives[0],
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
+            tie_breakers=self._tie_breakers or None,
+            band_target=self._band_target,
         )
         best_config = selection.best_config
         best_score = selection.best_score
