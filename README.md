@@ -6,7 +6,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
-Traigent adds zero-code-change optimization to existing agents, RAG pipelines, and LangGraph flows so you can improve accuracy and reduce cost without refactoring or extra dev time. Works with LangChain, LlamaIndex, and direct API calls (OpenAI, Anthropic, etc.). CrewAI and AutoGen support is in testing.
+Traigent adds zero-code-change optimization to existing agents, RAG pipelines, and sequential chains so you can improve accuracy and reduce cost without refactoring or extra dev time. Works with LangChain, LlamaIndex, and direct API calls (OpenAI, Anthropic, etc.). CrewAI and AutoGen support is in testing.
 
 ---
 
@@ -86,10 +86,10 @@ See the [Evaluation Guide](docs/guides/evaluation.md) and [Complete Function Spe
 
 ```bash
 # From your project virtualenv
-pip install -e /path/to/Traigent[integrations]
+pip install -e "/path/to/Traigent[integrations]"
 
 # Or with uv (faster)
-uv pip install -e /path/to/Traigent[integrations]
+uv pip install -e "/path/to/Traigent[integrations]"
 ```
 
 ```python
@@ -131,19 +131,19 @@ python examples/quickstart/01_simple_qa.py
 
 ---
 
-## How It Works (Router Agents + LangGraph)
+## How It Works (Router Agents + Sequential Chains)
 
 Traigent optimizes existing functions in place. For router agents, it tunes the handoff to the right specialist and the configs used by each step in a sequential chain.
 
 Flow example: `User -> Router Agent -> Specialized Agent -> Response`
 
-| Architecture           | Support | Notes                                           |
-| ---------------------- | ------- | ----------------------------------------------- |
-| Single Agent           | Full    | Any LLM-powered function                        |
-| RAG                    | Full    | Optimize retriever depth, chunking, and models  |
-| Router Agents          | Full    | 1-to-1 handoff to a specialized agent           |
-| LangGraph              | Full    | Sequential agent chains                         |
-| Multi-Agent (parallel) | Roadmap | Multiple tunables simultaneously                |
+| Architecture           | Support     | Notes                                          |
+| ---------------------- | ----------- | ---------------------------------------------- |
+| Single Agent           | Full        | Any LLM-powered function                       |
+| RAG                    | Full        | Optimize retriever depth, chunking, and models |
+| Router Agents          | Full        | 1-to-1 handoff to a specialized agent          |
+| Sequential Chains      | Full        | Multi-step agent pipelines                     |
+| Multi-Agent (parallel) | Coming Soon | Multiple tunables simultaneously               |
 
 ---
 
@@ -254,7 +254,7 @@ Beyond the basics, Traigent includes powerful features such as:
 | **TVL (Traigent Validation Language)** | YAML specs for objectives, constraints, budgets - optimizer-agnostic |
 | **Constraint DSL** | Functional, operator, or fluent syntax for config constraints |
 | **Smart Pruning** | Median/Percentile/Threshold/Timeout pruners + adaptive early stopping |
-| **Sample Budget Leasing** | `max_total_examples` + `reps_per_trial` = 60-80% cost reduction |
+| **Sample Budget Leasing** | `max_total_examples` caps evaluations = 60-80% cost reduction |
 | **100+ LLM Providers** | Via LiteLLM - optimize across providers in a single run |
 
 ---
