@@ -468,7 +468,6 @@ class TraigentConfig:
         )
 
     @classmethod
-    @classmethod
     def from_environment(cls) -> TraigentConfig:
         """Create configuration from environment variables.
 
