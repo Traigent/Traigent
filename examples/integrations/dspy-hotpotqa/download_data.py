@@ -107,8 +107,8 @@ def main():
     # Download
     splits = download_hotpotqa(
         train_size=200,  # For DSPy: 200 examples recommended to avoid overfitting
-        dev_size=100,    # For Traigent: validation set
-        test_size=50,    # Held-out for final evaluation
+        dev_size=100,  # For Traigent: validation set
+        test_size=50,  # Held-out for final evaluation
     )
 
     # Save to JSONL files
@@ -127,7 +127,9 @@ def main():
     print(f"\nData saved to: {DATA_DIR}")
     print("\nDataset splits:")
     print(f"  hotpotqa_train.jsonl : {len(splits['train'])} examples (DSPy training)")
-    print(f"  hotpotqa_dev.jsonl   : {len(splits['dev'])} examples (Traigent validation)")
+    print(
+        f"  hotpotqa_dev.jsonl   : {len(splits['dev'])} examples (Traigent validation)"
+    )
     print(f"  hotpotqa_test.jsonl  : {len(splits['test'])} examples (Final evaluation)")
     print("\nNext step: Run the optimization example:")
     print("  python run.py")
