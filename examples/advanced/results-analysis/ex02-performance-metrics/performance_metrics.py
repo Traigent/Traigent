@@ -116,7 +116,7 @@ def _contains_accuracy(
 )
 def faq_answer(question: str) -> str:
     llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.0, model_kwargs={"max_tokens": 150}
+        model="gpt-3.5-turbo", temperature=0.0, max_tokens=150
     )
     prompt = f"Answer this customer FAQ briefly and precisely: {question}"
     resp = llm.invoke([HumanMessage(content=prompt)])

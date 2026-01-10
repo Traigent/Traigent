@@ -91,7 +91,7 @@ class OptimizedChatService:
             llm = ChatOpenAI(
                 model=config.get("model", "gpt-3.5-turbo"),
                 temperature=config.get("temperature", 0.3),
-                model_kwargs={"max_tokens": config.get("max_tokens", 100)},
+                max_tokens=config.get("max_tokens", 100),
             )
 
             prompt = f"Generate a greeting for {name} {style_prompt}."
@@ -125,7 +125,7 @@ class OptimizedChatService:
                     config.get("creativity_mode", "medium"),
                     config.get("temperature", 0.5),
                 ),
-                model_kwargs={"max_tokens": config.get("max_tokens", 300)},
+                max_tokens=config.get("max_tokens", 300),
             )
 
             prompt = f"""Context: {context}

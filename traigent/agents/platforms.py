@@ -10,6 +10,7 @@ Integrated with unified authentication system for secure credential management.
 from __future__ import annotations
 
 import importlib.util
+import inspect
 from typing import Any, cast
 
 from traigent.agents.executor import (
@@ -109,9 +110,12 @@ class LangChainAgentExecutor(AgentExecutor):
         llm_kwargs = {
             ("model" if modern_lc else "model_name"): model_name,
             "temperature": temperature,
-            "model_kwargs": {"max_tokens": max_tokens},
             **self._extract_llm_kwargs(config),
         }
+        if self._supports_langchain_param(chat_openai_cls, "max_tokens"):
+            llm_kwargs["max_tokens"] = max_tokens
+        else:
+            llm_kwargs["model_kwargs"] = {"max_tokens": max_tokens}
         llm = chat_openai_cls(**llm_kwargs)
         return llm, model_name
 
@@ -306,6 +310,18 @@ class LangChainAgentExecutor(AgentExecutor):
                 llm_params[param] = value
 
         return llm_params
+
+    @staticmethod
+    def _supports_langchain_param(chat_openai_cls: Any, param_name: str) -> bool:
+        """Check whether a LangChain ChatOpenAI class supports a parameter."""
+        try:
+            signature = inspect.signature(chat_openai_cls)
+        except (TypeError, ValueError):
+            try:
+                signature = inspect.signature(chat_openai_cls.__init__)
+            except (TypeError, ValueError):
+                return False
+        return param_name in signature.parameters
 
     def _format_prompt(self, template: str | None, input_data: dict[str, Any]) -> str:
         """Format prompt template with input data."""

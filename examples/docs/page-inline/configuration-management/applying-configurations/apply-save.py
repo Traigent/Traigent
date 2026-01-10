@@ -93,7 +93,7 @@ def customer_support_agent(query: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
     prompt = f"Customer query: {query}"
     response = llm.invoke(prompt)
@@ -113,7 +113,7 @@ def production_support_agent(query: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
     response = llm.invoke(f"Customer query: {query}")
     return getattr(response, "content", str(response))

@@ -100,7 +100,7 @@ class OptimizedChatBot:
             llm = ChatOpenAI(
                 model=str(config.get("model", "gpt-3.5-turbo")),
                 temperature=float(config.get("temperature", 0.7)),
-                model_kwargs={"max_tokens": int(config.get("max_tokens", 300))},
+                max_tokens=int(config.get("max_tokens", 300)),
             )
             prompt = f"Context: {context}\nUser: {user_input}\nAssistant:"
             reply = llm.invoke(prompt)

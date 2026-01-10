@@ -452,7 +452,7 @@ class CustomerSupportProblem(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.7,
-                model_kwargs={"max_tokens": 50},
+                max_tokens=50,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -495,7 +495,7 @@ Respond with only the category name, nothing else.""",
             llm = ChatOpenAI(
                 model="gpt-4o-mini",  # Will be overridden by Traigent
                 temperature=0.7,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 50},  # Will be overridden by Traigent
+                max_tokens=50,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
