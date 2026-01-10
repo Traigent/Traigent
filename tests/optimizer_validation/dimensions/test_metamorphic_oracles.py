@@ -351,7 +351,7 @@ class TestTrialCountMetamorphic:
             objectives=[ObjectiveSpec(name="accuracy", orientation="maximize")],
             config_space=base_config,
             max_trials=3,
-            mock_mode_config={"optimizer": "grid"},
+            mock_mode_config={"optimizer": "grid", "random_seed": 42},
             expected=ExpectedResult(min_trials=3),
             gist_template="meta-few -> {trial_count()} | {best_score()}",
         )
@@ -363,7 +363,7 @@ class TestTrialCountMetamorphic:
             objectives=[ObjectiveSpec(name="accuracy", orientation="maximize")],
             config_space=base_config,
             max_trials=20,
-            mock_mode_config={"optimizer": "grid"},
+            mock_mode_config={"optimizer": "grid", "random_seed": 42},
             expected=ExpectedResult(min_trials=20),
             gist_template="meta-many -> {trial_count()} | {best_score()}",
         )

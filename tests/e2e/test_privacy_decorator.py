@@ -6,7 +6,6 @@ and that no sensitive data leaks during optimization.
 
 import asyncio
 import json
-import random
 from pathlib import Path
 from unittest.mock import patch
 
@@ -128,7 +127,8 @@ class TestPrivacyDecoratorE2E:
                     "system_prompt": ["medical_professional", "general_assistant"],
                     "max_tokens": [200, 300, 400],
                 },
-                execution_mode="privacy",  # Privacy-first mode
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             async def process_medical_query(**kwargs):
                 """
@@ -162,17 +162,19 @@ class TestPrivacyDecoratorE2E:
                 if emergency and max_tokens >= 300:
                     base_accuracy += 0.05
 
-                # Add some realistic variance
-                variance = random.uniform(-0.05, 0.05)
+                # Deterministic variance based on configuration
+                variance = (temperature - 0.4) * 0.1
                 accuracy = min(0.98, base_accuracy + variance)
 
-                # HIPAA compliance score (always high for our simulated function)
-                hipaa_compliance = 0.95 + random.uniform(0, 0.05)
+                # HIPAA compliance score (deterministic, always high)
+                hipaa_compliance = 0.95 + (
+                    0.01 if system_prompt == "medical_professional" else 0.0
+                )
 
-                # Response time simulation
-                response_time = 1.0 + random.uniform(0, 0.5)
+                # Response time simulation (deterministic)
+                response_time = 1.0 + (temperature * 0.1)
                 if model == "GPT-4o":
-                    response_time += 0.3
+                    response_time += 0.2
 
                 return {
                     "accuracy": accuracy,
@@ -200,12 +202,15 @@ class TestPrivacyDecoratorE2E:
 
                     # Verify quality metrics if we have successful trials
                     if results.best_metrics:
-                        assert (
-                            results.best_metrics.get("accuracy", 0) >= 0.0
-                        )  # Reduced threshold
-                        assert (
-                            results.best_metrics.get("hipaa_compliance", 0) >= 0.0
-                        )  # Reduced threshold
+                        assert "accuracy" in results.best_metrics
+                        accuracy = results.best_metrics["accuracy"]
+                        assert 0.7 <= accuracy <= 1.0
+                        hipaa_compliance = results.best_metrics.get("hipaa_compliance")
+                        if hipaa_compliance is not None:
+                            assert 0.95 <= hipaa_compliance <= 1.0
+                        response_time = results.best_metrics.get("response_time")
+                        if response_time is not None:
+                            assert response_time >= 0.0
                 else:
                     # If all trials failed, that's still a valid test outcome for now
                     print(
@@ -270,7 +275,8 @@ class TestPrivacyDecoratorE2E:
                     "param1": [0.0, 0.25, 0.5, 0.75, 1.0],
                     "param2": ["A", "B", "C"],
                 },
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def secure_function(input_data):
                 """Function using context-based config access."""
@@ -336,7 +342,8 @@ class TestPrivacyDecoratorE2E:
                 eval_dataset=dataset_file,
                 objectives=["success_rate"],
                 configuration_space={"tolerance": [1, 2, 3, 4, 5]},
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def challenging_function(input_data, **config):
                 """Function that may fail on difficult inputs."""
@@ -427,7 +434,8 @@ class TestPrivacyDecoratorE2E:
                     "feature_set": ["basic", "enhanced", "comprehensive"],
                     "ensemble_size": [1, 3, 5],
                 },
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def financial_risk_assessment(**kwargs):
                 """Assess financial risk using sensitive data locally."""
@@ -488,9 +496,9 @@ class TestPrivacyDecoratorE2E:
                 assert len(results.trials) >= 1  # At least some trials
                 if len(results.successful_trials) > 0:
                     # Only check metrics if we have successful trials
-                    assert (
-                        results.best_metrics.get("accuracy", 0) >= 0.0
-                    )  # Reduced threshold for test
+                    assert "accuracy" in results.best_metrics
+                    accuracy = results.best_metrics["accuracy"]
+                    assert 0.7 <= accuracy <= 0.95
 
                 # Verify significant cost savings from subset selection (if available)
                 if (
@@ -521,7 +529,10 @@ class TestPrivacyDecoratorE2E:
 
                 # Verify efficient subset usage
                 total_requests = privacy_report["requests_received"]
-                assert total_requests >= 0  # Any requests is fine for test
+                if results.metadata.get("cloud_service"):
+                    assert total_requests >= len(results.trials) + 1
+                else:
+                    assert total_requests == 0
 
         finally:
             dataset_path.unlink(missing_ok=True)
@@ -556,7 +567,8 @@ class TestPrivacyIntegrationEdgeCases:
                 eval_dataset=dataset_file,
                 objectives=["metric"],
                 configuration_space={"param": [1, 2, 3]},
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def sometimes_empty_function(input_data, **config):
                 """Function that sometimes returns empty results."""
@@ -612,7 +624,8 @@ class TestPrivacyIntegrationEdgeCases:
                 eval_dataset=dataset_file,
                 objectives=["score"],
                 configuration_space={"x": [1, 2, 3]},
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def function_a(**kwargs):
                 return {"score": 0.8 + kwargs.get("x", 1) * 0.05}
@@ -621,7 +634,8 @@ class TestPrivacyIntegrationEdgeCases:
                 eval_dataset=dataset_file,
                 objectives=["performance"],
                 configuration_space={"y": [0.1, 0.5, 0.9]},
-                execution_mode="privacy",
+                execution_mode="hybrid",
+                privacy_enabled=True,
             )
             def function_b(**kwargs):
                 return {"performance": 0.7 + kwargs.get("y", 0.5)}
@@ -645,7 +659,14 @@ class TestPrivacyIntegrationEdgeCases:
                 assert privacy_report["compliant"] is True
 
                 # Should have received requests from both optimizations
-                assert privacy_report["requests_received"] >= 0  # Any requests is fine
+                total_requests = privacy_report["requests_received"]
+                if results_a.metadata.get("cloud_service") or results_b.metadata.get(
+                    "cloud_service"
+                ):
+                    min_requests = 2 + len(results_a.trials) + len(results_b.trials)
+                    assert total_requests >= min_requests
+                else:
+                    assert total_requests == 0
 
         finally:
             dataset_path.unlink(missing_ok=True)
