@@ -117,6 +117,7 @@ def generate_prompt_variants_with_dspy(
 
     try:
         import dspy
+
         from traigent.integrations import DSPyPromptOptimizer
 
         DSPY_AVAILABLE = True
@@ -182,7 +183,9 @@ def generate_prompt_variants_with_dspy(
             "Let me think through this carefully:\n"
             "Answer:"
         )
-        print(f"    Generated with {result.num_demos} demos, score: {result.best_score}")
+        print(
+            f"    Generated with {result.num_demos} demos, score: {result.best_score}"
+        )
 
     except Exception as e:
         print(f"    CoT variant fallback: {e}")
@@ -261,7 +264,9 @@ def create_traigent_agent(
         for ex in devset:
             # Format for Traigent: input/output structure
             f.write(
-                json.dumps({"input": {"question": ex["question"]}, "output": ex["answer"]})
+                json.dumps(
+                    {"input": {"question": ex["question"]}, "output": ex["answer"]}
+                )
                 + "\n"
             )
     print(f"  Saved devset to: {devset_path}")
