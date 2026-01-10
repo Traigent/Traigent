@@ -394,3 +394,4 @@ tests/optimizer_validation/*_TEMPLATE*.md
 tests/optimizer_validation/TEST_REVIEW_CHECKLIST.md
 metrics/
 .env
+_bmad-output/
