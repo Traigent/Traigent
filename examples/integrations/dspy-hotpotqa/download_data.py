@@ -51,7 +51,7 @@ def download_hotpotqa(
         print("  pip install dspy-ai>=2.5.0")
         sys.exit(1)
 
-    print(f"Downloading HotPotQA dataset...")
+    print("Downloading HotPotQA dataset...")
     print(f"  Train size: {train_size}")
     print(f"  Dev size: {dev_size}")
     print(f"  Test size: {test_size}")

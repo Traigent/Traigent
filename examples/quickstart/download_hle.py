@@ -22,7 +22,7 @@ def main():
     # Print schema to understand the fields
     print(f"\nDataset has {len(dataset)} examples")
     print(f"Columns: {dataset.column_names}")
-    print(f"\nFirst example:")
+    print("\nFirst example:")
     print(json.dumps(dataset[0], indent=2, default=str))
 
     # Output path

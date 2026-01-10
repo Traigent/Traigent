@@ -29,7 +29,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 # Check for required dependencies
@@ -173,7 +172,7 @@ def example_2_prompt_variants_as_choices():
         prompt_template = prompt_strategies[strategy]
 
         # In real usage, this would call an LLM
-        prompt = prompt_template.format(question=question)
+        _prompt = prompt_template.format(question=question)  # noqa: F841
         return f"[{strategy}] Answer to: {question}"
 
     print("  Configuration space includes prompt_strategy as searchable param")
@@ -195,8 +194,6 @@ def example_3_adapter_direct_usage():
 
     from traigent.integrations import (
         DSPY_AVAILABLE,
-        DSPyPromptOptimizer,
-        PromptOptimizationResult,
         create_dspy_integration,
     )
 
@@ -216,13 +213,13 @@ def example_3_adapter_direct_usage():
     print(f"  Auto setting: {optimizer.auto_setting}")
 
     # Result dataclass
-    print(f"\n  PromptOptimizationResult fields:")
-    print(f"    - optimized_module: The DSPy module with tuned prompts")
-    print(f"    - method: 'mipro' or 'bootstrap'")
-    print(f"    - num_demos: Number of few-shot examples")
-    print(f"    - trainset_size: Training set size used")
-    print(f"    - best_score: Best metric achieved")
-    print(f"    - metadata: Additional optimization info")
+    print("\n  PromptOptimizationResult fields:")
+    print("    - optimized_module: The DSPy module with tuned prompts")
+    print("    - method: 'mipro' or 'bootstrap'")
+    print("    - num_demos: Number of few-shot examples")
+    print("    - trainset_size: Training set size used")
+    print("    - best_score: Best metric achieved")
+    print("    - metadata: Additional optimization info")
 
 
 # =============================================================================

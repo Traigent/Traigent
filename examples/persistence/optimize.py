@@ -41,7 +41,7 @@ async def sentiment_agent(text: str) -> str:
     In production, this would call an actual LLM.
     The @traigent.optimize decorator injects the optimal config.
     """
-    config = traigent.get_config()
+    _config = traigent.get_config()  # noqa: F841 - shows how to access config
 
     # Mock implementation for demo
     # In production: call OpenAI/Anthropic with config["model"], etc.

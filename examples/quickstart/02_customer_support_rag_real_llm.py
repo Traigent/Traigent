@@ -636,7 +636,7 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
         trial_configs.append(config)
 
     rows = []
-    for q_idx, (question, expected) in enumerate(zip(questions, expected_answers)):
+    for question, expected in zip(questions, expected_answers, strict=True):
         question_clean = question.replace("\n", " | ").replace("\r", "")
         expected_clean = expected.replace("\n", " | ").replace("\r", "")
         rows.append([question_clean, expected_clean])
