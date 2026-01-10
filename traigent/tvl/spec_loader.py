@@ -267,11 +267,12 @@ def validate_tvl_schema(
     Raises:
         TVLValidationError: If strict=True and validation fails.
 
-    Example:
-        >>> data = yaml.safe_load(path.read_text())
-        >>> issues = validate_tvl_schema(data)
-        >>> if issues:
-        ...     print("Warnings:", issues)
+    Example::
+
+        data = yaml.safe_load(path.read_text())
+        issues = validate_tvl_schema(data)
+        if issues:
+            print("Warnings:", issues)
     """
     issues: list[str] = []
 

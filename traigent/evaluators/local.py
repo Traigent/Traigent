@@ -140,9 +140,10 @@ class LocalEvaluator(BaseEvaluator):
     Evaluates functions locally in the current process. Supports both
     synchronous and asynchronous functions with timeout handling.
 
-    Example:
-        >>> evaluator = LocalEvaluator(["accuracy"], timeout=30.0)
-        >>> result = await evaluator.evaluate(my_function, config, dataset)
+    Example::
+
+        evaluator = LocalEvaluator(["accuracy"], timeout=30.0)
+        result = await evaluator.evaluate(my_function, config, dataset)
     """
 
     def __init__(

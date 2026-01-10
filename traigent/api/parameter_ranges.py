@@ -9,24 +9,25 @@ These classes are TVL (Tuned Variable Language) first-class citizens, supporting
 - Optional naming and units for TVL integration
 - Constraint builder methods for expressing structural constraints
 
-Example:
-    >>> from traigent import Range, IntRange, Choices, LogRange, implies
-    >>>
-    >>> # Basic usage
-    >>> @traigent.optimize(
-    ...     temperature=Range(0.0, 2.0),
-    ...     max_tokens=IntRange(100, 4096),
-    ...     model=Choices(["gpt-4", "gpt-3.5-turbo"]),
-    ...     learning_rate=LogRange(1e-5, 1e-1),
-    ... )
-    ... def my_func(...): ...
-    >>>
-    >>> # With TVL features (constraints, units)
-    >>> temp = Range(0.0, 2.0, unit="ratio")
-    >>> model = Choices(["gpt-4", "gpt-3.5"])
-    >>> constraints = [
-    ...     implies(model.equals("gpt-4"), temp.lte(0.7)),
-    ... ]
+Example::
+
+    from traigent import Range, IntRange, Choices, LogRange, implies
+
+    # Basic usage
+    @traigent.optimize(
+        temperature=Range(0.0, 2.0),
+        max_tokens=IntRange(100, 4096),
+        model=Choices(["gpt-4", "gpt-3.5-turbo"]),
+        learning_rate=LogRange(1e-5, 1e-1),
+    )
+    def my_func(query): ...
+
+    # With TVL features (constraints, units)
+    temp = Range(0.0, 2.0, unit="ratio")
+    model = Choices(["gpt-4", "gpt-3.5"])
+    constraints = [
+        implies(model.equals("gpt-4"), temp.lte(0.7)),
+    ]
 """
 
 from __future__ import annotations

@@ -2241,13 +2241,14 @@ To approve, use one of these methods:
         Raises:
             ConfigurationError: If no optimization results are available
 
-        Example:
-            >>> # After optimization
-            >>> results = my_function.optimize()
-            >>> # Apply best config manually (optional step)
-            >>> my_function.apply_best_config(results.best_config)
-            >>> # Now function uses optimal parameters
-            >>> output = my_function("test input")
+        Example::
+
+            # After optimization
+            results = my_function.optimize()
+            # Apply best config manually (optional step)
+            my_function.apply_best_config(results.best_config)
+            # Now function uses optimal parameters
+            output = my_function("test input")
         """
         # Use provided results or fall back to latest optimization
         if results is None:
