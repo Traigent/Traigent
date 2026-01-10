@@ -751,8 +751,14 @@ traigent validate path/to/dataset.jsonl -o accuracy -o cost
 traigent validate_config config.json
 
 # Manage and visualize results
-traigent results
+traigent results list                              # List all optimization runs
+traigent results show <run_name>                   # Detailed view of a run
+traigent results compare <run1> <run2>             # Side-by-side comparison
+traigent results rerank <run> --weights acc=0.8,cost=0.2  # Re-rank with new weights
 traigent plot <result_name> -p progress
+
+# Export configs for deployment
+traigent export <run_name> -o configs/prod.json    # Git-friendly export
 
 # Generate example templates
 traigent generate -t basic -o traigent_example.py
@@ -886,6 +892,68 @@ print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 - **📊 Privacy-Safe Analytics**: Track optimization patterns with zero sensitive data
 - **🎯 Smart Insights**: Get personalized upgrade recommendations based on usage
 - **🏃‍♂️ Gradual Migration**: Start local, upgrade selectively based on real value
+
+## 🔄 Config Persistence & Deployment
+
+Traigent supports a complete workflow from local optimization to production deployment.
+
+### Development → Production Workflow
+
+```python
+# 1. Development: Run optimization
+@traigent.optimize(
+    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"], "temperature": [0.1, 0.5, 0.9]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/eval.jsonl",
+)
+async def my_agent(query: str) -> str:
+    ...
+
+results = await my_agent.optimize()
+
+# 2. Export for version control
+my_agent.export_config("configs/my_agent_prod.json")
+# Or via CLI: traigent export my_run -o configs/my_agent_prod.json
+```
+
+```python
+# 3. Production: Auto-load optimized config
+@traigent.optimize(
+    load_from="configs/my_agent_prod.json",  # Load specific config
+    configuration_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
+)
+async def my_agent(query: str) -> str:
+    ...
+
+# Config is auto-applied on startup - no optimization runs in production!
+print(my_agent.best_config)  # {'model': 'gpt-4', 'temperature': 0.3}
+```
+
+### Load Options
+
+| Option | Description |
+| ------ | ----------- |
+| `load_from="path/to/config.json"` | Load from explicit path |
+| `auto_load_best=True` | Auto-find latest from `.traigent/` |
+| `TRAIGENT_CONFIG_PATH` env var | Override config path at runtime |
+
+### Export Formats
+
+```bash
+# Slim format (~1KB) - git-friendly, contains config + metrics
+traigent export my_run -o configs/prod.json
+
+# Full format - includes all trial history
+traigent export my_run -o results/full.json --format=full
+```
+
+### Recommended Git Structure
+
+```text
+.gitignore:     .traigent/          # Ignore raw optimization logs
+configs/        prod.json           # Commit exported configs
+                staging.json
+```
 
 ## 🎓 Quick Examples
 
