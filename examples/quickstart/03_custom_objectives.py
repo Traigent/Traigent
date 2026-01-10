@@ -22,6 +22,9 @@ os.environ.setdefault(
     "TRAIGENT_RESULTS_FOLDER", str(Path(__file__).parent / ".traigent_results")
 )
 
+ROOT_DIR = Path(__file__).resolve().parents[2]
+os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
+
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
