@@ -40,6 +40,18 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ![Traigent Agent Hooks Demo](docs/demos/output/github-hooks.svg)
 
+## 🏗️ How It Works
+
+Traigent uses a combination of techniques to find the best parameters for your LLM workflow:
+
+- **Parameter Optimization**: Bayesian optimization (TPE), grid search, or evolutionary algorithms explore your configuration space
+- **Multi-Objective**: Balance accuracy, cost, and latency using Pareto-optimal solutions
+- **Cost Control**: Built-in budget enforcement and cost tracking across trials
+
+![Traigent Architecture Overview](docs/assets/architecture_overview.png)
+
+> 📖 **Deep Dive**: See the [full architecture documentation](docs/architecture/ARCHITECTURE.md) for detailed diagrams of the optimization flow, injection modes, and component relationships.
+
 ## 🚀 Quick Example: See Tuned Variables in Action
 
 > **Want to run this now?** First [install Traigent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
