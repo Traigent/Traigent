@@ -619,12 +619,25 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             console.print(obj_result.get_feedback())
 
 
-@cli.command()
+@cli.group()
+def results() -> None:
+    """Browse, compare, and manage optimization results.
+
+    Examples:
+        traigent results list                    # List all runs
+        traigent results show my_run             # Show detailed view
+        traigent results compare run1 run2       # Side-by-side comparison
+        traigent results rerank my_run --weights accuracy=0.8,cost=0.2
+    """
+    pass
+
+
+@results.command("list")
 @click.option(
     "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
 )
-def results(storage_dir: str) -> None:
-    """List and manage optimization results."""
+def results_list(storage_dir: str) -> None:
+    """List all optimization results with summary."""
     console.print("\n[bold blue]Traigent Optimization Results[/bold blue]\n")
 
     persistence = PersistenceManager(storage_dir)
@@ -657,6 +670,488 @@ def results(storage_dir: str) -> None:
         )
 
     console.print(table)
+
+
+@results.command("show")
+@click.argument("result_name")
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+@click.option("--trials", "-t", is_flag=True, help="Show all trial details")
+def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
+    """Show detailed view of a specific optimization run.
+
+    Examples:
+        traigent results show my_run              # Summary view
+        traigent results show my_run --trials     # Include all trials
+    """
+    console.print(f"\n[bold blue]Optimization Result: {result_name}[/bold blue]\n")
+
+    try:
+        persistence = PersistenceManager(storage_dir)
+        result = persistence.load_result(result_name)
+
+        # Summary section
+        console.print("[bold]Summary[/bold]")
+        summary_table = Table(show_header=False, box=None)
+        summary_table.add_column("Key", style="dim")
+        summary_table.add_column("Value")
+
+        summary_table.add_row("Function", getattr(result, "function_name", "unknown"))
+        summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
+        summary_table.add_row("Total Trials", str(len(result.trials)))
+        summary_table.add_row(
+            "Successful Trials", str(len(result.successful_trials or []))
+        )
+        summary_table.add_row("Best Score", f"{result.best_score:.4f}")
+        summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
+        if hasattr(result, "duration") and result.duration:
+            summary_table.add_row("Duration", f"{result.duration:.1f}s")
+
+        console.print(summary_table)
+
+        # Best config section
+        console.print("\n[bold]Best Configuration[/bold]")
+        if result.best_config:
+            config_syntax = Syntax(
+                json.dumps(result.best_config, indent=2),
+                "json",
+                theme="monokai",
+            )
+            console.print(config_syntax)
+        else:
+            console.print("[yellow]No best configuration found[/yellow]")
+
+        # Metrics section
+        if result.best_metrics:
+            console.print("\n[bold]Best Metrics[/bold]")
+            metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+            metrics_table.add_column("Metric")
+            metrics_table.add_column("Value", justify="right")
+            for metric, value in result.best_metrics.items():
+                if not metric.startswith("_"):
+                    if isinstance(value, float):
+                        metrics_table.add_row(metric, f"{value:.4f}")
+                    else:
+                        metrics_table.add_row(metric, str(value))
+            console.print(metrics_table)
+
+        # Trials section (optional)
+        if trials and result.trials:
+            console.print(f"\n[bold]All Trials ({len(result.trials)})[/bold]")
+            trials_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+            trials_table.add_column("#", justify="right")
+            trials_table.add_column("Config")
+            trials_table.add_column("Score", justify="right")
+            trials_table.add_column("Status")
+
+            for i, trial in enumerate(result.trials[:50], 1):  # Limit to 50
+                config_str = str(trial.config)
+                if len(config_str) > 40:
+                    config_str = config_str[:37] + "..."
+                # Get primary objective score from metrics
+                primary_score = trial.metrics.get("overall") or trial.metrics.get(
+                    "score"
+                )
+                score_str = (
+                    f"{primary_score:.4f}" if primary_score is not None else "N/A"
+                )
+                status = getattr(trial, "status", "completed")
+                trials_table.add_row(str(i), config_str, score_str, status)
+
+            console.print(trials_table)
+            if len(result.trials) > 50:
+                console.print(
+                    f"[dim]... and {len(result.trials) - 50} more trials[/dim]"
+                )
+
+    except FileNotFoundError:
+        console.print(f"[red]Result '{result_name}' not found[/red]")
+        console.print("Use 'traigent results list' to see available results")
+    except Exception as e:
+        console.print(f"[red]Error loading result: {e}[/red]")
+
+
+@results.command("compare")
+@click.argument("result1")
+@click.argument("result2")
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+def results_compare(result1: str, result2: str, storage_dir: str) -> None:
+    """Compare two optimization runs side-by-side.
+
+    Examples:
+        traigent results compare run_v1 run_v2
+    """
+    console.print(f"\n[bold blue]Comparing: {result1} vs {result2}[/bold blue]\n")
+
+    try:
+        persistence = PersistenceManager(storage_dir)
+        r1 = persistence.load_result(result1)
+        r2 = persistence.load_result(result2)
+
+        # Comparison table
+        table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+        table.add_column("Metric", style="bold")
+        table.add_column(result1, style="cyan")
+        table.add_column(result2, style="green")
+        table.add_column("Δ", justify="right")
+
+        # Best score comparison
+        score_diff = r2.best_score - r1.best_score
+        if score_diff > 0:
+            score_diff_str = f"[green]+{score_diff:.4f}[/]"
+        elif score_diff < 0:
+            score_diff_str = f"[red]{score_diff:.4f}[/]"
+        else:
+            score_diff_str = f"{score_diff:+.4f}"
+        table.add_row(
+            "Best Score",
+            f"{r1.best_score:.4f}",
+            f"{r2.best_score:.4f}",
+            score_diff_str,
+        )
+
+        # Trials comparison
+        r1_total = len(r1.trials)
+        r2_total = len(r2.trials)
+        table.add_row(
+            "Total Trials",
+            str(r1_total),
+            str(r2_total),
+            str(r2_total - r1_total),
+        )
+
+        # Success rate comparison
+        sr1 = len(r1.successful_trials or []) / max(r1_total, 1)
+        sr2 = len(r2.successful_trials or []) / max(r2_total, 1)
+        sr_diff = sr2 - sr1
+        if sr_diff > 0:
+            sr_diff_str = f"[green]+{sr_diff:.1%}[/]"
+        elif sr_diff < 0:
+            sr_diff_str = f"[red]{sr_diff:.1%}[/]"
+        else:
+            sr_diff_str = f"{sr_diff:+.1%}"
+        table.add_row(
+            "Success Rate",
+            f"{sr1:.1%}",
+            f"{sr2:.1%}",
+            sr_diff_str,
+        )
+
+        console.print(table)
+
+        # Config comparison
+        console.print("\n[bold]Best Configurations[/bold]")
+        config_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+        config_table.add_column("Parameter")
+        config_table.add_column(result1)
+        config_table.add_column(result2)
+
+        all_keys = set((r1.best_config or {}).keys()) | set(
+            (r2.best_config or {}).keys()
+        )
+        for key in sorted(all_keys):
+            v1 = (r1.best_config or {}).get(key, "-")
+            v2 = (r2.best_config or {}).get(key, "-")
+            style1 = "" if v1 == v2 else "[yellow]"
+            style2 = "" if v1 == v2 else "[yellow]"
+            config_table.add_row(key, f"{style1}{v1}[/]", f"{style2}{v2}[/]")
+
+        console.print(config_table)
+
+        # Metrics comparison if available
+        if r1.best_metrics or r2.best_metrics:
+            console.print("\n[bold]Metrics Comparison[/bold]")
+            metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+            metrics_table.add_column("Metric")
+            metrics_table.add_column(result1, justify="right")
+            metrics_table.add_column(result2, justify="right")
+            metrics_table.add_column("Δ", justify="right")
+
+            all_metrics = set((r1.best_metrics or {}).keys()) | set(
+                (r2.best_metrics or {}).keys()
+            )
+            for metric in sorted(all_metrics):
+                if metric.startswith("_"):
+                    continue
+                m1 = (r1.best_metrics or {}).get(metric)
+                m2 = (r2.best_metrics or {}).get(metric)
+                if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
+                    diff = m2 - m1
+                    diff_str = f"{diff:+.4f}"
+                else:
+                    diff_str = "-"
+                metrics_table.add_row(
+                    metric,
+                    f"{m1:.4f}" if isinstance(m1, float) else str(m1 or "-"),
+                    f"{m2:.4f}" if isinstance(m2, float) else str(m2 or "-"),
+                    diff_str,
+                )
+
+            console.print(metrics_table)
+
+    except FileNotFoundError as e:
+        console.print(f"[red]Result not found: {e}[/red]")
+        console.print("Use 'traigent results list' to see available results")
+    except Exception as e:
+        console.print(f"[red]Error comparing results: {e}[/red]")
+
+
+@results.command("rerank")
+@click.argument("result_name")
+@click.option(
+    "--weights",
+    "-w",
+    required=True,
+    help="Objective weights as key=value pairs (e.g., accuracy=0.7,cost=0.3)",
+)
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
+    """Recalculate best config with different objective weights.
+
+    This re-scores all trials using new weights without re-running optimization.
+
+    Examples:
+        traigent results rerank my_run --weights accuracy=0.8,cost=0.2
+        traigent results rerank my_run -w "accuracy=0.5,latency=0.3,cost=0.2"
+    """
+    console.print(
+        f"\n[bold blue]Re-ranking: {result_name} with custom weights[/bold blue]\n"
+    )
+
+    # Parse weights
+    try:
+        weight_dict: dict[str, float] = {}
+        for pair in weights.split(","):
+            key, value = pair.strip().split("=")
+            weight_dict[key.strip()] = float(value.strip())
+
+        # Normalize weights to sum to 1
+        total = sum(weight_dict.values())
+        if total > 0:
+            weight_dict = {k: v / total for k, v in weight_dict.items()}
+
+        console.print("[bold]Weights (normalized):[/bold]")
+        for k, v in weight_dict.items():
+            console.print(f"  {k}: {v:.2%}")
+
+    except ValueError as e:
+        console.print(f"[red]Invalid weights format: {e}[/red]")
+        console.print("Use format: --weights accuracy=0.7,cost=0.3")
+        return
+
+    try:
+        persistence = PersistenceManager(storage_dir)
+        result = persistence.load_result(result_name)
+
+        if not result.trials:
+            console.print("[yellow]No trials found in this result[/yellow]")
+            return
+
+        # Re-score trials
+        scored_trials = []
+        for trial in result.trials:
+            if not trial.metrics:
+                continue
+
+            # Calculate weighted score
+            score = 0.0
+            metrics_used: list[str] = []
+            for metric, weight in weight_dict.items():
+                if metric in trial.metrics:
+                    # Assume higher is better; for cost/latency, user should use negative weight
+                    # or we detect and invert
+                    metric_value = trial.metrics[metric]
+                    if isinstance(metric_value, (int, float)):
+                        score += weight * metric_value
+                        metrics_used.append(metric)
+
+            if metrics_used:
+                scored_trials.append((score, trial))
+
+        if not scored_trials:
+            console.print(
+                "[yellow]No trials have the specified metrics. "
+                f"Available metrics: {list(result.trials[0].metrics.keys())}[/yellow]"
+            )
+            return
+
+        # Sort by new score (highest first)
+        scored_trials.sort(key=lambda x: x[0], reverse=True)
+
+        # Show results
+        console.print("\n[bold]Top 5 Configurations (re-ranked)[/bold]")
+        table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+        table.add_column("Rank", justify="right")
+        table.add_column("New Score", justify="right")
+        table.add_column("Original Score", justify="right")
+        table.add_column("Config")
+
+        for i, (new_score, trial) in enumerate(scored_trials[:5], 1):
+            config_str = json.dumps(trial.config)
+            if len(config_str) > 50:
+                config_str = config_str[:47] + "..."
+            # Get original score from metrics
+            orig_score_val = trial.metrics.get("overall") or trial.metrics.get("score")
+            orig_score = (
+                f"{orig_score_val:.4f}" if orig_score_val is not None else "N/A"
+            )
+            table.add_row(str(i), f"{new_score:.4f}", orig_score, config_str)
+
+        console.print(table)
+
+        # Show new best config
+        _, best_trial = scored_trials[0]
+        console.print("\n[bold green]New Best Configuration:[/bold green]")
+        config_syntax = Syntax(
+            json.dumps(best_trial.config, indent=2), "json", theme="monokai"
+        )
+        console.print(config_syntax)
+
+        # Compare with original best
+        if result.best_config != best_trial.config:
+            console.print(
+                "\n[yellow]Note: This differs from the original best config.[/yellow]"
+            )
+            console.print("[dim]Original best config:[/dim]")
+            console.print(json.dumps(result.best_config, indent=2))
+
+    except FileNotFoundError:
+        console.print(f"[red]Result '{result_name}' not found[/red]")
+        console.print("Use 'traigent results list' to see available results")
+    except Exception as e:
+        console.print(f"[red]Error re-ranking: {e}[/red]")
+
+
+@cli.command()
+@click.argument("result_name")
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="Output file path (default: configs/<result_name>.json)",
+)
+@click.option(
+    "--format",
+    "-f",
+    "export_format",
+    type=click.Choice(["slim", "full"]),
+    default="slim",
+    help="Export format: slim (~1KB, git-friendly) or full (includes trials)",
+)
+@click.option(
+    "--storage-dir", "-d", default=".traigent", help="Traigent storage directory"
+)
+def export(
+    result_name: str, output: str | None, export_format: str, storage_dir: str
+) -> None:
+    """Export an optimization result to a portable config file.
+
+    This exports the best configuration from a previous optimization run
+    to a JSON file suitable for version control and deployment.
+
+    The slim format (~1KB) contains only:
+    - config: The best parameter values
+    - metrics: Objective scores achieved
+    - function_name, exported_at, traigent_version
+
+    The full format additionally includes:
+    - Complete trial history
+    - Optimization metadata
+    - Configuration space
+
+    Examples:
+        traigent export my_run -o configs/prod.json      # Export for git
+        traigent export my_run --format=full              # Include all data
+        traigent export my_run                            # Default: configs/my_run.json
+    """
+    console.print(
+        f"\n[bold blue]Exporting: {result_name} ({export_format} format)[/bold blue]\n"
+    )
+
+    try:
+        persistence = PersistenceManager(storage_dir)
+        result = persistence.load_result(result_name)
+
+        if not result.best_config:
+            console.print("[red]No best configuration found in this result[/red]")
+            return
+
+        # Determine output path
+        if output is None:
+            output_path = Path("configs") / f"{result_name}.json"
+        else:
+            output_path = Path(output)
+
+        output_path = output_path.expanduser()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build export data based on format
+        from traigent import __version__
+
+        if export_format == "slim":
+            export_data: dict[str, Any] = {
+                "config": result.best_config,
+                "function_name": getattr(result, "function_name", result_name),
+                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "traigent_version": __version__,
+            }
+            if result.best_metrics:
+                export_data["metrics"] = {
+                    k: v
+                    for k, v in result.best_metrics.items()
+                    if not k.startswith("_")
+                }
+        else:  # full
+            export_data = {
+                "config": result.best_config,
+                "function_name": getattr(result, "function_name", result_name),
+                "exported_at": __import__("datetime").datetime.now().isoformat(),
+                "traigent_version": __version__,
+                "trials": [
+                    {
+                        "trial_id": t.trial_id,
+                        "config": t.config,
+                        "metrics": t.metrics,
+                        "status": getattr(t, "status", "completed"),
+                    }
+                    for t in (result.trials or [])
+                ],
+                "optimization": {
+                    "total_trials": len(result.trials),
+                    "stop_reason": result.stop_reason,
+                },
+            }
+            if result.best_metrics:
+                export_data["metrics"] = result.best_metrics
+
+        # Write to file
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(export_data, f, indent=2, default=str)
+
+        console.print(f"✅ [green]Exported to: {output_path}[/green]")
+
+        # Show preview
+        config_preview = json.dumps(result.best_config, indent=2)
+        if len(config_preview) > 200:
+            config_preview = config_preview[:197] + "..."
+        console.print(f"\n[bold]Best config:[/bold]\n{config_preview}")
+
+        # Show usage hint
+        console.print("\n[dim]To use in production:[/dim]")
+        console.print(
+            f'[cyan]@traigent.optimize(load_from="{output_path}", ...)[/cyan]'
+        )
+
+    except FileNotFoundError:
+        console.print(f"[red]Result '{result_name}' not found[/red]")
+        console.print("Use 'traigent results' to see available results")
+    except Exception as e:
+        console.print(f"[red]Error exporting result: {e}[/red]")
 
 
 @cli.command()
