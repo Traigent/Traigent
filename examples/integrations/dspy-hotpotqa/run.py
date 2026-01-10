@@ -36,13 +36,12 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parents[3]))
 
 import traigent
-from traigent import Choices, Range
+from traigent import Choices
 
 # =============================================================================
 # Configuration
@@ -179,7 +178,7 @@ def generate_prompt_variants_with_dspy(
         # Extract the optimized prompt pattern
         prompts.append(
             "Think step by step to answer this multi-hop question.\n\n"
-            f"Question: {{question}}\n"
+            "Question: {question}\n"
             "Let me think through this carefully:\n"
             "Answer:"
         )
@@ -456,7 +455,7 @@ async def main():
         results = await agent.optimize()
         best_config = results.best_config
         best_score = results.best_score
-        print(f"\n  Optimization complete!")
+        print("\n  Optimization complete!")
         print(f"  Best validation score: {best_score}")
     except Exception as e:
         print(f"\n  Optimization error: {e}")
