@@ -1048,14 +1048,24 @@ def check_constraints_conflict(
     against the constraint set. For comprehensive SAT-based checking,
     consider using z3-solver (MIT license).
 
+    Warning:
+        This function can produce **false positives** when sample_configs is
+        sparse. A conflict is reported if no sample satisfies all constraints,
+        but valid configurations may exist outside the samples. Ensure samples
+        adequately cover the parameter space, or treat results as advisory.
+
     Args:
         constraints: List of Constraint objects to check.
         sample_configs: Optional list of configs to test. If not provided,
             the function returns None (no conflict detected by default).
+            For reliable conflict detection, provide samples that span
+            the full domain of each constrained variable.
         var_names: Optional mapping from ParameterRange id() to config key.
 
     Returns:
         ConstraintConflict if a conflict is detected, None otherwise.
+        Note: None means no conflict was found in the samples, not that
+        no conflict exists.
 
     Example:
         >>> temp = Range(0.0, 2.0, name="temperature")
@@ -1079,6 +1089,9 @@ def check_constraints_conflict(
             c._collect_tvars(var_names, [])
 
     # Test each sample config against all constraints
+    # Track all violations per config to report the best diagnostic
+    all_violations: list[tuple[dict[str, Any], list[tuple[Constraint, str]]]] = []
+
     for config in sample_configs:
         violations: list[tuple[Constraint, str]] = []
 
@@ -1088,13 +1101,33 @@ def check_constraints_conflict(
                 explanation = constraint.explain(var_names)
                 violations.append((constraint, explanation))
 
-        # If all constraints violated, we found a conflict scenario
-        if len(violations) == len(constraints) and len(violations) > 1:
-            return ConstraintConflict(
-                constraints=[v[0] for v in violations],
-                config=config,
-                messages=[v[1] for v in violations],
-            )
+        # If this config satisfies all constraints, no conflict
+        if not violations:
+            return None
+
+        all_violations.append((config, violations))
+
+    # No config satisfied all constraints - this indicates a conflict
+    # Report the config with the most violations for best diagnostics
+    # (for mutually exclusive constraints, each config violates different ones)
+    if all_violations and len(constraints) > 1:
+        # Find the config that violates the most constraints for best diagnostics
+        worst_config, worst_violations = max(all_violations, key=lambda x: len(x[1]))
+
+        # For mutually exclusive constraints, aggregate all violated constraints
+        # across configs to show the full conflict
+        all_violated_constraints: dict[int, tuple[Constraint, str]] = {}
+        for _config, violations in all_violations:
+            for constraint, msg in violations:
+                cid = id(constraint)
+                if cid not in all_violated_constraints:
+                    all_violated_constraints[cid] = (constraint, msg)
+
+        return ConstraintConflict(
+            constraints=[v[0] for v in all_violated_constraints.values()],
+            config=worst_config,
+            messages=[v[1] for v in all_violated_constraints.values()],
+        )
 
     return None
 
