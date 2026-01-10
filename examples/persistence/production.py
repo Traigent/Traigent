@@ -40,7 +40,7 @@ async def sentiment_agent(text: str) -> str:
     In production, the config is already loaded from the exported file.
     No optimization runs - just uses the pre-optimized configuration.
     """
-    config = traigent.get_config()
+    _config = traigent.get_config()  # noqa: F841 - shows how to access config
 
     # Mock implementation for demo
     if "love" in text.lower() or "best" in text.lower():

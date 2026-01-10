@@ -180,7 +180,7 @@ def save_results_to_csv(results, dataset_path: Path, output_path: Path) -> None:
 
     # Initialize rows with questions and expected answers
     rows = []
-    for q_idx, (question, expected) in enumerate(zip(questions, expected_answers)):
+    for question, expected in zip(questions, expected_answers, strict=True):
         # Sanitize newlines for CSV compatibility with LibreOffice/Excel
         question_clean = question.replace("\n", " | ").replace("\r", "")
         expected_clean = expected.replace("\n", " | ").replace("\r", "")
