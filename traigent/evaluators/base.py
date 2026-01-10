@@ -154,7 +154,8 @@ def _resolve_dataset_source(
         resolved_path.relative_to(dataset_root)
     except ValueError as exc:
         raise ValidationError(
-            f"Dataset path must reside under {dataset_root}: {resolved_path}"
+            f"Dataset path must reside under {dataset_root}: {resolved_path}\n"
+            f"Hint: set {DATASET_ROOT_ENV} to the repo root (or run from it)."
         ) from exc
 
     if not resolved_path.is_file():
