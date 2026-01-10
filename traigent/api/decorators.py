@@ -299,6 +299,9 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "agent_prefixes": None,  # Prefix-based agent inference
     "agent_measures": None,  # Agent-to-measures mapping
     "global_measures": None,  # Global (non-agent) measures
+    # Config persistence (Phase 1 of optimization-persistency feature)
+    "auto_load_best": False,  # Auto-load best config on decoration
+    "load_from": None,  # Explicit path to load config from
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -357,6 +360,9 @@ class LegacyOptimizeArgs:
     agent_prefixes: list[str] | None = None
     agent_measures: dict[str, list[str]] | None = None
     global_measures: list[str] | None = None
+    # Config persistence
+    auto_load_best: bool | None = None
+    load_from: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -419,6 +425,8 @@ class LegacyOptimizeArgs:
             ("agent_prefixes", self.agent_prefixes),
             ("agent_measures", self.agent_measures),
             ("global_measures", self.global_measures),
+            ("auto_load_best", self.auto_load_best),
+            ("load_from", self.load_from),
         ]
 
 
@@ -1042,6 +1050,9 @@ def optimize(
     agent_prefixes: list[str] | None = None,
     agent_measures: dict[str, list[str]] | None = None,
     global_measures: list[str] | None = None,
+    # Config persistence
+    auto_load_best: bool = False,
+    load_from: str | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -1243,6 +1254,8 @@ def optimize(
         "agent_prefixes": agent_prefixes,
         "agent_measures": agent_measures,
         "global_measures": global_measures,
+        "auto_load_best": auto_load_best,
+        "load_from": load_from,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1305,6 +1318,9 @@ def optimize(
     agent_prefixes_config = combined_settings["agent_prefixes"]
     agent_measures_config = combined_settings["agent_measures"]
     global_measures_config = combined_settings["global_measures"]
+    # Config persistence
+    auto_load_best_config = combined_settings["auto_load_best"]
+    load_from_config = combined_settings["load_from"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1480,6 +1496,9 @@ def optimize(
             agent_prefixes=agent_prefixes_config,
             agent_measures=agent_measures_config,
             global_measures=global_measures_config,
+            # Config persistence
+            auto_load_best=auto_load_best_config,
+            load_from=load_from_config,
             **combined_runtime_overrides,
         )
 
