@@ -42,7 +42,7 @@ Tier = Literal["fast", "balanced", "quality"]
 
 # Fallback model lists - kept minimal and updated rarely
 # These are used only when env vars and API discovery both fail
-_FALLBACK_MODELS: dict[tuple[str, str], list[str]] = {
+_FALLBACK_MODELS: dict[tuple[str | None, str], list[str]] = {
     # OpenAI tiers
     ("openai", "fast"): ["gpt-4o-mini"],
     ("openai", "balanced"): ["gpt-4o-mini", "gpt-4o"],
