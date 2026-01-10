@@ -1072,12 +1072,14 @@ def optimize(
                 2. ``ParameterRange.default`` values (e.g., ``Range(0.0, 1.0, default=0.7)``)
                 3. Optimizer-suggested defaults (e.g., Optuna's suggest_* midpoint)
 
-            Example showing precedence:
+            Example showing precedence::
+
                 >>> @traigent.optimize(
                 ...     temperature=Range(0.0, 1.0, default=0.5),  # Precedence 2
                 ...     default_config={"temperature": 0.7},      # Precedence 1 (wins)
                 ... )
                 ... def my_func(): ...
+
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it.
 
@@ -1210,15 +1212,9 @@ def optimize(
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
         ... )
-        ... def medical_assistant(patient_query: str) -> str:
+        ... def medical_assistant(patient_query: str) -> str:  # doctest: +SKIP
         ...     # Data never leaves your infrastructure
         ...     return process_medical_query(patient_query)
-        >>> result = my_agent("Hello")
-        >>>
-        >>> # Run optimization
-        >>> import asyncio
-        >>> optimization_result = asyncio.run(my_agent.optimize())
-        >>> best_config = my_agent.get_best_config()
     """
 
     legacy_args = _parse_legacy_args(legacy)
