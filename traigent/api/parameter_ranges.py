@@ -37,7 +37,7 @@ import os
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar, cast
 
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
@@ -738,7 +738,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         if env_models:
             models = [m.strip() for m in env_models.split(",") if m.strip()]
             if models:
-                return cls(models, name="model")
+                return Choices(models, name="model")
 
         # Fallback defaults
         fallbacks: dict[tuple[str | None, str], list[str]] = {
@@ -753,15 +753,15 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             (None, "quality"): ["gpt-4o", "claude-3-opus-20240229"],
         }
 
-        models = fallbacks.get((provider, tier))
-        if not models:
+        models_found = fallbacks.get((provider, tier))
+        if not models_found:
             logger.warning(
                 f"No model list found for provider={provider}, tier={tier}. "
                 f"Using default models. Set {env_key} for explicit control."
             )
-            models = ["gpt-4o-mini"]
+            models_found = ["gpt-4o-mini"]
 
-        return cls(models, name="model")
+        return Choices(models_found, name="model")
 
     @classmethod
     def prompting_strategy(cls) -> Choices[str]:
@@ -773,7 +773,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Example:
             >>> strategy = Choices.prompting_strategy()
         """
-        return cls(
+        return Choices(
             ["direct", "chain_of_thought", "react", "self_consistency"],
             default="direct",
             name="prompting_strategy",
@@ -789,7 +789,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Example:
             >>> fmt = Choices.context_format()
         """
-        return cls(
+        return Choices(
             ["bullet", "numbered", "xml", "markdown", "json"],
             default="bullet",
             name="context_format",
@@ -805,7 +805,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Example:
             >>> retriever = Choices.retriever_type()
         """
-        return cls(
+        return Choices(
             ["similarity", "mmr", "bm25", "hybrid"],
             default="similarity",
             name="retriever",
@@ -843,7 +843,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         }
 
         models = fallbacks.get(provider, fallbacks[None])
-        return cls(models, name="embedding_model")
+        return Choices(models, name="embedding_model")
 
     @classmethod
     def reranker_model(cls) -> Choices[str]:
@@ -855,7 +855,7 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
         Example:
             >>> reranker = Choices.reranker_model()
         """
-        return cls(
+        return Choices(
             [
                 "none",
                 "cohere-rerank-v3",
@@ -956,7 +956,8 @@ def _process_param_entry(
         param = value
         if param.name is None:
             try:
-                param = replace(param, name=key)
+                # Cast to Any since all ParameterRange subclasses are dataclasses
+                param = replace(cast(Any, param), name=key)
             except TypeError:
                 # Fallback if replace fails (shouldn't happen with our dataclasses)
                 logger.debug(
