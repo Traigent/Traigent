@@ -40,7 +40,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 # Optional YAML support
 try:
@@ -197,7 +197,7 @@ class FileRegistryResolver:
             return yaml.safe_load(content) or {}
 
         if path.suffix == ".json":
-            return json.loads(content)
+            return cast(dict[str, Any], json.loads(content))
 
         raise ValueError(f"Unsupported registry file format: {path.suffix}")
 

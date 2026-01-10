@@ -1019,8 +1019,9 @@ def _normalize_config_space_and_defaults(
     constraints: list[Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[Any] | None]:
     """Normalize configuration space and merge defaults."""
+    normalized_space: dict[str, Any] | None = None
     if inline_params or configuration_space:
-        configuration_space, param_defaults = normalize_configuration_space(
+        normalized_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
         if param_defaults:
@@ -1029,7 +1030,7 @@ def _normalize_config_space_and_defaults(
     if config_space_constraints and not constraints:
         constraints = config_space_constraints
 
-    return configuration_space, default_config, constraints
+    return normalized_space, default_config, constraints
 
 
 def optimize(

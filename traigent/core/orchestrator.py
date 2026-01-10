@@ -62,6 +62,7 @@ from traigent.core.progress_manager import (
     ProgressManager,
 )
 from traigent.core.result_selection import (
+    TieBreaker,
     _is_minimization_objective,
     select_best_configuration,
 )
@@ -171,7 +172,9 @@ class OptimizationOrchestrator:
         )
 
         # TVL 0.9 tie-breaker configuration
-        self._tie_breakers: dict[str, str] = kwargs.pop("tie_breakers", None) or {}
+        self._tie_breakers: dict[str, TieBreaker] = (
+            kwargs.pop("tie_breakers", None) or {}
+        )
 
         # Multi-agent configuration
         explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
@@ -335,7 +338,7 @@ class OptimizationOrchestrator:
                     window=int(convergence_window),
                     threshold=float(convergence_threshold),
                     objective_names=objective_names,
-                    directions=directions,
+                    directions=cast(list[str], directions),
                 )
 
         # Initialize cost enforcer for cost limit enforcement
