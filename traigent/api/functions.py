@@ -74,6 +74,7 @@ def configure(
         ...     parallel_workers=4,
         ...     api_keys={"openai": "sk-..."}
         ... )
+        True
     """
     if default_storage_backend is not None:
         _GLOBAL_CONFIG["default_storage_backend"] = default_storage_backend
@@ -183,22 +184,23 @@ def initialize(  # noqa: C901
     Returns:
         True if initialization successful
 
-    Example:
-        >>> # Edge Analytics mode initialization (backend URL from env or config)
-        >>> # Set TRAIGENT_API_KEY environment variable for security
-        >>> config = traigent.TraigentConfig.edge_analytics_mode()
-        >>> traigent.initialize(config=config)
+    Example::
 
-        >>> # Cloud mode with explicit URL
-        >>> traigent.initialize(
-        ...     api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
-        ...     api_url="https://api.traigent.ai"
-        ... )
+        # Edge Analytics mode initialization (backend URL from env or config)
+        # Set TRAIGENT_API_KEY environment variable for security
+        config = traigent.TraigentConfig.edge_analytics_mode()
+        traigent.initialize(config=config)
 
-        >>> # Using environment variables (recommended)
-        >>> # export TRAIGENT_BACKEND_URL="http://localhost:5000"
-        >>> # export TRAIGENT_API_KEY="your-key-here"
-        >>> traigent.initialize()
+        # Cloud mode with explicit URL
+        traigent.initialize(
+            api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
+            api_url="https://api.traigent.ai"
+        )
+
+        # Using environment variables (recommended)
+        # export TRAIGENT_BACKEND_URL="http://localhost:5000"
+        # export TRAIGENT_API_KEY="your-key-here"
+        traigent.initialize()
     """
 
     from traigent.config.backend_config import BackendConfig
@@ -344,11 +346,12 @@ def get_config() -> dict[str, Any]:
         OptimizationStateError: If no configuration is available (e.g., called
             outside an optimized function without apply_best_config()).
 
-    Example:
-        >>> @traigent.optimize(...)
-        ... def my_func(query: str):
-        ...     cfg = traigent.get_config()  # Works during and after optimization
-        ...     return call_llm(model=cfg["model"])
+    Example::
+
+        @traigent.optimize(...)
+        def my_func(query: str):
+            cfg = traigent.get_config()  # Works during and after optimization
+            return call_llm(model=cfg["model"])
     """
     trial_ctx = get_trial_context()
     if trial_ctx is not None:
@@ -406,18 +409,19 @@ def get_trial_config() -> dict[str, Any]:
     Returns:
         Dictionary with the current trial's configuration parameters.
 
-    Example:
-        >>> @traigent.optimize(
-        ...     configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.8]}
-        ... )
-        ... def my_function(query: str) -> str:
-        ...     config = traigent.get_trial_config()  # Gets trial-specific config
-        ...     return call_llm(model=config["model"], temperature=config["temperature"])
-        ...
-        >>> # Run optimization - get_trial_config() works inside the function
-        >>> result = traigent.optimize(my_function, dataset=my_data)
-        >>> # Access best config via result
-        >>> print(result.best_config)
+    Example::
+
+        @traigent.optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.8]}
+        )
+        def my_function(query: str) -> str:
+            config = traigent.get_trial_config()  # Gets trial-specific config
+            return call_llm(model=config["model"], temperature=config["temperature"])
+
+        # Run optimization - get_trial_config() works inside the function
+        result = traigent.optimize(my_function, dataset=my_data)
+        # Access best config via result
+        print(result.best_config)
     """
     # Check if we're in an active trial context
     trial_ctx = get_trial_context()
@@ -519,14 +523,15 @@ def override_config(
     Returns:
         Configuration override dict for use with .optimize()
 
-    Example:
-        >>> # Override to focus on cost efficiency
-        >>> cost_config = traigent.override_config(
-        ...     objectives=["cost", "accuracy"],
-        ...     configuration_space={"model": ["gpt-4o-mini"]},
-        ...     max_trials=20
-        ... )
-        >>> results = my_agent.optimize(config_override=cost_config)
+    Example::
+
+        # Override to focus on cost efficiency
+        cost_config = traigent.override_config(
+            objectives=["cost", "accuracy"],
+            configuration_space={"model": ["gpt-4o-mini"]},
+            max_trials=20
+        )
+        results = my_agent.optimize(config_override=cost_config)
     """
     override: dict[str, Any] = {}
 
@@ -580,16 +585,17 @@ def set_strategy(
     Returns:
         StrategyConfig object for use with optimization
 
-    Example:
-        >>> strategy = traigent.set_strategy(
-        ...     algorithm="tpe",
-        ...     algorithm_config={
-        ...         "n_startup_trials": 10,
-        ...         "multivariate": True
-        ...     },
-        ...     parallel_workers=4
-        ... )
-        >>> results = my_agent.optimize(strategy=strategy)
+    Example::
+
+        strategy = traigent.set_strategy(
+            algorithm="tpe",
+            algorithm_config={
+                "n_startup_trials": 10,
+                "multivariate": True
+            },
+            parallel_workers=4
+        )
+        results = my_agent.optimize(strategy=strategy)
     """
     # Validate algorithm
     available_algorithms = get_available_strategies()
@@ -628,8 +634,8 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
 
     Example:
         >>> strategies = traigent.get_available_strategies()
-        >>> print(strategies["bayesian"]["description"])
-        >>> print(strategies["bayesian"]["parameters"])
+        >>> strategies["bayesian"]["description"]
+        'Gaussian Process-based optimization with acquisition functions'
     """
     algorithms = list_optimizers()
 
@@ -713,8 +719,8 @@ def get_version_info() -> dict[str, Any]:
 
     Example:
         >>> info = traigent.get_version_info()
-        >>> print(f"Traigent SDK v{info['version']}")
-        >>> print(f"Available algorithms: {info['algorithms']}")
+        >>> 'version' in info
+        True
     """
     import platform
     import sys
@@ -798,12 +804,13 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         - parameter_insights: Analysis of parameter importance and impact
         - recommendations: Actionable recommendations based on analysis
 
-    Example:
-        >>> results = my_function.optimize()
-        >>> insights = traigent.get_optimization_insights(results)
-        >>> print("💡 Top 3 configurations discovered:")
-        >>> for i, config in enumerate(insights['top_configurations'][:3]):
-        ...     print(f"{i+1}. {config['config']} → {config['score']:.2%} accuracy, ${config.get('cost_analysis', {}).get('cost_per_query', 0):.3f}/1K queries")
+    Example::
+
+        results = my_function.optimize()
+        insights = traigent.get_optimization_insights(results)
+        print("Top 3 configurations discovered:")
+        for i, config in enumerate(insights['top_configurations'][:3]):
+            print(f"{i+1}. {config['config']} -> {config['score']:.2%} accuracy")
     """
     return cast(dict[str, Any], _get_optimization_insights(results))
 

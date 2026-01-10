@@ -18,11 +18,11 @@ from __future__ import annotations
 import warnings
 from typing import Any
 
-from ..utils.logging import get_logger
-from .framework_override import (
+from traigent.integrations.framework_override import (
     enable_framework_overrides,
     register_framework_mapping,
 )
+from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 

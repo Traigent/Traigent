@@ -1129,13 +1129,14 @@ class OptimizationResult:
         Raises:
             ImportError: If traigent-tuned-variables plugin is not installed
 
-        Example:
-            >>> result = my_agent.optimize()
-            >>> analysis = result.analyze("accuracy")
-            >>> for var_name, var_analysis in analysis.variables.items():
-            ...     print(f"{var_name}: importance={var_analysis.importance:.3f}")
-            >>> # Get refined space for next optimization
-            >>> refined = analysis.get_refined_space(["accuracy"])
+        Example::
+
+            result = my_agent.optimize()
+            analysis = result.analyze("accuracy")
+            for var_name, var_analysis in analysis.variables.items():
+                print(f"{var_name}: importance={var_analysis.importance:.3f}")
+            # Get refined space for next optimization
+            refined = analysis.get_refined_space(["accuracy"])
         """
         try:
             from traigent_tuned_variables import VariableAnalyzer

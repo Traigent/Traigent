@@ -162,7 +162,7 @@ def extract_parameter_agents(
         ... }
         >>> agents = extract_parameter_agents(config_space)
         >>> agents
-        {"model": "financial", "temperature": "financial"}
+        {'model': 'financial', 'temperature': 'financial'}
     """
     # Import here to avoid circular dependency
     from traigent.api.parameter_ranges import ParameterRange
@@ -295,11 +295,11 @@ def _humanize(agent_id: str) -> str:
 
     Examples:
         >>> _humanize("financial")
-        "Financial"
+        'Financial'
         >>> _humanize("financial_agent")
-        "Financial Agent"
+        'Financial Agent'
         >>> _humanize("my_llm_router")
-        "My Llm Router"
+        'My Llm Router'
     """
     return agent_id.replace("_", " ").title()
 

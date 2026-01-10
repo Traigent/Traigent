@@ -163,11 +163,12 @@ def validate_spec_code_alignment(
     Returns:
         SpecDriftReport containing all detected issues
 
-    Example:
-        >>> spec = load_tvl_spec("optimization.tvl.yaml")
-        >>> report = validate_spec_code_alignment(spec, decorated_func=my_agent)
-        >>> if report.has_errors:
-        ...     print(report.summary())
+    Example::
+
+        spec = load_tvl_spec("optimization.tvl.yaml")
+        report = validate_spec_code_alignment(spec, decorated_func=my_agent)
+        if report.has_errors:
+            print(report.summary())
     """
     issues: list[SpecDriftIssue] = []
 
