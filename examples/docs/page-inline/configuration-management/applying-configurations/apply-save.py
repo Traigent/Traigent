@@ -37,6 +37,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 F = TypeVar("F")
 CONFIG_PATH = Path(__file__).with_name("optimal_support_config.json")
+DEFAULT_MODEL = "gpt-3.5-turbo"
 
 
 def _load_config(path: Path) -> dict[str, Any]:
@@ -73,7 +74,7 @@ def apply_saved_config(path: Path) -> Callable[[F], F]:
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "model": [DEFAULT_MODEL, "gpt-4o-mini", "gpt-4o"],
         "temperature": [0.1, 0.5, 0.9],
         "max_tokens": [100, 300, 500],
     },
@@ -84,9 +85,7 @@ def apply_saved_config(path: Path) -> Callable[[F], F]:
 def customer_support_agent(query: str) -> str:
     """Handle a support query using parameters injected by Traigent."""
     cfg = traigent.get_config()
-    model = (
-        cfg.get("model", "gpt-3.5-turbo") if isinstance(cfg, dict) else "gpt-3.5-turbo"
-    )
+    model = cfg.get("model", DEFAULT_MODEL) if isinstance(cfg, dict) else DEFAULT_MODEL
     temperature = float(cfg.get("temperature", 0.7)) if isinstance(cfg, dict) else 0.7
     max_tokens = int(cfg.get("max_tokens", 300)) if isinstance(cfg, dict) else 300
 
@@ -104,9 +103,7 @@ def customer_support_agent(query: str) -> str:
 def production_support_agent(query: str) -> str:
     """Use the saved optimal configuration without re-running optimization."""
     cfg = traigent.get_config()
-    model = (
-        cfg.get("model", "gpt-3.5-turbo") if isinstance(cfg, dict) else "gpt-3.5-turbo"
-    )
+    model = cfg.get("model", DEFAULT_MODEL) if isinstance(cfg, dict) else DEFAULT_MODEL
     temperature = float(cfg.get("temperature", 0.7)) if isinstance(cfg, dict) else 0.7
     max_tokens = int(cfg.get("max_tokens", 300)) if isinstance(cfg, dict) else 300
 
