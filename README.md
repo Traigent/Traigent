@@ -3,14 +3,14 @@
 **If you can evaluate it, optimize it. Specify evaluation set and eval, and start optimizing today.**
 
 [![Build](https://github.com/Traigent/Traigent/actions/workflows/ci.yml/badge.svg)](https://github.com/Traigent/Traigent/actions)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11–3.13](https://img.shields.io/badge/python-3.11--3.13-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 Traigent adds zero-code-change optimization to existing agents, RAG pipelines, and sequential chains so you can improve accuracy and reduce cost without refactoring or extra dev time. Works with LangChain, LlamaIndex, and direct API calls (OpenAI, Anthropic, etc.). CrewAI and AutoGen support is in testing.
 
 ---
 
-## Golden Path: Router Agent + LiteLLM
+## 🚀 Golden Path: Router Agent + LiteLLM
 
 Decorate your existing router, pass an evaluation set, and Traigent will tune across OpenAI, Anthropic, and Google models via LiteLLM.
 
@@ -80,7 +80,7 @@ See the [Evaluation Guide](docs/guides/evaluation.md) and [Complete Function Spe
 
 ---
 
-## Installation
+## 📦 Installation
 
 ### Add to Your Existing Project (Recommended)
 
@@ -101,7 +101,7 @@ def your_agent(...):
     ...  # Your unchanged code
 ```
 
-Requirements: Python 3.11+ on Linux, macOS, or Windows.
+Requirements: Python 3.11–3.13 on Linux, macOS, or Windows.
 
 #### Feature Sets
 
@@ -131,7 +131,7 @@ python examples/quickstart/01_simple_qa.py
 
 ---
 
-## How It Works (Router Agents + Sequential Chains)
+## 🏗️ How It Works
 
 Traigent optimizes existing functions in place. For router agents, it tunes the handoff to the right specialist and the configs used by each step in a sequential chain.
 
@@ -147,7 +147,7 @@ Flow example: `User -> Router Agent -> Specialized Agent -> Response`
 
 ---
 
-## Traigent Cloud: Deep Insights and AI Planning
+## ☁️ Traigent Cloud
 
 The SDK runs locally. A Traigent Cloud API key unlocks advanced capabilities:
 
@@ -163,7 +163,7 @@ Get a Cloud API key at <https://traigent.ai/>.
 
 ---
 
-## Quick Reference
+## ⚡ Quick Reference
 
 ```python
 @traigent.optimize(
@@ -190,7 +190,7 @@ traigent results
 
 ---
 
-## Cost Warning
+## ⚠️ Cost Warning
 
 Traigent runs multiple trials = multiple API calls = costs add up.
 
@@ -203,7 +203,7 @@ See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ---
 
-## Resources
+## 📚 Resources
 
 | Resource                                  | Description                                                                                |
 | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
@@ -259,7 +259,7 @@ Beyond the basics, Traigent includes powerful features such as:
 
 ---
 
-## License
+## 📄 License
 
 Apache 2.0 - See [LICENSE](LICENSE)
 
