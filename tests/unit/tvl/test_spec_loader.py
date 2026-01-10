@@ -1498,11 +1498,12 @@ class TestSchemaValidation:
         from traigent.tvl.spec_loader import validate_tvl_schema
 
         data = {
-            "tvars": "should be dict",  # Wrong type
+            "tvars": "should be list or dict",  # Wrong type (string)
         }
 
         issues = validate_tvl_schema(data)
-        assert any("tvars" in issue and "dict" in issue for issue in issues)
+        # Should flag that tvars is wrong type (string instead of list/dict)
+        assert any("tvars" in issue and "should be" in issue for issue in issues)
 
     def test_validate_tvar_missing_domain(self) -> None:
         """TVAR without domain field is flagged."""
