@@ -588,9 +588,13 @@ class DictRegistryResolver:
 
         items = list(self.registries[registry_id])
 
-        # Apply version filter
+        # Apply version filter (only to dict items that have a version field)
         if version:
-            items = [i for i in items if i.get("version") == version]
+            items = [
+                i
+                for i in items
+                if not isinstance(i, dict) or i.get("version") == version
+            ]
 
         # Apply filter expression (reuse FileRegistryResolver logic)
         if filter_expr:
