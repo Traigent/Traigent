@@ -35,6 +35,13 @@ WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 # Style constant for table headers
 _TABLE_HEADER_STYLE = "bold magenta"
 
+# Message constants to avoid duplication (SonarQube S1192)
+_MSG_RESULTS_LIST_HINT = "Use 'traigent results list' to see available results"
+_MSG_BEST_SCORE = "Best Score"
+_MSG_TOTAL_TRIALS = "Total Trials"
+_MSG_SUCCESS_RATE = "Success Rate"
+_STYLE_HIGHLIGHT = "[yellow]"
+
 
 def _resolve_workspace_path(
     path: Path,
@@ -175,7 +182,7 @@ def _display_optimization_summary(
 
     table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
     table.add_column("Function", style="cyan")
-    table.add_column("Best Score", justify="right")
+    table.add_column(_MSG_BEST_SCORE, justify="right")
     table.add_column("Best Config", style="green")
     table.add_column("Trials", justify="right")
 
@@ -619,6 +626,248 @@ def validate(dataset_path: str, objectives: tuple[str, ...], verbose: bool) -> N
             console.print(obj_result.get_feedback())
 
 
+# -----------------------------------------------------------------------------
+# Helper functions for results commands (reduces cognitive complexity - S3776)
+# -----------------------------------------------------------------------------
+
+
+def _format_metric_value(value: Any) -> str:
+    """Format a metric value for display."""
+    if isinstance(value, float):
+        return f"{value:.4f}"
+    return str(value)
+
+
+def _format_diff_colored(diff: float, fmt: str = ".4f") -> str:
+    """Format a numeric diff with color coding (green=positive, red=negative)."""
+    if diff > 0:
+        return f"[green]+{diff:{fmt}}[/]"
+    if diff < 0:
+        return f"[red]{diff:{fmt}}[/]"
+    return f"{diff:+{fmt}}"
+
+
+def _print_result_summary(result: Any) -> None:
+    """Print the summary section of a result."""
+    console.print("[bold]Summary[/bold]")
+    summary_table = Table(show_header=False, box=None)
+    summary_table.add_column("Key", style="dim")
+    summary_table.add_column("Value")
+
+    summary_table.add_row("Function", getattr(result, "function_name", "unknown"))
+    summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
+    summary_table.add_row(_MSG_TOTAL_TRIALS, str(len(result.trials)))
+    summary_table.add_row("Successful Trials", str(len(result.successful_trials or [])))
+    summary_table.add_row(_MSG_BEST_SCORE, f"{result.best_score:.4f}")
+    summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
+    if hasattr(result, "duration") and result.duration:
+        summary_table.add_row("Duration", f"{result.duration:.1f}s")
+
+    console.print(summary_table)
+
+
+def _print_config_json(
+    config: dict[str, Any] | None, title: str = "Best Configuration"
+) -> None:
+    """Print a config dict as formatted JSON."""
+    console.print(f"\n[bold]{title}[/bold]")
+    if config:
+        config_syntax = Syntax(json.dumps(config, indent=2), "json", theme="monokai")
+        console.print(config_syntax)
+    else:
+        console.print("[yellow]No best configuration found[/yellow]")
+
+
+def _print_metrics_table(metrics: dict[str, Any] | None) -> None:
+    """Print a metrics table, filtering out internal metrics."""
+    if not metrics:
+        return
+    console.print("\n[bold]Best Metrics[/bold]")
+    metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    metrics_table.add_column("Metric")
+    metrics_table.add_column("Value", justify="right")
+    for metric, value in metrics.items():
+        if not metric.startswith("_"):
+            metrics_table.add_row(metric, _format_metric_value(value))
+    console.print(metrics_table)
+
+
+def _print_trials_table(trials: list[Any], max_display: int = 50) -> None:
+    """Print a table of trials with config and score."""
+    if not trials:
+        return
+    console.print(f"\n[bold]All Trials ({len(trials)})[/bold]")
+    trials_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    trials_table.add_column("#", justify="right")
+    trials_table.add_column("Config")
+    trials_table.add_column("Score", justify="right")
+    trials_table.add_column("Status")
+
+    for i, trial in enumerate(trials[:max_display], 1):
+        config_str = str(trial.config)
+        if len(config_str) > 40:
+            config_str = config_str[:37] + "..."
+        primary_score = trial.metrics.get("overall") or trial.metrics.get("score")
+        score_str = f"{primary_score:.4f}" if primary_score is not None else "N/A"
+        status = getattr(trial, "status", "completed")
+        trials_table.add_row(str(i), config_str, score_str, status)
+
+    console.print(trials_table)
+    if len(trials) > max_display:
+        console.print(f"[dim]... and {len(trials) - max_display} more trials[/dim]")
+
+
+def _build_comparison_summary_table(r1: Any, r2: Any, name1: str, name2: str) -> Table:
+    """Build the main comparison summary table."""
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Metric", style="bold")
+    table.add_column(name1, style="cyan")
+    table.add_column(name2, style="green")
+    table.add_column("Δ", justify="right")
+
+    # Best score
+    score_diff = r2.best_score - r1.best_score
+    table.add_row(
+        _MSG_BEST_SCORE,
+        f"{r1.best_score:.4f}",
+        f"{r2.best_score:.4f}",
+        _format_diff_colored(score_diff),
+    )
+
+    # Trials count
+    r1_total, r2_total = len(r1.trials), len(r2.trials)
+    table.add_row(
+        _MSG_TOTAL_TRIALS, str(r1_total), str(r2_total), str(r2_total - r1_total)
+    )
+
+    # Success rate
+    sr1 = len(r1.successful_trials or []) / max(r1_total, 1)
+    sr2 = len(r2.successful_trials or []) / max(r2_total, 1)
+    table.add_row(
+        _MSG_SUCCESS_RATE,
+        f"{sr1:.1%}",
+        f"{sr2:.1%}",
+        _format_diff_colored(sr2 - sr1, ".1%"),
+    )
+
+    return table
+
+
+def _build_config_comparison_table(
+    config1: dict[str, Any] | None,
+    config2: dict[str, Any] | None,
+    name1: str,
+    name2: str,
+) -> Table:
+    """Build a config comparison table highlighting differences."""
+    config_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    config_table.add_column("Parameter")
+    config_table.add_column(name1)
+    config_table.add_column(name2)
+
+    all_keys = set((config1 or {}).keys()) | set((config2 or {}).keys())
+    for key in sorted(all_keys):
+        v1 = (config1 or {}).get(key, "-")
+        v2 = (config2 or {}).get(key, "-")
+        style = _STYLE_HIGHLIGHT if v1 != v2 else ""
+        config_table.add_row(key, f"{style}{v1}[/]", f"{style}{v2}[/]")
+
+    return config_table
+
+
+def _build_metrics_comparison_table(
+    metrics1: dict[str, Any] | None,
+    metrics2: dict[str, Any] | None,
+    name1: str,
+    name2: str,
+) -> Table | None:
+    """Build a metrics comparison table, or None if no metrics."""
+    if not metrics1 and not metrics2:
+        return None
+
+    metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    metrics_table.add_column("Metric")
+    metrics_table.add_column(name1, justify="right")
+    metrics_table.add_column(name2, justify="right")
+    metrics_table.add_column("Δ", justify="right")
+
+    all_metrics = set((metrics1 or {}).keys()) | set((metrics2 or {}).keys())
+    for metric in sorted(all_metrics):
+        if metric.startswith("_"):
+            continue
+        m1 = (metrics1 or {}).get(metric)
+        m2 = (metrics2 or {}).get(metric)
+        diff_str = "-"
+        if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
+            diff_str = f"{m2 - m1:+.4f}"
+        metrics_table.add_row(
+            metric,
+            _format_metric_value(m1) if m1 else "-",
+            _format_metric_value(m2) if m2 else "-",
+            diff_str,
+        )
+
+    return metrics_table
+
+
+def _parse_weights(weights_str: str) -> dict[str, float] | None:
+    """Parse and normalize weight string like 'accuracy=0.7,cost=0.3'.
+
+    Returns normalized weights dict or None if parsing fails.
+    """
+    try:
+        weight_dict: dict[str, float] = {}
+        for pair in weights_str.split(","):
+            key, value = pair.strip().split("=")
+            weight_dict[key.strip()] = float(value.strip())
+
+        # Normalize weights to sum to 1
+        total = sum(weight_dict.values())
+        if total > 0:
+            weight_dict = {k: v / total for k, v in weight_dict.items()}
+        return weight_dict
+    except ValueError:
+        return None
+
+
+def _calculate_trial_score(trial: Any, weight_dict: dict[str, float]) -> float | None:
+    """Calculate weighted score for a trial. Returns None if no valid metrics."""
+    if not trial.metrics:
+        return None
+
+    score = 0.0
+    has_metrics = False
+    for metric, weight in weight_dict.items():
+        if metric in trial.metrics:
+            metric_value = trial.metrics[metric]
+            if isinstance(metric_value, (int, float)):
+                score += weight * metric_value
+                has_metrics = True
+
+    return score if has_metrics else None
+
+
+def _build_rerank_table(
+    scored_trials: list[tuple[float, Any]], top_n: int = 5
+) -> Table:
+    """Build a table showing top re-ranked configurations."""
+    table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
+    table.add_column("Rank", justify="right")
+    table.add_column("New Score", justify="right")
+    table.add_column("Original Score", justify="right")
+    table.add_column("Config")
+
+    for i, (new_score, trial) in enumerate(scored_trials[:top_n], 1):
+        config_str = json.dumps(trial.config)
+        if len(config_str) > 50:
+            config_str = config_str[:47] + "..."
+        orig_score_val = trial.metrics.get("overall") or trial.metrics.get("score")
+        orig_score = f"{orig_score_val:.4f}" if orig_score_val is not None else "N/A"
+        table.add_row(str(i), f"{new_score:.4f}", orig_score, config_str)
+
+    return table
+
+
 @cli.group()
 def results() -> None:
     """Browse, compare, and manage optimization results.
@@ -653,9 +902,9 @@ def results_list(storage_dir: str) -> None:
     table.add_column("Name", style="cyan", no_wrap=True, min_width=20)
     table.add_column("Function", style="green", no_wrap=True, min_width=15)
     table.add_column("Algorithm", no_wrap=True)
-    table.add_column("Best Score", justify="right")
+    table.add_column(_MSG_BEST_SCORE, justify="right")
     table.add_column("Trials", justify="right")
-    table.add_column("Success Rate", justify="right")
+    table.add_column(_MSG_SUCCESS_RATE, justify="right")
     table.add_column("Date", style="dim")
 
     for result_info in all_results:
@@ -691,83 +940,16 @@ def results_show(result_name: str, storage_dir: str, trials: bool) -> None:
         persistence = PersistenceManager(storage_dir)
         result = persistence.load_result(result_name)
 
-        # Summary section
-        console.print("[bold]Summary[/bold]")
-        summary_table = Table(show_header=False, box=None)
-        summary_table.add_column("Key", style="dim")
-        summary_table.add_column("Value")
+        _print_result_summary(result)
+        _print_config_json(result.best_config)
+        _print_metrics_table(result.best_metrics)
 
-        summary_table.add_row("Function", getattr(result, "function_name", "unknown"))
-        summary_table.add_row("Algorithm", getattr(result, "algorithm", "unknown"))
-        summary_table.add_row("Total Trials", str(len(result.trials)))
-        summary_table.add_row(
-            "Successful Trials", str(len(result.successful_trials or []))
-        )
-        summary_table.add_row("Best Score", f"{result.best_score:.4f}")
-        summary_table.add_row("Stop Reason", result.stop_reason or "unknown")
-        if hasattr(result, "duration") and result.duration:
-            summary_table.add_row("Duration", f"{result.duration:.1f}s")
-
-        console.print(summary_table)
-
-        # Best config section
-        console.print("\n[bold]Best Configuration[/bold]")
-        if result.best_config:
-            config_syntax = Syntax(
-                json.dumps(result.best_config, indent=2),
-                "json",
-                theme="monokai",
-            )
-            console.print(config_syntax)
-        else:
-            console.print("[yellow]No best configuration found[/yellow]")
-
-        # Metrics section
-        if result.best_metrics:
-            console.print("\n[bold]Best Metrics[/bold]")
-            metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-            metrics_table.add_column("Metric")
-            metrics_table.add_column("Value", justify="right")
-            for metric, value in result.best_metrics.items():
-                if not metric.startswith("_"):
-                    if isinstance(value, float):
-                        metrics_table.add_row(metric, f"{value:.4f}")
-                    else:
-                        metrics_table.add_row(metric, str(value))
-            console.print(metrics_table)
-
-        # Trials section (optional)
-        if trials and result.trials:
-            console.print(f"\n[bold]All Trials ({len(result.trials)})[/bold]")
-            trials_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-            trials_table.add_column("#", justify="right")
-            trials_table.add_column("Config")
-            trials_table.add_column("Score", justify="right")
-            trials_table.add_column("Status")
-
-            for i, trial in enumerate(result.trials[:50], 1):  # Limit to 50
-                config_str = str(trial.config)
-                if len(config_str) > 40:
-                    config_str = config_str[:37] + "..."
-                # Get primary objective score from metrics
-                primary_score = trial.metrics.get("overall") or trial.metrics.get(
-                    "score"
-                )
-                score_str = (
-                    f"{primary_score:.4f}" if primary_score is not None else "N/A"
-                )
-                status = getattr(trial, "status", "completed")
-                trials_table.add_row(str(i), config_str, score_str, status)
-
-            console.print(trials_table)
-            if len(result.trials) > 50:
-                console.print(
-                    f"[dim]... and {len(result.trials) - 50} more trials[/dim]"
-                )
+        if trials:
+            _print_trials_table(result.trials)
 
     except FileNotFoundError:
         console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results list' to see available results")
+        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
         console.print(f"[red]Error loading result: {e}[/red]")
 
@@ -791,110 +973,28 @@ def results_compare(result1: str, result2: str, storage_dir: str) -> None:
         r1 = persistence.load_result(result1)
         r2 = persistence.load_result(result2)
 
-        # Comparison table
-        table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-        table.add_column("Metric", style="bold")
-        table.add_column(result1, style="cyan")
-        table.add_column(result2, style="green")
-        table.add_column("Δ", justify="right")
-
-        # Best score comparison
-        score_diff = r2.best_score - r1.best_score
-        if score_diff > 0:
-            score_diff_str = f"[green]+{score_diff:.4f}[/]"
-        elif score_diff < 0:
-            score_diff_str = f"[red]{score_diff:.4f}[/]"
-        else:
-            score_diff_str = f"{score_diff:+.4f}"
-        table.add_row(
-            "Best Score",
-            f"{r1.best_score:.4f}",
-            f"{r2.best_score:.4f}",
-            score_diff_str,
-        )
-
-        # Trials comparison
-        r1_total = len(r1.trials)
-        r2_total = len(r2.trials)
-        table.add_row(
-            "Total Trials",
-            str(r1_total),
-            str(r2_total),
-            str(r2_total - r1_total),
-        )
-
-        # Success rate comparison
-        sr1 = len(r1.successful_trials or []) / max(r1_total, 1)
-        sr2 = len(r2.successful_trials or []) / max(r2_total, 1)
-        sr_diff = sr2 - sr1
-        if sr_diff > 0:
-            sr_diff_str = f"[green]+{sr_diff:.1%}[/]"
-        elif sr_diff < 0:
-            sr_diff_str = f"[red]{sr_diff:.1%}[/]"
-        else:
-            sr_diff_str = f"{sr_diff:+.1%}"
-        table.add_row(
-            "Success Rate",
-            f"{sr1:.1%}",
-            f"{sr2:.1%}",
-            sr_diff_str,
-        )
-
-        console.print(table)
+        # Summary comparison table
+        summary_table = _build_comparison_summary_table(r1, r2, result1, result2)
+        console.print(summary_table)
 
         # Config comparison
         console.print("\n[bold]Best Configurations[/bold]")
-        config_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-        config_table.add_column("Parameter")
-        config_table.add_column(result1)
-        config_table.add_column(result2)
-
-        all_keys = set((r1.best_config or {}).keys()) | set(
-            (r2.best_config or {}).keys()
+        config_table = _build_config_comparison_table(
+            r1.best_config, r2.best_config, result1, result2
         )
-        for key in sorted(all_keys):
-            v1 = (r1.best_config or {}).get(key, "-")
-            v2 = (r2.best_config or {}).get(key, "-")
-            style1 = "" if v1 == v2 else "[yellow]"
-            style2 = "" if v1 == v2 else "[yellow]"
-            config_table.add_row(key, f"{style1}{v1}[/]", f"{style2}{v2}[/]")
-
         console.print(config_table)
 
-        # Metrics comparison if available
-        if r1.best_metrics or r2.best_metrics:
+        # Metrics comparison
+        metrics_table = _build_metrics_comparison_table(
+            r1.best_metrics, r2.best_metrics, result1, result2
+        )
+        if metrics_table:
             console.print("\n[bold]Metrics Comparison[/bold]")
-            metrics_table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-            metrics_table.add_column("Metric")
-            metrics_table.add_column(result1, justify="right")
-            metrics_table.add_column(result2, justify="right")
-            metrics_table.add_column("Δ", justify="right")
-
-            all_metrics = set((r1.best_metrics or {}).keys()) | set(
-                (r2.best_metrics or {}).keys()
-            )
-            for metric in sorted(all_metrics):
-                if metric.startswith("_"):
-                    continue
-                m1 = (r1.best_metrics or {}).get(metric)
-                m2 = (r2.best_metrics or {}).get(metric)
-                if isinstance(m1, (int, float)) and isinstance(m2, (int, float)):
-                    diff = m2 - m1
-                    diff_str = f"{diff:+.4f}"
-                else:
-                    diff_str = "-"
-                metrics_table.add_row(
-                    metric,
-                    f"{m1:.4f}" if isinstance(m1, float) else str(m1 or "-"),
-                    f"{m2:.4f}" if isinstance(m2, float) else str(m2 or "-"),
-                    diff_str,
-                )
-
             console.print(metrics_table)
 
     except FileNotFoundError as e:
         console.print(f"[red]Result not found: {e}[/red]")
-        console.print("Use 'traigent results list' to see available results")
+        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
         console.print(f"[red]Error comparing results: {e}[/red]")
 
@@ -924,25 +1024,15 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
     )
 
     # Parse weights
-    try:
-        weight_dict: dict[str, float] = {}
-        for pair in weights.split(","):
-            key, value = pair.strip().split("=")
-            weight_dict[key.strip()] = float(value.strip())
-
-        # Normalize weights to sum to 1
-        total = sum(weight_dict.values())
-        if total > 0:
-            weight_dict = {k: v / total for k, v in weight_dict.items()}
-
-        console.print("[bold]Weights (normalized):[/bold]")
-        for k, v in weight_dict.items():
-            console.print(f"  {k}: {v:.2%}")
-
-    except ValueError as e:
-        console.print(f"[red]Invalid weights format: {e}[/red]")
+    weight_dict = _parse_weights(weights)
+    if weight_dict is None:
+        console.print("[red]Invalid weights format[/red]")
         console.print("Use format: --weights accuracy=0.7,cost=0.3")
         return
+
+    console.print("[bold]Weights (normalized):[/bold]")
+    for k, v in weight_dict.items():
+        console.print(f"  {k}: {v:.2%}")
 
     try:
         persistence = PersistenceManager(storage_dir)
@@ -952,26 +1042,12 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
             console.print("[yellow]No trials found in this result[/yellow]")
             return
 
-        # Re-score trials
-        scored_trials = []
-        for trial in result.trials:
-            if not trial.metrics:
-                continue
-
-            # Calculate weighted score
-            score = 0.0
-            metrics_used: list[str] = []
-            for metric, weight in weight_dict.items():
-                if metric in trial.metrics:
-                    # Assume higher is better; for cost/latency, user should use negative weight
-                    # or we detect and invert
-                    metric_value = trial.metrics[metric]
-                    if isinstance(metric_value, (int, float)):
-                        score += weight * metric_value
-                        metrics_used.append(metric)
-
-            if metrics_used:
-                scored_trials.append((score, trial))
+        # Re-score trials using helper
+        scored_trials = [
+            (score, trial)
+            for trial in result.trials
+            if (score := _calculate_trial_score(trial, weight_dict)) is not None
+        ]
 
         if not scored_trials:
             console.print(
@@ -983,26 +1059,9 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
         # Sort by new score (highest first)
         scored_trials.sort(key=lambda x: x[0], reverse=True)
 
-        # Show results
+        # Show results table
         console.print("\n[bold]Top 5 Configurations (re-ranked)[/bold]")
-        table = Table(show_header=True, header_style=_TABLE_HEADER_STYLE)
-        table.add_column("Rank", justify="right")
-        table.add_column("New Score", justify="right")
-        table.add_column("Original Score", justify="right")
-        table.add_column("Config")
-
-        for i, (new_score, trial) in enumerate(scored_trials[:5], 1):
-            config_str = json.dumps(trial.config)
-            if len(config_str) > 50:
-                config_str = config_str[:47] + "..."
-            # Get original score from metrics
-            orig_score_val = trial.metrics.get("overall") or trial.metrics.get("score")
-            orig_score = (
-                f"{orig_score_val:.4f}" if orig_score_val is not None else "N/A"
-            )
-            table.add_row(str(i), f"{new_score:.4f}", orig_score, config_str)
-
-        console.print(table)
+        console.print(_build_rerank_table(scored_trials))
 
         # Show new best config
         _, best_trial = scored_trials[0]
@@ -1022,7 +1081,7 @@ def results_rerank(result_name: str, weights: str, storage_dir: str) -> None:
 
     except FileNotFoundError:
         console.print(f"[red]Result '{result_name}' not found[/red]")
-        console.print("Use 'traigent results list' to see available results")
+        console.print(_MSG_RESULTS_LIST_HINT)
     except Exception as e:
         console.print(f"[red]Error re-ranking: {e}[/red]")
 
