@@ -216,7 +216,8 @@ _KNOWN_TVL_SECTIONS = frozenset(
         "constraints",
         "defaults",
         "metadata",
-        "environments",
+        "environment",  # Environment snapshot (single env)
+        "environments",  # Multi-environment definitions
         "env_snapshot",
         "evaluation_set",
         "promotion_policy",
@@ -230,13 +231,14 @@ _KNOWN_TVL_SECTIONS = frozenset(
 _SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
     "tvl": dict,
     "tvl_version": (str, int, float),
-    "tvars": dict,
+    "tvars": (list, dict),  # TVL 0.9 array or legacy dict format
     "exploration": dict,
     "objectives": (list, dict),
     "constraints": (list, dict),
     "defaults": dict,
     "metadata": dict,
-    "environments": dict,
+    "environment": dict,  # Environment snapshot
+    "environments": dict,  # Multi-environment definitions
     "env_snapshot": dict,
     "evaluation_set": dict,
     "promotion_policy": dict,
@@ -304,6 +306,8 @@ def validate_tvl_schema(
         tvars = data["tvars"]
         if isinstance(tvars, dict):
             issues.extend(_validate_tvars_structure(tvars))
+        elif isinstance(tvars, list):
+            issues.extend(_validate_tvars_list_structure(tvars))
 
     # Validate objectives structure if present
     if "objectives" in data:
@@ -330,7 +334,7 @@ def validate_tvl_schema(
 
 
 def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
-    """Validate structure of tvars section."""
+    """Validate structure of tvars section (legacy dict format)."""
     issues: list[str] = []
 
     for name, tvar_def in tvars.items():
@@ -356,6 +360,55 @@ def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
                         issues.append(
                             f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
                             f"Valid: {valid_types}"
+                        )
+            elif not isinstance(domain, (list, tuple)):
+                issues.append(
+                    f"TVAR '{name}' domain should be dict, list, or tuple, "
+                    f"got {type(domain).__name__}"
+                )
+
+    return issues
+
+
+def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
+    """Validate structure of tvars section (TVL 0.9 array format)."""
+    issues: list[str] = []
+
+    for idx, tvar_def in enumerate(tvars):
+        if not isinstance(tvar_def, dict):
+            issues.append(
+                f"TVAR at index {idx} must be a dict, got {type(tvar_def).__name__}"
+            )
+            continue
+
+        # Check for required 'name' field
+        name = tvar_def.get("name")
+        if not isinstance(name, str) or not name:
+            issues.append(f"TVAR at index {idx} missing required 'name' string")
+            name = f"<index {idx}>"  # Use placeholder for further validation
+
+        # Check for required 'type' field
+        tvar_type = tvar_def.get("type")
+        if not isinstance(tvar_type, str):
+            issues.append(f"TVAR '{name}' missing required 'type' string")
+        else:
+            valid_types = {"float", "int", "str", "bool", "categorical", "registry"}
+            if tvar_type.lower() not in valid_types:
+                issues.append(
+                    f"TVAR '{name}' has invalid type '{tvar_type}'. "
+                    f"Valid: {valid_types}"
+                )
+
+        # Validate domain structure if present
+        domain = tvar_def.get("domain")
+        if domain is not None:
+            if isinstance(domain, dict):
+                if "type" in domain:
+                    valid_domain_types = {"range", "choices", "registry"}
+                    if domain["type"] not in valid_domain_types:
+                        issues.append(
+                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
+                            f"Valid: {valid_domain_types}"
                         )
             elif not isinstance(domain, (list, tuple)):
                 issues.append(

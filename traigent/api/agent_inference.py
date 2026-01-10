@@ -220,13 +220,15 @@ def _assign_by_prefix(
     """Assign parameters to agents based on prefix matching.
 
     Modifies param_to_agent in place, only for parameters not already assigned.
+    Matches both 'prefix_*' patterns and exact 'prefix' matches.
     """
     for param_key in param_keys:
         if param_key in param_to_agent:
             continue  # Already assigned by higher priority source
 
         for prefix in prefixes:
-            if param_key.startswith(prefix + "_"):
+            # Match 'prefix_*' patterns OR exact 'prefix' match
+            if param_key.startswith(prefix + "_") or param_key == prefix:
                 param_to_agent[param_key] = prefix
                 break
 

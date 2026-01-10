@@ -269,6 +269,33 @@ def filter_by_signature(
     return result
 
 
+def _param_is_optional_extra(param: inspect.Parameter) -> bool:
+    """Check if a parameter can be safely ignored (has default or is variadic)."""
+    if param.kind in (
+        inspect.Parameter.VAR_POSITIONAL,
+        inspect.Parameter.VAR_KEYWORD,
+    ):
+        return True
+    return param.default is not inspect.Parameter.empty
+
+
+def _params_strictly_compatible(
+    sig_param: inspect.Parameter,
+    target_param: inspect.Parameter,
+) -> bool:
+    """Check strict compatibility between two parameters."""
+    if sig_param.kind != target_param.kind:
+        return False
+    # Check annotation compatibility (if both have annotations)
+    if (
+        target_param.annotation is not inspect.Parameter.empty
+        and sig_param.annotation is not inspect.Parameter.empty
+        and target_param.annotation != sig_param.annotation
+    ):
+        return False
+    return True
+
+
 def _signature_compatible(
     sig: inspect.Signature,
     target_params: list[tuple[str, inspect.Parameter]],
@@ -285,31 +312,20 @@ def _signature_compatible(
         True if compatible.
     """
     sig_params = dict(sig.parameters)
+    target_param_dict = dict(target_params)
 
+    # Check all target params exist in signature
     for name, target_param in target_params:
         if name not in sig_params:
             return False
+        if strict and not _params_strictly_compatible(sig_params[name], target_param):
+            return False
 
-        if strict:
-            # Check kind compatibility
-            sig_param = sig_params[name]
-            if sig_param.kind != target_param.kind:
-                return False
-
-            # Check annotation compatibility (if both have annotations)
-            if (
-                target_param.annotation is not inspect.Parameter.empty
-                and sig_param.annotation is not inspect.Parameter.empty
-            ):
-                if target_param.annotation != sig_param.annotation:
-                    return False
-
-    if strict:
-        # In strict mode, extra params without defaults are not allowed
-        for name, param in sig_params.items():
-            if name not in dict(target_params):
-                if param.default is inspect.Parameter.empty:
-                    return False
+    # Extra params without defaults are not allowed in either mode
+    # (they would cause invocation to fail with missing arguments)
+    for name, param in sig_params.items():
+        if name not in target_param_dict and not _param_is_optional_extra(param):
+            return False
 
     return True
 
