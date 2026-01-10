@@ -201,7 +201,7 @@ class AssemblyCodeLogicPuzzles(ProblemDefinition):
             llm = ChatOpenAI(
                 model=config.model,
                 temperature=config.temperature,
-                model_kwargs={"max_tokens": config.max_tokens},
+                max_tokens=config.max_tokens,
             )
 
             # Create prompt based on problem type

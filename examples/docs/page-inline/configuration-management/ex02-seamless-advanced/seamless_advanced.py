@@ -87,7 +87,7 @@ def intelligent_content_system(topic: str) -> str:
     analyzer = ChatOpenAI(
         model="gpt-3.5-turbo",  # Uses analyzer_model from optimization
         temperature=0.1,  # Uses analyzer_temp from optimization
-        model_kwargs={"max_tokens": 500},
+        max_tokens=500,
     )
     analysis_result = analyzer.invoke(f"Analyze content requirements for: {topic}")
     analysis = getattr(analysis_result, "content", str(analysis_result))
@@ -96,7 +96,7 @@ def intelligent_content_system(topic: str) -> str:
     generator = ChatOpenAI(
         model="gpt-4o",  # Uses generator_model from optimization
         temperature=0.7,  # Uses generator_temp from optimization
-        model_kwargs={"max_tokens": 2000},  # Uses max_context from optimization
+        max_tokens=2000,  # Uses max_context from optimization
     )
     content_result = generator.invoke(
         f"Based on this analysis: {analysis}\n\nCreate content about: {topic}"

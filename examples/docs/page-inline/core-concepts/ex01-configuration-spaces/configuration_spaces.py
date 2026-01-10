@@ -137,7 +137,7 @@ def intelligent_assistant(query: str) -> str:
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.7),
-        model_kwargs={"max_tokens": config.get("max_tokens", 200)},
+        max_tokens=config.get("max_tokens", 200),
         top_p=config.get("top_p", 0.9),
     )
 

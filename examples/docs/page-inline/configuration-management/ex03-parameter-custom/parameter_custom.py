@@ -110,7 +110,7 @@ def adaptive_chat_bot(user_message: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
 
     # Get appropriate system prompt

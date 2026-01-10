@@ -175,7 +175,7 @@ Category:""",
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.1),
-        model_kwargs={"max_tokens": config.get("max_tokens", 50)},
+        max_tokens=config.get("max_tokens", 50),
     )
 
     response = llm.invoke([HumanMessage(content=prompt)])

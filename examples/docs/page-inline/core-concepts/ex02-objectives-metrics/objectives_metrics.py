@@ -178,7 +178,7 @@ def balanced_support_bot(query: str) -> str:
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.5),
-        model_kwargs={"max_tokens": config.get("max_tokens", 200)},
+        max_tokens=config.get("max_tokens", 200),
     )
 
     prompt = f"As a helpful support agent, answer: {query}"

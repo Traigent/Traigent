@@ -279,7 +279,7 @@ class GeorgianCuisineTriviaQaProblem(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.3,
-                model_kwargs={"max_tokens": 150},
+                max_tokens=150,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -320,7 +320,7 @@ Be specific about regional variations and traditional preparations.""",
             llm = ChatOpenAI(
                 model="gpt-4o-mini",  # Will be overridden by Traigent
                 temperature=0.3,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 150},  # Will be overridden by Traigent
+                max_tokens=150,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

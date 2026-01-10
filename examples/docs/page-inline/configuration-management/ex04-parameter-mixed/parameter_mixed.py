@@ -128,7 +128,7 @@ Generate high-quality content based on the given topic and context."""
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": 800},  # Fixed parameter not optimized
+        max_tokens=800,  # Fixed parameter not optimized
     )
 
     # Prepare the user prompt
