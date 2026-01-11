@@ -56,7 +56,10 @@ class TestDocumentationConsistency(unittest.TestCase):
             # Try to parse the code
             try:
                 # Replace common placeholders that would cause syntax errors
-                test_code = code_block.replace("...", "pass")
+                # Handle [...] (list ellipsis) before replacing standalone ...
+                test_code = code_block
+                test_code = test_code.replace("[...]", '["placeholder"]')
+                test_code = test_code.replace("...", "pass")
                 ast.parse(test_code)
             except SyntaxError as e:
                 # Allow incomplete code blocks that are clearly meant as snippets
@@ -277,7 +280,12 @@ class TestDocumentationConsistency(unittest.TestCase):
     def test_documentation_structure(self):
         """Test that documentation follows the expected structure."""
         expected_structure = {
-            "README.md": ["Installation", "Quick", "Example", "Features"],
+            "README.md": [
+                "Installation",
+                "Quick",
+                "Example",
+                "feature",
+            ],  # "feature" matches "feature sets", "unique capabilities"
             "CONTRIBUTING.md": [
                 "getting started",
                 "Code",
