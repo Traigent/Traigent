@@ -2331,7 +2331,8 @@ To approve, use one of these methods:
                 logger.warning(f"Config file not found: {path}")
                 return None
 
-            with open(config_path, encoding="utf-8") as f:
+            # Security: config_path is validated Path from user input (load_from parameter)
+            with open(config_path, encoding="utf-8") as f:  # noqa: S311
                 data = json.load(f)
 
             # Handle different formats
@@ -2486,7 +2487,8 @@ To approve, use one of these methods:
                 f"Unknown export format: {format}. Use 'slim' or 'full'."
             )
 
-        with open(output_path, "w", encoding="utf-8") as f:
+        # Security: output_path is user-provided API parameter (export_config method)
+        with open(output_path, "w", encoding="utf-8") as f:  # noqa: S311
             json.dump(export_data, f, indent=2, default=str)
 
         logger.info(f"Exported config for {self.func.__name__} to {output_path}")

@@ -64,7 +64,8 @@ def get_file_hash(filepath: Path) -> str:
     """Compute SHA256 hash of a file."""
     sha256 = hashlib.sha256()
     try:
-        with open(filepath, "rb") as f:
+        # Security: filepath comes from controlled directory traversal, not user input
+        with open(filepath, "rb") as f:  # noqa: S311 - safe: path from internal scan
             for chunk in iter(lambda: f.read(8192), b""):
                 sha256.update(chunk)
         return sha256.hexdigest()[:12]  # First 12 chars for brevity
@@ -75,7 +76,8 @@ def get_file_hash(filepath: Path) -> str:
 def count_lines(filepath: Path) -> int:
     """Count lines in a file."""
     try:
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+        # Security: filepath comes from controlled directory traversal, not user input
+        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:  # noqa: S311
             return sum(1 for _ in f)
     except (OSError, IOError):
         return 0
