@@ -29,8 +29,12 @@ except ImportError:
 class TestREADMEExamples:
     """Test all examples from README.md."""
 
+    project_root: Path
+    readme_path: Path
+    examples: list[str]
+
     @classmethod
-    def setup_class(cls):
+    def setup_class(cls) -> None:
         """Set up test environment."""
         cls.project_root = Path(__file__).parent.parent.parent
         cls.readme_path = cls.project_root / "README.md"
@@ -322,6 +326,7 @@ if 'customer_support_agent' in locals():
             "numpy",
             "pandas",
             "playground",  # Local playground module - optional for examples
+            "litellm",  # LiteLLM for multi-provider support
         }
 
         all_imports = set()

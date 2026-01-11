@@ -3,6 +3,7 @@
 These tests verify that the decorator properly integrates with privacy mode
 and that no sensitive data leaks during optimization.
 """
+# ruff: noqa: S101 - asserts are standard in test files
 
 import asyncio
 import json
@@ -129,6 +130,7 @@ class TestPrivacyDecoratorE2E:
                 },
                 execution_mode="hybrid",
                 privacy_enabled=True,
+                max_trials=10,  # Limit trials to avoid config space exhaustion
             )
             async def process_medical_query(**kwargs):
                 """

@@ -53,7 +53,8 @@ def validate_tvl_files(
             # First validate schema (early validation)
             import yaml
 
-            with open(file_path, encoding="utf-8") as f:
+            # Security: file_path is from CLI args for TVL validation (expected behavior)
+            with open(file_path, encoding="utf-8") as f:  # noqa: S311
                 raw_data = yaml.safe_load(f)
 
             if raw_data is None:

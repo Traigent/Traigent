@@ -261,7 +261,8 @@ def call_llm_openai(prompt: str, model: str, temperature: float) -> str:
             headers=headers,
             method="POST",
         )
-        with urlopen(request, timeout=60) as response:
+        # Security: URL is from OPENAI_API_BASE env var, trusted LLM provider endpoint
+        with urlopen(request, timeout=60) as response:  # noqa: S310
             result = json.loads(response.read().decode("utf-8"))
             return result.get("choices", [{}])[0].get("message", {}).get("content", "")
     except HTTPError as e:
