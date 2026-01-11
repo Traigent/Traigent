@@ -321,9 +321,9 @@ def _coerce_config_dict(
 ) -> dict[str, Any]:
     """Normalize config objects to a plain dict and raise on invalid types."""
     if isinstance(config, TraigentConfig):
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
     if isinstance(config, dict):
-        return dict(config)
+        return cast(dict[str, Any], dict(config))
 
     raise OptimizationStateError(
         f"{source} config has invalid type: {type(config).__name__}. "
@@ -382,7 +382,7 @@ def get_config() -> dict[str, Any]:
             expected_states=["CONFIG_APPLIED", "UNOPTIMIZED"],
         )
     if isinstance(context_config, TraigentConfig):
-        config_dict = context_config.to_dict()
+        config_dict = cast(dict[str, Any], context_config.to_dict())
         # Check if config has any meaningful values (not just defaults)
         if any(v is not None for k, v in config_dict.items() if k != "execution_mode"):
             return config_dict
@@ -491,9 +491,9 @@ def get_current_config() -> dict[str, Any]:
 
     # Convert TraigentConfig to dict if needed
     if isinstance(config, TraigentConfig):
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
     if isinstance(config, dict):
-        return dict(config)
+        return cast(dict[str, Any], dict(config))
 
     # Fallback for unexpected config types
     # This branch handles edge cases where config is neither TraigentConfig nor dict

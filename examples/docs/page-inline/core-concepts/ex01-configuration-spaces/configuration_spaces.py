@@ -192,8 +192,10 @@ def demonstrate_configuration_types() -> None:
 
     # Calculate total combinations
     total_combinations = 1
-    for values in mixed_config.values():
-        total_combinations *= len(values)
+    for key in mixed_config:
+        values = mixed_config[key]
+        if isinstance(values, (list, tuple)):
+            total_combinations *= len(values)
     print(f"Total possible configurations: {total_combinations:,}")
 
 
