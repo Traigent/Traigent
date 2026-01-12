@@ -1,3 +1,0 @@
-{"input": {"text": "Invoice: Vendor Acme Corp; Total $300.00 due."}, "output": {"vendor": "Acme Corp", "amount": 300}}
-{"input": {"text": "Receipt from Globex for $125.50 on 2024-07-01."}, "output": {"vendor": "Globex", "amount": 125.5}}
-{"input": {"text": "MegaCo billed: USD 89"}, "output": {"vendor": "MegaCo", "amount": 89}}
