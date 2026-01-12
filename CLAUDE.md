@@ -301,3 +301,10 @@ When reporting experimental results:
 - Always create a feature/dev branch for changes
 - Use pull requests to merge into main
 - If on main, checkout a new branch before committing
+
+### 11. Never commit or push without explicit permission
+- NEVER run `git commit` or `git push` unless the user explicitly asks
+- Explicit requests include: "commit", "push", "commit and push", "please commit"
+- NOT explicit: completing a task, user saying "do it", user approving changes
+- After making code changes, WAIT for the user to request a commit
+- This applies even if the changes are complete and tested
