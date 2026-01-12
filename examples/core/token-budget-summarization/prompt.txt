@@ -1,4 +1,0 @@
-From the transcript, output exactly one keyword that best summarizes the focus:
-- budget
-- timeline
-- decision

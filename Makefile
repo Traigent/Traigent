@@ -16,8 +16,7 @@ COVERAGE := $(PYTHON) -m coverage
 # Directories
 SRC_DIR := traigent
 TEST_DIR := tests
-EXAMPLES_DIR := examples
-PLAYGROUND_DIR := playground
+# NOTE: examples, playground, paper_experiments moved to TraigentDemo
 
 help:  ## Show this help message
 	@echo "Traigent SDK Development Commands"
@@ -87,9 +86,9 @@ lint:  ## Run all linters (ruff, mypy, bandit)
 
 format:  ## Format code with black and isort
 	@echo "Formatting with Black..."
-	$(BLACK) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(BLACK) $(SRC_DIR) $(TEST_DIR)
 	@echo "Sorting imports with isort..."
-	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR) --profile black
+	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) --profile black
 
 security:  ## Run security checks
 	@echo "Running Bandit security scan..."
@@ -115,7 +114,7 @@ optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint
-	$(BLACK) --check $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(BLACK) --check $(SRC_DIR) $(TEST_DIR)
 	$(MAKE) test-coverage
 	$(MAKE) security
 
@@ -136,8 +135,9 @@ update-deps:  ## Update all dependencies to latest versions
 	$(PIP) install --upgrade pip setuptools wheel
 	$(PIP) install --upgrade -e ".[dev,integrations,bayesian,docs]"
 
-dev-server:  ## Run the Streamlit playground UI
-	streamlit run playground/traigent_control_center.py
+dev-server:  ## Run the Streamlit playground UI (moved to TraigentDemo)
+	@echo "NOTE: Playground has been moved to TraigentDemo project"
+	@echo "Run: cd ../TraigentDemo && streamlit run playground/traigent_control_center.py"
 
 docs:  ## Build documentation
 	cd docs && $(MAKE) html

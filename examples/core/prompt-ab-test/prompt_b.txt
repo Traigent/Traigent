@@ -1,4 +1,0 @@
-Choose the best option and reply with only the phrase:
-- Artificial Intelligence
-- Uses data and algorithms
-- Retrieval Augmented Generation

@@ -3,6 +3,7 @@
 These tests verify that the decorator properly integrates with privacy mode
 and that no sensitive data leaks during optimization.
 """
+
 # ruff: noqa: S101 - asserts are standard in test files
 
 import asyncio
