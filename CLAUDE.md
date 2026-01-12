@@ -10,6 +10,34 @@ Traigent is a Python SDK for zero-code LLM optimization using decorators (`@trai
 - **Execution Modes**: `edge_analytics` (local + analytics), `mock` (testing), `cloud` (production).
 - **Security**: `traigent/security/` handles JWT validation and encryption. **Never bypass auth in production code.**
 
+## 🚨 CRITICAL: Pre-Edit Checklist (READ BEFORE WRITING ANY CODE)
+
+Before writing ANY value in code, STOP and ask:
+- [ ] Is this value already defined as a constant somewhere? → Use it
+- [ ] If not, should it be a constant? (YES if used in prints/logs/multiple places)
+- [ ] Am I hardcoding something that should reference a variable? → NEVER do this
+
+**Constants First Rule**: When adding a new configurable value, create the constant in config.py FIRST, then use it everywhere. Never write a literal value "temporarily" - it's never temporary.
+
+```python
+# ❌ BAD - hardcoding then "planning to fix later"
+print(f"Max trials: 10")  # WRONG - even temporarily
+
+# ❌ BAD - hardcoding in multiple places
+max_trials=10,  # in decorator
+TqdmProgressCallback(total_trials=10)  # in run_poc.py
+print(f"Max trials: 10")  # in print statement
+
+# ✅ GOOD - create constant FIRST, then use it everywhere
+# Step 1: Add to config.py
+MAX_TRIALS = 10
+
+# Step 2: Use the constant everywhere
+max_trials=MAX_TRIALS,
+TqdmProgressCallback(total_trials=MAX_TRIALS)
+print(f"Max trials: {MAX_TRIALS}")
+```
+
 ## 🛠️ Development Workflow
 - **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
 - **Testing**: `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
@@ -202,10 +230,15 @@ When reporting experimental results:
 - **After the run**: Inform about issues/improvements, but WAIT for user to explicitly initiate changes
 - Key shift: **I inform, you initiate.** Modifications require explicit user initiation.
 
-### 2. No hardcoded values in print statements
+### 2. 🚨 CRITICAL: No hardcoded values in print statements
 - All printed configuration info MUST come from actual variables
+- This applies to ALL literals: strings, numbers, lists - EVERYTHING
 - BAD: `print("Models: gpt-3.5-turbo, gpt-4o-mini")`
+- BAD: `print(f"Max trials: 10")`  # Number literals are ALSO hardcoding!
+- BAD: `print(f"Algorithm: optuna")`  # String literals are hardcoding!
 - GOOD: `print(f"Models: {', '.join(config_space['model'])}")`
+- GOOD: `print(f"Max trials: {MAX_TRIALS}")`
+- GOOD: `print(f"Algorithm: {OPTIMIZATION_ALGORITHM}")`
 
 ### 3. Don't change approved formats
 - Once a format/output is tested and approved, DO NOT modify it
@@ -218,10 +251,27 @@ When reporting experimental results:
 - Confirm cost limits are set correctly
 - Do NOT make last-minute code changes before expensive runs
 
-### 5. Single source of truth
-- Configuration values should be defined ONCE
-- All references (prints, logs, docs) must read from that source
-- Never duplicate configuration values as strings elsewhere
+### 5. 🚨 CRITICAL: Single source of truth
+- Configuration values should be defined ONCE in config.py
+- All references (prints, logs, docs, decorators, callbacks) must read from that source
+- Never duplicate configuration values as strings/numbers elsewhere
+- **"Constants First" workflow**:
+  1. FIRST: Add constant to config.py
+  2. THEN: Import and use it everywhere
+  3. NEVER: Write a literal value "temporarily" - it's never temporary
+- Example violation (what I did wrong):
+  ```python
+  # ❌ I wrote this in 3 different places:
+  max_trials=10,  # text2sql_agent.py
+  TqdmProgressCallback(total_trials=10)  # run_poc.py
+  print(f"Max trials: 10")  # run_poc.py
+
+  # ✅ Should have been:
+  MAX_TRIALS = 10  # config.py (define ONCE)
+  max_trials=MAX_TRIALS,  # use constant
+  TqdmProgressCallback(total_trials=MAX_TRIALS)  # use constant
+  print(f"Max trials: {MAX_TRIALS}")  # use constant
+  ```
 
 ### 6. Test runs must be representative
 - Test runs should use the same code path as production runs

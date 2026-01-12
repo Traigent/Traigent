@@ -1698,7 +1698,7 @@ class OptimizedFunction:
 
         # Phase 6: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
-        if max_trials and algorithm == "random":
+        if max_trials is not None:
             optimizer_kwargs["max_trials"] = max_trials
 
         # Apply mock config overrides if present
