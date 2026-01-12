@@ -1,6 +1,0 @@
-Respond with exactly one of the following options:
-- Artificial Intelligence
-- Uses data and algorithms
-- Retrieval Augmented Generation
-- A list of steps
-- A private key

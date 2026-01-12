@@ -1,4 +1,0 @@
-Classify the sentiment. Respond with exactly one word:
-- positive
-- negative
-- neutral

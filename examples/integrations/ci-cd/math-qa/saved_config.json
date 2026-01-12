@@ -1,6 +1,0 @@
-{
-  "model": "gpt-3.5-turbo",
-  "temperature": 0.1,
-  "prompt_style": "direct",
-  "max_tokens": 50
-}
