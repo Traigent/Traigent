@@ -171,16 +171,16 @@ Get updates (and a Cloud API key when available) at <https://traigent.ai/>.
 ## ⚡ Quick Reference
 
 ```python
-	@traigent.optimize(
-	    configuration_space={"model": [...], "temperature": [...]},
-	    eval_dataset="path/to/data.jsonl",
-	    objectives=["accuracy", "cost"],
-	    scoring_function=my_evaluator,  # Optional custom accuracy metric
-	    # execution_mode defaults to "edge_analytics" (local)
-	    # execution_mode="cloud",  # Not yet supported (raises NotYetSupported)
-	    cost_limit=2.0,
-	)
-	```
+@traigent.optimize(
+    configuration_space={"model": [...], "temperature": [...]},
+    eval_dataset="path/to/data.jsonl",
+    objectives=["accuracy", "cost"],
+    scoring_function=my_evaluator,  # Optional custom accuracy metric
+    # execution_mode defaults to "edge_analytics" (local)
+    # execution_mode="cloud",  # Not yet supported (raises NotYetSupported)
+    cost_limit=2.0,
+)
+```
 
 ```python
 results = await agent.optimize(algorithm="bayesian", max_trials=50)
