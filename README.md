@@ -149,7 +149,9 @@ Flow example: `User -> Router Agent -> Specialized Agent -> Response`
 
 ## ☁️ Traigent Cloud
 
-The SDK runs locally. A Traigent Cloud API key unlocks advanced capabilities:
+The SDK executes your code locally. By default Traigent runs in `execution_mode="cloud"`: it will try to connect to Traigent Cloud for advanced insights. If no `TRAIGENT_API_KEY` is configured (or cloud is unavailable), Traigent falls back to local-only execution and prints a notice.
+
+A Traigent Cloud API key unlocks advanced capabilities:
 
 - AI Planner: natural language to agent, benchmark, and measure generation; template configs and draft iteration.
 - Advanced Insights: trade-off analysis (up to 4 measures), correlations, trend analysis, robustness scoring, Pareto frontier, log-scale normalization.
@@ -158,7 +160,7 @@ The SDK runs locally. A Traigent Cloud API key unlocks advanced capabilities:
 - Rate Limiting and Usage: real-time monitoring, alerts before limits, history, admin overrides.
 - Analytics Dashboard: system health monitoring, performance trend sparklines, model performance explorer.
 
-Run locally today with `execution_mode="edge_analytics"`.
+Force local-only runs with `execution_mode="edge_analytics"` (or `TRAIGENT_OFFLINE_MODE=true`).
 Get a Cloud API key at <https://traigent.ai/>.
 
 ---
@@ -171,7 +173,8 @@ Get a Cloud API key at <https://traigent.ai/>.
     eval_dataset="path/to/data.jsonl",
     objectives=["accuracy", "cost"],
     scoring_function=my_evaluator,  # Optional custom accuracy metric
-    execution_mode="edge_analytics",
+    # execution_mode defaults to "cloud" (falls back locally if TRAIGENT_API_KEY is unset)
+    # execution_mode="edge_analytics",  # Force local-only runs
     cost_limit=2.0,
 )
 ```
@@ -217,13 +220,13 @@ See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ## 🌐 Execution Modes
 
-Traigent supports local execution with cloud modes planned:
+Traigent executes your code locally in all modes; `execution_mode` controls whether Traigent Cloud integration is used for session tracking and insights.
 
-| Mode | Status | Privacy | Algorithm | Best For |
-| ---- | ------ | ------- | --------- | -------- |
-| **Local** (`edge_analytics`) | Available | Complete | Random/Grid/Bayesian | All use cases |
-| **Cloud** | Coming Soon | Metadata | Bayesian | Production, teams |
-| **Hybrid** | Coming Soon | Execution local | Bayesian | Balanced approach |
+| Mode | Notes |
+| ---- | ----- |
+| **Cloud** (`cloud`, default) | Uses Traigent Cloud for insights when available; falls back to local-only if no `TRAIGENT_API_KEY` or cloud is unavailable |
+| **Local** (`edge_analytics`) | Local-only runs (no cloud attempts) |
+| **Hybrid** (`hybrid` / legacy `privacy`) | Local execution with privacy toggles; cloud insights when available |
 
 ---
 
