@@ -108,7 +108,11 @@ def my_agent(query: str) -> str:
 
 ## 🔒 Execution Model
 
-Traigent executes your code locally. By default, `execution_mode="cloud"` will try to connect to Traigent Cloud for enhanced insights; if no `TRAIGENT_API_KEY` is configured (or cloud is unavailable), Traigent falls back to local-only execution and prints a notice. Use `execution_mode="edge_analytics"` (or `TRAIGENT_OFFLINE_MODE=true`) to force local-only runs.
+Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local).
+
+`execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported in this build; they will raise `NotYetSupported` when optimization runs.
+
+To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
 ---
 
