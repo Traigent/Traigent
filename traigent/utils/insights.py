@@ -37,11 +37,12 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         - parameter_insights: Analysis of parameter importance
         - recommendations: Actionable recommendations
 
-    Example:
-        >>> results = my_function.optimize()
-        >>> insights = traigent.get_optimization_insights(results)
-        >>> print(f"Best model: {insights['top_configurations'][0]['config']['model']}")
-        >>> print(f"Performance improvement: {insights['performance_summary']['improvement']:.1%}")
+    Example::
+
+        results = my_function.optimize()
+        insights = traigent.get_optimization_insights(results)
+        print(f"Best model: {insights['top_configurations'][0]['config']['model']}")
+        print(f"Performance improvement: {insights['performance_summary']['improvement']:.1%}")
     """
     if not results or not results.trials:
         return {

@@ -100,8 +100,8 @@ class TraigentConfig:
         ...     temperature=0.7,
         ...     max_tokens=1000
         ... )
-        >>> print(config.model)
-        gpt-4
+        >>> config.model
+        'GPT-4o'
     """
 
     # Core LLM parameters
@@ -467,7 +467,6 @@ class TraigentConfig:
             **kwargs,
         )
 
-    @classmethod
     @classmethod
     def from_environment(cls) -> TraigentConfig:
         """Create configuration from environment variables.

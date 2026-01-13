@@ -1,9 +1,0 @@
-{"text": "I loved it", "label": "positive"}
-{"text": "Amazing and delightful", "label": "positive"}
-{"text": "This was great", "label": "positive"}
-{"text": "I hated it", "label": "negative"}
-{"text": "Terrible experience", "label": "negative"}
-{"text": "Really bad", "label": "negative"}
-{"text": "It was fine", "label": "neutral"}
-{"text": "Average overall", "label": "neutral"}
-{"text": "Okay", "label": "neutral"}

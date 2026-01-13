@@ -28,13 +28,13 @@ class StreamingInvoker(LocalInvoker):
     Functions must return an async iterator or generator to use streaming.
 
     Example:
-        >>> invoker = StreamingInvoker(timeout=60.0)
-        >>> async for chunk in invoker.invoke_streaming(llm_func, config, input_data):
-        ...     print(chunk.content, end="")
+        >>> invoker = StreamingInvoker(timeout=60.0)  # doctest: +SKIP
+        >>> async for chunk in invoker.invoke_streaming(llm_func, config, input_data):  # doctest: +SKIP
+        ...     print(chunk.content, end="")  # doctest: +SKIP
 
         >>> # Or collect all chunks into a result
-        >>> result = await invoker.invoke_streaming_to_result(llm_func, config, input_data)
-        >>> print(result.accumulated_content)
+        >>> result = await invoker.invoke_streaming_to_result(llm_func, config, input_data)  # doctest: +SKIP
+        >>> print(result.accumulated_content)  # doctest: +SKIP
     """
 
     def __init__(

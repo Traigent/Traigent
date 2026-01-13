@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
+    from traigent.api.config_space import ConfigSpace
     from traigent.api.constraints import BoolExpr, Constraint
 
 from pydantic import BaseModel, ConfigDict
@@ -59,6 +60,7 @@ from traigent.api.parameter_ranges import (
     is_inline_param_definition,
     normalize_configuration_space,
 )
+from traigent.api.types import AgentDefinition
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
@@ -109,7 +111,9 @@ class InjectionOptions(BaseModel):
 
     injection_mode: str | InjectionMode = InjectionMode.CONTEXT
     config_param: str | None = None
-    auto_override_frameworks: bool = True
+    # Default to False - requires traigent-integrations plugin for framework overrides
+    # Set to True explicitly when using framework integrations
+    auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
     allow_parallel_attribute: bool = False
 
@@ -268,7 +272,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "tvl": None,
     "injection_mode": InjectionMode.CONTEXT,
     "config_param": None,
-    "auto_override_frameworks": True,
+    "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
     "allow_parallel_attribute": False,
     "execution_mode": "edge_analytics",
@@ -287,6 +291,17 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "execution": None,
     "mock": None,
     "max_trials": 50,
+    # Early stopping parameters
+    "plateau_window": None,  # Stop if no improvement for N trials
+    "plateau_epsilon": None,  # Improvement threshold for plateau detection
+    # Multi-agent configuration
+    "agents": None,  # Explicit agent definitions
+    "agent_prefixes": None,  # Prefix-based agent inference
+    "agent_measures": None,  # Agent-to-measures mapping
+    "global_measures": None,  # Global (non-agent) measures
+    # Config persistence (Phase 1 of optimization-persistency feature)
+    "auto_load_best": False,  # Auto-load best config on decoration
+    "load_from": None,  # Explicit path to load config from
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -340,6 +355,14 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None
+    agent_prefixes: list[str] | None = None
+    agent_measures: dict[str, list[str]] | None = None
+    global_measures: list[str] | None = None
+    # Config persistence
+    auto_load_best: bool | None = None
+    load_from: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -398,6 +421,12 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("mock", self.mock),
+            ("agents", self.agents),
+            ("agent_prefixes", self.agent_prefixes),
+            ("agent_measures", self.agent_measures),
+            ("global_measures", self.global_measures),
+            ("auto_load_best", self.auto_load_best),
+            ("load_from", self.load_from),
         ]
 
 
@@ -957,7 +986,7 @@ def _process_runtime_overrides(
 
 
 def _process_config_space_constraints(
-    configuration_space: dict[str, Any] | None,
+    configuration_space: dict[str, Any] | ConfigSpace | None,
     constraints: list[Any] | None,
 ) -> tuple[Any, Any, Any]:
     """Process ConfigSpace constraints, returning constraints and var_names."""
@@ -983,15 +1012,16 @@ def _process_config_space_constraints(
 
 
 def _normalize_config_space_and_defaults(
-    configuration_space: dict[str, Any] | None,
+    configuration_space: dict[str, Any] | ConfigSpace | None,
     inline_params: dict[str, Any],
     default_config: dict[str, Any] | None,
     config_space_constraints: Any,
     constraints: list[Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[Any] | None]:
     """Normalize configuration space and merge defaults."""
+    normalized_space: dict[str, Any] | None = None
     if inline_params or configuration_space:
-        configuration_space, param_defaults = normalize_configuration_space(
+        normalized_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
         if param_defaults:
@@ -1000,13 +1030,13 @@ def _normalize_config_space_and_defaults(
     if config_space_constraints and not constraints:
         constraints = config_space_constraints
 
-    return configuration_space, default_config, constraints
+    return normalized_space, default_config, constraints
 
 
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
-    configuration_space: dict[str, Any] | None = None,
+    configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
     tvl_spec: str | Path | None = None,
@@ -1016,6 +1046,14 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
+    # Multi-agent configuration
+    agents: dict[str, AgentDefinition] | None = None,
+    agent_prefixes: list[str] | None = None,
+    agent_measures: dict[str, list[str]] | None = None,
+    global_measures: list[str] | None = None,
+    # Config persistence
+    auto_load_best: bool = False,
+    load_from: str | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -1040,6 +1078,20 @@ def optimize(
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
             and provided as the ``config`` argument.
+
+            Default Value Precedence (highest to lowest):
+                1. Explicit ``default_config`` dict values
+                2. ``ParameterRange.default`` values (e.g., ``Range(0.0, 1.0, default=0.7)``)
+                3. Optimizer-suggested defaults (e.g., Optuna's suggest_* midpoint)
+
+            Example showing precedence::
+
+                >>> @traigent.optimize(
+                ...     temperature=Range(0.0, 1.0, default=0.5),  # Precedence 2
+                ...     default_config={"temperature": 0.7},      # Precedence 1 (wins)
+                ... )
+                ... def my_func(): ...
+
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it.
 
@@ -1172,15 +1224,9 @@ def optimize(
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
         ... )
-        ... def medical_assistant(patient_query: str) -> str:
+        ... def medical_assistant(patient_query: str) -> str:  # doctest: +SKIP
         ...     # Data never leaves your infrastructure
         ...     return process_medical_query(patient_query)
-        >>> result = my_agent("Hello")
-        >>>
-        >>> # Run optimization
-        >>> import asyncio
-        >>> optimization_result = asyncio.run(my_agent.optimize())
-        >>> best_config = my_agent.get_best_config()
     """
 
     legacy_args = _parse_legacy_args(legacy)
@@ -1205,6 +1251,12 @@ def optimize(
         "injection": injection,
         "execution": execution,
         "mock": mock,
+        "agents": agents,
+        "agent_prefixes": agent_prefixes,
+        "agent_measures": agent_measures,
+        "global_measures": global_measures,
+        "auto_load_best": auto_load_best,
+        "load_from": load_from,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1262,6 +1314,14 @@ def optimize(
     metric_functions = combined_settings["metric_functions"]
     tvl_spec_value = combined_settings["tvl_spec"]
     tvl_environment_value = combined_settings["tvl_environment"]
+    # Multi-agent configuration
+    agents_config = combined_settings["agents"]
+    agent_prefixes_config = combined_settings["agent_prefixes"]
+    agent_measures_config = combined_settings["agent_measures"]
+    global_measures_config = combined_settings["global_measures"]
+    # Config persistence
+    auto_load_best_config = combined_settings["auto_load_best"]
+    load_from_config = combined_settings["load_from"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1432,6 +1492,14 @@ def optimize(
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             requested_execution_mode=requested_execution_mode,
+            # Multi-agent configuration
+            agents=agents_config,
+            agent_prefixes=agent_prefixes_config,
+            agent_measures=agent_measures_config,
+            global_measures=global_measures_config,
+            # Config persistence
+            auto_load_best=auto_load_best_config,
+            load_from=load_from_config,
             **combined_runtime_overrides,
         )
 

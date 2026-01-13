@@ -804,6 +804,68 @@ class AuthManager:
         self._stats["failed_authentications"] += 1
         self._authenticated = False
 
+    def _get_api_key_headers(self) -> dict[str, str]:
+        """Generate headers for API key authentication."""
+        headers: dict[str, str] = {}
+        api_key_value = self._get_api_key_for_internal_use()
+        if api_key_value:
+            headers["X-API-Key"] = api_key_value
+            headers["Authorization"] = f"Bearer {api_key_value}"
+        return headers
+
+    async def _get_jwt_headers(self) -> dict[str, str]:
+        """Generate headers for JWT token authentication.
+
+        Uses token lock to prevent TOCTOU race on expiration check.
+        """
+        headers: dict[str, str] = {}
+        async with self._token_op_lock:
+            if self._current_token:
+                if self._current_token.is_expired:
+                    refresh_result = await self._refresh_token()
+                    if not refresh_result.success:
+                        raise AuthenticationError(
+                            refresh_result.error_message or "Token refresh failed"
+                        )
+                headers.update(self._current_token.get_header())
+            elif self._credentials and self._credentials.jwt_token:
+                headers["Authorization"] = f"Bearer {self._credentials.jwt_token}"
+        return headers
+
+    def _get_oauth_headers(self) -> dict[str, str]:
+        """Generate headers for OAuth2 authentication."""
+        token = self._credentials.jwt_token if self._credentials else ""
+        return {"Authorization": f"Bearer {token or ''}"}
+
+    def _get_service_headers(self, target: str) -> dict[str, str]:
+        """Generate headers for service-to-service authentication."""
+        signature = self._generate_service_signature(target)
+        service_key = self._credentials.service_key if self._credentials else ""
+        return {
+            "Authorization": f"Service {signature}",
+            "X-Service-Key": service_key or "",
+        }
+
+    def _get_dev_headers(self) -> dict[str, str]:
+        """Generate headers for development mode."""
+        metadata = self._credentials.metadata if self._credentials else {}
+        return {
+            "X-Development-Mode": "true",
+            "X-Dev-User": metadata.get("dev_user", "developer"),
+        }
+
+    def _add_common_headers(self, headers: dict[str, str], target: str) -> None:
+        """Add common headers to the request headers dict in-place."""
+        headers["X-Client-Version"] = "0.1.0"
+        headers["X-Integration-Mode"] = "unified"
+        headers.setdefault("Content-Type", "application/json")
+
+        if target in ("cloud", "both"):
+            headers["X-Traigent-Client"] = "sdk"
+        if target in ("backend", "both"):
+            headers["X-Traigent-Service"] = "sdk"
+            headers["X-Backend-Integration"] = "true"
+
     async def get_auth_headers(
         self,
         target: str = "both",  # "cloud", "backend", or "both"
@@ -825,61 +887,22 @@ class AuthManager:
         if not self._credentials:
             return {}
 
-        headers = {}
-
         # Generate headers based on authentication mode
-        if self._credentials.mode == AuthMode.API_KEY:
-            api_key_value = self._get_api_key_for_internal_use()
-            if api_key_value:
-                # Include both headers for backward compatibility
-                headers["X-API-Key"] = api_key_value
-                headers["Authorization"] = f"Bearer {api_key_value}"
+        mode = self._credentials.mode
+        if mode == AuthMode.API_KEY:
+            headers = self._get_api_key_headers()
+        elif mode == AuthMode.JWT_TOKEN:
+            headers = await self._get_jwt_headers()
+        elif mode == AuthMode.OAUTH2:
+            headers = self._get_oauth_headers()
+        elif mode == AuthMode.SERVICE_TO_SERVICE:
+            headers = self._get_service_headers(target)
+        elif mode == AuthMode.DEVELOPMENT:
+            headers = self._get_dev_headers()
+        else:
+            headers = {}
 
-        elif self._credentials.mode == AuthMode.JWT_TOKEN:
-            # Use separate token lock to prevent TOCTOU race on token expiration check (S1 fix)
-            # Note: Cannot use _auth_lock here as authenticate() also acquires it,
-            # and asyncio.Lock is not reentrant - would cause deadlock
-            async with self._token_op_lock:
-                if self._current_token:
-                    if self._current_token.is_expired:
-                        refresh_result = await self._refresh_token()
-                        if not refresh_result.success:
-                            raise AuthenticationError(
-                                refresh_result.error_message or "Token refresh failed"
-                            )
-                    headers.update(self._current_token.get_header())
-                elif self._credentials.jwt_token:
-                    headers["Authorization"] = f"Bearer {self._credentials.jwt_token}"
-
-        elif self._credentials.mode == AuthMode.OAUTH2:
-            token = self._credentials.jwt_token or ""
-            headers["Authorization"] = f"Bearer {token}"
-
-        elif self._credentials.mode == AuthMode.SERVICE_TO_SERVICE:
-            # Generate service signature
-            signature = self._generate_service_signature(target)
-            headers["Authorization"] = f"Service {signature}"
-            headers["X-Service-Key"] = self._credentials.service_key or ""
-
-        elif self._credentials.mode == AuthMode.DEVELOPMENT:
-            headers["X-Development-Mode"] = "true"
-            headers["X-Dev-User"] = self._credentials.metadata.get(
-                "dev_user", "developer"
-            )
-
-        # Add common headers
-        headers["X-Client-Version"] = "0.1.0"
-        headers["X-Integration-Mode"] = "unified"
-        headers.setdefault("Content-Type", "application/json")
-
-        # Add target-specific headers
-        if target in ["cloud", "both"]:
-            headers["X-Traigent-Client"] = "sdk"
-
-        if target in ["backend", "both"]:
-            headers["X-Traigent-Service"] = "sdk"
-            headers["X-Backend-Integration"] = "true"
-
+        self._add_common_headers(headers, target)
         return headers
 
     async def get_headers(self, target: str = "both") -> dict[str, str]:

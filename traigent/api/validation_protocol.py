@@ -25,7 +25,8 @@ Example:
     ...     constraints=constraints,
     ...     var_names={id(temp): "temperature", id(model): "model"}
     ... )
-    >>> print(result.is_valid)  # True
+    >>> result.is_valid
+    True
 """
 
 from __future__ import annotations
@@ -102,6 +103,7 @@ class ValidationResult:
         >>> result = ValidationResult(is_valid=True, violations=[], checked_count=3)
         >>> if result.is_valid:
         ...     print("Configuration is valid!")
+        Configuration is valid!
     """
 
     is_valid: bool
@@ -241,7 +243,8 @@ class PythonConstraintValidator:
         ...     constraints=constraints,
         ...     var_names={id(temp): "temperature", id(model): "model"}
         ... )
-        >>> print(result.is_valid)  # True
+        >>> result.is_valid
+        True
     """
 
     def validate_config(

@@ -513,11 +513,22 @@ class TrialLifecycle:
         ):
             return None, None
 
+        # Extract band target for banded objective pruning
+        band_target = None
+        if (
+            orchestrator.objective_schema is not None
+            and orchestrator.objective_schema.objectives
+        ):
+            primary_obj = orchestrator.objective_schema.objectives[0]
+            if hasattr(primary_obj, "band") and primary_obj.band is not None:
+                band_target = primary_obj.band
+
         tracker = PruningProgressTracker(
             optimizer=orchestrator.optimizer,
             dataset=dataset,
             trial_id=trial_id,
             optuna_trial_id=optuna_trial_id,
+            band_target=band_target,
         )
         return tracker.callback, tracker.state
 
