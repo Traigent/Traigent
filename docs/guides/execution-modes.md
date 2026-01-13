@@ -1,20 +1,20 @@
 # Traigent Execution Modes Guide
 
-> **Current status:** Open-source builds support `edge_analytics` (local) only. Cloud and hybrid are roadmap-ready but require a managed backend.
+> **Current status:** Traigent executes your code locally. By default it runs in `execution_mode="cloud"` to enable Traigent Cloud insights when available, and falls back to local-only execution (with a notice) when no `TRAIGENT_API_KEY` is configured or cloud is unavailable.
 
 ## Overview
 
-Use `edge_analytics` for all OSS runs. This guide focuses on local mode and notes roadmap items for awareness.
+Use `cloud` (default) if you want Traigent Cloud session tracking + insights when available. Use `edge_analytics` to force local-only runs (no cloud attempts). Use `hybrid` (or legacy `privacy`) when you want local execution with privacy toggles and cloud insights when available.
 
 ## Modes at a Glance
 
 | Mode | OSS availability | Privacy | Notes |
 | --- | --- | --- | --- |
-| `edge_analytics` | ✅ Available | ✅ Data stays local | Default and supported today |
-| `cloud` | 🚧 Roadmap | ⚠️ Metadata shared | Managed backend only (not shipped) |
-| `hybrid` | 🚧 Roadmap | ✅ I/O local, metadata shared | Managed backend only (not shipped) |
+| `cloud` | ✅ Available | ⚠️ Metadata shared when configured | Default; falls back to local-only when cloud is unavailable |
+| `edge_analytics` | ✅ Available | ✅ Data stays local | Local-only (no cloud attempts) |
+| `hybrid` | ✅ Available | ✅ I/O local, metadata shared when configured | Local execution with privacy toggles; cloud insights when available |
 
-> **Legacy alias:** `privacy` maps to `hybrid` and sets `privacy_enabled=True`, but hybrid execution is still a managed-backend feature.
+> **Legacy alias:** `privacy` maps to `hybrid` and sets `privacy_enabled=True`.
 
 ## Local Mode (`edge_analytics`)
 
@@ -60,11 +60,9 @@ def my_agent(query: str) -> str:
 - CI smoke tests and demos (`TRAIGENT_MOCK_LLM=true`)
 - Budget-conscious experiments
 
-## Roadmap (Awareness Only)
+## Roadmap Notes
 
-- `cloud`: Managed orchestration with Bayesian search, team history, dashboards.
-- `hybrid`: Local execution with cloud-guided trial selection and privacy toggles.
-- Until a managed backend is provisioned, keep `execution_mode="edge_analytics"` in OSS builds.
+Some fully managed backend capabilities (for example, cloud-executed trials / agent optimization) require a provisioned backend and may not be available in OSS builds yet. When cloud services are unavailable, the SDK falls back to local-only execution automatically.
 
 ## Privacy-Safe Analytics
 

@@ -108,7 +108,7 @@ def my_agent(query: str) -> str:
 
 ## 🔒 Execution Model
 
-Open-source builds support `execution_mode="edge_analytics"` (local). Cloud/hybrid orchestration is a roadmap item—keep runs in local mode unless you have a managed backend wired up.
+Traigent executes your code locally. By default, `execution_mode="cloud"` will try to connect to Traigent Cloud for enhanced insights; if no `TRAIGENT_API_KEY` is configured (or cloud is unavailable), Traigent falls back to local-only execution and prints a notice. Use `execution_mode="edge_analytics"` (or `TRAIGENT_OFFLINE_MODE=true`) to force local-only runs.
 
 ---
 
