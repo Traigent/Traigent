@@ -82,7 +82,7 @@ def qa_agent(question: str) -> str:
         model="gpt-3.5-turbo",    # Traigent will tune this
         temperature=0.7           # Traigent will tune this
     )
-    return llm.invoke(question).content
+    return str(llm.invoke(question).content)
 PYTHON
 sleep 3
 
