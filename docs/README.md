@@ -18,7 +18,7 @@ from langchain_openai import ChatOpenAI
 def answer_question(question: str) -> str:
     cfg = traigent.get_config()  # Active trial/applied config
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
-    return llm.invoke(question).content
+    return str(llm.invoke(question).content)
 
 # Async-safe in Traigent
 # results = await answer_question.optimize(max_trials=5)

@@ -26,7 +26,7 @@ from langchain_openai import ChatOpenAI
 def answer_question(question: str) -> str:
     cfg = traigent.get_config()  # Active trial/applied config
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
-    return llm.invoke(question).content
+    return str(llm.invoke(question).content)
 
 # Async-safe in Traigent - use asyncio.run in sync contexts
 if __name__ == "__main__":
@@ -103,7 +103,7 @@ from litellm import completion
 def my_agent(query: str) -> str:
     config = traigent.get_config()
     response = completion(model=config.get("model"), messages=[{"role": "user", "content": query}])
-    return response.choices[0].message.content
+    return str(response.choices[0].message.content)
 ```
 
 ## 🔒 Execution Model
