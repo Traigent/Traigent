@@ -791,6 +791,16 @@ class OptimizedFunction:
 
     def _setup_function_wrapper(self) -> None:
         """Setup function wrapper that uses current configuration."""
+        # Set injection mode attributes on the original function so evaluator knows
+        # how to pass configuration during optimization trials
+        injection_mode_str = (
+            self.injection_mode.value
+            if hasattr(self.injection_mode, "value")
+            else self.injection_mode
+        )
+        self.func._traigent_injection_mode = injection_mode_str  # type: ignore[attr-defined]
+        self.func._traigent_config_param = self.config_param or "config"  # type: ignore[attr-defined]
+
         # Use provider to inject configuration
         self._wrapped_func = self._provider.inject_config(
             self.func, self._current_config, self.config_param
@@ -1603,6 +1613,9 @@ class OptimizedFunction:
             if result.best_config:
                 self._current_config = result.best_config.copy()
                 self._best_config = result.best_config.copy()
+                # Also update default_config so subsequent optimization runs
+                # start with the best config as baseline (first trial)
+                self.default_config = result.best_config.copy()
                 self._setup_function_wrapper()
 
             # Set state to OPTIMIZED on success

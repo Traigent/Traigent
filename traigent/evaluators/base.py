@@ -965,13 +965,21 @@ class BaseEvaluator(ABC):
 
         Returns:
             Tuple of (positional_args, keyword_args)
+
+        Note:
+            For "parameter" injection mode, config is passed as a single dict to the
+            parameter named by _traigent_config_param (default: "config"), NOT spread
+            into individual kwargs. This allows functions to receive the full config
+            object and access it via config.get("key") or config["key"].
         """
         injection_mode = getattr(func, "_traigent_injection_mode", "context")
 
-        if injection_mode == "parameter" and isinstance(input_data, CollectionsMapping):
-            return (), {**input_data, **config}
         if injection_mode == "parameter":
-            return (input_data,), dict(config)
+            # Pass config as a single dict to the config parameter
+            config_param = getattr(func, "_traigent_config_param", "config")
+            if isinstance(input_data, CollectionsMapping):
+                return (), {**input_data, config_param: config}
+            return (input_data,), {config_param: config}
         if isinstance(
             input_data, CollectionsMapping
         ) and self._should_expand_input_mapping(func, input_data):
