@@ -25,15 +25,39 @@ import traigent
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
 
+# Internal fields added by TraigentConfig that aren't part of the config space
+_INTERNAL_CONFIG_FIELDS = {
+    "execution_mode",
+    "local_storage_path",
+    "minimal_logging",
+    "auto_sync",
+    "privacy_enabled",
+    "strict_metrics_nulls",
+    "enable_usage_analytics",
+    "analytics_endpoint",
+    "anonymous_user_id",
+}
+
+
+def _extract_config_space_values(config_dict: dict[str, Any]) -> dict[str, Any]:
+    """Extract only configuration space values, excluding internal fields."""
+    return {k: v for k, v in config_dict.items() if k not in _INTERNAL_CONFIG_FIELDS}
+
 
 @pytest.fixture
 def simple_dataset() -> Dataset:
     """Create a simple dataset for testing."""
     return Dataset(
         examples=[
-            EvaluationExample(input_data={"prompt": "test 1"}, expected_output="result1"),
-            EvaluationExample(input_data={"prompt": "test 2"}, expected_output="result2"),
-            EvaluationExample(input_data={"prompt": "test 3"}, expected_output="result3"),
+            EvaluationExample(
+                input_data={"prompt": "test 1"}, expected_output="result1"
+            ),
+            EvaluationExample(
+                input_data={"prompt": "test 2"}, expected_output="result2"
+            ),
+            EvaluationExample(
+                input_data={"prompt": "test 3"}, expected_output="result3"
+            ),
         ],
         name="test_dataset",
     )
@@ -68,8 +92,8 @@ class TestParameterModeAndSecondOptimizationIntegration:
         )
         def my_llm_function(prompt: str, config: dict) -> str:
             """Function that uses config dict during optimization."""
-            # Capture the config for verification
-            config_copy = dict(config)
+            # Capture the config for verification (only config space values)
+            config_copy = _extract_config_space_values(config.to_dict())
 
             if current_run == 1:
                 run1_configs.append(config_copy)
@@ -85,7 +109,9 @@ class TestParameterModeAndSecondOptimizationIntegration:
         opt_fn: OptimizedFunction = my_llm_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             # === RUN 1 ===
             print("\n=== Running First Optimization ===")
             result1 = await opt_fn.optimize(max_trials=4)
@@ -98,13 +124,20 @@ class TestParameterModeAndSecondOptimizationIntegration:
             assert len(run1_configs) > 0, "Run 1 should have captured configs"
             for i, config in enumerate(run1_configs):
                 assert "model" in config, f"Trial {i}: Config should have 'model'"
-                assert config["model"] in ["gpt-3.5", "gpt-4", "gpt-4-turbo"], (
-                    f"Trial {i}: Model should be valid, got {config['model']}"
-                )
-                assert "temperature" in config, f"Trial {i}: Config should have 'temperature'"
-                assert config["temperature"] in [0.1, 0.3, 0.5, 0.7], (
-                    f"Trial {i}: Temperature should be valid, got {config['temperature']}"
-                )
+                assert config["model"] in [
+                    "gpt-3.5",
+                    "gpt-4",
+                    "gpt-4-turbo",
+                ], f"Trial {i}: Model should be valid, got {config['model']}"
+                assert (
+                    "temperature" in config
+                ), f"Trial {i}: Config should have 'temperature'"
+                assert config["temperature"] in [
+                    0.1,
+                    0.3,
+                    0.5,
+                    0.7,
+                ], f"Trial {i}: Temperature should be valid, got {config['temperature']}"
 
             # === RUN 2 ===
             current_run = 2
@@ -161,28 +194,35 @@ class TestParameterModeAndSecondOptimizationIntegration:
         opt_fn: OptimizedFunction = test_access_methods  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         # Verify all access methods worked
         assert len(access_results) > 0
         for result in access_results:
             # .get() should return actual values, not fallbacks
-            assert result["model_get"] in ["gpt-3.5", "gpt-4"], (
-                f"config.get() failed: {result['model_get']}"
-            )
-            assert result["temp_get"] in [0.1, 0.9], (
-                f"config.get() without default failed: {result['temp_get']}"
-            )
-            assert result["tokens_bracket"] in [100, 500], (
-                f"config[] bracket access failed: {result['tokens_bracket']}"
-            )
-            assert result["has_model"] is True, (
-                f"'in' operator failed: {result['has_model']}"
-            )
-            assert set(result["keys"]) == {"model", "temperature", "max_tokens"}, (
-                f".keys() failed: {result['keys']}"
-            )
+            assert result["model_get"] in [
+                "gpt-3.5",
+                "gpt-4",
+            ], f"config.get() failed: {result['model_get']}"
+            assert result["temp_get"] in [
+                0.1,
+                0.9,
+            ], f"config.get() without default failed: {result['temp_get']}"
+            assert result["tokens_bracket"] in [
+                100,
+                500,
+            ], f"config[] bracket access failed: {result['tokens_bracket']}"
+            assert (
+                result["has_model"] is True
+            ), f"'in' operator failed: {result['has_model']}"
+            # .keys() should contain the config space keys (may also include internal fields)
+            config_space_keys = {"model", "temperature", "max_tokens"}
+            assert config_space_keys.issubset(
+                set(result["keys"])
+            ), f".keys() should contain config space keys: {result['keys']}"
 
     @pytest.mark.asyncio
     async def test_continuous_optimization_progression(
@@ -207,12 +247,16 @@ class TestParameterModeAndSecondOptimizationIntegration:
         opt_fn: OptimizedFunction = progressive_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             num_runs = 4
 
             for run_num in range(num_runs):
-                # Capture first config before optimization
-                first_config = opt_fn.default_config.copy() if opt_fn.default_config else None
+                # Capture _current_config before optimization (baseline for this run)
+                first_config = (
+                    opt_fn._current_config.copy() if opt_fn._current_config else None
+                )
 
                 result = await opt_fn.optimize(max_trials=2)
 
@@ -223,17 +267,11 @@ class TestParameterModeAndSecondOptimizationIntegration:
                 print(f"  Started with: {first_config}")
                 print(f"  Found best: {result.best_config}")
 
-        # Verify progression: each run starts with previous best
-        for i in range(1, num_runs):
-            prev_best = run_best_configs[i - 1]
-            current_default = opt_fn.default_config
-
-            # After each run, default should be updated
-            # The final default should equal the last best
-            if run_best_configs[-1]:
-                assert current_default == run_best_configs[-1], (
-                    f"Final default_config should be last best_config"
-                )
+        # Verify progression: _current_config should be updated to last best
+        if run_best_configs[-1]:
+            assert (
+                opt_fn._current_config == run_best_configs[-1]
+            ), "Final _current_config should be last best_config"
 
 
 @pytest.mark.parametrize("num_optimization_runs", [2, 3, 5])
@@ -259,14 +297,16 @@ async def test_multiple_sequential_optimizations(
     def test_fn(prompt: str, config: dict) -> str:
         nonlocal is_first_trial, current_first_config
         if is_first_trial:
-            current_first_config = dict(config)
+            current_first_config = _extract_config_space_values(config.to_dict())
             is_first_trial = False
         return config.get("model", "x")
 
     opt_fn: OptimizedFunction = test_fn  # type: ignore[assignment]
     opt_fn.eval_dataset = simple_dataset
 
-    with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+    with patch.dict(
+        "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+    ):
         for _ in range(num_optimization_runs):
             is_first_trial = True
             current_first_config = None
@@ -307,24 +347,25 @@ class TestEdgeCases:
             # No default_config specified
         )
         def fn(prompt: str, config: dict) -> str:
-            received_configs.append(dict(config))
+            received_configs.append(_extract_config_space_values(config.to_dict()))
             return config.get("model", "none")
 
         opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             result = await opt_fn.optimize(max_trials=2)
 
         # Should have received valid configs
         assert len(received_configs) > 0
         assert result.best_config is not None
-        assert opt_fn.default_config == result.best_config
+        # _current_config should be updated to best_config
+        assert opt_fn._current_config == result.best_config
 
     @pytest.mark.asyncio
-    async def test_custom_config_param_name(
-        self, simple_dataset: Dataset
-    ) -> None:
+    async def test_custom_config_param_name(self, simple_dataset: Dataset) -> None:
         """Custom config_param name should work correctly."""
         received: list[dict[str, Any]] = []
 
@@ -335,13 +376,15 @@ class TestEdgeCases:
             objectives=["accuracy"],
         )
         def fn(prompt: str, traigent_cfg: dict) -> str:
-            received.append(dict(traigent_cfg))
+            received.append(_extract_config_space_values(traigent_cfg.to_dict()))
             return traigent_cfg.get("model", "none")
 
         opt_fn: OptimizedFunction = fn  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         assert len(received) > 0

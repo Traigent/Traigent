@@ -344,6 +344,10 @@ class TraigentConfig:
         """Check if configuration contains key."""
         return key in self.to_dict()
 
+    def keys(self) -> list[str]:
+        """Return configuration keys (dict-like interface)."""
+        return list(self.to_dict().keys())
+
     def __repr__(self) -> str:
         """String representation of configuration."""
         params = []

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from traigent.api.types import ExampleResult
+from traigent.config.types import TraigentConfig
 from traigent.evaluators.dataset_registry import (
     DatasetRegistryEntry,
     resolve_dataset_reference,
@@ -975,11 +976,13 @@ class BaseEvaluator(ABC):
         injection_mode = getattr(func, "_traigent_injection_mode", "context")
 
         if injection_mode == "parameter":
-            # Pass config as a single dict to the config parameter
+            # Pass config as TraigentConfig to match the type used outside optimization
+            # This ensures config.model and config.get("model") both work consistently
             config_param = getattr(func, "_traigent_config_param", "config")
+            config_obj = TraigentConfig.from_dict(config)
             if isinstance(input_data, CollectionsMapping):
-                return (), {**input_data, config_param: config}
-            return (input_data,), {config_param: config}
+                return (), {**input_data, config_param: config_obj}
+            return (input_data,), {config_param: config_obj}
         if isinstance(
             input_data, CollectionsMapping
         ) and self._should_expand_input_mapping(func, input_data):

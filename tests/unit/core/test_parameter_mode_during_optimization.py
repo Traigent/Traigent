@@ -15,13 +15,13 @@ The fix:
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 import traigent
+from traigent.config.types import TraigentConfig
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset, EvaluationExample
 
@@ -31,8 +31,12 @@ def simple_dataset() -> Dataset:
     """Create a simple dataset for testing."""
     return Dataset(
         examples=[
-            EvaluationExample(input_data={"prompt": "test 1"}, expected_output="result1"),
-            EvaluationExample(input_data={"prompt": "test 2"}, expected_output="result2"),
+            EvaluationExample(
+                input_data={"prompt": "test 1"}, expected_output="result1"
+            ),
+            EvaluationExample(
+                input_data={"prompt": "test 2"}, expected_output="result2"
+            ),
         ],
         name="test_dataset",
     )
@@ -85,33 +89,47 @@ class TestParameterModeInjectionDuringOptimization:
         received_configs: list[dict[str, Any]] = []
 
         @traigent.optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.5]},
+            configuration_space={
+                "model": ["gpt-3.5", "gpt-4"],
+                "temperature": [0.1, 0.5],
+            },
             injection_mode="parameter",
             config_param="config",
             objectives=["accuracy"],
         )
-        def my_function(prompt: str, config: dict) -> str:
-            # Capture what config we received
-            received_configs.append(dict(config) if isinstance(config, Mapping) else {"raw": config})
-            model = config.get("model", "unset") if isinstance(config, Mapping) else "not-a-dict"
+        def my_function(prompt: str, config: TraigentConfig) -> str:
+            # Capture what config we received - now expects TraigentConfig
+            received_configs.append(
+                config.to_dict() if hasattr(config, "to_dict") else {"raw": config}
+            )
+            model = config.get("model", "unset")
             return f"model={model}"
 
         opt_fn: OptimizedFunction = my_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
         # Run optimization with mock mode
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=3)
 
         # Verify we received configs during optimization
-        assert len(received_configs) > 0, "Should have received configs during optimization"
+        assert (
+            len(received_configs) > 0
+        ), "Should have received configs during optimization"
 
         # Each config should be a dict with our configuration values
         for config in received_configs:
-            assert isinstance(config, dict), f"Config should be dict, got {type(config)}"
+            assert isinstance(
+                config, dict
+            ), f"Config should be dict, got {type(config)}"
             # Should contain actual model values, not "unset"
             if "model" in config:
-                assert config["model"] in ["gpt-3.5", "gpt-4"], f"Unexpected model: {config['model']}"
+                assert config["model"] in [
+                    "gpt-3.5",
+                    "gpt-4",
+                ], f"Unexpected model: {config['model']}"
 
     @pytest.mark.asyncio
     async def test_parameter_mode_config_accessible_via_get(
@@ -135,13 +153,17 @@ class TestParameterModeInjectionDuringOptimization:
         opt_fn: OptimizedFunction = my_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         # Should have actual model values, not "fallback"
         assert len(get_results) > 0
         for result in get_results:
-            assert result != "fallback", "config.get() should return actual values, not fallback"
+            assert (
+                result != "fallback"
+            ), "config.get() should return actual values, not fallback"
             assert result in ["gpt-3.5", "gpt-4"]
 
     @pytest.mark.asyncio
@@ -166,7 +188,9 @@ class TestParameterModeInjectionDuringOptimization:
         opt_fn: OptimizedFunction = my_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         # Should have actual model values
@@ -187,14 +211,16 @@ class TestParameterModeInjectionDuringOptimization:
             config_param="traigent_config",  # Custom name
             objectives=["accuracy"],
         )
-        def my_function(prompt: str, traigent_config: dict) -> str:
-            received_configs.append(dict(traigent_config))
+        def my_function(prompt: str, traigent_config: TraigentConfig) -> str:
+            received_configs.append(traigent_config.to_dict())
             return traigent_config.get("model", "unset")
 
         opt_fn: OptimizedFunction = my_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         assert len(received_configs) > 0
@@ -207,23 +233,32 @@ class TestParameterModeVsOtherModes:
     """Compare parameter mode behavior with other injection modes."""
 
     @pytest.mark.asyncio
-    async def test_seamless_mode_injects_as_kwargs(self, simple_dataset: Dataset) -> None:
+    async def test_seamless_mode_injects_as_kwargs(
+        self, simple_dataset: Dataset
+    ) -> None:
         """Seamless mode should inject config values as individual kwargs."""
         received_values: list[tuple[str, float]] = []
 
         @traigent.optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.5]},
+            configuration_space={
+                "model": ["gpt-3.5", "gpt-4"],
+                "temperature": [0.1, 0.5],
+            },
             injection_mode="seamless",
             objectives=["accuracy"],
         )
-        def my_function(prompt: str, model: str = "default", temperature: float = 0.0) -> str:
+        def my_function(
+            prompt: str, model: str = "default", temperature: float = 0.0
+        ) -> str:
             received_values.append((model, temperature))
             return f"{model}:{temperature}"
 
         opt_fn: OptimizedFunction = my_function  # type: ignore[assignment]
         opt_fn.eval_dataset = simple_dataset
 
-        with patch.dict("os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}):
+        with patch.dict(
+            "os.environ", {"TRAIGENT_MOCK_LLM": "true", "TRAIGENT_OFFLINE_MODE": "true"}
+        ):
             await opt_fn.optimize(max_trials=2)
 
         # Seamless mode: values should be passed as individual kwargs
@@ -238,6 +273,7 @@ def test_injection_mode_attribute_matches_configured_mode(injection_mode: str) -
     """All injection modes should set the correct attribute on the function."""
 
     if injection_mode == "parameter":
+
         @traigent.optimize(
             configuration_space={"model": ["gpt-3.5"]},
             injection_mode=injection_mode,
@@ -245,7 +281,9 @@ def test_injection_mode_attribute_matches_configured_mode(injection_mode: str) -
         )
         def fn(prompt: str, config: dict) -> str:
             return prompt
+
     else:
+
         @traigent.optimize(
             configuration_space={"model": ["gpt-3.5"]},
             injection_mode=injection_mode,

@@ -1513,8 +1513,13 @@ class OptimizedFunction:
         orchestrator_kwargs: dict[str, Any] = {
             "cache_policy": cache_policy,
         }
-        if self.default_config:
-            orchestrator_kwargs["default_config"] = self.default_config.copy()
+        # Use _current_config as baseline for optimization runs
+        # After first optimization, _current_config is set to best_config,
+        # so subsequent runs start with the previous best as baseline.
+        # This preserves default_config as the user's original baseline
+        # (used by reset_optimization() to restore initial state).
+        if self._current_config:
+            orchestrator_kwargs["default_config"] = self._current_config.copy()
 
         # Pass budget stop condition parameters
         if "budget_limit" in algorithm_kwargs:
@@ -1613,9 +1618,9 @@ class OptimizedFunction:
             if result.best_config:
                 self._current_config = result.best_config.copy()
                 self._best_config = result.best_config.copy()
-                # Also update default_config so subsequent optimization runs
-                # start with the best config as baseline (first trial)
-                self.default_config = result.best_config.copy()
+                # Note: We don't update default_config here to preserve the user's
+                # original baseline. The _current_config is used as the baseline
+                # for subsequent optimization runs (see orchestrator_kwargs above).
                 self._setup_function_wrapper()
 
             # Set state to OPTIMIZED on success
