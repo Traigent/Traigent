@@ -252,7 +252,7 @@ Beyond the basics, Traigent includes powerful features such as:
 
 | Capability | Description |
 | ---------- | ----------- |
-| **Dual Injection Modes** | Seamless (zero-code via RuntimeShim) or Parameter (explicit `config.get()`) |
+| **Injection Modes (default: context)** | Context (default), Parameter, Attribute, Seamless for different trade-offs |
 | **3-Tier Evaluation** | Exact match (default) → Custom scorers → LLM-as-Judge/RAGAS |
 | **Budget Rails** | `TRAIGENT_RUN_COST_LIMIT` + handshake approval + EMA estimation |
 | **2-Level Parallelism** | `example_concurrency` (per trial) + `trial_concurrency` (simultaneous configs) |
