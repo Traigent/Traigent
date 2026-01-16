@@ -28,9 +28,14 @@ from traigent.api.types import (
     TrialStatus,
 )
 
-# Type-only import for BackendIntegratedClient (runtime import is lazy)
+# Type-only imports for optional dependencies
 if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
+    from traigent.integrations.observability.workflow_traces import (
+        SpanPayload,
+        WorkflowGraphPayload,
+        WorkflowTracesTracker,
+    )
 
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
@@ -116,6 +121,7 @@ class OptimizationOrchestrator:
         objectives: Sequence[str | None] | None = None,
         objective_schema: ObjectiveSchema | None = None,
         metric_registry: MetricRegistry | None = None,
+        workflow_traces_tracker: WorkflowTracesTracker | None = None,
         use_versioned_logger: bool = False,
         file_version: str = "2",
         **kwargs: Any,
@@ -125,6 +131,8 @@ class OptimizationOrchestrator:
         Keyword Args:
             default_config: Optional baseline configuration evaluated once before
                 optimizer-driven suggestions. Counts toward max_trials.
+            workflow_traces_tracker: Optional tracker for collecting and submitting
+                workflow spans to the backend for visualization.
         """
 
         self._initialized = False
@@ -246,6 +254,12 @@ class OptimizationOrchestrator:
         self.metric_registry = (
             metric_registry.clone() if metric_registry is not None else clone_registry()
         )
+
+        # Workflow traces tracker for span collection and backend submission
+        self._workflow_traces_tracker: WorkflowTracesTracker | None = (
+            workflow_traces_tracker
+        )
+        self._collected_spans: list[SpanPayload] = []
 
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
@@ -1332,6 +1346,221 @@ class OptimizationOrchestrator:
         except Exception as exc:
             logger.debug("Analytics submission failed: %s", exc)
 
+    def collect_workflow_span(
+        self,
+        span_data: SpanPayload,
+    ) -> None:
+        """Collect a workflow span for later submission to backend.
+
+        Args:
+            span_data: Span payload to collect
+        """
+        if self._workflow_traces_tracker is not None:
+            self._collected_spans.append(span_data)
+
+    async def _submit_workflow_traces(self, session_id: str | None = None) -> None:
+        """Submit collected workflow spans and graph to backend.
+
+        Called during optimization finalization to send all collected spans
+        and workflow graph to the backend for visualization in the workflow traces view.
+
+        Spans are grouped by configuration_run_id and submitted separately so each
+        trial's ConfigurationRun gets its run_metadata updated with trace_id.
+
+        Args:
+            session_id: Backend session ID (used to get experiment_id for graph)
+        """
+        if self._workflow_traces_tracker is None:
+            return
+
+        if not self._collected_spans:
+            logger.debug("No workflow spans to submit")
+            return
+
+        try:
+            # Get trace_id from first span (all spans share same trace)
+            trace_id = self._collected_spans[0].trace_id
+
+            # Try to create workflow graph for visualization (only submit once)
+            graph = self._create_optimization_workflow_graph(session_id)
+
+            # Group spans by configuration_run_id so each trial gets trace_id in its metadata
+            spans_by_config_run: dict[str, list] = {}
+            for span in self._collected_spans:
+                config_run_id = span.configuration_run_id
+                if config_run_id not in spans_by_config_run:
+                    spans_by_config_run[config_run_id] = []
+                spans_by_config_run[config_run_id].append(span)
+
+            # Submit each group separately
+            total_submitted = 0
+            graph_id = None
+            for idx, (config_run_id, spans) in enumerate(spans_by_config_run.items()):
+                # Only include graph in first request
+                include_graph = graph if idx == 0 else None
+
+                response = await self._workflow_traces_tracker.ingest_traces_async(
+                    graph=include_graph,
+                    spans=spans,
+                    trace_id=trace_id,
+                    configuration_run_id=config_run_id,
+                )
+
+                if response.success:
+                    total_submitted += len(spans)
+                    if response.graph_id:
+                        graph_id = response.graph_id
+                else:
+                    logger.warning(
+                        f"Failed to submit spans for config_run {config_run_id}: {response.error}"
+                    )
+
+            if total_submitted > 0:
+                graph_msg = f", graph_id={graph_id}" if graph_id else ""
+                logger.info(
+                    f"Submitted {total_submitted} workflow spans "
+                    f"for trace {trace_id[:8]}...{graph_msg}"
+                )
+
+        except Exception as exc:
+            logger.warning(f"Workflow trace submission failed: {exc}")
+        finally:
+            # Clear collected spans after submission attempt
+            self._collected_spans = []
+
+    def _create_optimization_workflow_graph(
+        self, session_id: str | None
+    ) -> "WorkflowGraphPayload | None":
+        """Create a workflow graph representing the optimization flow.
+
+        Creates a simple graph with START -> optimization_run -> END nodes
+        to enable workflow trace visualization in the frontend.
+
+        Args:
+            session_id: Backend session ID for looking up experiment_id
+
+        Returns:
+            WorkflowGraphPayload if experiment_id found, None otherwise
+        """
+        # Import here to avoid circular dependency
+        from traigent.integrations.observability.workflow_traces import (
+            WorkflowEdge,
+            WorkflowGraphPayload,
+            WorkflowNode,
+        )
+
+        # Get experiment_id from session mapping
+        experiment_id = self._get_experiment_id_from_session(session_id)
+        if not experiment_id:
+            logger.debug("Cannot create workflow graph: no experiment_id available")
+            return None
+
+        # Get experiment_run_id for linking
+        experiment_run_id = self._get_experiment_run_id_from_session(session_id)
+
+        # Get function name for display
+        function_name = (
+            self._function_descriptor.identifier
+            if self._function_descriptor
+            else "optimization"
+        )
+
+        # Create nodes for the optimization workflow
+        nodes = [
+            WorkflowNode(
+                id="__start__",
+                type="entry",
+                display_name="Start",
+                metadata={"purpose": "Workflow entry point"},
+            ),
+            WorkflowNode(
+                id="optimization_run",
+                type="agent",
+                display_name=f"Optimize: {function_name}",
+                tunable_params=(
+                    list(self.optimizer.config_space.keys())
+                    if self.optimizer.config_space
+                    else []
+                ),
+                metadata={
+                    "purpose": "Execute optimization trials",
+                    "function": function_name,
+                    "max_trials": self.max_trials,
+                    "algorithm": self.optimizer.__class__.__name__,
+                },
+            ),
+            WorkflowNode(
+                id="__end__",
+                type="exit",
+                display_name="End",
+                metadata={"purpose": "Workflow exit point"},
+            ),
+        ]
+
+        # Create edges
+        edges = [
+            WorkflowEdge(from_node="__start__", to_node="optimization_run"),
+            WorkflowEdge(from_node="optimization_run", to_node="__end__"),
+        ]
+
+        return WorkflowGraphPayload(
+            experiment_id=experiment_id,
+            experiment_run_id=experiment_run_id,
+            nodes=nodes,
+            edges=edges,
+            metadata={
+                "workflow_type": "sdk_optimization",
+                "function_name": function_name,
+                "optimization_id": self._optimization_id,
+            },
+        )
+
+    def _get_experiment_id_from_session(self, session_id: str | None) -> str | None:
+        """Get experiment_id from backend session mapping.
+
+        Args:
+            session_id: Backend session ID
+
+        Returns:
+            experiment_id if found, None otherwise
+        """
+        if not session_id or not self.backend_client:
+            return None
+
+        try:
+            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
+            if callable(get_mapping):
+                mapping = get_mapping(session_id)
+                if mapping:
+                    return getattr(mapping, "experiment_id", None)
+        except Exception as exc:
+            logger.debug(f"Could not get experiment_id from session mapping: {exc}")
+
+        return None
+
+    def _get_experiment_run_id_from_session(self, session_id: str | None) -> str | None:
+        """Get experiment_run_id from backend session mapping.
+
+        Args:
+            session_id: Backend session ID
+
+        Returns:
+            experiment_run_id if found, None otherwise
+        """
+        if not session_id or not self.backend_client:
+            return None
+
+        try:
+            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
+            if callable(get_mapping):
+                mapping = get_mapping(session_id)
+                if mapping:
+                    return getattr(mapping, "experiment_run_id", None)
+        except Exception as exc:
+            logger.debug(f"Could not get experiment_run_id from session mapping: {exc}")
+
+        return None
+
     def _initialize_optimization_run(
         self,
         func: Callable[..., Any],
@@ -1642,6 +1871,10 @@ class OptimizationOrchestrator:
         )
 
         self._submit_usage_analytics()
+
+        # Submit collected workflow traces and graph to backend
+        await self._submit_workflow_traces(session_id)
+
         self.callback_manager.on_optimization_complete(result)
 
         cost_status = self.cost_enforcer.get_status()

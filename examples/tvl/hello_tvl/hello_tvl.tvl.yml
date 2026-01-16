@@ -1,0 +1,37 @@
+# TVL 0.9 Example: Hello TVL
+# A minimal example demonstrating basic TVL structure
+
+spec:
+  id: hello-tvl
+  version: 0.0.1
+
+metadata:
+  owner: "examples@traigent.ai"
+  description: "Minimal TVL spec demonstrating basic structure"
+
+# TVL 0.9 typed variables
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "claude-3-haiku-20240307"]
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+# Basic constraints
+constraints:
+  structural:
+    - expr: 'params.temperature <= 1.0'
+      id: max-temperature
+      error_message: "Temperature must be at most 1.0"
+
+promotion:
+  gate: manual_review
+  reviewers: ["reviewer@traigent.ai"]

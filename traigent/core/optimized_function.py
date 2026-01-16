@@ -1484,6 +1484,49 @@ class OptimizedFunction:
             metric_functions=effective_metric_functions or None,
         )
 
+    def _create_workflow_traces_tracker(self, traigent_config: TraigentConfig) -> Any:
+        """Create workflow traces tracker if backend is configured.
+
+        Args:
+            traigent_config: Traigent configuration
+
+        Returns:
+            WorkflowTracesTracker instance if backend is configured, None otherwise
+        """
+        # Check if workflow traces should be enabled
+        # Requires both backend URL and API key
+        backend_url = os.environ.get("TRAIGENT_BACKEND_URL")
+        api_key = os.environ.get("TRAIGENT_API_KEY")
+
+        # Skip if backend is not configured (but allow in mock mode for testing)
+        if not backend_url or not api_key:
+            return None
+
+        # Skip if explicitly disabled
+        if os.environ.get("TRAIGENT_TRACES_ENABLED", "").lower() == "false":
+            return None
+
+        try:
+            from traigent.integrations.observability.workflow_traces import (
+                WorkflowTracesTracker,
+            )
+
+            tracker = WorkflowTracesTracker(
+                backend_url=backend_url,
+                auth_token=api_key,
+            )
+            logger.debug(f"Auto-initialized workflow traces tracker for {backend_url}")
+            return tracker
+
+        except ImportError:
+            logger.debug(
+                "Workflow traces module not available, skipping trace collection"
+            )
+            return None
+        except Exception as exc:
+            logger.debug(f"Failed to initialize workflow traces tracker: {exc}")
+            return None
+
     def _build_optimization_orchestrator(
         self,
         optimizer: Any,
@@ -1551,6 +1594,9 @@ class OptimizedFunction:
                 "tvl_parameter_agents"
             ]
 
+        # Auto-initialize workflow traces tracker if backend is configured
+        workflow_traces_tracker = self._create_workflow_traces_tracker(traigent_config)
+
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
             evaluator=evaluator,
@@ -1562,6 +1608,7 @@ class OptimizedFunction:
             parallel_trials=effective_parallel_trials,
             objectives=self.objectives,
             objective_schema=self.objective_schema,
+            workflow_traces_tracker=workflow_traces_tracker,
             **orchestrator_kwargs,
         )
 

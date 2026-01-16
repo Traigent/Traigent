@@ -1,0 +1,73 @@
+# TVL 0.9 Example: Complete Banded TOST
+# Full example of banded objectives with TOST equivalence testing
+
+spec:
+  id: banded-tost-complete
+  version: 0.1.0
+
+metadata:
+  owner: "tutorials@traigent.ai"
+  description: "Complete example of banded objectives with TOST"
+
+# TVL 0.9 typed variables
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307"]
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+  - name: max_tokens
+    type: enum[int]
+    domain: [256, 512, 1024]
+
+# Multiple banded objectives demonstrating TOST
+objectives:
+  - name: task_accuracy
+    direction: maximize
+
+  - name: response_consistency
+    band:
+      target: [0.85, 0.95]
+      test: TOST
+      alpha: 0.05
+
+  - name: latency_stability
+    band:
+      target: [200, 400]
+      test: TOST
+      alpha: 0.05
+
+  - name: cost_variance
+    band:
+      target:
+        center: 0.02
+        tol: 0.01
+      test: TOST
+      alpha: 0.10
+
+promotion_policy:
+  alpha: 0.05
+  min_effect:
+    task_accuracy: 0.02
+    response_consistency: 0.01
+    latency_stability: 20.0
+    cost_variance: 0.005
+  dominance: epsilon_pareto
+  adjust: BH
+
+exploration:
+  strategy: pareto_optimal
+  budgets:
+    max_trials: 60
+    timeout_seconds: 2400
+
+constraints:
+  structural:
+    - when: 'params.model == "gpt-4o"'
+      then: 'params.max_tokens <= 512'
+      id: premium-limit
+      error_message: "Limit tokens for premium models"

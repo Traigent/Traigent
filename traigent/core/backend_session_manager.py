@@ -744,4 +744,15 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+
+        # Add experiment_id from session mapping if available
+        if self._backend_client is not None:
+            try:
+                mapping = self._backend_client.get_session_mapping(session_id)
+                if mapping is not None:
+                    update_payload["experiment_id"] = mapping.experiment_id
+                    update_payload["experiment_run_id"] = mapping.experiment_run_id
+            except Exception:
+                pass  # Silently ignore if mapping not available
+
         result.metadata.update(update_payload)

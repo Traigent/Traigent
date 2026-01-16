@@ -1,0 +1,60 @@
+# TVL 0.9 Example: Constraints and Units
+# Demonstrates structural constraints with units
+
+spec:
+  id: constraints-units-example
+  version: 0.1.0
+
+metadata:
+  owner: "mlops@traigent.ai"
+  description: "Example demonstrating constraints and units"
+
+units:
+  time: [milliseconds, seconds]
+  currency: [USD]
+  ratio: [dimensionless]
+
+# TVL 0.9 typed variables
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307"]
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+    unit: ratio
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [128, 2048]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+  - name: latency
+    direction: minimize
+    unit: milliseconds
+
+# TVL 0.9 structural constraints
+constraints:
+  structural:
+    - expr: 'params.temperature <= 0.8'
+      id: temperature-cap
+      error_message: "Keep temperature reasonable for consistency"
+
+    - when: 'params.model == "gpt-4o"'
+      then: 'params.max_tokens <= 1024'
+      id: premium-token-limit
+      error_message: "Premium models have token budget limits"
+
+    - expr: 'params.max_tokens >= 256'
+      id: min-tokens
+      error_message: "Need at least 256 tokens for meaningful output"
+
+exploration:
+  strategy: pareto_optimal
+  budgets:
+    max_trials: 30
