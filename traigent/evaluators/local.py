@@ -16,6 +16,7 @@ from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
+    MetricsCalculator,
     MetricsTracker,
     extract_llm_metrics,
 )
@@ -706,6 +707,89 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
         example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
 
+    def _extract_and_inject_traigent_meta(
+        self, output: Any, metrics: ExampleMetrics
+    ) -> dict[str, Any] | None:
+        """Extract __traigent_meta__ from output and inject into metrics.
+
+        This method runs AFTER cost calculation to allow user-provided costs
+        to override SDK-calculated values (including mock mode zeros).
+
+        Args:
+            output: Raw function output (may be dict with __traigent_meta__).
+            metrics: ExampleMetrics to update with user-provided values.
+
+        Returns:
+            The meta dict if found, None otherwise. Extraction errors are
+            logged but do not abort evaluation.
+
+        Note:
+            - Tokens are injected using key-presence checks (explicit zeros override).
+            - Derived metrics (tokens_per_second) are recomputed after injection.
+            - Custom metrics receive the raw output dict (including __traigent_meta__).
+        """
+        if not isinstance(output, dict):
+            return None
+
+        meta = output.get("__traigent_meta__")
+        if meta is None or not isinstance(meta, dict):
+            return None
+
+        # Type narrowing for mypy
+        meta = cast(dict[str, Any], meta)
+
+        logger.debug(f"Found __traigent_meta__ with keys: {meta.keys()}")
+
+        # Inject tokens first (each field independently)
+        usage = meta.get("usage")
+        if isinstance(usage, dict):
+            try:
+                # Use key-presence checks (not truthiness) to allow explicit zeros
+                if "input_tokens" in usage:
+                    metrics.tokens.input_tokens = max(0, int(usage["input_tokens"]))
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Failed to inject input_tokens: {e}")
+
+            try:
+                if "output_tokens" in usage:
+                    metrics.tokens.output_tokens = max(0, int(usage["output_tokens"]))
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Failed to inject output_tokens: {e}")
+
+            # Recompute total_tokens if any token counts were injected
+            try:
+                if "input_tokens" in usage or "output_tokens" in usage:
+                    metrics.tokens.total_tokens = (
+                        metrics.tokens.input_tokens + metrics.tokens.output_tokens
+                    )
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Failed to compute total_tokens: {e}")
+
+        # Inject cost (independent of tokens)
+        try:
+            if "total_cost" in meta:
+                # Clamp to non-negative to prevent negative values from propagating
+                metrics.cost.total_cost = max(0.0, float(meta["total_cost"]))
+        except (TypeError, ValueError) as e:
+            logger.warning(f"Failed to inject total_cost: {e}")
+
+        # Recompute derived metrics after token injection
+        try:
+            # Reset tokens_per_second if tokens are now 0 (avoid stale values)
+            if metrics.tokens.total_tokens == 0:
+                metrics.response.tokens_per_second = 0.0
+            else:
+                MetricsCalculator.calculate_tokens_per_second(metrics)
+        except Exception as e:
+            logger.warning(f"Failed to recompute tokens_per_second: {e}")
+
+        logger.debug(
+            f"Injected cost=${metrics.cost.total_cost:.4f}, "
+            f"tokens={metrics.tokens.total_tokens}"
+        )
+
+        return meta
+
     def _process_single_output(
         self,
         output: Any,
@@ -736,6 +820,10 @@ class LocalEvaluator(BaseEvaluator):
         example_metric = self._extract_llm_metrics_for_output(
             output, index, config, dataset, all_captured_responses
         )
+
+        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present
+        # This MUST happen AFTER extract_llm_metrics returns (so we can override cost)
+        self._extract_and_inject_traigent_meta(output, example_metric)
 
         # Set success status
         example_metric.success = errors[index] is None

@@ -461,7 +461,19 @@ def run_rag_workflow(question: str) -> str:
     # Run the workflow
     result = app.invoke(initial_state)
 
-    return result["answer"]
+    # Accumulate usage from all agent spans
+    total_input_tokens = sum(span["input_tokens"] for span in _agent_spans)
+    total_output_tokens = sum(span["output_tokens"] for span in _agent_spans)
+    total_cost = sum(span["cost_usd"] for span in _agent_spans)
+
+    # Use with_usage() to report multi-agent workflow costs to Traigent
+    # This allows the SDK to track costs even though internal LLM calls are invisible
+    return traigent.with_usage(
+        text=result["answer"],
+        total_cost=total_cost,
+        input_tokens=total_input_tokens,
+        output_tokens=total_output_tokens,
+    )
 
 
 # =============================================================================

@@ -826,3 +826,87 @@ def get_global_parallel_config() -> ParallelConfig:
         coerced = ParallelConfig()
     _GLOBAL_CONFIG["parallel_config"] = coerced
     return coerced
+
+
+def with_usage(
+    text: str,
+    total_cost: float,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> str | dict[str, Any]:
+    """Wrap a response with usage metadata if in optimization mode.
+
+    Returns text directly in production, or a dict with metadata
+    during optimization. The metadata is extracted and injected into
+    metrics after cost calculation.
+
+    Args:
+        text: The actual response content (must be a string)
+        total_cost: Pre-computed cost in USD (REQUIRED - not recalculated from tokens)
+        input_tokens: Number of input tokens consumed (informational, for UI display).
+            If only one token count is provided, the other defaults to 0.
+        output_tokens: Number of output tokens generated (informational, for UI display).
+            If only one token count is provided, the other defaults to 0.
+
+    Returns:
+        In production: text unchanged
+        During optimization: dict with text + __traigent_meta__
+
+    Raises:
+        TypeError: If text is not a string
+
+    Note:
+        - `total_cost` is REQUIRED because cost is not recalculated from tokens
+        - Token counts are informational only (for UI display)
+        - Cost is injected AFTER SDK's cost calculation, overriding any calculated value
+        - Custom metric functions receive the full dict output (including __traigent_meta__)
+        - `__traigent_meta__` is a reserved key. If your function output already contains
+          this key for other purposes, it will be treated as usage metadata.
+
+    Example:
+        @traigent.optimize(...)
+        def my_workflow(question: str):
+            # Accumulate usage from internal LLM calls
+            total_in = total_out = total_cost = 0
+            for step in workflow:
+                response = llm.call(...)
+                total_in += response.usage.prompt_tokens
+                total_out += response.usage.completion_tokens
+                total_cost += calculate_cost(response)  # User must calculate
+
+            return traigent.with_usage(
+                text=answer,
+                total_cost=total_cost,
+                input_tokens=total_in,
+                output_tokens=total_out,
+            )
+    """
+    # Enforce string type
+    if not isinstance(text, str):
+        raise TypeError(
+            f"with_usage() requires text to be a string, got {type(text).__name__}. "
+            "Convert your response to a string before calling with_usage()."
+        )
+
+    # Only wrap in dict during optimization
+    if get_trial_context() is None:
+        return text
+
+    result: dict[str, Any] = {"text": text}
+
+    # Build metadata - always include total_cost (required)
+    meta: dict[str, Any] = {"total_cost": float(total_cost)}
+
+    # Only include token counts if explicitly provided (not None)
+    # This avoids overwriting existing extracted token counts with zeros
+    if input_tokens is not None or output_tokens is not None:
+        usage: dict[str, int] = {}
+        if input_tokens is not None:
+            usage["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            usage["output_tokens"] = int(output_tokens)
+        meta["usage"] = usage
+
+    result["__traigent_meta__"] = meta
+
+    return result

@@ -75,6 +75,7 @@ from traigent.api.functions import (
     initialize,
     override_config,
     set_strategy,
+    with_usage,
 )
 
 # SE-friendly parameter range classes
@@ -108,7 +109,7 @@ from traigent.api.validation_protocol import (
 )
 
 # Thread context helpers
-from traigent.config.context import copy_context_to_thread
+from traigent.config.context import copy_context_to_thread, get_trial_context
 
 # Configuration types
 from traigent.config.types import TraigentConfig
@@ -188,9 +189,11 @@ __all__ = [
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
+    "get_trial_context",  # New: check if in optimization context
     "get_optimization_insights",
     "get_version_info",
     "set_strategy",
+    "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
     # Configuration types
     "TraigentConfig",
     # Lifecycle and state

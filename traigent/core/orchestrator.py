@@ -1430,7 +1430,7 @@ class OptimizationOrchestrator:
 
     def _create_optimization_workflow_graph(
         self, session_id: str | None
-    ) -> "WorkflowGraphPayload | None":
+    ) -> WorkflowGraphPayload | None:
         """Create a workflow graph representing the optimization flow.
 
         Creates a simple graph with START -> optimization_run -> END nodes
