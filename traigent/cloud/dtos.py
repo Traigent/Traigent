@@ -6,6 +6,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
+import re
 from collections import UserDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -33,15 +34,17 @@ class MeasuresDict(UserDict):
 
     Enforces:
     - Maximum 50 keys to prevent unbounded memory usage
-    - String keys only
-    - Primitive value types only (int, float, str, bool, None)
+    - String keys matching Python identifier pattern (^[a-zA-Z_][a-zA-Z0-9_]*$)
+    - Numeric value types only (int, float, None) for optimization metrics
+    - Non-numeric values log warnings in Phase 0 (will be rejected in v2.0)
 
     Raises:
-        ValueError: If key limit exceeded
+        ValueError: If key limit exceeded or key pattern invalid
         TypeError: If key is not string or value is not primitive type
     """
 
     MAX_KEYS = 50
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
     def __init__(self, data: dict[str, Any] | None = None) -> None:
         """Initialize with optional data dictionary.
@@ -66,7 +69,7 @@ class MeasuresDict(UserDict):
             data: Dictionary to validate
 
         Raises:
-            ValueError: If data exceeds MAX_KEYS
+            ValueError: If data exceeds MAX_KEYS or key pattern invalid
             TypeError: If data contains invalid key or value types
         """
         if len(data) > self.MAX_KEYS:
@@ -77,33 +80,97 @@ class MeasuresDict(UserDict):
         for key, value in data.items():
             if not isinstance(key, str):
                 raise TypeError(f"Measure key must be string, got {type(key).__name__}")
-            if not isinstance(value, (int, float, str, bool, type(None))):
-                raise TypeError(
-                    f"Measure '{key}' must be primitive type "
-                    f"(int, float, str, bool, None), got {type(value).__name__}"
+
+            # NEW: Validate key pattern (Python identifier syntax)
+            if not self.KEY_PATTERN.match(key):
+                raise ValueError(
+                    f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
+                    f"(Python identifier syntax). "
+                    f"Use underscores instead of hyphens or spaces. "
+                    f"Invalid: 'my-metric', '123abc'. Valid: 'my_metric', 'metric_123'."
                 )
+
+            # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+            if not isinstance(value, (int, float, type(None))):
+                logger.warning(
+                    f"Measure '{key}' has non-numeric value type {type(value).__name__}. "
+                    f"Non-numeric metrics will be rejected in Traigent v2.0. "
+                    f"Store non-numeric data in configuration run metadata instead.",
+                    extra={
+                        "key": key,
+                        "value_type": type(value).__name__,
+                        "hint": "Use run_metadata or workflow_metadata for non-numeric data",
+                    },
+                )
+                # Phase 0: Allow but warn (backward compatible)
+                # Phase 2: Uncomment to enforce
+                # raise TypeError(
+                #     f"Measure '{key}' must be numeric type (int, float, None), "
+                #     f"got {type(value).__name__}. "
+                #     f"Non-numeric data should be stored in configuration run metadata."
+                # )
 
     def __setitem__(self, key: str, value: Any) -> None:
         """Validate on assignment.
 
         Args:
-            key: Measure key (must be string)
-            value: Measure value (must be primitive type)
+            key: Measure key (must be string matching Python identifier pattern)
+            value: Measure value (must be numeric type)
 
         Raises:
-            ValueError: If adding would exceed MAX_KEYS
+            ValueError: If adding would exceed MAX_KEYS or key pattern invalid
             TypeError: If key is not string or value is not primitive type
         """
         if len(self.data) >= self.MAX_KEYS and key not in self.data:
             raise ValueError(f"Measures cannot exceed {self.MAX_KEYS} keys")
+
         if not isinstance(key, str):
             raise TypeError(f"Key must be string, got {type(key).__name__}")
-        if not isinstance(value, (int, float, str, bool, type(None))):
-            raise TypeError(
-                f"Value must be primitive type (int, float, str, bool, None), "
-                f"got {type(value).__name__}"
+
+        # NEW: Validate key pattern (Python identifier syntax)
+        if not self.KEY_PATTERN.match(key):
+            raise ValueError(
+                f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
+                f"(Python identifier syntax). "
+                f"Use underscores instead of hyphens or spaces."
             )
+
+        # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+        if not isinstance(value, (int, float, type(None))):
+            logger.warning(
+                f"Setting non-numeric measure '{key}': {type(value).__name__}. "
+                f"This will be rejected in Traigent v2.0. "
+                f"Use run_metadata or workflow_metadata for non-numeric data."
+            )
+            # Phase 0: Allow but warn (backward compatible)
+            # Phase 2: Uncomment to enforce
+            # raise TypeError(
+            #     f"Value must be numeric type (int, float, None), "
+            #     f"got {type(value).__name__}"
+            # )
+
         self.data[key] = value
+
+    def __ior__(self, other: dict[str, Any]) -> "MeasuresDict":
+        """Support |= operator with validation.
+
+        Args:
+            other: Dictionary to merge with this MeasuresDict
+
+        Returns:
+            Self for chaining
+
+        Raises:
+            ValueError: If validation fails
+            TypeError: If key or value types invalid
+        """
+        # Validate all items from other dict before merging
+        if isinstance(other, dict):
+            for key, value in other.items():
+                self[key] = value  # Use __setitem__ for validation
+        else:
+            raise TypeError(f"unsupported operand type(s) for |=: 'MeasuresDict' and '{type(other).__name__}'")
+        return self
 
 
 @dataclass

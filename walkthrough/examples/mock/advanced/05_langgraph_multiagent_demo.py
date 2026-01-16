@@ -20,7 +20,6 @@ for visualization in the Traigent frontend.
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import time
 import uuid
@@ -417,6 +416,40 @@ def extract_workflow_graph(
 
 
 # =============================================================================
+# Custom Accuracy Metric
+# =============================================================================
+
+
+def accuracy_metric(expected: str, actual: str) -> float:
+    """Calculate accuracy by checking if expected output is in generated answer.
+
+    This is a simple substring match metric. For production use cases,
+    you might want to use semantic similarity, fuzzy matching, or LLM-as-judge.
+
+    Args:
+        expected: The expected answer from the dataset
+        actual: The generated answer from the workflow
+
+    Returns:
+        1.0 if expected output is found in generated answer, 0.0 otherwise
+    """
+    # Normalize both strings for comparison
+    actual_lower = actual.lower().strip()
+    expected_lower = expected.lower().strip()
+
+    # Check if expected answer appears in the output
+    if expected_lower in actual_lower:
+        return 1.0
+
+    # Also check individual words for partial credit (e.g., "Paris" in "The capital is Paris, France")
+    expected_words = expected_lower.split()
+    if len(expected_words) == 1 and expected_words[0] in actual_lower:
+        return 1.0
+
+    return 0.0
+
+
+# =============================================================================
 # Optimized Function
 # =============================================================================
 
@@ -424,11 +457,12 @@ def extract_workflow_graph(
 @traigent.optimize(
     eval_dataset=str(SCRIPT_DIR / "simple_questions.jsonl"),
     objectives=["accuracy", "cost"],
+    metric_functions={"accuracy": accuracy_metric},  # Custom accuracy metric
     configuration_space={
         # Generator Agent parameters (namespaced)
         # Note: In real mode, we always use gpt-4o-mini for simplicity
         # These params demonstrate what Traigent CAN optimize
-        "generate.model": ["gpt-4o-mini"],  # Cheap model only
+        "generate.model": ["gpt-4o-mini"],  # Fast and cheap model
         "generate.temperature": [0.3, 0.7],  # Reduced options to minimize API calls
         # Retriever Agent parameters
         "retrieve.top_k": [3, 5],  # Reduced options
@@ -468,7 +502,7 @@ def run_rag_workflow(question: str) -> str:
 
     # Use with_usage() to report multi-agent workflow costs to Traigent
     # This allows the SDK to track costs even though internal LLM calls are invisible
-    return traigent.with_usage(
+    return traigent.with_usage(  # type: ignore[return-value]
         text=result["answer"],
         total_cost=total_cost,
         input_tokens=total_input_tokens,
@@ -535,10 +569,16 @@ async def main() -> None:
     max_trials = 4 if MOCK_MODE else 2
     print(f"\nOptimizing parameters ({max_trials} trials)...")
 
+    # Set a generous timeout to allow all trials to complete
+    # Each trial takes ~100s with 20 examples, so timeout should be at least max_trials * 120s
+    timeout_seconds = max_trials * 120  # 240s for 2 trials in real mode
+    print(f"  Timeout: {timeout_seconds}s (allowing ~{timeout_seconds // max_trials}s per trial)")
+
     results = await run_rag_workflow.optimize(
         algorithm="grid",
         max_trials=max_trials,
         random_seed=42,
+        timeout=timeout_seconds,  # Explicit timeout to allow all trials to complete
     )
 
     # Send the workflow graph to backend for visualization

@@ -2,7 +2,13 @@
 
 This module tests the MeasuresDict class to ensure it properly validates
 measures and enforces cardinality limits.
+
+Phase 0 tests added for:
+- Key pattern validation (Python identifier syntax)
+- Non-numeric value warnings (gradual migration to numeric-only)
 """
+
+import logging
 
 import pytest
 
@@ -30,29 +36,63 @@ class TestMeasuresDictValidation:
         assert measures["bool_val"] is True
         assert measures["none_val"] is None
 
-    def test_rejects_list_type(self):
-        """Should reject list values."""
-        with pytest.raises(TypeError, match="must be primitive type"):
-            MeasuresDict({"list_val": [1, 2, 3]})
+    def test_accepts_list_type_with_warning(self, caplog):
+        """Should accept list values with warning (Phase 0)."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"list_val": [1, 2, 3]})
 
-    def test_rejects_dict_type(self):
-        """Should reject dict values."""
-        with pytest.raises(TypeError, match="must be primitive type"):
-            MeasuresDict({"dict_val": {"nested": "dict"}})
+        # Phase 0: Accept but warn
+        assert measures["list_val"] == [1, 2, 3]
 
-    def test_rejects_tuple_type(self):
-        """Should reject tuple values."""
-        with pytest.raises(TypeError, match="must be primitive type"):
-            MeasuresDict({"tuple_val": (1, 2, 3)})
+        # Check warning was logged
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
 
-    def test_rejects_object_type(self):
-        """Should reject object values."""
+    def test_accepts_dict_type_with_warning(self, caplog):
+        """Should accept dict values with warning (Phase 0)."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"dict_val": {"nested": "dict"}})
+
+        # Phase 0: Accept but warn
+        assert measures["dict_val"] == {"nested": "dict"}
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_accepts_tuple_type_with_warning(self, caplog):
+        """Should accept tuple values with warning (Phase 0)."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"tuple_val": (1, 2, 3)})
+
+        # Phase 0: Accept but warn
+        assert measures["tuple_val"] == (1, 2, 3)
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_accepts_object_type_with_warning(self, caplog):
+        """Should accept object values with warning (Phase 0)."""
 
         class CustomObject:
             pass
 
-        with pytest.raises(TypeError, match="must be primitive type"):
-            MeasuresDict({"object_val": CustomObject()})
+        obj = CustomObject()
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"object_val": obj})
+
+        # Phase 0: Accept but warn
+        assert measures["object_val"] is obj
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
 
     def test_rejects_non_string_keys(self):
         """Should reject non-string keys."""
@@ -102,44 +142,68 @@ class TestMeasuresDictValidation:
         measures = MeasuresDict(None)
         assert len(measures) == 0
 
-    def test_assignment_validates_types(self):
-        """Should validate types on assignment."""
+    def test_assignment_warns_on_non_numeric(self, caplog):
+        """Should warn on non-numeric assignment (Phase 0)."""
         measures = MeasuresDict()
 
-        # Valid assignment
+        # Valid numeric assignment
         measures["valid"] = 42
         assert measures["valid"] == 42
 
-        # Invalid value type
-        with pytest.raises(TypeError, match="Value must be primitive"):
+        # Non-numeric value triggers warning
+        with caplog.at_level(logging.WARNING):
             measures["invalid"] = [1, 2, 3]
 
-    def test_update_method_validates(self):
-        """Should validate on update() operation."""
+        # Phase 0: Accept but warn
+        assert measures["invalid"] == [1, 2, 3]
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_update_method_warns_on_non_numeric(self, caplog):
+        """Should warn on non-numeric update() (Phase 0)."""
         measures = MeasuresDict({"existing": 1})
 
         # Valid update
         measures.update({"new_key": 2})
         assert measures["new_key"] == 2
 
-        # Invalid type in update should raise during __setitem__
-        with pytest.raises(TypeError, match="Value must be primitive"):
+        # Non-numeric value triggers warning
+        with caplog.at_level(logging.WARNING):
             measures.update({"bad_key": [1, 2, 3]})
 
-    def test_or_operator_validates(self):
-        """Should validate on |= operator (dict union)."""
+        # Phase 0: Accept but warn
+        assert measures["bad_key"] == [1, 2, 3]
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_or_operator_warns_on_non_numeric(self, caplog):
+        """Should warn on non-numeric |= operator (Phase 0)."""
         measures = MeasuresDict({"existing": 1})
 
         # Valid union
         measures |= {"new_key": 2}
         assert measures["new_key"] == 2
 
-        # Invalid type in union should raise
-        with pytest.raises(TypeError, match="Value must be primitive"):
+        # Non-numeric value triggers warning
+        with caplog.at_level(logging.WARNING):
             measures |= {"bad_key": {"nested": "dict"}}
 
-    def test_setdefault_validates(self):
-        """Should validate on setdefault() operation."""
+        # Phase 0: Accept but warn
+        assert measures["bad_key"] == {"nested": "dict"}
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_setdefault_warns_on_non_numeric(self, caplog):
+        """Should warn on non-numeric setdefault() (Phase 0)."""
         measures = MeasuresDict()
 
         # Valid setdefault
@@ -147,9 +211,18 @@ class TestMeasuresDictValidation:
         assert result == 42
         assert measures["key1"] == 42
 
-        # Invalid type in setdefault should raise
-        with pytest.raises(TypeError, match="Value must be primitive"):
-            measures.setdefault("key2", [1, 2, 3])
+        # Non-numeric value triggers warning
+        with caplog.at_level(logging.WARNING):
+            result = measures.setdefault("key2", [1, 2, 3])
+
+        # Phase 0: Accept but warn
+        assert result == [1, 2, 3]
+        assert measures["key2"] == [1, 2, 3]
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
 
     def test_dict_access_operations(self):
         """Should support standard dict operations."""
@@ -266,3 +339,152 @@ class TestMeasuresDictValidation:
         assert measures["negative_float"] == -2.5
         assert measures["zero"] == 0
         assert measures["empty_string"] == ""
+
+
+class TestMeasuresDictKeyPattern:
+    """Test key pattern validation (Python identifier syntax) - Phase 0."""
+
+    def test_accepts_valid_python_identifier_keys(self):
+        """Should accept keys matching Python identifier pattern."""
+        valid_keys = {
+            "accuracy": 0.95,
+            "cost": 0.001,
+            "latency": 1.5,
+            "_private_metric": 0.8,
+            "metric_123": 0.7,
+            "metric123": 0.6,
+            "ALLCAPS": 0.5,
+            "CamelCase": 0.4,
+        }
+        measures = MeasuresDict(valid_keys)
+        assert len(measures) == 8
+        assert measures["accuracy"] == 0.95
+
+    def test_rejects_hyphenated_keys(self):
+        """Should reject keys with hyphens (not Python identifiers)."""
+        with pytest.raises(
+            ValueError, match=r"Measure key 'my-metric' must match pattern"
+        ):
+            MeasuresDict({"my-metric": 0.95})
+
+    def test_rejects_keys_starting_with_digit(self):
+        """Should reject keys starting with digits."""
+        with pytest.raises(
+            ValueError, match=r"Measure key '123abc' must match pattern"
+        ):
+            MeasuresDict({"123abc": 0.95})
+
+    def test_rejects_keys_with_spaces(self):
+        """Should reject keys with spaces."""
+        with pytest.raises(
+            ValueError, match=r"Measure key 'my metric' must match pattern"
+        ):
+            MeasuresDict({"my metric": 0.95})
+
+    def test_rejects_keys_with_special_chars(self):
+        """Should reject keys with special characters."""
+        with pytest.raises(
+            ValueError, match=r"Measure key 'my@metric' must match pattern"
+        ):
+            MeasuresDict({"my@metric": 0.95})
+
+    def test_error_message_provides_examples(self):
+        """Error message should show valid and invalid examples."""
+        with pytest.raises(ValueError) as exc_info:
+            MeasuresDict({"my-metric": 0.95})
+
+        error_msg = str(exc_info.value)
+        assert "Python identifier syntax" in error_msg
+        assert "my-metric" in error_msg  # Shows the invalid key
+        assert "my_metric" in error_msg  # Shows valid alternative
+
+    def test_setitem_validates_key_pattern(self):
+        """Assignment should also validate key pattern."""
+        measures = MeasuresDict()
+
+        # Valid assignment works
+        measures["valid_key"] = 0.95
+        assert measures["valid_key"] == 0.95
+
+        # Invalid assignment raises
+        with pytest.raises(ValueError, match=r"must match pattern"):
+            measures["invalid-key"] = 0.8
+
+
+class TestMeasuresDictNumericEnforcement:
+    """Test numeric type enforcement (Phase 0: warn, Phase 2: enforce)."""
+
+    def test_accepts_numeric_types(self):
+        """Should accept int, float, None."""
+        measures = MeasuresDict(
+            {
+                "int_metric": 42,
+                "float_metric": 3.14,
+                "none_metric": None,
+            }
+        )
+        assert measures["int_metric"] == 42
+        assert measures["float_metric"] == 3.14
+        assert measures["none_metric"] is None
+
+    def test_warns_on_non_numeric_string(self, caplog):
+        """Should warn (not reject) for string values in Phase 0."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"model_name": "gpt-4o-mini"})
+
+        # Phase 0: Accept but warn
+        assert measures["model_name"] == "gpt-4o-mini"
+
+        # Check warning was logged
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)
+        assert any("v2.0" in msg for msg in warning_messages)
+
+    def test_accepts_boolean_without_warning(self, caplog):
+        """Should accept boolean values without warning (bool is subclass of int)."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"is_valid": True})
+
+        # Booleans are accepted as numeric (isinstance(True, int) == True)
+        assert measures["is_valid"] is True
+
+        # No warning should be logged (booleans pass isinstance check for int)
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert not any("non-numeric" in msg.lower() for msg in warning_messages)
+
+    def test_warns_on_non_numeric_list(self, caplog):
+        """Should warn for list values in Phase 0."""
+        with caplog.at_level(logging.WARNING):
+            measures = MeasuresDict({"scores": [0.9, 0.8, 0.7]})
+
+        # Phase 0: Accept but warn
+        assert measures["scores"] == [0.9, 0.8, 0.7]
+
+    def test_warning_includes_helpful_hint(self, caplog):
+        """Warning should suggest using metadata for non-numeric data."""
+        with caplog.at_level(logging.WARNING):
+            MeasuresDict({"model_name": "gpt-4o"})
+
+        warning_messages = " ".join(
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        )
+        assert "metadata" in warning_messages.lower()
+
+    def test_setitem_warns_on_non_numeric(self, caplog):
+        """Assignment of non-numeric values should also warn."""
+        measures = MeasuresDict()
+
+        with caplog.at_level(logging.WARNING):
+            measures["tag"] = "production"
+
+        # Phase 0: Accept but warn
+        assert measures["tag"] == "production"
+
+        warning_messages = [
+            record.message for record in caplog.records if record.levelname == "WARNING"
+        ]
+        assert any("non-numeric" in msg.lower() for msg in warning_messages)

@@ -159,8 +159,49 @@ class WorkflowCostSummary:
     total_output_cost: float = 0.0
     total_cost: float = 0.0
 
+    @classmethod
+    def from_agents(
+        cls,
+        workflow_id: str,
+        workflow_name: str,
+        agent_breakdowns: list[AgentCostBreakdown],
+    ) -> "WorkflowCostSummary":
+        """Factory method that computes totals from agent breakdowns.
+
+        Use this when you don't want to manually calculate totals.
+        This is the recommended way to create a WorkflowCostSummary.
+
+        Args:
+            workflow_id: Unique workflow identifier
+            workflow_name: Human-readable workflow name
+            agent_breakdowns: List of per-agent cost breakdowns
+
+        Returns:
+            WorkflowCostSummary with totals computed from agent_breakdowns
+
+        Example:
+            >>> agent1 = AgentCostBreakdown(...)
+            >>> agent2 = AgentCostBreakdown(...)
+            >>> summary = WorkflowCostSummary.from_agents(
+            ...     workflow_id="wf-123",
+            ...     workflow_name="Research + Write",
+            ...     agent_breakdowns=[agent1, agent2],
+            ... )
+        """
+        return cls(
+            workflow_id=workflow_id,
+            workflow_name=workflow_name,
+            agent_breakdowns=agent_breakdowns,
+            total_input_tokens=sum(a.input_tokens for a in agent_breakdowns),
+            total_output_tokens=sum(a.output_tokens for a in agent_breakdowns),
+            total_tokens=sum(a.total_tokens for a in agent_breakdowns),
+            total_input_cost=sum(a.input_cost for a in agent_breakdowns),
+            total_output_cost=sum(a.output_cost for a in agent_breakdowns),
+            total_cost=sum(a.total_cost for a in agent_breakdowns),
+        )
+
     def __post_init__(self) -> None:
-        """Validate and aggregate from agent breakdowns.
+        """Validate workflow data and totals (strict validation, no transformations).
 
         Raises:
             ValueError: If validation fails
@@ -180,13 +221,65 @@ class WorkflowCostSummary:
                 + "\n".join(f"  - {e}" for e in errors)
             )
 
-        # Aggregate from agents (override any provided values)
-        self.total_input_tokens = sum(a.input_tokens for a in self.agent_breakdowns)
-        self.total_output_tokens = sum(a.output_tokens for a in self.agent_breakdowns)
-        self.total_tokens = sum(a.total_tokens for a in self.agent_breakdowns)
-        self.total_input_cost = sum(a.input_cost for a in self.agent_breakdowns)
-        self.total_output_cost = sum(a.output_cost for a in self.agent_breakdowns)
-        self.total_cost = sum(a.total_cost for a in self.agent_breakdowns)
+        # Compute expected totals from agent breakdowns
+        expected_input_tokens = sum(a.input_tokens for a in self.agent_breakdowns)
+        expected_output_tokens = sum(a.output_tokens for a in self.agent_breakdowns)
+        expected_total_tokens = sum(a.total_tokens for a in self.agent_breakdowns)
+        expected_input_cost = sum(a.input_cost for a in self.agent_breakdowns)
+        expected_output_cost = sum(a.output_cost for a in self.agent_breakdowns)
+        expected_total_cost = sum(a.total_cost for a in self.agent_breakdowns)
+
+        # Validate that provided totals match computed totals (strict - no recomputation)
+        validation_errors: list[str] = []
+
+        if self.total_input_tokens != expected_input_tokens:
+            validation_errors.append(
+                f"total_input_tokens ({self.total_input_tokens}) must equal "
+                f"sum of agent input_tokens ({expected_input_tokens}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        if self.total_output_tokens != expected_output_tokens:
+            validation_errors.append(
+                f"total_output_tokens ({self.total_output_tokens}) must equal "
+                f"sum of agent output_tokens ({expected_output_tokens}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        if self.total_tokens != expected_total_tokens:
+            validation_errors.append(
+                f"total_tokens ({self.total_tokens}) must equal "
+                f"sum of agent total_tokens ({expected_total_tokens}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        # Use floating point tolerance for costs
+        if abs(self.total_input_cost - expected_input_cost) > 0.0001:
+            validation_errors.append(
+                f"total_input_cost ({self.total_input_cost:.8f}) must equal "
+                f"sum of agent input_costs ({expected_input_cost:.8f}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        if abs(self.total_output_cost - expected_output_cost) > 0.0001:
+            validation_errors.append(
+                f"total_output_cost ({self.total_output_cost:.8f}) must equal "
+                f"sum of agent output_costs ({expected_output_cost:.8f}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        if abs(self.total_cost - expected_total_cost) > 0.0001:
+            validation_errors.append(
+                f"total_cost ({self.total_cost:.8f}) must equal "
+                f"sum of agent total_costs ({expected_total_cost:.8f}). "
+                f"Hint: Use WorkflowCostSummary.from_agents() to compute totals automatically."
+            )
+
+        if validation_errors:
+            raise ValueError(
+                "WorkflowCostSummary aggregation validation failed:\n"
+                + "\n".join(f"  - {e}" for e in validation_errors)
+            )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization.

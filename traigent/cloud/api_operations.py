@@ -608,13 +608,23 @@ class ApiOperations:
                         )
                         return False
 
-            # Build measures data in the correct Traigent format
-            measures_data = {"measures": {"metrics": mapped_metrics, "metadata": {}}}
+            # Build measures data in schema-compliant array format
+            # Per configuration_run_schema.json, measures must be array of MeasureResult objects
+            # Type: dict[str, list[dict[str, float]] | None]
+            measures_data: dict[str, list[dict[str, float]] | None]
+            if mapped_metrics:
+                measure_result = dict(mapped_metrics)
+                measures_data = {"measures": [measure_result]}
+            else:
+                # Omit measures if empty (per schema - use null or omit when no results)
+                measures_data = {"measures": None}
 
-            # Add execution time if provided
+            # Add execution time to workflow_metadata when backend supports it
+            # TODO: Once backend adds workflow_metadata field, send via that endpoint
             if execution_time is not None:
-                measures_data["measures"]["metadata"]["execution_time"] = float(
-                    execution_time
+                logger.debug(
+                    f"execution_time={execution_time} should be sent via workflow_metadata field "
+                    f"(not yet supported by backend). Skipping for now."
                 )
 
             connector = self._build_connector()

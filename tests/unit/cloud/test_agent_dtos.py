@@ -301,7 +301,8 @@ class TestWorkflowCostSummary:
             model_used="gpt-4o",
         )
 
-        workflow = WorkflowCostSummary(
+        # Use from_agents() factory to compute totals automatically
+        workflow = WorkflowCostSummary.from_agents(
             workflow_id="workflow-001",
             workflow_name="Research + Write",
             agent_breakdowns=[agent1, agent2],
@@ -380,7 +381,8 @@ class TestWorkflowCostSummary:
             model_used="gpt-4o-mini",
         )
 
-        workflow = WorkflowCostSummary(
+        # Use from_agents() factory to compute totals automatically
+        workflow = WorkflowCostSummary.from_agents(
             workflow_id="workflow-001",
             workflow_name="Solo Workflow",
             agent_breakdowns=[agent],
@@ -407,7 +409,8 @@ class TestWorkflowCostSummary:
             for i in range(10)
         ]
 
-        workflow = WorkflowCostSummary(
+        # Use from_agents() factory to compute totals automatically
+        workflow = WorkflowCostSummary.from_agents(
             workflow_id="workflow-001",
             workflow_name="Multi-Agent Workflow",
             agent_breakdowns=agents,
@@ -442,7 +445,8 @@ class TestWorkflowCostSummary:
             model_used="gpt-4o",
         )
 
-        workflow = WorkflowCostSummary(
+        # Use from_agents() factory to compute totals automatically
+        workflow = WorkflowCostSummary.from_agents(
             workflow_id="workflow-001",
             workflow_name="Research + Write",
             agent_breakdowns=[agent1, agent2],
@@ -457,3 +461,238 @@ class TestWorkflowCostSummary:
         assert len(result["agent_breakdowns"]) == 2
         assert result["agent_breakdowns"][0]["agent_id"] == "agent-001"
         assert result["agent_breakdowns"][1]["agent_id"] == "agent-002"
+
+
+class TestWorkflowCostSummaryFromAgentsFactory:
+    """Test WorkflowCostSummary.from_agents() factory method - Phase 0."""
+
+    def test_from_agents_computes_totals_correctly(self):
+        """from_agents() should compute totals from agent breakdowns."""
+        agent1 = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Researcher",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+        agent2 = AgentCostBreakdown(
+            agent_id="agent-002",
+            agent_name="Writer",
+            input_tokens=200,
+            output_tokens=100,
+            total_tokens=300,
+            input_cost=0.002,
+            output_cost=0.004,
+            total_cost=0.006,
+            model_used="gpt-4o",
+        )
+
+        workflow = WorkflowCostSummary.from_agents(
+            workflow_id="workflow-001",
+            workflow_name="Research + Write",
+            agent_breakdowns=[agent1, agent2],
+        )
+
+        # Verify totals computed correctly
+        assert workflow.total_input_tokens == 300
+        assert workflow.total_output_tokens == 150
+        assert workflow.total_tokens == 450
+        assert workflow.total_input_cost == 0.003
+        assert workflow.total_output_cost == 0.006
+        assert abs(workflow.total_cost - 0.009) < 0.0001
+
+    def test_from_agents_with_single_agent(self):
+        """from_agents() should work with single agent."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Solo",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        workflow = WorkflowCostSummary.from_agents(
+            workflow_id="workflow-001",
+            workflow_name="Solo Work",
+            agent_breakdowns=[agent],
+        )
+
+        assert workflow.total_tokens == 150
+        assert workflow.total_cost == 0.003
+
+    def test_from_agents_with_many_agents(self):
+        """from_agents() should handle many agents."""
+        agents = [
+            AgentCostBreakdown(
+                agent_id=f"agent-{i:03d}",
+                agent_name=f"Agent {i}",
+                input_tokens=100,
+                output_tokens=50,
+                total_tokens=150,
+                input_cost=0.001,
+                output_cost=0.002,
+                total_cost=0.003,
+                model_used="gpt-4o-mini",
+            )
+            for i in range(10)
+        ]
+
+        workflow = WorkflowCostSummary.from_agents(
+            workflow_id="workflow-001",
+            workflow_name="Multi-Agent",
+            agent_breakdowns=agents,
+        )
+
+        assert workflow.total_tokens == 1500
+        assert abs(workflow.total_cost - 0.030) < 0.0001
+
+
+class TestWorkflowCostSummaryValidation:
+    """Test WorkflowCostSummary strict validation (not transformation) - Phase 0."""
+
+    def test_rejects_mismatched_input_tokens(self):
+        """Should reject when total_input_tokens doesn't match sum."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Agent",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        with pytest.raises(ValueError, match=r"total_input_tokens.*must equal"):
+            WorkflowCostSummary(
+                workflow_id="workflow-001",
+                workflow_name="Test",
+                agent_breakdowns=[agent],
+                total_input_tokens=999,  # Wrong! Should be 100
+                total_output_tokens=50,
+                total_tokens=150,
+                total_input_cost=0.001,
+                total_output_cost=0.002,
+                total_cost=0.003,
+            )
+
+    def test_rejects_mismatched_output_tokens(self):
+        """Should reject when total_output_tokens doesn't match sum."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Agent",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        with pytest.raises(ValueError, match=r"total_output_tokens.*must equal"):
+            WorkflowCostSummary(
+                workflow_id="workflow-001",
+                workflow_name="Test",
+                agent_breakdowns=[agent],
+                total_input_tokens=100,
+                total_output_tokens=999,  # Wrong! Should be 50
+                total_tokens=150,
+                total_input_cost=0.001,
+                total_output_cost=0.002,
+                total_cost=0.003,
+            )
+
+    def test_rejects_mismatched_total_tokens(self):
+        """Should reject when total_tokens doesn't match sum."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Agent",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        with pytest.raises(ValueError, match=r"total_tokens.*must equal"):
+            WorkflowCostSummary(
+                workflow_id="workflow-001",
+                workflow_name="Test",
+                agent_breakdowns=[agent],
+                total_input_tokens=100,
+                total_output_tokens=50,
+                total_tokens=999,  # Wrong! Should be 150
+                total_input_cost=0.001,
+                total_output_cost=0.002,
+                total_cost=0.003,
+            )
+
+    def test_rejects_mismatched_total_cost(self):
+        """Should reject when total_cost doesn't match sum."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Agent",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        with pytest.raises(ValueError, match=r"total_cost.*must equal"):
+            WorkflowCostSummary(
+                workflow_id="workflow-001",
+                workflow_name="Test",
+                agent_breakdowns=[agent],
+                total_input_tokens=100,
+                total_output_tokens=50,
+                total_tokens=150,
+                total_input_cost=0.001,
+                total_output_cost=0.002,
+                total_cost=0.999,  # Wrong! Should be 0.003
+            )
+
+    def test_validation_error_includes_hint(self):
+        """Validation error should hint to use from_agents()."""
+        agent = AgentCostBreakdown(
+            agent_id="agent-001",
+            agent_name="Agent",
+            input_tokens=100,
+            output_tokens=50,
+            total_tokens=150,
+            input_cost=0.001,
+            output_cost=0.002,
+            total_cost=0.003,
+            model_used="gpt-4o-mini",
+        )
+
+        with pytest.raises(ValueError) as exc_info:
+            WorkflowCostSummary(
+                workflow_id="workflow-001",
+                workflow_name="Test",
+                agent_breakdowns=[agent],
+                total_input_tokens=999,
+                total_output_tokens=50,
+                total_tokens=150,
+                total_input_cost=0.001,
+                total_output_cost=0.002,
+                total_cost=0.003,
+            )
+
+        error_msg = str(exc_info.value)
+        assert "from_agents()" in error_msg
+        assert "automatically" in error_msg.lower()
