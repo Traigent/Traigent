@@ -7,9 +7,54 @@ from typing import Any
 
 from traigent.api.types import OptimizationResult, TrialResult
 from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.utils.example_id import compute_dataset_hash, generate_stable_example_id
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _validate_measure_dict(measure: dict[str, Any], example_index: int) -> None:
+    """Validate measure against MeasuresDict constraints from TraigentSchema.
+
+    MeasuresDict constraints (from traigent_schema/schemas/measures/):
+    1. Max 50 keys per measure
+    2. Keys must be valid Python identifiers (^[a-zA-Z_][a-zA-Z0-9_]*$)
+    3. Values must be numeric (int, float) or None (except example_id which can be str)
+
+    Args:
+        measure: Measure dict to validate
+        example_index: Index of the example (for error messages)
+
+    Raises:
+        ValueError: If validation fails
+    """
+    # Constraint 1: Max 50 keys
+    if len(measure) > 50:
+        raise ValueError(
+            f"Example {example_index}: Measure has {len(measure)} keys, "
+            f"exceeds MeasuresDict limit of 50"
+        )
+
+    # Constraint 2: Keys must be Python identifiers
+    for key in measure.keys():
+        if not key.isidentifier():
+            raise ValueError(
+                f"Example {example_index}: Invalid measure key '{key}', "
+                f"must be Python identifier (^[a-zA-Z_][a-zA-Z0-9_]*$)"
+            )
+
+    # Constraint 3: Values must be numeric or None (except example_id)
+    for key, value in measure.items():
+        if value is not None:
+            # example_id is allowed to be string
+            if key == "example_id" and isinstance(value, str):
+                continue
+            # All other values must be numeric
+            if not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"Example {example_index}: Measure key '{key}' has invalid type "
+                    f"{type(value).__name__}, must be int, float, or None"
+                )
 
 
 def merge_run_metrics_into_session_summary(result: OptimizationResult) -> None:
@@ -54,6 +99,8 @@ def build_backend_metadata(
     trial_result: TrialResult,
     primary_objective: str,
     traigent_config: TraigentConfig,
+    dataset_name: str = "dataset",
+    content_scores: dict[str, dict[int, float]] | None = None,
 ) -> dict[str, Any]:
     """Build metadata dictionary for backend trial submission.
 
@@ -61,12 +108,17 @@ def build_backend_metadata(
     - Basic trial info (duration, timestamp, execution mode)
     - Summary statistics (if available and not in cloud mode)
     - Per-example measures (respecting privacy settings)
+    - Stable example IDs (format: ex_{hash}_{index})
+    - Content-based scores (uniqueness, novelty)
     - Additional metrics beyond primary objective
 
     Args:
         trial_result: Completed trial result
         primary_objective: Primary optimization objective name
         traigent_config: Global configuration for execution mode and privacy
+        dataset_name: Name of the dataset (used for stable example ID generation)
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score (0.0-1.0). Pre-computed by ContentScorer.
 
     Returns:
         Metadata dict ready for backend submission
@@ -112,7 +164,9 @@ def build_backend_metadata(
         ExecutionMode.HYBRID,
     }
     if include_full_measures and example_results:
-        measures = _build_measures_full(example_results, primary_objective)
+        measures = _build_measures_full(
+            example_results, primary_objective, dataset_name, content_scores
+        )
         trial_metadata["measures"] = measures
         logger.debug(
             "Collected %s per-example MeasureResults for %s mode",
@@ -130,7 +184,9 @@ def build_backend_metadata(
                 pass
 
     elif privacy_on and example_results:
-        measures = _build_measures_privacy(example_results, primary_objective)
+        measures = _build_measures_privacy(
+            example_results, primary_objective, dataset_name, content_scores
+        )
         trial_metadata["measures"] = measures
         logger.debug(
             "Using sanitized MeasureResults for privacy mode: %s examples",
@@ -170,19 +226,33 @@ def build_backend_metadata(
 def _build_measures_full(
     example_results: list[Any],
     primary_objective: str,
+    dataset_name: str = "dataset",
+    content_scores: dict[str, dict[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build full per-example measures (non-privacy mode).
+    """Build full per-example measures with stable IDs and content scores (non-privacy mode).
 
     Args:
         example_results: List of example evaluation results
         primary_objective: Primary optimization objective name
+        dataset_name: Name of the dataset (for stable example ID generation)
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score
 
     Returns:
         List of measure dicts with all available metrics
+
+    Raises:
+        ValueError: If measures violate MeasuresDict constraints
     """
+    dataset_hash = compute_dataset_hash(dataset_name)
     measures = []
+
     for idx, example_result in enumerate(example_results):
         measure_result: dict[str, Any] = {}
+
+        # Generate stable example_id (format: ex_{hash}_{index})
+        example_id = generate_stable_example_id(dataset_hash, idx)
+        measure_result["example_id"] = example_id
 
         # Extract score from metrics
         metrics = getattr(example_result, "metrics", {}) or {}
@@ -223,6 +293,20 @@ def _build_measures_full(
         if hasattr(example_result, "execution_time"):
             measure_result["response_time"] = example_result.execution_time
 
+        # Add content scores if available (privacy-safe: numeric only)
+        if content_scores:
+            if "uniqueness" in content_scores:
+                measure_result["content_uniqueness"] = content_scores["uniqueness"].get(
+                    idx, 0.5
+                )
+            if "novelty" in content_scores:
+                measure_result["content_novelty"] = content_scores["novelty"].get(
+                    idx, 0.5
+                )
+
+        # Validate against MeasuresDict constraints
+        _validate_measure_dict(measure_result, idx)
+
         logger.debug(
             "Measure %s being sent: %s",
             idx,
@@ -236,21 +320,38 @@ def _build_measures_full(
 def _build_measures_privacy(
     example_results: list[Any],
     primary_objective: str,
+    dataset_name: str = "dataset",
+    content_scores: dict[str, dict[int, float]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Build sanitized per-example measures (privacy mode).
+    """Build sanitized per-example measures with stable IDs (privacy mode).
 
-    Only includes score, response time, tokens, and cost metrics.
+    Only includes:
+    - Stable example_id (privacy-safe: hash-based, no PII)
+    - Score, response time, tokens, and cost metrics
+    - Content scores (privacy-safe: numeric only, no raw text)
 
     Args:
         example_results: List of example evaluation results
         primary_objective: Primary optimization objective name
+        dataset_name: Name of the dataset (for stable example ID generation)
+        content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                       example_index -> score
 
     Returns:
         List of sanitized measure dicts
+
+    Raises:
+        ValueError: If measures violate MeasuresDict constraints
     """
+    dataset_hash = compute_dataset_hash(dataset_name)
     measures = []
-    for example_result in example_results:
+
+    for idx, example_result in enumerate(example_results):
         measure_result: dict[str, Any] = {}
+
+        # Stable example_id (privacy-safe: just a hash, no content)
+        example_id = generate_stable_example_id(dataset_hash, idx)
+        measure_result["example_id"] = example_id
 
         # Extract score from metrics
         metrics = getattr(example_result, "metrics", {}) or {}
@@ -291,6 +392,20 @@ def _build_measures_privacy(
             for cost_key in ("input_cost", "output_cost", "total_cost"):
                 if cost_key in metrics:
                     measure_result[cost_key] = metrics[cost_key]
+
+        # Content scores are privacy-safe (just floats, no raw text)
+        if content_scores:
+            if "uniqueness" in content_scores:
+                measure_result["content_uniqueness"] = content_scores["uniqueness"].get(
+                    idx, 0.5
+                )
+            if "novelty" in content_scores:
+                measure_result["content_novelty"] = content_scores["novelty"].get(
+                    idx, 0.5
+                )
+
+        # Validate against MeasuresDict constraints
+        _validate_measure_dict(measure_result, idx)
 
         measures.append(measure_result)
 
