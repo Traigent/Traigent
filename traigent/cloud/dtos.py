@@ -8,6 +8,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 
 import re
 from collections import UserDict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -151,11 +152,11 @@ class MeasuresDict(UserDict):
 
         self.data[key] = value
 
-    def __ior__(self, other: dict[str, Any]) -> "MeasuresDict":
+    def __ior__(self, other: dict[str, Any] | Mapping[str, Any]) -> "MeasuresDict":  # type: ignore[override,misc]
         """Support |= operator with validation.
 
         Args:
-            other: Dictionary to merge with this MeasuresDict
+            other: Mapping to merge with this MeasuresDict
 
         Returns:
             Self for chaining
@@ -164,12 +165,14 @@ class MeasuresDict(UserDict):
             ValueError: If validation fails
             TypeError: If key or value types invalid
         """
-        # Validate all items from other dict before merging
-        if isinstance(other, dict):
+        # Validate all items from other mapping before merging
+        if isinstance(other, Mapping):
             for key, value in other.items():
                 self[key] = value  # Use __setitem__ for validation
         else:
-            raise TypeError(f"unsupported operand type(s) for |=: 'MeasuresDict' and '{type(other).__name__}'")
+            raise TypeError(
+                f"unsupported operand type(s) for |=: 'MeasuresDict' and '{type(other).__name__}'"
+            )
         return self
 
 

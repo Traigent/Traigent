@@ -202,6 +202,26 @@ class TestMeasuresDictValidation:
         ]
         assert any("non-numeric" in msg.lower() for msg in warning_messages)
 
+    def test_or_operator_accepts_measuresdict(self):
+        """Should accept MeasuresDict as operand for |= operator."""
+        measures1 = MeasuresDict({"key1": 1.0, "key2": 2.0})
+        measures2 = MeasuresDict({"key3": 3.0, "key4": 4.0})
+
+        # Store original id to verify it returns self
+        original_id = id(measures1)
+
+        # Merge two MeasuresDict instances
+        measures1 |= measures2
+
+        # Verify all keys are present
+        assert measures1["key1"] == 1.0
+        assert measures1["key2"] == 2.0
+        assert measures1["key3"] == 3.0
+        assert measures1["key4"] == 4.0
+
+        # Verify the operation returns self (id unchanged)
+        assert id(measures1) == original_id
+
     def test_setdefault_warns_on_non_numeric(self, caplog):
         """Should warn on non-numeric setdefault() (Phase 0)."""
         measures = MeasuresDict()
