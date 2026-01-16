@@ -804,6 +804,8 @@ class OptimizationOrchestrator:
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
+                dataset_name=getattr(self, "_dataset_name", "dataset"),
+                content_scores=getattr(self, "_content_scores", None),
             )
 
         if hasattr(self.optimizer, "tell"):
@@ -1594,6 +1596,10 @@ class OptimizationOrchestrator:
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
 
+        # Compute content scores once for the dataset (used for backend analytics)
+        self._dataset_name = getattr(dataset, "name", "dataset")
+        self._content_scores = self._compute_content_scores(dataset)
+
         if function_name and function_name != descriptor.identifier:
             logger.debug(
                 "Ignoring supplied function_name '%s' in favour of fully-qualified identifier '%s'",
@@ -2376,3 +2382,60 @@ class OptimizationOrchestrator:
             )
 
         return optimization_result
+
+    def _compute_content_scores(
+        self, dataset: Dataset
+    ) -> dict[str, dict[int, float]] | None:
+        """Compute content-based scores for the dataset (once per optimization run).
+
+        Computes uniqueness and novelty scores using TF-IDF and cosine similarity.
+        These scores are computed once and reused across all trials since the
+        dataset doesn't change.
+
+        Args:
+            dataset: Evaluation dataset
+
+        Returns:
+            Dict with keys "uniqueness" and "novelty" mapping example_index -> score,
+            or None if content scoring is disabled or fails
+        """
+        try:
+            from traigent.metrics.content_scoring import ContentScorer
+
+            # Extract input texts from dataset
+            example_inputs = []
+            for example in dataset.examples:
+                input_data = str(example.input_data)
+                example_inputs.append(input_data)
+
+            # Instantiate scorer (per-trial pattern for thread safety)
+            scorer = ContentScorer()
+
+            # Compute scores
+            uniqueness_scores = scorer.compute_uniqueness_scores(example_inputs)
+            novelty_scores = scorer.compute_novelty_scores(example_inputs)
+
+            logger.debug(
+                "Computed content scores for %s examples: uniqueness range [%.2f, %.2f], "
+                "novelty range [%.2f, %.2f]",
+                len(example_inputs),
+                min(uniqueness_scores.values()) if uniqueness_scores else 0.0,
+                max(uniqueness_scores.values()) if uniqueness_scores else 0.0,
+                min(novelty_scores.values()) if novelty_scores else 0.0,
+                max(novelty_scores.values()) if novelty_scores else 0.0,
+            )
+
+            return {
+                "uniqueness": uniqueness_scores,
+                "novelty": novelty_scores,
+            }
+
+        except ImportError:
+            logger.debug(
+                "Content scoring disabled: scikit-learn not installed. "
+                "Install with: pip install traigent[analytics]"
+            )
+            return None
+        except Exception as e:
+            logger.warning("Failed to compute content scores: %s", e)
+            return None

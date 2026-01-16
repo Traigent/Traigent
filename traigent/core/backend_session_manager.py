@@ -227,12 +227,17 @@ class BackendSessionManager:
         self,
         trial_result: TrialResult,
         session_id: str | None,
+        dataset_name: str = "dataset",
+        content_scores: dict[str, dict[int, float]] | None = None,
     ) -> bool:
         """Submit trial to backend.
 
         Args:
             trial_result: Completed trial result
             session_id: Backend session identifier
+            dataset_name: Name of the dataset (for stable example ID generation)
+            content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                           example_index -> score (0.0-1.0)
 
         Returns:
             True if submission succeeded
@@ -246,7 +251,11 @@ class BackendSessionManager:
 
         score = trial_result.get_metric(primary_objective, 0.0)
         trial_metadata = build_backend_metadata(
-            trial_result, primary_objective, self._traigent_config
+            trial_result,
+            primary_objective,
+            self._traigent_config,
+            dataset_name,
+            content_scores,
         )
 
         await self._log_trial_to_backend(

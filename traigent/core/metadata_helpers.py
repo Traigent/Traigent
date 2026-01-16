@@ -274,9 +274,9 @@ def _build_measures_full(
                         example_score = float(value)
                         break
 
-            # Add all scalar metrics
+            # Add all scalar metrics (numeric only per MeasuresDict constraints)
             for metric_key, metric_value in metrics.items():
-                if isinstance(metric_value, (int, float, str)) or metric_value is None:
+                if isinstance(metric_value, (int, float)) or metric_value is None:
                     measure_result[metric_key] = metric_value
 
         # Fallback score calculation
