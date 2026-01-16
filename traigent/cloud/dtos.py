@@ -6,6 +6,7 @@ privacy-preserving defaults for Edge Analytics mode execution.
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
+from collections import UserDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +23,87 @@ try:
 except ImportError:
     VALIDATOR_AVAILABLE = False
     logger.debug("optigen_schemas not available, validation disabled")
+
+
+class MeasuresDict(UserDict):
+    """Type-safe measures dict with validation.
+
+    Inherits from UserDict (not dict) to properly intercept all mutation
+    operations including update(), |=, and other bulk operations.
+
+    Enforces:
+    - Maximum 50 keys to prevent unbounded memory usage
+    - String keys only
+    - Primitive value types only (int, float, str, bool, None)
+
+    Raises:
+        ValueError: If key limit exceeded
+        TypeError: If key is not string or value is not primitive type
+    """
+
+    MAX_KEYS = 50
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        """Initialize with optional data dictionary.
+
+        Args:
+            data: Optional dict to initialize with (will be validated)
+
+        Raises:
+            ValueError: If data exceeds MAX_KEYS
+            TypeError: If data contains invalid key or value types
+        """
+        super().__init__()
+        if data:
+            # Validate first, then use parent's update to populate self.data
+            self._validate_dict(data)
+            self.data.update(data)
+
+    def _validate_dict(self, data: dict[str, Any]) -> None:
+        """Validate measures dictionary.
+
+        Args:
+            data: Dictionary to validate
+
+        Raises:
+            ValueError: If data exceeds MAX_KEYS
+            TypeError: If data contains invalid key or value types
+        """
+        if len(data) > self.MAX_KEYS:
+            raise ValueError(
+                f"Measures cannot exceed {self.MAX_KEYS} keys, got {len(data)}"
+            )
+
+        for key, value in data.items():
+            if not isinstance(key, str):
+                raise TypeError(f"Measure key must be string, got {type(key).__name__}")
+            if not isinstance(value, (int, float, str, bool, type(None))):
+                raise TypeError(
+                    f"Measure '{key}' must be primitive type "
+                    f"(int, float, str, bool, None), got {type(value).__name__}"
+                )
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Validate on assignment.
+
+        Args:
+            key: Measure key (must be string)
+            value: Measure value (must be primitive type)
+
+        Raises:
+            ValueError: If adding would exceed MAX_KEYS
+            TypeError: If key is not string or value is not primitive type
+        """
+        if len(self.data) >= self.MAX_KEYS and key not in self.data:
+            raise ValueError(f"Measures cannot exceed {self.MAX_KEYS} keys")
+        if not isinstance(key, str):
+            raise TypeError(f"Key must be string, got {type(key).__name__}")
+        if not isinstance(value, (int, float, str, bool, type(None))):
+            raise TypeError(
+                f"Value must be primitive type (int, float, str, bool, None), "
+                f"got {type(value).__name__}"
+            )
+        self.data[key] = value
 
 
 @dataclass
@@ -118,16 +200,61 @@ class ExperimentDTO:
         return result
 
     def validate(self) -> bool:
-        """Validate the DTO against optigen_schemas (optional)."""
+        """Validate the DTO against optigen_schemas.
+
+        By default, validation is strict - failures raise exceptions.
+        Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
+
+        Returns:
+            True if validation passed
+
+        Raises:
+            DTOSerializationError: If strict mode enabled and validation fails
+        """
+        import os
+
+        from traigent.utils.exceptions import DTOSerializationError
+
+        # Check if strict validation is enabled (default: true)
+        strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
+
         if not VALIDATOR_AVAILABLE:
-            return True
+            error_msg = (
+                "Schema validator unavailable (optigen_schemas not installed). "
+                "Install with: pip install 'traigent[validation]'"
+            )
+            logger.error(error_msg)
+
+            if strict_mode:
+                raise DTOSerializationError(
+                    "Schema validation required but validator unavailable",
+                    dto_class="ExperimentDTO",
+                    dto_id=self.id,
+                )
+            return False
 
         try:
             validator = SchemaValidator()
             validator.validate_json_by_schema("experiment", self.to_dict())
             return True
         except Exception as e:
-            logger.warning(f"Validation failed (non-blocking): {e}")
+            logger.error(
+                "DTO validation failed",
+                extra={
+                    "dto_class": "ExperimentDTO",
+                    "dto_id": self.id,
+                    "error": str(e),
+                    "strict_mode": strict_mode,
+                },
+            )
+
+            if strict_mode:
+                raise DTOSerializationError(
+                    f"ExperimentDTO validation failed: {e}",
+                    dto_class="ExperimentDTO",
+                    dto_id=self.id,
+                ) from e
+
             return False
 
 
@@ -190,7 +317,7 @@ class ConfigurationRunDTO:
 
     # Configuration payload
     configuration: dict[str, Any] = field(default_factory=dict)
-    measures: dict[str, Any] = field(default_factory=dict)
+    measures: MeasuresDict = field(default_factory=MeasuresDict)
 
     # Optional fields
     status: str = "pending"

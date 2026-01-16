@@ -22,7 +22,7 @@ from typing import Any, TypedDict, TypeGuard
 try:
     from typing import NotRequired  # Python 3.11+
 except ImportError:
-    from typing_extensions import NotRequired  # Python 3.8-3.10
+    from typing import NotRequired  # Python 3.8-3.10
 
 
 class UsageMetadata(TypedDict):

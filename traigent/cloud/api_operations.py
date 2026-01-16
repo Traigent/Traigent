@@ -27,7 +27,9 @@ from traigent.cloud.models import (
 )
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
+from traigent.utils.exceptions import MetricExtractionError
 from traigent.utils.logging import get_logger
+from traigent.utils.validation import validate_numeric_metric
 
 # Optional aiohttp dependency handling
 try:
@@ -509,25 +511,50 @@ class ApiOperations:
             # Map Traigent metrics to standard measure IDs
             mapped_metrics = {}
 
-            # Helper function to ensure value is a valid number
-            def ensure_numeric(value):
-                """Ensure value is a valid number, converting if necessary."""
-                if value is None:
-                    return 0.0
-                try:
-                    return float(value)
-                except (TypeError, ValueError):
-                    return 0.0
-
-            # Standard Traigent measure mappings
+            # Standard Traigent measure mappings with strict validation
             if "accuracy" in metrics and metrics["accuracy"] is not None:
-                mapped_metrics["accuracy"] = ensure_numeric(metrics["accuracy"])
+                try:
+                    mapped_metrics["accuracy"] = validate_numeric_metric(
+                        metrics["accuracy"],
+                        field_name="accuracy",
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.error(
+                        f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
+                            "Check that the value is not None, NaN, or Inf.",
+                            "config_run_id": config_run_id,
+                            "field": "accuracy",
+                            "value": metrics["accuracy"],
+                        },
+                    )
+                    return False
+
             if "score" in metrics and metrics["score"] is not None:
-                mapped_metrics["score"] = ensure_numeric(metrics["score"])
+                try:
+                    mapped_metrics["score"] = validate_numeric_metric(
+                        metrics["score"],
+                        field_name="score",
+                        trial_id=config_run_id,
+                    )
+                except MetricExtractionError as e:
+                    logger.error(
+                        f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
+                        extra={
+                            "hint": "Ensure your evaluation function returns numeric values for 'score'. "
+                            "Check that the value is not None, NaN, or Inf.",
+                            "config_run_id": config_run_id,
+                            "field": "score",
+                            "value": metrics["score"],
+                        },
+                    )
+                    return False
             elif (
                 "accuracy" in metrics and metrics["accuracy"] is not None
             ):  # Use accuracy as score if no explicit score
-                mapped_metrics["score"] = ensure_numeric(metrics["accuracy"])
+                mapped_metrics["score"] = mapped_metrics["accuracy"]
 
             # Include other standard measures if present
             for key in [
@@ -539,12 +566,47 @@ class ApiOperations:
                 "context_recall",
             ]:
                 if key in metrics and metrics[key] is not None:
-                    mapped_metrics[key] = ensure_numeric(metrics[key])
+                    try:
+                        mapped_metrics[key] = validate_numeric_metric(
+                            metrics[key],
+                            field_name=key,
+                            trial_id=config_run_id,
+                        )
+                    except MetricExtractionError as e:
+                        logger.error(
+                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                            extra={
+                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                                "Check that the value is not None, NaN, or Inf.",
+                                "config_run_id": config_run_id,
+                                "field": key,
+                                "value": metrics[key],
+                            },
+                        )
+                        return False
 
             # Include any other metrics as-is, ensuring they are numeric
             for key, value in metrics.items():
                 if key not in mapped_metrics and value is not None:
-                    mapped_metrics[key] = ensure_numeric(value)
+                    try:
+                        mapped_metrics[key] = validate_numeric_metric(
+                            value,
+                            field_name=key,
+                            trial_id=config_run_id,
+                        )
+                    except MetricExtractionError as e:
+                        logger.error(
+                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
+                            extra={
+                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
+                                "Check that the value is not None, NaN, or Inf. "
+                                "Custom metrics must be numeric types (int, float).",
+                                "config_run_id": config_run_id,
+                                "field": key,
+                                "value": value,
+                            },
+                        )
+                        return False
 
             # Build measures data in the correct Traigent format
             measures_data = {"measures": {"metrics": mapped_metrics, "metadata": {}}}

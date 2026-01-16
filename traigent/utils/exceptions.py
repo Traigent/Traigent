@@ -283,6 +283,127 @@ class FeatureNotAvailableError(TraigentError):
 
 
 # =============================================================================
+# Data Integrity and Validation Errors
+# =============================================================================
+
+
+class DataIntegrityError(TraigentError):
+    """Data corruption or invalid conversion detected.
+
+    Raised when data validation fails or conversion produces invalid results.
+    Unlike silent failures that default to 0.0, this exception ensures data
+    corruption is caught immediately.
+
+    Attributes:
+        message: Error description
+        field: Optional field name that failed validation
+        value: Optional invalid value that caused the error
+        details: Additional context about the error
+    """
+
+    def __init__(
+        self,
+        message: str,
+        field: str | None = None,
+        value: Any = None,
+        context: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, context)
+        self.field = field
+        self.value = value
+
+
+class MetricExtractionError(DataIntegrityError):
+    """Metric extraction or conversion failed.
+
+    Raised when extracting metrics from function outputs fails due to:
+    - Invalid types (non-numeric values)
+    - NaN or Inf values
+    - Missing required fields
+    - Type conversion failures
+
+    This prevents silent data corruption where invalid metrics are converted
+    to 0.0 and corrupt optimization results.
+
+    Attributes:
+        message: Error description
+        field: Metric field name that failed
+        value: Invalid value that caused the error
+        trial_id: Optional trial identifier
+        example_id: Optional example identifier
+        original_error: Optional underlying exception
+
+    Example:
+        raise MetricExtractionError(
+            "Cannot convert metric 'accuracy' to numeric",
+            field="accuracy",
+            value="invalid",
+            trial_id="trial-123",
+            example_id="example-456",
+        )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        field: str,
+        value: Any,
+        trial_id: str | None = None,
+        example_id: str | None = None,
+        original_error: Exception | None = None,
+    ) -> None:
+        context = {
+            "trial_id": trial_id,
+            "example_id": example_id,
+            "original_error": str(original_error) if original_error else None,
+        }
+        super().__init__(message, field, value, context)
+        self.trial_id = trial_id
+        self.example_id = example_id
+        self.original_error = original_error
+
+
+class DTOSerializationError(DataIntegrityError):
+    """DTO serialization or validation failed.
+
+    Raised when a Data Transfer Object fails validation or produces invalid
+    serialized data. This ensures DTOs maintain data integrity before sending
+    to the backend.
+
+    Attributes:
+        message: Error description
+        dto_class: Name of the DTO class that failed
+        dto_id: Optional DTO identifier
+        invalid_fields: Optional dict of field names to invalid values
+
+    Example:
+        raise DTOSerializationError(
+            "ConfigurationRunDTO validation failed",
+            dto_class="ConfigurationRunDTO",
+            dto_id="config-run-123",
+            invalid_fields={"measures": ["invalid", "types"]},
+        )
+    """
+
+    def __init__(
+        self,
+        message: str,
+        dto_class: str,
+        dto_id: str | None = None,
+        invalid_fields: dict[str, Any] | None = None,
+    ) -> None:
+        context = {
+            "dto_class": dto_class,
+            "dto_id": dto_id,
+            "invalid_fields": invalid_fields,
+        }
+        super().__init__(message, context=context)
+        self.dto_class = dto_class
+        self.dto_id = dto_id
+        self.invalid_fields = invalid_fields
+
+
+# =============================================================================
 # Warnings (for deprecation and discouraged patterns)
 # =============================================================================
 

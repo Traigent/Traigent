@@ -850,10 +850,32 @@ def with_usage(
 
     Returns:
         In production: text unchanged
-        During optimization: dict with text + __traigent_meta__
+        During optimization: dict with structure:
+            {
+                "text": str,
+                "__traigent_meta__": {
+                    "total_cost": float,
+                    "usage": {  # Optional
+                        "input_tokens": int,
+                        "output_tokens": int
+                    }
+                }
+            }
 
     Raises:
-        TypeError: If text is not a string
+        TypeError: If text is not a string or total_cost is not numeric
+
+    Validation:
+        The returned __traigent_meta__ structure is validated at runtime using
+        type guards from traigent.core.meta_types.TraigentMetadata:
+        - text must be string (raises TypeError)
+        - total_cost must be numeric (raises TypeError)
+        - tokens must be integers if provided
+        - negative values are clamped to 0 with warning
+
+    Type Safety:
+        See traigent.core.meta_types.TraigentMetadata for the canonical TypedDict
+        definition. The structure is validated using is_traigent_metadata() type guard.
 
     Note:
         - `total_cost` is REQUIRED because cost is not recalculated from tokens
@@ -880,6 +902,30 @@ def with_usage(
                 input_tokens=total_in,
                 output_tokens=total_out,
             )
+
+    Multi-Agent Workflows:
+        For multi-agent workflows with per-agent cost tracking, use the
+        AgentCostBreakdown and WorkflowCostSummary DTOs from traigent.cloud.agent_dtos:
+
+        >>> from traigent import AgentCostBreakdown, WorkflowCostSummary
+        >>> agent1 = AgentCostBreakdown(
+        ...     agent_id="researcher",
+        ...     agent_name="Research Agent",
+        ...     input_tokens=100, output_tokens=50, total_tokens=150,
+        ...     input_cost=0.001, output_cost=0.002, total_cost=0.003,
+        ...     model_used="gpt-4o-mini"
+        ... )
+        >>> workflow = WorkflowCostSummary(
+        ...     workflow_id="workflow-001",
+        ...     workflow_name="Research",
+        ...     agent_breakdowns=[agent1]
+        ... )
+        >>> return traigent.with_usage(
+        ...     text=result,
+        ...     total_cost=workflow.total_cost,
+        ...     input_tokens=workflow.total_input_tokens,
+        ...     output_tokens=workflow.total_output_tokens
+        ... )
     """
     # Enforce string type
     if not isinstance(text, str):
