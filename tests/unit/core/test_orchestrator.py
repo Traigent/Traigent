@@ -1654,6 +1654,8 @@ class TestOptimizationOrchestrator:
         orchestrator.backend_session_manager.submit_trial.assert_awaited_once_with(
             trial_result=trial_result,
             session_id="session-123",
+            dataset_name="dataset",  # default value from orchestrator
+            content_scores=None,  # default value from orchestrator
         )
 
 
