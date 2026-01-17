@@ -401,3 +401,57 @@ if LANGFUSE_INTEGRATION_AVAILABLE:
             "create_langfuse_tracker",
         ]
     )
+
+# LangChain/LangGraph handler integration (graceful degradation for langchain-core)
+try:
+    from .langchain import (
+        LANGCHAIN_AVAILABLE,
+        LLMCallMetrics,
+        ToolCallMetrics,
+        TraigentHandler,
+        TraigentHandlerMetrics,
+        create_traigent_handler,
+        get_current_node_name,
+        get_current_trial_config,
+        node_context,
+        trial_context,
+    )
+
+    LANGCHAIN_HANDLER_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+    LANGCHAIN_HANDLER_AVAILABLE = False
+
+    def _langchain_handler_unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError(
+            "LangChain handler integration is unavailable. "
+            "Install langchain-core: pip install langchain-core"
+        )
+
+    TraigentHandler = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    TraigentHandlerMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    LLMCallMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    ToolCallMetrics = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    create_traigent_handler = _langchain_handler_unavailable
+    trial_context = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    node_context = _langchain_handler_unavailable  # type: ignore[assignment, misc]
+    get_current_trial_config = _langchain_handler_unavailable
+    get_current_node_name = _langchain_handler_unavailable
+
+# Add LangChain handler exports if available
+if LANGCHAIN_HANDLER_AVAILABLE:
+    __all__.extend(
+        [
+            "LANGCHAIN_AVAILABLE",
+            "LANGCHAIN_HANDLER_AVAILABLE",
+            "TraigentHandler",
+            "TraigentHandlerMetrics",
+            "LLMCallMetrics",
+            "ToolCallMetrics",
+            "create_traigent_handler",
+            "trial_context",
+            "node_context",
+            "get_current_trial_config",
+            "get_current_node_name",
+        ]
+    )
