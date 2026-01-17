@@ -295,6 +295,38 @@ if DSPY_INTEGRATION_AVAILABLE:
         ]
     )
 
+# Langfuse integration (always available - graceful degradation for langfuse SDK)
+try:
+    from .langfuse import (
+        LANGFUSE_AVAILABLE,
+        LangfuseClient,
+        LangfuseObservation,
+        LangfuseOptimizationCallback,
+        LangfuseTraceMetrics,
+        LangfuseTracker,
+        TraceIdResolver,
+        create_langfuse_tracker,
+    )
+
+    LANGFUSE_INTEGRATION_AVAILABLE = True
+except ImportError:
+    LANGFUSE_AVAILABLE = False
+    LANGFUSE_INTEGRATION_AVAILABLE = False
+
+    def _langfuse_unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError(
+            "Langfuse integration is unavailable. "
+            "Install the optional dependencies: pip install aiohttp requests"
+        )
+
+    LangfuseClient = _langfuse_unavailable  # type: ignore[assignment, misc]
+    LangfuseObservation = _langfuse_unavailable  # type: ignore[assignment, misc]
+    LangfuseOptimizationCallback = _langfuse_unavailable  # type: ignore[assignment, misc]
+    LangfuseTraceMetrics = _langfuse_unavailable  # type: ignore[assignment, misc]
+    LangfuseTracker = _langfuse_unavailable  # type: ignore[assignment, misc]
+    TraceIdResolver = _langfuse_unavailable  # type: ignore[assignment, misc]
+    create_langfuse_tracker = _langfuse_unavailable
+
 # Workflow traces integration (always available - graceful degradation for OTEL)
 from .observability.workflow_traces import (
     OTEL_AVAILABLE,
@@ -353,3 +385,19 @@ __all__.extend(
         "detect_loops_in_graph",
     ]
 )
+
+# Add Langfuse exports if available
+if LANGFUSE_INTEGRATION_AVAILABLE:
+    __all__.extend(
+        [
+            "LANGFUSE_AVAILABLE",
+            "LANGFUSE_INTEGRATION_AVAILABLE",
+            "LangfuseClient",
+            "LangfuseObservation",
+            "LangfuseOptimizationCallback",
+            "LangfuseTraceMetrics",
+            "LangfuseTracker",
+            "TraceIdResolver",
+            "create_langfuse_tracker",
+        ]
+    )
