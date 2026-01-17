@@ -999,3 +999,614 @@ class TestEdgeCases:
         tool_nodes = [n for n in nodes if n.id == "tool_node"]
         assert len(tool_nodes) == 1
         assert tool_nodes[0].type == "tool"
+
+    def test_graph_extraction_infers_node_type_agent(self) -> None:
+        """Test that node type is inferred correctly for agent nodes."""
+        graph = MockStateGraph()
+        # Use "task_agent" - "research_agent" contains "search" which triggers "tool" type
+        graph.add_node("agent_node", MockLangGraphNode("task_agent"))
+
+        nodes = extract_nodes_from_langgraph(graph)
+
+        agent_nodes = [n for n in nodes if n.id == "agent_node"]
+        assert len(agent_nodes) == 1
+        assert agent_nodes[0].type == "agent"
+
+    def test_graph_extraction_infers_node_type_router(self) -> None:
+        """Test that node type is inferred correctly for router nodes."""
+        graph = MockStateGraph()
+        graph.add_node("router_node", MockLangGraphNode("branch_router"))
+
+        nodes = extract_nodes_from_langgraph(graph)
+
+        router_nodes = [n for n in nodes if n.id == "router_node"]
+        assert len(router_nodes) == 1
+        assert router_nodes[0].type == "router"
+
+    def test_get_display_name_from_node_function(self) -> None:
+        """Test _get_display_name extracts name from function."""
+        from traigent.integrations.observability.workflow_traces import (
+            _get_display_name,
+        )
+
+        node_func = MockLangGraphNode("process_input_data")
+        name = _get_display_name("node_1", node_func)
+        assert name == "Process Input Data"
+
+    def test_get_display_name_fallback(self) -> None:
+        """Test _get_display_name falls back to node_id."""
+        from traigent.integrations.observability.workflow_traces import (
+            _get_display_name,
+        )
+
+        # Object without __name__
+        node_obj = object()
+        name = _get_display_name("my_node_func", node_obj)
+        assert name == "My Node Func"
+
+    def test_infer_node_type_chat(self) -> None:
+        """Test _infer_node_type for chat nodes."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("chat_completion")
+        assert _infer_node_type(node_func) == "llm"
+
+    def test_infer_node_type_model(self) -> None:
+        """Test _infer_node_type for model nodes."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("run_model")
+        assert _infer_node_type(node_func) == "llm"
+
+    def test_infer_node_type_retrieve(self) -> None:
+        """Test _infer_node_type for retrieve nodes."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("retrieve_documents")
+        assert _infer_node_type(node_func) == "tool"
+
+    def test_infer_node_type_fetch(self) -> None:
+        """Test _infer_node_type for fetch nodes."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("fetch_data")
+        assert _infer_node_type(node_func) == "tool"
+
+    def test_infer_node_type_switch(self) -> None:
+        """Test _infer_node_type for switch/branch nodes."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("switch_handler")
+        assert _infer_node_type(node_func) == "router"
+
+    def test_infer_node_type_default(self) -> None:
+        """Test _infer_node_type returns agent for unknown types."""
+        from traigent.integrations.observability.workflow_traces import _infer_node_type
+
+        node_func = MockLangGraphNode("process_something")
+        assert _infer_node_type(node_func) == "agent"
+
+    def test_extract_tunable_params_from_signature(self) -> None:
+        """Test _extract_tunable_params extracts common params."""
+        from traigent.integrations.observability.workflow_traces import (
+            _extract_tunable_params,
+        )
+
+        def node_func(state, temperature=0.7, max_tokens=100):
+            pass
+
+        params = _extract_tunable_params(node_func)
+        assert "temperature" in params
+        assert "max_tokens" in params
+
+    def test_add_span_with_datetime_end_time(self) -> None:
+        """Test adding span with datetime end_time."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auto_send=False,
+        )
+
+        with tracker.trace_trial("config_123"):
+            now = datetime.now(UTC)
+            tracker.add_span(
+                span_id="span_001",
+                span_name="Test Node",
+                span_type=SpanType.NODE,
+                start_time=now,
+                end_time=now,
+            )
+
+            assert len(tracker._spans) == 1
+            assert isinstance(tracker._spans[0].end_time, str)
+
+    def test_add_span_with_string_end_time(self) -> None:
+        """Test adding span with string end_time."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auto_send=False,
+        )
+
+        with tracker.trace_trial("config_123"):
+            tracker.add_span(
+                span_id="span_001",
+                span_name="Test Node",
+                span_type="node",
+                start_time="2026-01-13T10:00:00Z",
+                end_time="2026-01-13T10:00:05Z",
+            )
+
+            assert len(tracker._spans) == 1
+            assert tracker._spans[0].end_time == "2026-01-13T10:00:05Z"
+
+    def test_add_span_with_span_status_enum(self) -> None:
+        """Test adding span with SpanStatus enum."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auto_send=False,
+        )
+
+        with tracker.trace_trial("config_123"):
+            tracker.add_span(
+                span_id="span_001",
+                span_name="Test Node",
+                span_type=SpanType.LLM_CALL,
+                start_time=datetime.now(UTC),
+                status=SpanStatus.FAILED,
+                error_message="Test error",
+            )
+
+            assert len(tracker._spans) == 1
+            assert tracker._spans[0].status == "FAILED"
+
+
+# =============================================================================
+# Tests for Async Methods
+# =============================================================================
+
+
+class TestAsyncMethods:
+    """Tests for async methods in workflow traces."""
+
+    @pytest.fixture
+    def mock_aiohttp(self) -> MagicMock:
+        """Create mock aiohttp module."""
+        mock = MagicMock()
+        return mock
+
+    @pytest.fixture
+    def patched_aiohttp(
+        self, monkeypatch: pytest.MonkeyPatch, mock_aiohttp: MagicMock
+    ) -> MagicMock:
+        """Patch aiohttp module in workflow_traces."""
+        monkeypatch.setattr(wt_module, "aiohttp", mock_aiohttp)
+        monkeypatch.setattr(wt_module, "AIOHTTP_AVAILABLE", True)
+        return mock_aiohttp
+
+    def test_ingest_traces_async_requires_aiohttp(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that async ingest raises ImportError without aiohttp."""
+        monkeypatch.setattr(wt_module, "AIOHTTP_AVAILABLE", False)
+
+        client = WorkflowTracesClient(backend_url="http://localhost:5000")
+
+        import asyncio
+
+        async def test_async():
+            with pytest.raises(ImportError, match="aiohttp is required"):
+                await client.ingest_traces_async()
+
+        asyncio.get_event_loop().run_until_complete(test_async())
+
+    def test_ingest_traces_async_empty_returns_error(
+        self, patched_aiohttp: MagicMock
+    ) -> None:
+        """Test async ingest with no data returns error."""
+        client = WorkflowTracesClient(backend_url="http://localhost:5000")
+
+        import asyncio
+
+        async def test_async():
+            response = await client.ingest_traces_async()
+            assert response.success is False
+            assert response.error is not None
+
+        asyncio.get_event_loop().run_until_complete(test_async())
+
+
+# =============================================================================
+# Tests for TraceIngestionRequest
+# =============================================================================
+
+
+class TestTraceIngestionRequest:
+    """Tests for TraceIngestionRequest dataclass."""
+
+    def test_to_dict_empty(self) -> None:
+        """Test to_dict with no data."""
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionRequest,
+        )
+
+        request = TraceIngestionRequest()
+        result = request.to_dict()
+        assert result == {}
+
+    def test_to_dict_with_graph(
+        self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]
+    ) -> None:
+        """Test to_dict with graph."""
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionRequest,
+        )
+
+        graph = WorkflowGraphPayload(
+            experiment_id="exp_123",
+            nodes=sample_nodes,
+            edges=sample_edges,
+        )
+        request = TraceIngestionRequest(graph=graph)
+        result = request.to_dict()
+
+        assert "graph" in result
+        assert result["graph"]["experiment_id"] == "exp_123"
+
+    def test_to_dict_with_spans(self) -> None:
+        """Test to_dict with spans."""
+        from traigent.integrations.observability.workflow_traces import (
+            TraceIngestionRequest,
+        )
+
+        spans_data = {
+            "trace_id": "trace_123",
+            "configuration_run_id": "config_456",
+            "spans": [],
+        }
+        request = TraceIngestionRequest(spans=spans_data)
+        result = request.to_dict()
+
+        assert "spans" in result
+        assert result["spans"]["trace_id"] == "trace_123"
+
+
+# =============================================================================
+# Tests for Compiled Graph Edge Extraction
+# =============================================================================
+
+
+class TestCompiledGraphEdgeExtraction:
+    """Tests for edge extraction from compiled graphs."""
+
+    def test_extract_edges_from_compiled_graph_dict_mapping(self) -> None:
+        """Test extracting edges from compiled graph with dict mapping."""
+        graph = MockCompiledStateGraph()
+        graph.edges = {
+            "node_a": {"pass": "node_b", "fail": "node_c"},  # Conditional
+        }
+
+        edges = extract_edges_from_langgraph(graph)
+
+        # Should have 2 conditional edges
+        assert len(edges) == 2
+        edge_targets = {e.to_node for e in edges}
+        assert "node_b" in edge_targets
+        assert "node_c" in edge_targets
+
+    def test_extract_edges_from_compiled_graph_list_mapping(self) -> None:
+        """Test extracting edges from compiled graph with list mapping."""
+        graph = MockCompiledStateGraph()
+        graph.edges = {
+            "node_a": ["node_b", "node_c"],  # Multiple targets
+        }
+
+        edges = extract_edges_from_langgraph(graph)
+
+        assert len(edges) == 2
+        edge_targets = {e.to_node for e in edges}
+        assert "node_b" in edge_targets
+        assert "node_c" in edge_targets
+
+    def test_extract_edges_from_compiled_graph_simple_mapping(self) -> None:
+        """Test extracting edges from compiled graph with simple string mapping."""
+        graph = MockCompiledStateGraph()
+        graph.edges = {
+            "node_a": "node_b",  # Simple edge
+            "node_b": "node_c",
+        }
+
+        edges = extract_edges_from_langgraph(graph)
+
+        assert len(edges) == 2
+
+
+# =============================================================================
+# Tests for Raw Graph Submission with Loops
+# =============================================================================
+
+
+class TestRawGraphWithLoops:
+    """Tests for raw graph submission with loops."""
+
+    def test_send_workflow_graph_raw_with_loops(
+        self, patched_requests: MagicMock
+    ) -> None:
+        """Test sending raw workflow graph with loops."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auth_token="token",
+        )
+
+        nodes = [
+            {"id": "n1", "type": "llm", "display_name": "Generator"},
+            {"id": "n2", "type": "llm", "display_name": "Critic"},
+        ]
+        edges = [
+            {"from_node": "n1", "to_node": "n2"},
+            {"from_node": "n2", "to_node": "n1"},
+        ]
+        loops = [
+            {
+                "loop_id": "retry_loop",
+                "entry_node": "n1",
+                "exit_condition": "quality >= 0.9",
+                "max_iterations": 3,
+            }
+        ]
+
+        graph_id = tracker.send_workflow_graph_raw(
+            experiment_id="exp_123",
+            experiment_run_id="run_456",
+            nodes=nodes,
+            edges=edges,
+            loops=loops,
+        )
+
+        assert graph_id == "graph_abc123"
+
+    def test_send_workflow_graph_raw_with_metadata(
+        self, patched_requests: MagicMock
+    ) -> None:
+        """Test sending raw workflow graph with node/edge metadata."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auth_token="token",
+        )
+
+        nodes = [
+            {
+                "id": "n1",
+                "type": "llm",
+                "display_name": "Generator",
+                "tunable_params": ["temperature", "max_tokens"],
+                "metadata": {"model": "gpt-4o"},
+            },
+        ]
+        edges = [
+            {
+                "from_node": "n1",
+                "to_node": "n2",
+                "edge_type": "conditional",
+                "condition": "score >= 0.8",
+                "metadata": {"priority": "high"},
+            },
+        ]
+
+        graph_id = tracker.send_workflow_graph_raw(
+            experiment_id="exp_123",
+            experiment_run_id="run_456",
+            nodes=nodes,
+            edges=edges,
+        )
+
+        assert graph_id == "graph_abc123"
+
+
+# =============================================================================
+# Tests for Graph Payload without experiment_run_id
+# =============================================================================
+
+
+class TestGraphPayloadOptionalFields:
+    """Tests for WorkflowGraphPayload optional fields."""
+
+    def test_to_dict_without_experiment_run_id(
+        self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]
+    ) -> None:
+        """Test to_dict excludes experiment_run_id when None."""
+        graph = WorkflowGraphPayload(
+            experiment_id="exp_123",
+            nodes=sample_nodes,
+            edges=sample_edges,
+        )
+
+        result = graph.to_dict()
+
+        assert "experiment_run_id" not in result
+
+    def test_to_dict_without_metadata(
+        self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]
+    ) -> None:
+        """Test to_dict excludes metadata when empty."""
+        graph = WorkflowGraphPayload(
+            experiment_id="exp_123",
+            nodes=sample_nodes,
+            edges=sample_edges,
+            metadata={},  # Empty
+        )
+
+        result = graph.to_dict()
+
+        assert "metadata" not in result
+
+    def test_to_dict_with_metadata(
+        self, sample_nodes: list[WorkflowNode], sample_edges: list[WorkflowEdge]
+    ) -> None:
+        """Test to_dict includes metadata when present."""
+        graph = WorkflowGraphPayload(
+            experiment_id="exp_123",
+            nodes=sample_nodes,
+            edges=sample_edges,
+            metadata={"version": "1.0"},
+        )
+
+        result = graph.to_dict()
+
+        assert "metadata" in result
+        assert result["metadata"]["version"] == "1.0"
+
+
+# =============================================================================
+# Tests for Loop to_dict with optional fields
+# =============================================================================
+
+
+class TestLoopOptionalFields:
+    """Tests for WorkflowLoop optional fields in to_dict."""
+
+    def test_to_dict_without_max_iterations(self) -> None:
+        """Test to_dict excludes max_iterations when None."""
+        loop = WorkflowLoop(
+            loop_id="loop_1",
+            entry_node="node_a",
+            exit_condition="complete",
+        )
+
+        result = loop.to_dict()
+
+        assert "max_iterations" not in result
+
+    def test_to_dict_without_metadata(self) -> None:
+        """Test to_dict excludes metadata when empty."""
+        loop = WorkflowLoop(
+            loop_id="loop_1",
+            entry_node="node_a",
+            exit_condition="complete",
+            metadata={},
+        )
+
+        result = loop.to_dict()
+
+        assert "metadata" not in result
+
+    def test_to_dict_with_all_fields(self) -> None:
+        """Test to_dict includes all fields when present."""
+        loop = WorkflowLoop(
+            loop_id="loop_1",
+            entry_node="node_a",
+            exit_condition="complete",
+            max_iterations=5,
+            metadata={"reason": "retry"},
+        )
+
+        result = loop.to_dict()
+
+        assert result["max_iterations"] == 5
+        assert result["metadata"]["reason"] == "retry"
+
+
+# =============================================================================
+# Tests for SpanPayload with decision_reason
+# =============================================================================
+
+
+class TestSpanPayloadDecisionReason:
+    """Tests for SpanPayload decision_reason field."""
+
+    def test_to_dict_includes_decision_reason(self) -> None:
+        """Test to_dict includes decision_reason when present."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="Router Decision",
+            span_type="node",
+            start_time="2026-01-13T10:00:00Z",
+            decision_reason="Score exceeded threshold (0.85 > 0.8)",
+        )
+
+        result = span.to_dict()
+
+        assert "decision_reason" in result
+        assert result["decision_reason"] == "Score exceeded threshold (0.85 > 0.8)"
+
+    def test_to_dict_with_input_output_data(self) -> None:
+        """Test to_dict includes input_data and output_data when present."""
+        span = SpanPayload(
+            span_id="span_001",
+            trace_id="trace_abc",
+            configuration_run_id="config_001",
+            span_name="LLM Call",
+            span_type="llm_call",
+            start_time="2026-01-13T10:00:00Z",
+            input_data={"prompt": "Hello world"},
+            output_data={"response": "Hi there!"},
+        )
+
+        result = span.to_dict()
+
+        assert "input_data" in result
+        assert result["input_data"]["prompt"] == "Hello world"
+        assert "output_data" in result
+        assert result["output_data"]["response"] == "Hi there!"
+
+
+# =============================================================================
+# Tests for Edge to_dict with metadata
+# =============================================================================
+
+
+class TestEdgeMetadata:
+    """Tests for WorkflowEdge metadata in to_dict."""
+
+    def test_to_dict_without_metadata(self) -> None:
+        """Test to_dict excludes metadata when empty."""
+        edge = WorkflowEdge(from_node="a", to_node="b", metadata={})
+
+        result = edge.to_dict()
+
+        assert "metadata" not in result
+
+    def test_to_dict_with_metadata(self) -> None:
+        """Test to_dict includes metadata when present."""
+        edge = WorkflowEdge(
+            from_node="a", to_node="b", metadata={"priority": 1, "label": "high"}
+        )
+
+        result = edge.to_dict()
+
+        assert "metadata" in result
+        assert result["metadata"]["priority"] == 1
+
+
+# =============================================================================
+# Tests for Flush Spans Without Context
+# =============================================================================
+
+
+class TestFlushSpansWithoutContext:
+    """Tests for flushing spans without active context."""
+
+    def test_flush_without_context_warns(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test _flush_spans logs warning when no context."""
+        tracker = WorkflowTracesTracker(
+            backend_url="http://localhost:5000",
+            auto_send=False,
+        )
+
+        # Manually add spans without context
+        tracker._local.spans = [
+            SpanPayload(
+                span_id="span_001",
+                trace_id="trace_abc",
+                configuration_run_id="config_001",
+                span_name="Test",
+                span_type="node",
+                start_time="2026-01-13T10:00:00Z",
+            )
+        ]
+
+        tracker._flush_spans()
+
+        assert "No trace context" in caplog.text
