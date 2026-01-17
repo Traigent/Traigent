@@ -1,0 +1,59 @@
+# TVL Legacy Format Example: Environment Overlays
+# Uses legacy format to test deprecation warnings
+
+spec:
+  id: environment-overlays-example
+  version: 0.0.1
+
+metadata:
+  owner: "examples@traigent.ai"
+  description: "Legacy format example for deprecation testing"
+
+# Legacy configuration_space format (should emit deprecation warning)
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini", "claude-3-haiku-20240307"]
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+  max_tokens:
+    type: discrete
+    values: [256, 512]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+  - name: latency
+    direction: minimize
+
+# Legacy optimization format (should emit deprecation warning)
+optimization:
+  strategy: pareto_optimal
+  budget:
+    max_trials:
+      value: 30
+    timeout_seconds: 900
+
+# Legacy constraints format (should emit deprecation warning)
+constraints:
+  - id: temperature-limit
+    type: expression
+    rule: 'params.temperature <= 0.8'
+    error_message: "Keep temperature reasonable"
+
+environments:
+  base:
+    objectives:
+      - name: latency
+        threshold:
+          value: 500
+          unit: milliseconds
+
+  production:
+    extends: base
+    overrides:
+      configuration_space:
+        temperature:
+          type: continuous
+          range: [0.0, 0.5]

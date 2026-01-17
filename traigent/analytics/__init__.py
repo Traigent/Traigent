@@ -57,6 +57,7 @@ try:
 
 except ImportError:
     # Plugin not installed, use embedded implementation (deprecated)
+    # Example insights
     # Anomaly detection
     from .anomaly import (
         AlertManager,
@@ -78,6 +79,7 @@ except ImportError:
         ResourceType,
         ResourceUsage,
     )
+    from .example_insights import ExampleInsightsClient
 
     # Main AI intelligence
     from .intelligence import CostOptimizationAI
@@ -129,6 +131,8 @@ def is_plugin_installed() -> bool:
 
 
 __all__ = [
+    # Example Insights
+    "ExampleInsightsClient",
     # Meta-learning
     "MetaLearningEngine",
     "OptimizationHistory",

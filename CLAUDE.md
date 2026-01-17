@@ -10,6 +10,244 @@ Traigent is a Python SDK for zero-code LLM optimization using decorators (`@trai
 - **Execution Modes**: `edge_analytics` (local + analytics), `mock` (testing), `cloud` (production).
 - **Security**: `traigent/security/` handles JWT validation and encryption. **Never bypass auth in production code.**
 
+## 📋 Claude Plans & IP Protection (CRITICAL)
+
+**Implementation plans contain proprietary IP and MUST NOT be committed to version control.**
+
+### Storage Location
+- All Claude Code implementation plans are stored in `~/.claude/plans/` (user home directory)
+- This directory is already excluded by `.gitignore` (line 253: `.claude/`)
+- **NEVER** create plan files inside the repository directory structure
+- **NEVER** commit plan files or reference them in committed code
+
+### Plan Naming Convention
+- Plans use auto-generated names like `async-sprouting-summit.md`, `bold-crimson-valley.md`
+- Store plan path references only in conversation context, never in files
+
+### When Creating Plans
+When you create implementation plans using EnterPlanMode/ExitPlanMode:
+1. Plans are automatically written to `~/.claude/plans/`
+2. Verify the path starts with `/home/` or `~/` (outside repo)
+3. If accidentally created in repo, immediately move to `~/.claude/plans/`
+
+## ⚙️ Concurrency & Shared Resources (CRITICAL)
+
+**Traigent uses dependency injection, multi-threading, and shared resource guardrails. ALL changes must consider these patterns.**
+
+### Dependency Injection Pattern
+- `OptimizedFunction` receives injected dependencies: `TraigentConfig`, `BudgetGuardrail`, `CloudClient`, etc.
+- **NEVER** instantiate shared resources directly inside functions
+- **ALWAYS** accept dependencies as parameters or use factory patterns
+- Example: `OptimizationOrchestrator` injects budget guardrail into trial executor
+
+```python
+# ✅ CORRECT - Dependency injection
+def run_trial(config: dict, budget_guardrail: BudgetGuardrail) -> TrialResult:
+    budget_guardrail.check_before_trial()
+    # ... trial logic
+
+# ❌ WRONG - Direct instantiation creates multiple instances
+def run_trial(config: dict) -> TrialResult:
+    budget_guardrail = BudgetGuardrail()  # BREAKS shared state!
+    budget_guardrail.check_before_trial()
+```
+
+### Multi-Threading Considerations
+- Parallel trial execution uses `ThreadPoolExecutor` (see `traigent/core/orchestrator.py`)
+- **All shared resources MUST be thread-safe** (use locks, thread-local storage, or immutable data)
+- Budget guardrails use threading locks to prevent race conditions
+- Example thread-safe patterns:
+  - `BudgetGuardrail` uses `threading.Lock()` for spend tracking
+  - Trial results are collected in thread-safe queues
+  - Configuration sampling uses immutable config snapshots
+
+```python
+# ✅ CORRECT - Thread-safe shared state
+class BudgetGuardrail:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._spent = 0.0
+
+    def add_cost(self, cost: float):
+        with self._lock:
+            self._spent += cost
+
+# ❌ WRONG - Race condition
+class BudgetGuardrail:
+    def __init__(self):
+        self._spent = 0.0
+
+    def add_cost(self, cost: float):
+        self._spent += cost  # Multiple threads can corrupt this!
+```
+
+### Budget Guardrail Integration
+When adding features that consume resources (LLM calls, API requests):
+1. **Always check budget before execution**: Call `budget_guardrail.check_before_trial()` or similar
+2. **Track costs after execution**: Call `budget_guardrail.add_cost(trial_cost)`
+3. **Handle budget exceeded**: Raise `BudgetExceededError` and stop gracefully
+4. **Thread-safety**: Never bypass locks or create duplicate guardrail instances
+
+Key files:
+- `traigent/core/budget.py` - Budget guardrail implementation
+- `traigent/core/orchestrator.py` - Budget integration in optimization loop
+- `traigent/core/trial_lifecycle.py` - Cost tracking per trial
+
+### Resource Injection Checklist
+Before implementing ANY new feature that:
+- Makes LLM/API calls
+- Executes user functions
+- Runs in parallel trials
+- Shares state across trials
+
+**Ask yourself:**
+1. ✅ Does this respect the injected budget guardrail?
+2. ✅ Is this thread-safe for parallel execution?
+3. ✅ Am I using dependency injection (not creating new instances)?
+4. ✅ Do I handle budget exceeded gracefully?
+
+## 🔄 Cross-Project Communication: TraigentSchema DTOs (CRITICAL)
+
+**We own the SDK (Traigent), Frontend (FE), and Backend (BE). Use TraigentSchema DTOs for ALL cross-project data exchange.**
+
+### TraigentSchema DTOs
+Located in `traigent/cloud/dtos.py`, these DTOs define the canonical data contracts between SDK ↔ Backend ↔ Frontend:
+
+**Core DTOs:**
+- `ExperimentDTO` - Experiment definition and configuration
+- `ExperimentRunDTO` - Optimization run lifecycle and results
+- `ConfigurationRunDTO` - Individual trial/configuration results
+- `InfrastructureDTO` - Compute infrastructure metadata
+- `ConfigurationsDTO` - Experiment configurations wrapper
+- `MeasuresDict` - Type-safe measures dictionary with validation
+
+**Why Use DTOs:**
+1. **Type Safety**: Enforced validation (Python identifiers, numeric types, max keys)
+2. **Schema Compliance**: Validates against `optigen_schemas` (if installed)
+3. **Privacy Modes**: Built-in support for Edge Analytics (privacy-preserving defaults)
+4. **Backward Compatibility**: Handles schema evolution across SDK/BE/FE versions
+5. **Single Source of Truth**: Same DTOs used by SDK, Backend API, and Frontend API client
+
+### When to Use TraigentSchema DTOs
+
+**✅ ALWAYS use DTOs for:**
+- SDK → Backend API submissions (experiments, trials, results)
+- Backend → Frontend responses (experiment lists, run details, analytics)
+- Frontend → Backend requests (filters, updates, actions)
+- Any new feature that crosses SDK/BE/FE boundaries
+
+**❌ NEVER:**
+- Serialize raw Python objects (dicts, dataclasses) without DTO conversion
+- Create ad-hoc JSON schemas that bypass DTOs
+- Modify DTO fields without updating all 3 projects (SDK, BE, FE)
+
+### DTO Usage Pattern
+
+```python
+# ✅ CORRECT - Use DTOs for SDK → Backend
+from traigent.cloud.dtos import ExperimentRunDTO, ConfigurationRunDTO
+
+# Create DTO with validation
+experiment_run = ExperimentRunDTO(
+    id=run_id,
+    experiment_id=experiment_id,
+    status="running",
+    summary_stats={"accuracy": 0.95},
+    metadata={"dataset_size": 100}
+)
+
+# Validate against schema (if optigen_schemas installed)
+experiment_run.validate()  # Raises DTOSerializationError if invalid
+
+# Convert to dict for API submission
+payload = experiment_run.to_dict()
+response = await cloud_client.submit_experiment_run(payload)
+
+# ❌ WRONG - Ad-hoc dict without validation
+payload = {
+    "id": run_id,
+    "experiment_id": experiment_id,
+    "status": "running",  # Typo: should be "not_started", "running", "completed", etc.
+    "metrics": {"accuracy": 0.95},  # Wrong key: should be "summary_stats"
+}
+response = await cloud_client.submit_experiment_run(payload)  # May fail silently
+```
+
+### MeasuresDict Validation
+
+The `MeasuresDict` class enforces:
+- **Max 50 keys** (prevent unbounded memory)
+- **Python identifier keys** (e.g., `accuracy_score`, not `accuracy-score`)
+- **Numeric values only** (int, float, None) - non-numeric logged as warnings (Phase 0)
+
+```python
+from traigent.cloud.dtos import MeasuresDict
+
+# ✅ CORRECT
+measures = MeasuresDict({
+    "accuracy": 0.95,
+    "latency_ms": 120.5,
+    "cost_usd": 0.002,
+})
+
+# ❌ WRONG - Invalid key pattern (hyphen not allowed)
+measures = MeasuresDict({
+    "accuracy-score": 0.95,  # Raises ValueError: must match ^[a-zA-Z_][a-zA-Z0-9_]*$
+})
+
+# ⚠️ WARNING - Non-numeric value (allowed in Phase 0, rejected in v2.0)
+measures = MeasuresDict({
+    "model_name": "gpt-4",  # Logs warning: use metadata instead
+})
+```
+
+### Adding New Cross-Project Features
+
+When implementing features that span SDK/BE/FE (like example scoring):
+
+1. **Check existing DTOs first**: Can you extend `ExperimentRunDTO.metadata` or `ConfigurationRunDTO.measures`?
+2. **If new DTO needed**: Create in `traigent/cloud/dtos.py` with validation
+3. **Backend models**: Create SQLAlchemy models that map to DTO structure
+4. **Backend API**: Use DTOs in request/response schemas (FastAPI/Pydantic)
+5. **Frontend client**: Generate TypeScript types from DTO schemas
+6. **Validate end-to-end**: Ensure SDK DTO → Backend model → Frontend type consistency
+
+**Example: Adding Example Scoring (from plan)**
+- SDK computes content scores → add to `ConfigurationRunDTO.measures` (via `MeasuresDict`)
+- Backend stores scores → `ExampleScore` model matches DTO structure
+- Backend API returns scores → serialize to DTO format
+- Frontend displays scores → TypeScript types generated from DTO schemas
+
+### DTO Files to Know
+
+**SDK:**
+- [traigent/cloud/dtos.py](traigent/cloud/dtos.py) - All DTO definitions
+
+**Backend (TraigentBackend):**
+- `src/models/` - SQLAlchemy models (map to DTOs)
+- `src/routes/` - FastAPI endpoints (use Pydantic models based on DTOs)
+- `src/schemas/` - Pydantic request/response schemas
+
+**Frontend:**
+- `src/types/` - TypeScript types (generated from DTOs/API schemas)
+- `src/api/` - API client methods (consume DTO-based endpoints)
+
+### Schema Validation (Optional)
+
+Install `optigen_schemas` for strict validation:
+```bash
+pip install 'traigent[validation]'
+```
+
+Control strictness with environment variable:
+```bash
+# Strict (default): Raise exceptions on validation failure
+export TRAIGENT_STRICT_VALIDATION=true
+
+# Lenient: Log warnings only (for development)
+export TRAIGENT_STRICT_VALIDATION=false
+```
+
 ## 🛠️ Development Workflow
 - **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
 - **Testing**: `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
