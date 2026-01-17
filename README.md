@@ -147,9 +147,15 @@ Flow example: `User -> Router Agent -> Specialized Agent -> Response`
 
 ---
 
-## ☁️ Traigent Cloud
+## ☁️ Traigent Cloud (Coming Soon)
 
-The SDK runs locally. A Traigent Cloud API key unlocks advanced capabilities:
+The SDK executes your code locally. By default Traigent runs in `execution_mode="edge_analytics"` (local).
+
+`execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud integration, but are not yet supported in this build and will raise `NotYetSupported` when optimization runs.
+
+To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
+
+The Traigent Cloud roadmap includes:
 
 - AI Planner: natural language to agent, benchmark, and measure generation; template configs and draft iteration.
 - Advanced Insights: trade-off analysis (up to 4 measures), correlations, trend analysis, robustness scoring, Pareto frontier, log-scale normalization.
@@ -158,8 +164,7 @@ The SDK runs locally. A Traigent Cloud API key unlocks advanced capabilities:
 - Rate Limiting and Usage: real-time monitoring, alerts before limits, history, admin overrides.
 - Analytics Dashboard: system health monitoring, performance trend sparklines, model performance explorer.
 
-Run locally today with `execution_mode="edge_analytics"`.
-Get a Cloud API key at <https://traigent.ai/>.
+Get updates (and a Cloud API key when available) at <https://traigent.ai/>.
 
 ---
 
@@ -171,7 +176,8 @@ Get a Cloud API key at <https://traigent.ai/>.
     eval_dataset="path/to/data.jsonl",
     objectives=["accuracy", "cost"],
     scoring_function=my_evaluator,  # Optional custom accuracy metric
-    execution_mode="edge_analytics",
+    # execution_mode defaults to "edge_analytics" (local)
+    # execution_mode="cloud",  # Not yet supported (raises NotYetSupported)
     cost_limit=2.0,
 )
 ```
@@ -217,13 +223,13 @@ See [DISCLAIMER.md](DISCLAIMER.md) for details.
 
 ## 🌐 Execution Modes
 
-Traigent supports local execution with cloud modes planned:
+Traigent executes your code locally in this build; `execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported.
 
-| Mode | Status | Privacy | Algorithm | Best For |
-| ---- | ------ | ------- | --------- | -------- |
-| **Local** (`edge_analytics`) | Available | Complete | Random/Grid/Bayesian | All use cases |
-| **Cloud** | Coming Soon | Metadata | Bayesian | Production, teams |
-| **Hybrid** | Coming Soon | Execution local | Bayesian | Balanced approach |
+| Mode | Notes |
+| ---- | ----- |
+| **Local** (`edge_analytics`, default) | Runs locally; set `TRAIGENT_OFFLINE_MODE=true` to disable backend communication |
+| **Hybrid** (`hybrid`) | Not yet supported (raises `NotYetSupported`) |
+| **Cloud** (`cloud`) | Not yet supported (raises `NotYetSupported`) |
 
 ---
 
@@ -246,7 +252,7 @@ Beyond the basics, Traigent includes powerful features such as:
 
 | Capability | Description |
 | ---------- | ----------- |
-| **Dual Injection Modes** | Seamless (zero-code via RuntimeShim) or Parameter (explicit `config.get()`) |
+| **Injection Modes (default: context)** | Context (default), Parameter, Attribute, Seamless for different trade-offs. See [docs/user-guide/injection_modes.md](docs/user-guide/injection_modes.md). |
 | **3-Tier Evaluation** | Exact match (default) → Custom scorers → LLM-as-Judge/RAGAS |
 | **Budget Rails** | `TRAIGENT_RUN_COST_LIMIT` + handshake approval + EMA estimation |
 | **2-Level Parallelism** | `example_concurrency` (per trial) + `trial_concurrency` (simultaneous configs) |
@@ -265,7 +271,7 @@ Apache 2.0 - See [LICENSE](LICENSE)
 
 ---
 
-**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)** | **[Discord](https://discord.gg/traigent)**
+**[Get Started](docs/getting-started/GETTING_STARTED.md)** | **[Examples](examples/)** | **[GitHub Issues](https://github.com/Traigent/Traigent/issues)**
 
 ---
 
