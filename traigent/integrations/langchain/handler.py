@@ -654,12 +654,12 @@ class TraigentHandler(BaseCallbackHandler):
     ) -> float:
         """Estimate cost for LLM call.
 
-        Uses tokencost library if available, otherwise uses simple estimates.
+        Uses tokencost if available with litellm fallback, otherwise uses simple estimates.
         """
         try:
-            from tokencost import calculate_cost_by_tokens
+            from traigent.utils.cost_calculator import calculate_cost
 
-            return float(calculate_cost_by_tokens(input_tokens, output_tokens, model))
+            return float(calculate_cost(model, input_tokens, output_tokens))
         except ImportError:
             # Fallback estimates (per 1M tokens)
             cost_per_1m = {
