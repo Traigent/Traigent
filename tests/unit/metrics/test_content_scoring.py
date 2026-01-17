@@ -154,6 +154,7 @@ class TestContentScorer:
 
     def test_per_thread_instantiation_pattern(self):
         """Test recommended pattern: new instance per thread."""
+
         # This is the recommended pattern for thread safety
         def process_examples(inputs):
             scorer = ContentScorer()  # New instance per call

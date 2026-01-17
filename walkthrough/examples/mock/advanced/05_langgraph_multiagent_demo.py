@@ -21,18 +21,17 @@ from __future__ import annotations
 
 import asyncio
 import os
-import time
-import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TypedDict
 
 from dotenv import load_dotenv
 from langgraph.graph import END, StateGraph
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_openai import ChatOpenAI
+from opentelemetry import trace
 
 import traigent
 from traigent.integrations.observability.workflow_traces import (
-    SpanStatus,
     SpanType,
     WorkflowEdge,
     WorkflowGraphPayload,
@@ -52,60 +51,19 @@ SCRIPT_DIR = Path(__file__).parent.parent  # Go up to mock/ directory
 # Check if we're in mock mode
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
-# OpenAI client (lazy init)
-_openai_client = None
+# Model configuration
+DEFAULT_MODEL = "gpt-4.1-nano"
 
-# Pricing for gpt-4o-mini (per 1M tokens) - as of 2025
-GPT4O_MINI_INPUT_PRICE = 0.15 / 1_000_000  # $0.15 per 1M input tokens
-GPT4O_MINI_OUTPUT_PRICE = 0.60 / 1_000_000  # $0.60 per 1M output tokens
+# TODO: LangGraphAdapter should auto-instrument workflows
+# This demo shows MANUAL workarounds until LangGraphAdapter is implemented.
+# Ideal experience: users just define agents, SDK handles instrumentation.
 
+# OpenTelemetry tracer for span recording
+# NOTE: This is temporary - should be handled by LangGraphAdapter
+tracer = trace.get_tracer(__name__)
 
-def get_openai_client():
-    """Get or create OpenAI client."""
-    global _openai_client
-    if _openai_client is None:
-        try:
-            from openai import OpenAI
-            _openai_client = OpenAI()  # Uses OPENAI_API_KEY env var
-        except ImportError:
-            raise ImportError("openai package required for real mode. Install with: pip install openai")
-    return _openai_client
-
-
-def calculate_cost(input_tokens: int, output_tokens: int, model: str = "gpt-4o-mini") -> float:
-    """Calculate cost based on token usage."""
-    if model == "gpt-4o-mini":
-        return (input_tokens * GPT4O_MINI_INPUT_PRICE) + (output_tokens * GPT4O_MINI_OUTPUT_PRICE)
-    # Default fallback
-    return (input_tokens + output_tokens) * 0.001 / 1000
-
-
-# Global tracker for per-node span recording
+# Global tracker for workflow topology extraction
 _workflow_tracker: WorkflowTracesTracker | None = None
-_agent_spans: list = []  # Collect spans during workflow execution
-
-
-def record_agent_span(
-    node_id: str,
-    display_name: str,
-    start_time: float,
-    end_time: float,
-    input_tokens: int = 0,
-    output_tokens: int = 0,
-    cost_usd: float = 0.0,
-) -> None:
-    """Record a span for an agent execution."""
-    span_data = {
-        "span_id": uuid.uuid4().hex[:16],
-        "node_id": node_id,
-        "display_name": display_name,
-        "start_time": datetime.fromtimestamp(start_time, UTC).isoformat(),
-        "end_time": datetime.fromtimestamp(end_time, UTC).isoformat(),
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cost_usd": cost_usd,
-    }
-    _agent_spans.append(span_data)
 
 
 # =============================================================================
@@ -133,10 +91,12 @@ def retrieve_documents(state: RAGState) -> RAGState:
     """Retriever agent: Fetch documents from vector store.
 
     Note: This is typically a vector DB lookup, not an LLM call.
-    We keep it mock for simplicity (no vector DB setup required).
+    In production, this would use a vector database (Pinecone, Weaviate, etc.).
+
+    TODO: LangGraphAdapter should auto-instrument this node with OTEL spans.
     """
-    start = time.time()
     question = state["question"]
+
     # Mock retrieval based on question keywords
     if "capital" in question.lower():
         docs = ["Paris is the capital of France.", "France is in Europe."]
@@ -145,20 +105,21 @@ def retrieve_documents(state: RAGState) -> RAGState:
     else:
         docs = ["Generic document 1.", "Generic document 2."]
 
-    end = time.time()
-    # Retrieval is typically free (just vector DB lookup)
-    record_agent_span("retrieve", "Retriever Agent", start, end, input_tokens=0, cost_usd=0.0)
     return {**state, "documents": docs}
 
 
 def grade_documents(state: RAGState) -> RAGState:
-    """Document grader: Evaluate relevance of retrieved documents."""
-    start = time.time()
+    """Document grader: Evaluate relevance of retrieved documents.
+
+    Note: Uses LangChain ChatOpenAI wrapper for automatic cost tracking.
+    The LangChain interceptor automatically captures tokens and cost.
+
+    TODO: LangGraphAdapter should:
+    - Auto-create OTEL spans with node.id="grade_documents"
+    - Auto-inject temperature from config_space["grade_documents.temperature"]
+    """
     docs = state["documents"]
     question = state["question"]
-    input_tokens = 0
-    output_tokens = 0
-    cost_usd = 0.0
 
     if MOCK_MODE:
         # Simple relevance check - mock grading
@@ -168,35 +129,26 @@ def grade_documents(state: RAGState) -> RAGState:
             # Check if any question word appears in document
             if any(word in doc_lower for word in question.lower().split() if len(word) > 3):
                 relevant.append(doc)
-        input_tokens = 100
-        output_tokens = 20
-        cost_usd = 0.0002
     else:
-        # Real LLM grading
-        client = get_openai_client()
+        # Real LLM grading - use LangChain wrapper for automatic cost tracking
+        llm = ChatOpenAI(
+            model=DEFAULT_MODEL,
+            max_tokens=5,
+            temperature=0,
+        )
         relevant = []
 
         for doc in docs:
-            response = client.chat.completions.create(
-                model="gpt-4o-mini",
-                messages=[
-                    {"role": "system", "content": "You are a document relevance grader. Answer only 'yes' or 'no'."},
-                    {"role": "user", "content": f"Is this document relevant to the question?\n\nQuestion: {question}\n\nDocument: {doc}\n\nAnswer (yes/no):"}
-                ],
-                max_tokens=5,
-                temperature=0,
-            )
-            answer = response.choices[0].message.content.strip().lower()
-            input_tokens += response.usage.prompt_tokens
-            output_tokens += response.usage.completion_tokens
+            messages = [
+                SystemMessage(content="You are a document relevance grader. Answer only 'yes' or 'no'."),
+                HumanMessage(content=f"Is this document relevant to the question?\n\nQuestion: {question}\n\nDocument: {doc}\n\nAnswer (yes/no):")
+            ]
+            response = llm.invoke(messages)
+            answer = response.content.strip().lower()
 
             if "yes" in answer:
                 relevant.append(doc)
 
-        cost_usd = calculate_cost(input_tokens, output_tokens)
-
-    end = time.time()
-    record_agent_span("grade_documents", "Document Grader", start, end, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd)
     return {**state, "relevant_docs": relevant}
 
 
@@ -212,14 +164,14 @@ def decide_next_step(state: RAGState) -> str:
 
 
 def web_search(state: RAGState) -> RAGState:
-    """Web search agent: Search web for additional context."""
-    start = time.time()
+    """Web search agent: Search web for additional context.
+
+    TODO: LangGraphAdapter should auto-instrument this node.
+    """
     question = state["question"]
     # Mock web search results
     web_results = [f"Web result for: {question}", "Additional context from the web."]
 
-    end = time.time()
-    record_agent_span("web_search", "Web Search", start, end, cost_usd=0.0005)
     return {
         **state,
         "web_results": web_results,
@@ -229,13 +181,17 @@ def web_search(state: RAGState) -> RAGState:
 
 
 def generate_answer(state: RAGState) -> RAGState:
-    """Generator agent: Produce final answer from context."""
-    start = time.time()
+    """Generator agent: Produce final answer from context.
+
+    Note: Uses LangChain ChatOpenAI wrapper for automatic cost tracking.
+    The LangChain interceptor automatically captures tokens and cost.
+
+    TODO: LangGraphAdapter should:
+    - Auto-inject temperature from config_space["generate.temperature"]
+    - Auto-create OTEL spans
+    """
     docs = state["relevant_docs"] or state["documents"]
     question = state["question"]
-    input_tokens = 0
-    output_tokens = 0
-    cost_usd = 0.0
 
     if MOCK_MODE:
         # Mock answer generation
@@ -243,30 +199,22 @@ def generate_answer(state: RAGState) -> RAGState:
             answer = f"Based on the context: {docs[0]}"
         else:
             answer = f"I don't have enough information to answer: {question}"
-        input_tokens = 200
-        output_tokens = 50
-        cost_usd = 0.001
     else:
-        # Real LLM generation
-        client = get_openai_client()
+        # Real LLM generation - use LangChain wrapper for automatic cost tracking
+        llm = ChatOpenAI(
+            model=DEFAULT_MODEL,
+            max_tokens=150,
+            temperature=0.7,  # TODO: Should be injected from config_space
+        )
         context = "\n".join(docs) if docs else "No relevant documents found."
 
-        response = client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant. Answer the question based on the provided context. Be concise."},
-                {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:"}
-            ],
-            max_tokens=150,
-            temperature=0.7,
-        )
-        answer = response.choices[0].message.content.strip()
-        input_tokens = response.usage.prompt_tokens
-        output_tokens = response.usage.completion_tokens
-        cost_usd = calculate_cost(input_tokens, output_tokens)
+        messages = [
+            SystemMessage(content="You are a helpful assistant. Answer the question based on the provided context. Be concise."),
+            HumanMessage(content=f"Context:\n{context}\n\nQuestion: {question}\n\nAnswer:")
+        ]
+        response = llm.invoke(messages)
+        answer = response.content.strip()
 
-    end = time.time()
-    record_agent_span("generate", "Generator Agent", start, end, input_tokens=input_tokens, output_tokens=output_tokens, cost_usd=cost_usd)
     return {**state, "answer": answer}
 
 
@@ -460,9 +408,9 @@ def accuracy_metric(expected: str, actual: str) -> float:
     metric_functions={"accuracy": accuracy_metric},  # Custom accuracy metric
     configuration_space={
         # Generator Agent parameters (namespaced)
-        # Note: In real mode, we always use gpt-4o-mini for simplicity
+        # Note: In real mode, we use gpt-4.1-nano for speed and low cost
         # These params demonstrate what Traigent CAN optimize
-        "generate.model": ["gpt-4o-mini"],  # Fast and cheap model
+        "generate.model": [DEFAULT_MODEL],  # Fast and cheap model
         "generate.temperature": [0.3, 0.7],  # Reduced options to minimize API calls
         # Retriever Agent parameters
         "retrieve.top_k": [3, 5],  # Reduced options
@@ -474,10 +422,15 @@ def run_rag_workflow(question: str) -> str:
 
     This function is optimized by Traigent to find the best model/temperature
     combination for the RAG workflow.
-    """
-    global _agent_spans
-    _agent_spans = []  # Clear spans for this execution
 
+    Cost tracking: The LangChain interceptor automatically captures all LLM calls
+    made by the ChatOpenAI instances in grade_documents and generate_answer.
+    The SDK's evaluation infrastructure extracts tokens and costs from these
+    captured responses, so we just return the answer directly.
+
+    Note: OpenTelemetry spans are automatically recorded for each agent execution
+    and exported to the Traigent backend for parameter attribution analysis.
+    """
     # Build and compile the workflow
     workflow = build_rag_workflow()
     app = workflow.compile()
@@ -493,21 +446,11 @@ def run_rag_workflow(question: str) -> str:
     }
 
     # Run the workflow
+    # All LangChain LLM calls are automatically tracked by the interceptor
     result = app.invoke(initial_state)
 
-    # Accumulate usage from all agent spans
-    total_input_tokens = sum(span["input_tokens"] for span in _agent_spans)
-    total_output_tokens = sum(span["output_tokens"] for span in _agent_spans)
-    total_cost = sum(span["cost_usd"] for span in _agent_spans)
-
-    # Use with_usage() to report multi-agent workflow costs to Traigent
-    # This allows the SDK to track costs even though internal LLM calls are invisible
-    return traigent.with_usage(  # type: ignore[return-value]
-        text=result["answer"],
-        total_cost=total_cost,
-        input_tokens=total_input_tokens,
-        output_tokens=total_output_tokens,
-    )
+    # Return the answer - SDK will automatically extract cost from captured LangChain responses
+    return result["answer"]
 
 
 # =============================================================================
@@ -529,7 +472,7 @@ async def main() -> None:
     print(f"\nBackend URL: {backend_url}")
     print(f"Traigent API Key: {'set' if api_key else 'NOT SET'}")
     print(f"OpenAI API Key: {'set' if openai_key else 'NOT SET'}")
-    print(f"\n*** MODE: {'MOCK (no real API costs)' if MOCK_MODE else 'REAL (using OpenAI gpt-4o-mini)'} ***")
+    print(f"\n*** MODE: {'MOCK (no real API costs)' if MOCK_MODE else f'REAL (using OpenAI {DEFAULT_MODEL})'} ***")
 
     if not MOCK_MODE and not openai_key:
         print("\nERROR: OPENAI_API_KEY not set for real mode.")
@@ -605,93 +548,19 @@ async def main() -> None:
         else:
             print(f"  Failed to send graph: {response.error}")
 
-        # Step 4: Submit per-agent spans for attribution
+        # Note: Per-agent spans are automatically recorded via OpenTelemetry
+        # and exported to the Traigent backend by the OptiGenSpanExporter.
+        # No manual span creation needed - OTEL handles it during workflow execution.
         print("\n" + "-" * 70)
-        print("Step 4: Submitting per-agent spans for attribution...")
+        print("Note: Per-agent spans automatically recorded via OpenTelemetry")
         print("-" * 70)
-
-        # Import SpanPayload for creating per-agent spans
-        from traigent.integrations.observability.workflow_traces import SpanPayload
-
-        # Get trial IDs from results
-        trial_ids = []
-        for trial in results.trials:
-            if hasattr(trial, "trial_id"):
-                trial_ids.append(trial.trial_id)
-
-        if trial_ids:
-            # Create per-agent spans for the last trial (as a demo)
-            # In production, you'd create spans during each trial execution
-            trace_id = results.metadata.get("optimization_id", uuid.uuid4().hex)
-            config_run_id = trial_ids[-1]  # Use last trial
-
-            # Create spans for each agent node with realistic durations
-            # Simulating: retrieve=50ms, grade=30ms, generate=200ms
-            from datetime import timedelta
-
-            base_time = datetime.now(UTC)
-            agent_spans = [
-                SpanPayload(
-                    span_id=uuid.uuid4().hex[:16],
-                    trace_id=trace_id,
-                    configuration_run_id=config_run_id,
-                    span_name="retrieve_documents",
-                    span_type=SpanType.NODE.value,
-                    start_time=base_time.isoformat(),
-                    end_time=(base_time + timedelta(milliseconds=50)).isoformat(),
-                    status=SpanStatus.COMPLETED.value,
-                    node_id="retrieve",  # Links to graph node
-                    input_tokens=50,
-                    output_tokens=0,
-                    cost_usd=0.0001,
-                ),
-                SpanPayload(
-                    span_id=uuid.uuid4().hex[:16],
-                    trace_id=trace_id,
-                    configuration_run_id=config_run_id,
-                    span_name="grade_documents",
-                    span_type=SpanType.NODE.value,
-                    start_time=(base_time + timedelta(milliseconds=50)).isoformat(),
-                    end_time=(base_time + timedelta(milliseconds=80)).isoformat(),
-                    status=SpanStatus.COMPLETED.value,
-                    node_id="grade_documents",
-                    input_tokens=100,
-                    output_tokens=20,
-                    cost_usd=0.0002,
-                ),
-                SpanPayload(
-                    span_id=uuid.uuid4().hex[:16],
-                    trace_id=trace_id,
-                    configuration_run_id=config_run_id,
-                    span_name="generate_answer",
-                    span_type=SpanType.NODE.value,
-                    start_time=(base_time + timedelta(milliseconds=80)).isoformat(),
-                    end_time=(base_time + timedelta(milliseconds=280)).isoformat(),
-                    status=SpanStatus.COMPLETED.value,
-                    node_id="generate",
-                    input_tokens=200,
-                    output_tokens=50,
-                    cost_usd=0.001,
-                ),
-            ]
-
-            # Submit per-agent spans
-            span_response = tracker.client.ingest_traces(
-                spans=agent_spans,
-                trace_id=trace_id,
-                configuration_run_id=config_run_id,
-            )
-            if span_response.success:
-                print(f"  Submitted {len(agent_spans)} per-agent spans")
-                print("  Agent nodes: retrieve, grade_documents, generate")
-            else:
-                print(f"  Failed to submit spans: {span_response.error}")
-        else:
-            print("  No trial IDs available for per-agent span submission")
+        print("  Spans are created during workflow execution with:")
+        print("  - node.id attribute for parameter attribution")
+        print("  - llm.input_tokens, llm.output_tokens for cost tracking")
+        print("  - configuration_run_id for linking to specific trials")
     else:
-        print("  Note: Workflow graph visualization requires experiment_id.")
-        print("  Trial execution spans (6) were submitted successfully.")
-        print("  To see the graph, use the 04_workflow_traces_demo.py example.")
+        print("\n  Note: Workflow graph visualization requires experiment_id.")
+        print("  Per-agent spans are automatically recorded via OpenTelemetry.")
 
     # Display results
     print("\n" + "-" * 70)

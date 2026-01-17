@@ -405,7 +405,7 @@ class ConfigurationRunDTO:
             "experiment_run_id": self.experiment_run_id,
             "trial_number": self.trial_number,
             "configuration": self.configuration,
-            "measures": self.measures,
+            "measures": dict(self.measures),  # Convert MeasuresDict to plain dict
             "metadata": self.metadata,
             "status": self.status,
             "created_at": self.created_at or datetime.now(UTC).isoformat(),

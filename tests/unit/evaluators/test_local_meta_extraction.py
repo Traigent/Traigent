@@ -131,7 +131,7 @@ class TestMetaExtraction:
         assert metrics.tokens.input_tokens == 100  # Unchanged
 
     def test_meta_extraction_malformed_usage_graceful(self):
-        """Should handle malformed usage gracefully without aborting."""
+        """Malformed usage fails type guard - returns None."""
         evaluator = LocalEvaluator()
         metrics = ExampleMetrics()
         metrics.tokens.input_tokens = 100  # Initial value
@@ -139,19 +139,18 @@ class TestMetaExtraction:
         output = {
             "text": "answer",
             "__traigent_meta__": {
-                "usage": "not a dict",  # Malformed
+                "usage": "not a dict",  # Malformed - fails type guard
                 "total_cost": 0.0023,
             },
         }
-        # Should not raise, just log warning
+        # Type guard rejects entire structure when usage is malformed
         meta = evaluator._extract_and_inject_traigent_meta(output, metrics)
 
-        assert meta is not None
-        assert metrics.tokens.input_tokens == 100  # Unchanged due to malformed usage
-        assert metrics.cost.total_cost == 0.0023  # Cost still injected
+        assert meta is None  # Type guard fails
+        assert metrics.tokens.input_tokens == 100  # Unchanged
 
     def test_meta_extraction_malformed_cost_graceful(self):
-        """Should handle malformed cost gracefully without aborting."""
+        """Malformed cost fails type guard - returns None."""
         evaluator = LocalEvaluator()
         metrics = ExampleMetrics()
         metrics.tokens.input_tokens = 0  # Initial value
@@ -160,15 +159,14 @@ class TestMetaExtraction:
             "text": "answer",
             "__traigent_meta__": {
                 "usage": {"input_tokens": 100, "output_tokens": 50},
-                "total_cost": "not a number",  # Malformed
+                "total_cost": "not a number",  # Malformed - fails type guard
             },
         }
-        # Should not raise, just log warning
+        # Type guard rejects entire structure when total_cost is malformed
         meta = evaluator._extract_and_inject_traigent_meta(output, metrics)
 
-        assert meta is not None
-        assert metrics.tokens.input_tokens == 100  # Tokens still injected
-        assert metrics.cost.total_cost == 0.0  # Unchanged due to malformed cost
+        assert meta is None  # Type guard fails
+        assert metrics.tokens.input_tokens == 0  # Unchanged
 
     def test_meta_extraction_negative_cost_clamped(self):
         """Should clamp negative cost to 0."""

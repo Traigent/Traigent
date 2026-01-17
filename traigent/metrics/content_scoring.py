@@ -33,7 +33,6 @@ Thread Safety Warning:
 """
 
 import threading
-from typing import Dict, List, Optional
 
 try:
     import numpy as np
@@ -65,10 +64,12 @@ class ContentScorer:
                 "Install with: pip install traigent[analytics]"
             )
 
-        self.tfidf_vectorizer: Optional[TfidfVectorizer] = TfidfVectorizer(max_features=500)
+        self.tfidf_vectorizer: TfidfVectorizer | None = TfidfVectorizer(
+            max_features=500
+        )
         self._lock = threading.Lock()  # For external thread-safe usage
 
-    def compute_uniqueness_scores(self, example_inputs: List[str]) -> Dict[int, float]:
+    def compute_uniqueness_scores(self, example_inputs: list[str]) -> dict[int, float]:
         """Compute uniqueness score for each example.
 
         Uniqueness measures how different each example is from all other examples
@@ -93,7 +94,7 @@ class ContentScorer:
         """
         if not SKLEARN_AVAILABLE or len(example_inputs) < 2:
             # Fallback to neutral score if sklearn unavailable or too few examples
-            return {i: 0.5 for i in range(len(example_inputs))}
+            return dict.fromkeys(range(len(example_inputs)), 0.5)
 
         try:
             # Vectorize inputs using TF-IDF
@@ -101,7 +102,7 @@ class ContentScorer:
             vectors = self.tfidf_vectorizer.fit_transform(example_inputs)
         except Exception:
             # If vectorization fails (e.g., empty strings), return neutral scores
-            return {i: 0.5 for i in range(len(example_inputs))}
+            return dict.fromkeys(range(len(example_inputs)), 0.5)
 
         # Compute pairwise similarities
         similarities = cosine_similarity(vectors)
@@ -110,14 +111,16 @@ class ContentScorer:
         uniqueness_scores = {}
         for i in range(len(example_inputs)):
             # Get similarities to all other examples (exclude self)
-            other_sims = [similarities[i][j] for j in range(len(example_inputs)) if j != i]
+            other_sims = [
+                similarities[i][j] for j in range(len(example_inputs)) if j != i
+            ]
             max_sim = max(other_sims) if other_sims else 0.0
             # Clamp to [0, 1] to handle floating point precision issues
             uniqueness_scores[i] = float(max(0.0, min(1.0, 1.0 - max_sim)))
 
         return uniqueness_scores
 
-    def compute_novelty_scores(self, example_inputs: List[str]) -> Dict[int, float]:
+    def compute_novelty_scores(self, example_inputs: list[str]) -> dict[int, float]:
         """Compute coverage/novelty score for each example.
 
         Novelty measures how different each example is from the dataset average
@@ -141,7 +144,7 @@ class ContentScorer:
         Thread Safety: NOT thread-safe. See module docstring.
         """
         if not SKLEARN_AVAILABLE or len(example_inputs) < 2:
-            return {i: 0.5 for i in range(len(example_inputs))}
+            return dict.fromkeys(range(len(example_inputs)), 0.5)
 
         try:
             assert self.tfidf_vectorizer is not None
@@ -158,9 +161,11 @@ class ContentScorer:
 
             return novelty_scores
         except Exception:
-            return {i: 0.5 for i in range(len(example_inputs))}
+            return dict.fromkeys(range(len(example_inputs)), 0.5)
 
-    def compute_all_scores(self, example_inputs: List[str]) -> Dict[str, Dict[int, float]]:
+    def compute_all_scores(
+        self, example_inputs: list[str]
+    ) -> dict[str, dict[int, float]]:
         """Compute all content-based scores at once.
 
         Convenience method to compute both uniqueness and novelty scores in one call.
