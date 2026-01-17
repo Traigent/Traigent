@@ -295,6 +295,30 @@ if DSPY_INTEGRATION_AVAILABLE:
         ]
     )
 
+# Workflow traces integration (always available - graceful degradation for OTEL)
+from .observability.workflow_traces import (
+    OTEL_AVAILABLE,
+    OptiGenSpanExporter,
+    SpanPayload,
+    SpanStatus,
+    SpanType,
+    TraceIngestionRequest,
+    TraceIngestionResponse,
+    WorkflowEdge,
+    WorkflowGraphPayload,
+    WorkflowLoop,
+    WorkflowNode,
+    WorkflowTracesClient,
+    WorkflowTracesTracker,
+    create_workflow_tracker,
+    detect_loops_in_graph,
+    extract_edges_from_langgraph,
+    extract_nodes_from_langgraph,
+    setup_workflow_tracing,
+)
+
+WORKFLOW_TRACES_INTEGRATION_AVAILABLE = True
+
 # Add provider exports (always available)
 __all__.extend(
     [
@@ -302,5 +326,30 @@ __all__.extend(
         "list_available_providers",
         "get_all_tiers",
         "register_provider_tiers",
+    ]
+)
+
+# Add Workflow Traces exports (always available)
+__all__.extend(
+    [
+        "OTEL_AVAILABLE",
+        "WORKFLOW_TRACES_INTEGRATION_AVAILABLE",
+        "SpanStatus",
+        "SpanType",
+        "SpanPayload",
+        "WorkflowNode",
+        "WorkflowEdge",
+        "WorkflowLoop",
+        "WorkflowGraphPayload",
+        "TraceIngestionRequest",
+        "TraceIngestionResponse",
+        "WorkflowTracesClient",
+        "OptiGenSpanExporter",
+        "WorkflowTracesTracker",
+        "create_workflow_tracker",
+        "setup_workflow_tracing",
+        "extract_nodes_from_langgraph",
+        "extract_edges_from_langgraph",
+        "detect_loops_in_graph",
     ]
 )

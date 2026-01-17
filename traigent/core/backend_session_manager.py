@@ -227,12 +227,17 @@ class BackendSessionManager:
         self,
         trial_result: TrialResult,
         session_id: str | None,
+        dataset_name: str = "dataset",
+        content_scores: dict[str, dict[int, float]] | None = None,
     ) -> bool:
         """Submit trial to backend.
 
         Args:
             trial_result: Completed trial result
             session_id: Backend session identifier
+            dataset_name: Name of the dataset (for stable example ID generation)
+            content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                           example_index -> score (0.0-1.0)
 
         Returns:
             True if submission succeeded
@@ -246,7 +251,11 @@ class BackendSessionManager:
 
         score = trial_result.get_metric(primary_objective, 0.0)
         trial_metadata = build_backend_metadata(
-            trial_result, primary_objective, self._traigent_config
+            trial_result,
+            primary_objective,
+            self._traigent_config,
+            dataset_name,
+            content_scores,
         )
 
         await self._log_trial_to_backend(
@@ -744,4 +753,15 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+
+        # Add experiment_id from session mapping if available
+        if self._backend_client is not None:
+            try:
+                mapping = self._backend_client.get_session_mapping(session_id)
+                if mapping is not None:
+                    update_payload["experiment_id"] = mapping.experiment_id
+                    update_payload["experiment_run_id"] = mapping.experiment_run_id
+            except Exception:
+                pass  # Silently ignore if mapping not available
+
         result.metadata.update(update_payload)

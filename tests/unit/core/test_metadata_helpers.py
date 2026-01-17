@@ -353,12 +353,12 @@ class TestBuildMeasuresFull:
         assert measures[0]["score"] == 0.0
 
     def test_include_all_scalar_metrics(self, example_result):
-        """Test all scalar metrics are included."""
+        """Test all numeric metrics are included (per MeasuresDict constraints)."""
         example_result.metrics = {
             "accuracy": 0.9,
             "cost": 0.02,
             "latency": 0.5,
-            "model": "gpt-4",
+            "model": "gpt-4",  # String values are NOT included
         }
 
         measures = _build_measures_full([example_result], "accuracy")
@@ -367,7 +367,8 @@ class TestBuildMeasuresFull:
         assert "accuracy" in measure
         assert "cost" in measure
         assert "latency" in measure
-        assert "model" in measure
+        # String values are excluded per MeasuresDict constraints
+        assert "model" not in measure
 
     def test_include_execution_time(self, example_result):
         """Test execution_time is included as response_time."""

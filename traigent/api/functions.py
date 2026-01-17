@@ -826,3 +826,133 @@ def get_global_parallel_config() -> ParallelConfig:
         coerced = ParallelConfig()
     _GLOBAL_CONFIG["parallel_config"] = coerced
     return coerced
+
+
+def with_usage(
+    text: str,
+    total_cost: float,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> str | dict[str, Any]:
+    """Wrap a response with usage metadata if in optimization mode.
+
+    Returns text directly in production, or a dict with metadata
+    during optimization. The metadata is extracted and injected into
+    metrics after cost calculation.
+
+    Args:
+        text: The actual response content (must be a string)
+        total_cost: Pre-computed cost in USD (REQUIRED - not recalculated from tokens)
+        input_tokens: Number of input tokens consumed (informational, for UI display).
+            If only one token count is provided, the other defaults to 0.
+        output_tokens: Number of output tokens generated (informational, for UI display).
+            If only one token count is provided, the other defaults to 0.
+
+    Returns:
+        In production: text unchanged
+        During optimization: dict with structure:
+            {
+                "text": str,
+                "__traigent_meta__": {
+                    "total_cost": float,
+                    "usage": {  # Optional
+                        "input_tokens": int,
+                        "output_tokens": int
+                    }
+                }
+            }
+
+    Raises:
+        TypeError: If text is not a string or total_cost is not numeric
+
+    Validation:
+        The returned __traigent_meta__ structure is validated at runtime using
+        type guards from traigent.core.meta_types.TraigentMetadata:
+        - text must be string (raises TypeError)
+        - total_cost must be numeric (raises TypeError)
+        - tokens must be integers if provided
+        - negative values are clamped to 0 with warning
+
+    Type Safety:
+        See traigent.core.meta_types.TraigentMetadata for the canonical TypedDict
+        definition. The structure is validated using is_traigent_metadata() type guard.
+
+    Note:
+        - `total_cost` is REQUIRED because cost is not recalculated from tokens
+        - Token counts are informational only (for UI display)
+        - Cost is injected AFTER SDK's cost calculation, overriding any calculated value
+        - Custom metric functions receive the full dict output (including __traigent_meta__)
+        - `__traigent_meta__` is a reserved key. If your function output already contains
+          this key for other purposes, it will be treated as usage metadata.
+
+    Example:
+        @traigent.optimize(...)
+        def my_workflow(question: str):
+            # Accumulate usage from internal LLM calls
+            total_in = total_out = total_cost = 0
+            for step in workflow:
+                response = llm.call(...)
+                total_in += response.usage.prompt_tokens
+                total_out += response.usage.completion_tokens
+                total_cost += calculate_cost(response)  # User must calculate
+
+            return traigent.with_usage(
+                text=answer,
+                total_cost=total_cost,
+                input_tokens=total_in,
+                output_tokens=total_out,
+            )
+
+    Multi-Agent Workflows:
+        For multi-agent workflows with per-agent cost tracking, use the
+        AgentCostBreakdown and WorkflowCostSummary DTOs from traigent.cloud.agent_dtos:
+
+        >>> from traigent import AgentCostBreakdown, WorkflowCostSummary
+        >>> agent1 = AgentCostBreakdown(
+        ...     agent_id="researcher",
+        ...     agent_name="Research Agent",
+        ...     input_tokens=100, output_tokens=50, total_tokens=150,
+        ...     input_cost=0.001, output_cost=0.002, total_cost=0.003,
+        ...     model_used="gpt-4o-mini"
+        ... )
+        >>> workflow = WorkflowCostSummary(
+        ...     workflow_id="workflow-001",
+        ...     workflow_name="Research",
+        ...     agent_breakdowns=[agent1]
+        ... )
+        >>> return traigent.with_usage(
+        ...     text=result,
+        ...     total_cost=workflow.total_cost,
+        ...     input_tokens=workflow.total_input_tokens,
+        ...     output_tokens=workflow.total_output_tokens
+        ... )
+    """
+    # Enforce string type
+    if not isinstance(text, str):
+        raise TypeError(
+            f"with_usage() requires text to be a string, got {type(text).__name__}. "
+            "Convert your response to a string before calling with_usage()."
+        )
+
+    # Only wrap in dict during optimization
+    if get_trial_context() is None:
+        return text
+
+    result: dict[str, Any] = {"text": text}
+
+    # Build metadata - always include total_cost (required)
+    meta: dict[str, Any] = {"total_cost": float(total_cost)}
+
+    # Only include token counts if explicitly provided (not None)
+    # This avoids overwriting existing extracted token counts with zeros
+    if input_tokens is not None or output_tokens is not None:
+        usage: dict[str, int] = {}
+        if input_tokens is not None:
+            usage["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            usage["output_tokens"] = int(output_tokens)
+        meta["usage"] = usage
+
+    result["__traigent_meta__"] = meta
+
+    return result
