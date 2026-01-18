@@ -22,6 +22,7 @@ from traigent.metrics.agent_metrics import (
     extract_namespaced_config_for_agent,
     get_metrics_for_available_data,
     get_reference_free_metrics,
+    validate_agent_id,
     validate_agent_metrics,
 )
 
@@ -485,3 +486,108 @@ class TestValidateAgentMetrics:
 
         assert valid is True
         assert missing == []
+
+
+class TestValidateAgentId:
+    """Test validate_agent_id function."""
+
+    def test_valid_simple_name(self):
+        """Simple names are valid."""
+        assert validate_agent_id("grader") is True
+        assert validate_agent_id("generator") is True
+
+    def test_valid_with_underscores(self):
+        """Names with underscores are valid."""
+        assert validate_agent_id("financial_advisor") is True
+        assert validate_agent_id("grader_v2") is True
+        assert validate_agent_id("_private") is True
+
+    def test_valid_with_numbers(self):
+        """Names with numbers (not at start) are valid."""
+        assert validate_agent_id("agent1") is True
+        assert validate_agent_id("v2_grader") is True
+
+    def test_invalid_with_hyphen(self):
+        """Names with hyphens are invalid."""
+        assert validate_agent_id("grader-v2") is False
+        assert validate_agent_id("my-agent") is False
+
+    def test_invalid_starts_with_digit(self):
+        """Names starting with digits are invalid."""
+        assert validate_agent_id("123agent") is False
+        assert validate_agent_id("1st_grader") is False
+
+    def test_invalid_empty(self):
+        """Empty string is invalid."""
+        assert validate_agent_id("") is False
+
+    def test_invalid_with_dot(self):
+        """Names with dots are invalid."""
+        assert validate_agent_id("grader.v2") is False
+
+    def test_invalid_with_space(self):
+        """Names with spaces are invalid."""
+        assert validate_agent_id("my agent") is False
+
+
+class TestAgentIdValidationInDataclass:
+    """Test agent ID validation in AgentMetricsSummary."""
+
+    def test_valid_agent_id_accepted(self):
+        """Valid agent IDs are accepted."""
+        summary = AgentMetricsSummary(agent_id="grader", metrics={"cost": 0.002})
+        assert summary.agent_id == "grader"
+
+    def test_empty_agent_id_accepted(self):
+        """Empty agent ID is accepted (for global metrics)."""
+        summary = AgentMetricsSummary(agent_id="", metrics={"total_cost": 0.006})
+        assert summary.agent_id == ""
+
+    def test_invalid_agent_id_raises(self):
+        """Invalid agent IDs raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid agent_id"):
+            AgentMetricsSummary(agent_id="grader-v2", metrics={"cost": 0.002})
+
+    def test_invalid_agent_id_with_digit_start_raises(self):
+        """Agent IDs starting with digit raise ValueError."""
+        with pytest.raises(ValueError, match="Invalid agent_id"):
+            AgentMetricsSummary(agent_id="123agent", metrics={"cost": 0.002})
+
+
+class TestAgentIdValidationInFunctions:
+    """Test agent ID validation in functions."""
+
+    def test_compute_per_agent_metrics_rejects_invalid(self):
+        """compute_per_agent_metrics rejects invalid agent IDs."""
+        measures = {"grader_cost": 0.002}
+        with pytest.raises(ValueError, match="Invalid agent IDs"):
+            compute_per_agent_metrics(measures, ["grader-v2"])
+
+    def test_build_agent_objectives_rejects_invalid(self):
+        """build_agent_objectives rejects invalid agent IDs."""
+        with pytest.raises(ValueError, match="Invalid agent IDs"):
+            build_agent_objectives(["valid_agent", "invalid-agent"])
+
+    def test_validate_agent_metrics_rejects_invalid(self):
+        """validate_agent_metrics rejects invalid agent IDs."""
+        measures = {"grader_cost": 0.002}
+        with pytest.raises(ValueError, match="Invalid agent IDs"):
+            validate_agent_metrics(measures, ["123invalid"], ["cost"])
+
+    def test_functions_accept_valid_ids(self):
+        """Functions accept valid agent IDs."""
+        measures = {"grader_cost": 0.002, "generator_cost": 0.004}
+
+        # compute_per_agent_metrics
+        result = compute_per_agent_metrics(measures, ["grader", "generator"])
+        assert "grader" in result
+
+        # build_agent_objectives
+        objectives = build_agent_objectives(["grader", "generator"])
+        assert "grader_cost" in objectives
+
+        # validate_agent_metrics
+        valid, missing = validate_agent_metrics(
+            measures, ["grader", "generator"], ["cost"]
+        )
+        assert valid is True

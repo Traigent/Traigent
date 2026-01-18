@@ -41,6 +41,7 @@ _LAZY_IMPORTS = {
     "get_metrics_for_available_data": _AGENT_METRICS_MODULE,
     "build_agent_objectives": _AGENT_METRICS_MODULE,
     "extract_namespaced_config_for_agent": _AGENT_METRICS_MODULE,
+    "validate_agent_id": _AGENT_METRICS_MODULE,
     "validate_agent_metrics": _AGENT_METRICS_MODULE,
 }
 
@@ -87,5 +88,6 @@ __all__ = [
     "get_metrics_for_available_data",
     "build_agent_objectives",
     "extract_namespaced_config_for_agent",
+    "validate_agent_id",
     "validate_agent_metrics",
 ]

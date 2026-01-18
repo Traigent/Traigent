@@ -5,6 +5,19 @@ metrics on a per-agent basis in multi-agent workflows. It integrates with
 the namespace parsing utilities from traigent.core.namespace and the RAGAS
 evaluation framework.
 
+Agent ID Requirements:
+    Agent IDs must be valid Python identifiers (letters, digits, underscores,
+    not starting with a digit). This ensures compatibility with MeasuresDict
+    key requirements. Use `validate_agent_id()` to check agent IDs.
+
+    Valid: "grader", "generator_v2", "financial_advisor"
+    Invalid: "grader-v2" (hyphen), "123agent" (starts with digit)
+
+Thread Safety:
+    Data classes in this module (AgentMetricsSummary, MultiAgentMetricsSummary)
+    are mutable containers. They are NOT thread-safe for concurrent modification.
+    Create separate instances for each thread or use external synchronization.
+
 Example:
     >>> from traigent.metrics.agent_metrics import (
     ...     compute_per_agent_metrics,
@@ -38,6 +51,58 @@ from traigent.core.namespace import (
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# Regex pattern for valid agent IDs (Python identifier without keywords)
+_VALID_AGENT_ID_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+
+
+def validate_agent_id(agent_id: str) -> bool:
+    """Validate that an agent ID is a valid Python identifier.
+
+    Agent IDs must follow Python identifier rules to ensure
+    compatibility with MeasuresDict key requirements:
+    - Start with letter or underscore
+    - Contain only letters, digits, and underscores
+    - Not empty
+
+    Args:
+        agent_id: Agent identifier to validate
+
+    Returns:
+        True if valid, False otherwise
+
+    Example:
+        >>> validate_agent_id("grader")
+        True
+        >>> validate_agent_id("grader-v2")
+        False
+        >>> validate_agent_id("123agent")
+        False
+    """
+    if not agent_id:
+        return False
+    return agent_id.isidentifier()
+
+
+def _ensure_valid_agent_ids(agents: Sequence[str], context: str = "") -> None:
+    """Validate all agent IDs and log warnings for invalid ones.
+
+    Args:
+        agents: Sequence of agent IDs to validate
+        context: Optional context for log messages
+
+    Raises:
+        ValueError: If any agent ID is invalid
+    """
+    invalid = [a for a in agents if not validate_agent_id(a)]
+    if invalid:
+        context_msg = f" in {context}" if context else ""
+        raise ValueError(
+            f"Invalid agent IDs{context_msg}: {invalid}. "
+            f"Agent IDs must be valid Python identifiers "
+            f"(letters, digits, underscores, not starting with digit)."
+        )
+
 
 # Reference-free RAGAS metrics that don't require ground truth
 # These can be used when expected_output is not available
@@ -82,16 +147,29 @@ class AgentMetricsSummary:
     """Summary of metrics for a single agent.
 
     Attributes:
-        agent_id: Unique identifier for the agent
+        agent_id: Unique identifier for the agent (must be valid Python identifier)
         metrics: Dictionary of metric name to value
         sample_count: Number of samples used to compute metrics
         metadata: Optional additional metadata
+
+    Raises:
+        ValueError: If agent_id is non-empty and not a valid Python identifier
     """
 
     agent_id: str
     metrics: dict[str, float] = field(default_factory=dict)
     sample_count: int = 0
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Validate agent_id on construction."""
+        # Empty agent_id is allowed (for global metrics)
+        if self.agent_id and not validate_agent_id(self.agent_id):
+            raise ValueError(
+                f"Invalid agent_id: '{self.agent_id}'. "
+                f"Agent IDs must be valid Python identifiers "
+                f"(letters, digits, underscores, not starting with digit)."
+            )
 
     def to_measures_dict(self, prefix: str = "") -> dict[str, float]:
         """Convert to MeasuresDict-compatible format.
@@ -170,12 +248,15 @@ def compute_per_agent_metrics(
 
     Args:
         measures: Flat dictionary of metrics (e.g., from MeasuresDict)
-        agents: List of agent names to extract metrics for
+        agents: List of agent names to extract metrics for (must be valid identifiers)
         metric_names: Optional list of specific metrics to extract
             (e.g., ["cost", "latency_ms"]). If None, extracts all.
 
     Returns:
         Dictionary mapping agent_id to dict of metric_name to value
+
+    Raises:
+        ValueError: If any agent ID is not a valid Python identifier
 
     Example:
         >>> measures = {
@@ -189,6 +270,7 @@ def compute_per_agent_metrics(
         >>> per_agent["grader"]
         {'cost': 0.002, 'latency_ms': 150}
     """
+    _ensure_valid_agent_ids(agents, "compute_per_agent_metrics")
     result: dict[str, dict[str, float]] = {}
 
     for agent in agents:
@@ -362,7 +444,7 @@ def build_agent_objectives(
     (MeasuresDict-compatible).
 
     Args:
-        agents: List of agent names
+        agents: List of agent names (must be valid Python identifiers)
         include_cost: Include cost metrics (default: True)
         include_latency: Include latency metrics (default: True)
         include_quality: Include quality metrics like accuracy (default: False)
@@ -371,11 +453,15 @@ def build_agent_objectives(
     Returns:
         List of objective names
 
+    Raises:
+        ValueError: If any agent ID is not a valid Python identifier
+
     Example:
         >>> build_agent_objectives(["grader", "generator"], include_quality=False)
         ['total_cost', 'total_latency_ms', 'grader_cost', 'grader_latency_ms',
          'generator_cost', 'generator_latency_ms']
     """
+    _ensure_valid_agent_ids(agents, "build_agent_objectives")
     metrics: list[str] = []
 
     if include_cost:
@@ -438,11 +524,14 @@ def validate_agent_metrics(
 
     Args:
         measures: Flat metrics dictionary
-        agents: List of agents to validate
+        agents: List of agents to validate (must be valid Python identifiers)
         required_metrics: Metrics that must be present for each agent
 
     Returns:
         Tuple of (is_valid, list of missing metric names)
+
+    Raises:
+        ValueError: If any agent ID is not a valid Python identifier
 
     Example:
         >>> measures = {"grader_cost": 0.002, "generator_cost": 0.004}
@@ -454,6 +543,7 @@ def validate_agent_metrics(
         >>> missing
         ['grader_latency_ms', 'generator_latency_ms']
     """
+    _ensure_valid_agent_ids(agents, "validate_agent_metrics")
     missing: list[str] = []
 
     for agent in agents:
@@ -482,5 +572,6 @@ __all__ = [
     "get_metrics_for_available_data",
     "build_agent_objectives",
     "extract_namespaced_config_for_agent",
+    "validate_agent_id",
     "validate_agent_metrics",
 ]
