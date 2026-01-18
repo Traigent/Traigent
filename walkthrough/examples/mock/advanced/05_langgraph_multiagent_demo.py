@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import random
 from pathlib import Path
 from typing import TypedDict
 
@@ -364,36 +365,84 @@ def extract_workflow_graph(
 
 
 # =============================================================================
-# Custom Accuracy Metric
+# Custom Metrics (Accuracy and Cost simulation for mock mode)
 # =============================================================================
 
 
-def accuracy_metric(expected: str, actual: str) -> float:
+def accuracy_metric(output: str, expected: str) -> float:
     """Calculate accuracy by checking if expected output is in generated answer.
 
     This is a simple substring match metric. For production use cases,
     you might want to use semantic similarity, fuzzy matching, or LLM-as-judge.
 
     Args:
+        output: The generated answer from the workflow (passed by evaluator)
         expected: The expected answer from the dataset
-        actual: The generated answer from the workflow
 
     Returns:
         1.0 if expected output is found in generated answer, 0.0 otherwise
+        In mock mode, returns simulated accuracy (0.6-0.95) for realistic demo
     """
-    # Normalize both strings for comparison
-    actual_lower = actual.lower().strip()
+    # In mock mode, simulate realistic accuracy scores
+    if MOCK_MODE:
+        # Simulate varying accuracy based on output content
+        # This gives realistic-looking results in the demo
+        random.seed(hash(output + expected) % 2**32)  # Deterministic per example
+        return random.uniform(0.6, 0.95)
+
+    # Real mode: Normalize both strings for comparison
+    output_lower = output.lower().strip()
     expected_lower = expected.lower().strip()
 
     # Check if expected answer appears in the output
-    if expected_lower in actual_lower:
+    if expected_lower in output_lower:
         return 1.0
 
     # Also check individual words for partial credit (e.g., "Paris" in "The capital is Paris, France")
     expected_words = expected_lower.split()
-    if len(expected_words) == 1 and expected_words[0] in actual_lower:
+    if len(expected_words) == 1 and expected_words[0] in output_lower:
         return 1.0
 
+    return 0.0
+
+
+def cost_metric(output: str, expected: str) -> float:
+    """Calculate simulated cost for each example.
+
+    In mock mode, simulates realistic LLM costs based on output length.
+    In real mode, returns 0.0 (actual costs are tracked by the SDK).
+
+    The simulated costs are based on realistic gpt-4o-mini pricing:
+    - ~$0.15 per 1M input tokens
+    - ~$0.60 per 1M output tokens
+
+    Args:
+        output: The generated answer from the workflow
+        expected: The expected answer (unused, but required by evaluator signature)
+
+    Returns:
+        Simulated cost in USD for mock mode, 0.0 for real mode
+    """
+    if MOCK_MODE:
+        # Simulate realistic costs based on output length
+        # Assuming ~4 chars per token (rough estimate)
+        output_tokens = max(len(output) // 4, 10)
+        input_tokens = 150  # Approximate prompt size for RAG workflow
+
+        # Pricing: gpt-4o-mini rates (per 1M tokens)
+        input_cost_per_1m = 0.15
+        output_cost_per_1m = 0.60
+
+        input_cost = (input_tokens / 1_000_000) * input_cost_per_1m
+        output_cost = (output_tokens / 1_000_000) * output_cost_per_1m
+
+        # Add some variance for realism
+        random.seed(hash(output) % 2**32)
+        variance = random.uniform(0.8, 1.2)
+
+        return (input_cost + output_cost) * variance
+
+    # In real mode, SDK tracks costs automatically via LangChain interceptor
     return 0.0
 
 
@@ -405,7 +454,10 @@ def accuracy_metric(expected: str, actual: str) -> float:
 @traigent.optimize(
     eval_dataset=str(SCRIPT_DIR / "simple_questions.jsonl"),
     objectives=["accuracy", "cost"],
-    metric_functions={"accuracy": accuracy_metric},  # Custom accuracy metric
+    metric_functions={
+        "accuracy": accuracy_metric,  # Custom accuracy metric
+        "total_cost": cost_metric,  # Simulated cost for mock mode (overrides SDK's 0.0 default)
+    },
     configuration_space={
         # Generator Agent parameters (namespaced)
         # Note: In real mode, we use gpt-4.1-nano for speed and low cost
@@ -573,7 +625,7 @@ async def main() -> None:
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
-    print(f"  Cost: ${results.best_metrics.get('cost', 0):.6f}")
+    print(f"  Cost: ${results.best_metrics.get('total_cost', results.best_metrics.get('cost', 0)):.6f}")
 
     print("\n" + "=" * 70)
     print("Check the Traigent frontend to see:")
