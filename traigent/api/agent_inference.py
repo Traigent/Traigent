@@ -200,15 +200,26 @@ def _build_from_explicit_agents(
 def _validate_prefixes(prefixes: list[str], param_keys: list[str]) -> None:
     """Validate that all prefixes match at least one parameter.
 
+    Supports both single underscore (legacy) and double underscore (recommended) delimiters:
+    - "agent__param" (double underscore - recommended for MeasuresDict compatibility)
+    - "agent_param" (single underscore - legacy, supported for backward compatibility)
+
     Raises:
         ValueError: If any prefix has no matching parameters.
     """
     for prefix in prefixes:
-        matches = [k for k in param_keys if k.startswith(prefix + "_") or k == prefix]
+        # Check both double underscore (preferred) and single underscore (legacy)
+        matches = [
+            k
+            for k in param_keys
+            if k.startswith(prefix + "__")  # Double underscore (recommended)
+            or k.startswith(prefix + "_")  # Single underscore (legacy)
+            or k == prefix  # Exact match
+        ]
         if not matches:
             raise ValueError(
                 f"agent_prefixes contains '{prefix}' but no parameters start with "
-                f"'{prefix}_'. Available parameters: {param_keys}"
+                f"'{prefix}__' or '{prefix}_'. Available parameters: {param_keys}"
             )
 
 
@@ -220,15 +231,26 @@ def _assign_by_prefix(
     """Assign parameters to agents based on prefix matching.
 
     Modifies param_to_agent in place, only for parameters not already assigned.
-    Matches both 'prefix_*' patterns and exact 'prefix' matches.
+
+    Supports both single underscore (legacy) and double underscore (recommended) delimiters:
+    - "agent__param" (double underscore - recommended for MeasuresDict compatibility)
+    - "agent_param" (single underscore - legacy, supported for backward compatibility)
+
+    Priority: Double underscore is checked first to ensure correct matching when
+    an agent name contains underscores (e.g., "financial_advisor__model").
     """
     for param_key in param_keys:
         if param_key in param_to_agent:
             continue  # Already assigned by higher priority source
 
         for prefix in prefixes:
-            # Match 'prefix_*' patterns OR exact 'prefix' match
-            if param_key.startswith(prefix + "_") or param_key == prefix:
+            # Match 'prefix__*' (double underscore - preferred) first,
+            # then 'prefix_*' (single underscore - legacy), then exact match
+            if (
+                param_key.startswith(prefix + "__")
+                or param_key.startswith(prefix + "_")
+                or param_key == prefix
+            ):
                 param_to_agent[param_key] = prefix
                 break
 
