@@ -284,6 +284,8 @@ class TraigentHandler(BaseCallbackHandler):
         self._tool_calls: dict[str, ToolCallMetrics] = {}
         self._completed_llm_calls: list[LLMCallMetrics] = []
         self._completed_tool_calls: list[ToolCallMetrics] = []
+        # Track contextvar tokens for proper cleanup on chain end (supports nested chains)
+        self._chain_node_tokens: dict[str, contextvars.Token[str | None]] = {}
 
     @property
     def trace_id(self) -> str:
@@ -527,12 +529,16 @@ class TraigentHandler(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Called when chain starts. Used for node context propagation."""
+        chain_id = str(run_id)
+
         # Check for LangGraph node in metadata
         if metadata:
             node_name = metadata.get("langgraph_node")
             if node_name:
-                # Note: contextvars work across async boundaries
-                _current_node_name.set(node_name)
+                # Store token for proper cleanup on chain end (supports nested chains)
+                token = _current_node_name.set(node_name)
+                with self._lock:
+                    self._chain_node_tokens[chain_id] = token
                 logger.debug(f"Chain start: node={node_name}")
 
     def on_chain_end(
@@ -543,8 +549,8 @@ class TraigentHandler(BaseCallbackHandler):
         parent_run_id: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Called when chain ends."""
-        pass  # Node context cleared automatically via contextvars
+        """Called when chain ends. Restores previous node context."""
+        self._restore_chain_node_context(run_id)
 
     def on_chain_error(
         self,
@@ -554,8 +560,17 @@ class TraigentHandler(BaseCallbackHandler):
         parent_run_id: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        """Called when chain errors."""
-        pass
+        """Called when chain errors. Restores previous node context."""
+        self._restore_chain_node_context(run_id)
+
+    def _restore_chain_node_context(self, run_id: Any) -> None:
+        """Restore node context to previous value after chain completes."""
+        chain_id = str(run_id)
+        with self._lock:
+            token = self._chain_node_tokens.pop(chain_id, None)
+        if token is not None:
+            _current_node_name.reset(token)
+            logger.debug("Chain end: restored previous node context")
 
     # =========================================================================
     # Metrics Aggregation
@@ -643,6 +658,7 @@ class TraigentHandler(BaseCallbackHandler):
             self._tool_calls.clear()
             self._completed_llm_calls.clear()
             self._completed_tool_calls.clear()
+            self._chain_node_tokens.clear()
         self._trace_id = str(uuid4())
 
 
