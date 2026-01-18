@@ -66,9 +66,9 @@ if TYPE_CHECKING:
 # =============================================================================
 
 # Trial context for async-safe node identification (per CLAUDE.md - use contextvars not thread-local)
-_current_trial_context: contextvars.ContextVar[
-    dict[str, Any] | None
-] = contextvars.ContextVar("traigent_trial_context", default=None)
+_current_trial_context: contextvars.ContextVar[dict[str, Any] | None] = (
+    contextvars.ContextVar("traigent_trial_context", default=None)
+)
 
 _current_node_name: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "traigent_current_node", default=None
