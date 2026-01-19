@@ -33,6 +33,7 @@ from traigent.core.trial_result_factory import (
     build_success_result,
 )
 from traigent.core.types import TrialResult, TrialStatus
+from traigent.core.exception_handler import VendorPauseError, is_vendor_exception
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
@@ -202,39 +203,86 @@ class TrialLifecycle:
                 return trial_count, "break"
 
         orchestrator.callback_manager.on_trial_start(trial_count, config_for_run)
-
-        try:
-            trial_result = await self.run_trial(
-                func,
-                config_for_run,
-                dataset,
-                trial_count,
-                session_id,
-                optuna_trial_id=optuna_trial_id,
-            )
-
-            trial_count = await orchestrator._handle_trial_result(
-                trial_result=trial_result,
-                optimizer_config=config,
-                current_trial_index=trial_count,
-                session_id=session_id,
-                optuna_trial_id=optuna_trial_id,
-                log_on_success=True,
-                permit=permit,
-            )
-        except Exception:
-            # Release permit on exception to prevent stranding
-            if (
-                permit is not None
-                and permit.active
-                and orchestrator.cost_enforcer is not None
-            ):
-                await orchestrator.cost_enforcer.release_permit_async(permit)
-                logger.debug(
-                    "Released permit %d after exception in run_sequential_trial",
-                    permit.id,
+        while True:
+            try:
+                trial_result = await self.run_trial(
+                    func,
+                    config_for_run,
+                    dataset,
+                    trial_count,
+                    session_id,
+                    optuna_trial_id=optuna_trial_id,
                 )
-            raise
+
+                trial_count = await orchestrator._handle_trial_result(
+                    trial_result=trial_result,
+                    optimizer_config=config,
+                    current_trial_index=trial_count,
+                    session_id=session_id,
+                    optuna_trial_id=optuna_trial_id,
+                    log_on_success=True,
+                    permit=permit,
+                )
+                break
+            except VendorPauseError as exc:
+                if permit is not None and orchestrator.cost_enforcer is not None:
+                    partial_cost = exc.partial_cost
+                    if partial_cost is None and permit.amount > 0:
+                        partial_cost = permit.amount
+                        logger.info(
+                            "Partial cost unavailable for trial %s; "
+                            "using permit estimate $%.4f",
+                            trial_count,
+                            partial_cost,
+                        )
+                    if partial_cost is not None:
+                        await orchestrator.cost_enforcer.track_cost_async(
+                            cost=partial_cost,
+                            permit=permit,
+                            trial_failed=True,
+                            trial_id=f"trial_{trial_count}_partial",
+                        )
+                        logger.info(
+                            "Tracked partial cost for trial %s: $%.4f",
+                            trial_count,
+                            partial_cost,
+                        )
+                    else:
+                        await orchestrator.cost_enforcer.release_permit_async(permit)
+                    permit = None
+
+                should_continue = orchestrator._handle_vendor_exception(exc.error)
+                if not should_continue:
+                    orchestrator._stop_reason = "vendor_error"
+                    return trial_count, "break"
+                if orchestrator.cost_enforcer is not None:
+                    permit = await orchestrator.cost_enforcer.acquire_permit_async()
+                    if not permit.is_granted:
+                        orchestrator._stop_reason = "cost_limit"
+                        if hasattr(orchestrator, "_abandon_optuna_trial"):
+                            orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
+                                optuna_trial_id,
+                                reason="trial_cancelled_by_cost_limit",
+                                config=config_for_run,
+                                status=TrialStatus.CANCELLED,
+                                pruned_step=0,
+                            )
+                        return trial_count, "break"
+                logger.info("Retrying trial %s after vendor error", trial_count)
+                continue
+            except Exception:
+                # Release permit on exception to prevent stranding
+                if (
+                    permit is not None
+                    and permit.active
+                    and orchestrator.cost_enforcer is not None
+                ):
+                    await orchestrator.cost_enforcer.release_permit_async(permit)
+                    logger.debug(
+                        "Released permit %d after exception in run_sequential_trial",
+                        permit.id,
+                    )
+                raise
 
         return trial_count, "continue"
 
@@ -291,18 +339,21 @@ class TrialLifecycle:
 
         # Wrap trial execution in tracing span
         with trial_span(trial_id, trial_number, evaluation_config) as span:
-            return await self._execute_trial_with_tracing(
-                func=func,
-                dataset=dataset,
-                trial_id=trial_id,
-                evaluation_config=evaluation_config,
-                start_time=start_time,
-                optuna_trial_id=optuna_trial_id,
-                progress_callback=progress_callback,
-                progress_state=progress_state,
-                lease=lease,
-                span=span,
-            )
+            try:
+                return await self._execute_trial_with_tracing(
+                    func=func,
+                    dataset=dataset,
+                    trial_id=trial_id,
+                    evaluation_config=evaluation_config,
+                    start_time=start_time,
+                    optuna_trial_id=optuna_trial_id,
+                    progress_callback=progress_callback,
+                    progress_state=progress_state,
+                    lease=lease,
+                    span=span,
+                )
+            except VendorPauseError as exc:
+                raise
 
     async def _execute_trial_with_tracing(
         self,
@@ -417,6 +468,45 @@ class TrialLifecycle:
             raise
 
         except Exception as exc:
+            if (
+                orchestrator._pause_on_error
+                and orchestrator.parallel_trials <= 1
+                and is_vendor_exception(exc)
+            ):
+                partial_cost = None
+                if progress_state is not None:
+                    for cost_key in ("total_cost", "cost", "example_cost"):
+                        cost_value = progress_state.get(cost_key)
+                        if cost_value is None:
+                            continue
+                        try:
+                            partial_cost = float(cost_value)
+                            break
+                        except (TypeError, ValueError):
+                            logger.debug(
+                                "Unable to parse partial cost from %r",
+                                cost_value,
+                            )
+                if partial_cost is None:
+                    for attr in ("total_cost", "cost"):
+                        cost_value = getattr(exc, attr, None)
+                        if cost_value is None:
+                            continue
+                        try:
+                            partial_cost = float(cost_value)
+                            break
+                        except (TypeError, ValueError):
+                            logger.debug(
+                                "Unable to parse partial cost from %r",
+                                cost_value,
+                            )
+                logger.warning(
+                    "Vendor error during trial %s: %s",
+                    trial_id,
+                    exc,
+                )
+                record_trial_result(span, status="paused", error=str(exc))
+                raise VendorPauseError(exc, partial_cost=partial_cost) from exc
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
             result = self._build_trial_error_result(
                 trial_id,
