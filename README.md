@@ -276,3 +276,9 @@ Apache 2.0 - See [LICENSE](LICENSE)
 ---
 
 **Current Version**: 0.9.0 (Beta)
+
+---
+
+## 💬 Community
+
+Join our Discord for discussions, support, and updates: [Discord](https://discord.gg/KX4aRUeW8f)
