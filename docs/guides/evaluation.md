@@ -46,7 +46,7 @@ def qa_agent(question: str) -> str:
     return llm.invoke(f"Question: {question}\nAnswer:").content
 ```
 
-### 2) Custom evaluators
+### 2) Custom scoring functions
 
 Use your own scoring function when exact rules or domain metrics matter.
 
@@ -55,7 +55,7 @@ def exact_match(output: str, expected: str) -> float:
     return 1.0 if output.strip().lower() == expected.strip().lower() else 0.0
 
 @traigent.optimize(
-    evaluator=exact_match,
+    scoring_function=exact_match,
     eval_dataset="data.jsonl",
     objectives=["accuracy"],
 )
@@ -63,21 +63,67 @@ def strict_agent(query: str) -> str:
     ...
 ```
 
-Multi-metric example:
+### 3) Multiple metric functions
+
+Use `metric_functions` to define multiple custom metrics with named keys:
 
 ```python
-from traigent.evaluators.base import EvaluationResult
+def accuracy_metric(output: str, expected: str) -> float:
+    """Return 1.0 for exact match, 0.0 otherwise."""
+    return 1.0 if output.strip().lower() == expected.strip().lower() else 0.0
 
-def combined_eval(output: str, expected: str) -> EvaluationResult:
-    exact = 1.0 if output == expected else 0.0
-    length_penalty = max(0.0, 1.0 - abs(len(output) - len(expected)) / 100)
-    return EvaluationResult(
-        accuracy=exact,
-        custom_metrics={"exact_match": exact, "length_score": length_penalty},
-    )
+def cost_metric(output: str, expected: str) -> float:
+    """Simulate cost based on output length."""
+    # Approximate token count (4 chars ≈ 1 token)
+    output_tokens = max(len(output) // 4, 10)
+    input_tokens = 150  # Estimate for input
+
+    # GPT-4o-mini pricing per 1M tokens
+    input_cost = (input_tokens / 1_000_000) * 0.15
+    output_cost = (output_tokens / 1_000_000) * 0.60
+    return input_cost + output_cost
+
+@traigent.optimize(
+    eval_dataset="data.jsonl",
+    objectives=["accuracy", "cost"],
+    metric_functions={
+        "accuracy": accuracy_metric,
+        "total_cost": cost_metric,  # Use "total_cost" to track costs
+    },
+)
+def my_agent(query: str) -> str:
+    ...
 ```
 
-### 3) Mock mode
+**Note:** Use `metric_functions` to provide custom metrics in mock mode where no real LLM calls occur.
+
+### 4) Advanced custom evaluators
+
+For full control over evaluation logic, use `custom_evaluator` which receives the full context:
+
+```python
+from traigent.api.types import ExampleResult
+
+def advanced_evaluator(func, config, example) -> ExampleResult:
+    """Full control over evaluation with access to function, config, and example."""
+    output = func(**example.input)
+    exact = 1.0 if output == example.expected_output else 0.0
+    length_penalty = max(0.0, 1.0 - abs(len(output) - len(example.expected_output)) / 100)
+
+    return ExampleResult(
+        accuracy=exact,
+        metrics={"exact_match": exact, "length_score": length_penalty},
+    )
+
+@traigent.optimize(
+    custom_evaluator=advanced_evaluator,
+    eval_dataset="data.jsonl",
+)
+def strict_agent(query: str) -> str:
+    ...
+```
+
+### 5) Mock mode
 
 `TRAIGENT_MOCK_LLM=true` skips external LLM/API calls and synthesizes metrics—ideal for CI, demos, and budget-safe smoke tests.
 
@@ -88,7 +134,7 @@ python your_optimization_script.py
 
 ## Troubleshooting
 
-- **Semantic similarity fails**: Confirm `OPENAI_API_KEY` is set or switch to a custom evaluator.
+- **Semantic similarity fails**: Confirm `OPENAI_API_KEY` is set or switch to a custom `scoring_function` or `metric_functions`.
 - **Scores all zeros**: Check that dataset `output`/`expected_output` values are non-empty strings.
 - **Dataset errors**: Run `traigent validate path/to/dataset.jsonl` to see the exact row/field causing issues.
 
@@ -183,12 +229,13 @@ def code_evaluator(output: str, expected: str, context: Dict[str, Any]) -> float
     return 0.5 * test_score + 0.3 * similarity + 0.2 * syntax_valid
 ```
 
-## Troubleshooting
+## Common Issues and Solutions
 
 ### Issue: 0.0% Accuracy
 
 **Symptoms:**
-```
+
+```text
 Trial 1/10: accuracy=0.00, cost=$0.15
 Trial 2/10: accuracy=0.00, cost=$0.12
 ...
@@ -218,14 +265,19 @@ Best accuracy: 0.00
    # Or use custom evaluator if no API key
    ```
 
-3. **Use Custom Evaluator**
+3. **Use Custom Scoring Function**
    ```python
-   def debug_evaluator(output: str, expected: str) -> float:
+   def debug_scorer(output: str, expected: str) -> float:
        print(f"Output: '{output}'")
        print(f"Expected: '{expected}'")
        score = 1.0 if output.lower() == expected.lower() else 0.0
        print(f"Score: {score}")
        return score
+
+   @traigent.optimize(
+       scoring_function=debug_scorer,
+       eval_dataset="data.jsonl",
+   )
    ```
 
 4. **Enable Debug Mode**
@@ -325,11 +377,12 @@ Best accuracy: 0.00
 - **Balance**: Ensure balanced distribution across categories
 - **Quality**: Manually review and validate expected outputs
 
-### 2. Evaluator Selection
+### 2. Scoring Function Selection
 
-- **Default (Semantic)**: Best for natural language generation
-- **Exact Match**: Best for structured output (JSON, classifications)
-- **Custom**: Required for domain-specific metrics
+- **Default (Semantic)**: Best for natural language generation - uses embedding similarity
+- **`scoring_function`**: Single custom scorer for domain-specific metrics
+- **`metric_functions`**: Multiple named metrics (accuracy, cost, latency, etc.)
+- **`custom_evaluator`**: Full control with access to function, config, and example context
 
 ### 3. Optimization Settings
 
@@ -338,8 +391,15 @@ Best accuracy: 0.00
     eval_dataset="validated_dataset.jsonl",
     objectives=["accuracy", "cost"],
 
-    # Use appropriate evaluator
-    evaluator=custom_evaluator,  # if needed
+    # Use custom metrics (choose one approach):
+    # Option 1: Single scoring function
+    scoring_function=my_scorer,
+
+    # Option 2: Multiple named metrics
+    metric_functions={
+        "accuracy": accuracy_metric,
+        "total_cost": cost_metric,
+    },
 
     # Enable debugging during development
     debug_evaluation=True,
