@@ -352,29 +352,61 @@ class LangfuseClient:
         # Fall back to HTTP API
         return self._get_observations_http(trace_id)
 
-    def _get_observations_http(self, trace_id: str) -> list[LangfuseObservation]:
-        """Get observations via HTTP API."""
+    def _get_observations_http(
+        self, trace_id: str, *, max_pages: int = 100
+    ) -> list[LangfuseObservation]:
+        """Get observations via HTTP API with pagination.
+
+        Args:
+            trace_id: The trace ID to fetch observations for
+            max_pages: Maximum number of pages to fetch (safety limit)
+
+        Returns:
+            List of all observations for the trace
+        """
         if not REQUESTS_AVAILABLE:
             raise ImportError("requests is required")
 
-        try:
-            response = requests.get(
-                f"{self.host}/api/public/observations",
-                params={"traceId": trace_id, "limit": 1000},
-                headers=self._get_auth_header(),
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-            data = response.json()
+        observations: list[LangfuseObservation] = []
+        page = 1
 
-            observations = []
-            for obs_data in data.get("data", []):
-                observations.append(self._dict_to_observation(obs_data))
+        try:
+            while page <= max_pages:
+                response = requests.get(
+                    f"{self.host}/api/public/observations",
+                    params={"traceId": trace_id, "limit": "1000", "page": str(page)},
+                    headers=self._get_auth_header(),
+                    timeout=self.timeout,
+                )
+                response.raise_for_status()
+                data = response.json()
+
+                page_data = data.get("data", [])
+                if not page_data:
+                    # No more data
+                    break
+
+                for obs_data in page_data:
+                    observations.append(self._dict_to_observation(obs_data))
+
+                # Check if there are more pages
+                meta = data.get("meta", {})
+                total_items = meta.get("totalItems", 0)
+                if len(observations) >= total_items:
+                    break
+
+                page += 1
+
+            if page > max_pages:
+                logger.warning(
+                    f"Hit max_pages limit ({max_pages}) fetching observations "
+                    f"for trace {trace_id}. Some observations may be missing."
+                )
 
             return observations
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to get observations for trace {trace_id}: {e}")
-            return []
+            return observations  # Return what we have so far
 
     def wait_for_trace(
         self,
@@ -447,31 +479,65 @@ class LangfuseClient:
         return self._extract_metrics_from_trace(trace_data)
 
     async def get_observations_for_trace_async(
-        self, trace_id: str
+        self, trace_id: str, *, max_pages: int = 100
     ) -> list[LangfuseObservation]:
-        """Async version of get_observations_for_trace."""
+        """Async version of get_observations_for_trace with pagination.
+
+        Args:
+            trace_id: The trace ID to fetch observations for
+            max_pages: Maximum number of pages to fetch (safety limit)
+
+        Returns:
+            List of all observations for the trace
+        """
         if not AIOHTTP_AVAILABLE:
             raise ImportError("aiohttp is required for async")
 
+        observations: list[LangfuseObservation] = []
+        page = 1
+
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(
-                    f"{self.host}/api/public/observations",
-                    params={"traceId": trace_id, "limit": 1000},
-                    headers=self._get_auth_header(),
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                ) as response:
-                    response.raise_for_status()
-                    data = await response.json()
+                while page <= max_pages:
+                    async with session.get(
+                        f"{self.host}/api/public/observations",
+                        params={
+                            "traceId": trace_id,
+                            "limit": "1000",
+                            "page": str(page),
+                        },
+                        headers=self._get_auth_header(),
+                        timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    ) as response:
+                        response.raise_for_status()
+                        data = await response.json()
 
-                    observations = []
-                    for obs_data in data.get("data", []):
-                        observations.append(self._dict_to_observation(obs_data))
+                        page_data = data.get("data", [])
+                        if not page_data:
+                            # No more data
+                            break
 
-                    return observations
+                        for obs_data in page_data:
+                            observations.append(self._dict_to_observation(obs_data))
+
+                        # Check if there are more pages
+                        meta = data.get("meta", {})
+                        total_items = meta.get("totalItems", 0)
+                        if len(observations) >= total_items:
+                            break
+
+                        page += 1
+
+            if page > max_pages:
+                logger.warning(
+                    f"Hit max_pages limit ({max_pages}) fetching observations "
+                    f"for trace {trace_id}. Some observations may be missing."
+                )
+
+            return observations
         except aiohttp.ClientError as e:
             logger.error(f"Failed to get observations for trace {trace_id}: {e}")
-            return []
+            return observations  # Return what we have so far
 
     async def wait_for_trace_async(
         self,

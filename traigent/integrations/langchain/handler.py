@@ -370,6 +370,79 @@ class TraigentHandler(BaseCallbackHandler):
 
         logger.debug(f"Chat model start: {call_id} node={node_name} model={model}")
 
+    def on_chat_model_end(
+        self,
+        response: LLMResult,
+        *,
+        run_id: Any,
+        parent_run_id: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Called when chat model ends running.
+
+        Chat models (like ChatOpenAI) emit end events via this callback,
+        not on_llm_end. Without this, chat model calls would never finalize.
+        """
+        call_id = str(run_id)
+
+        with self._lock:
+            call = self._llm_calls.pop(call_id, None)
+            if call is None:
+                logger.warning(f"Chat model end for unknown call: {call_id}")
+                return
+
+            call.end_time = time.time()
+
+            # Extract token usage from response
+            if response.llm_output:
+                token_usage = response.llm_output.get("token_usage", {})
+                call.input_tokens = token_usage.get("prompt_tokens", 0)
+                call.output_tokens = token_usage.get("completion_tokens", 0)
+                call.total_tokens = token_usage.get("total_tokens", 0)
+
+                # Try to get model info if not already set
+                if call.model is None:
+                    call.model = response.llm_output.get("model_name")
+
+            # Calculate cost (uses tokencost if available)
+            if call.total_tokens > 0 and call.model:
+                call.cost = self._estimate_cost(
+                    call.model, call.input_tokens, call.output_tokens
+                )
+
+            self._completed_llm_calls.append(call)
+
+        logger.debug(
+            f"Chat model end: {call_id} tokens={call.total_tokens} "
+            f"latency={call.latency_ms:.1f}ms cost=${call.cost:.6f}"
+        )
+
+    def on_chat_model_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: Any,
+        parent_run_id: Any | None = None,
+        **kwargs: Any,
+    ) -> None:
+        """Called when chat model errors.
+
+        Chat models (like ChatOpenAI) emit error events via this callback,
+        not on_llm_error. Without this, errored chat calls would leak state.
+        """
+        call_id = str(run_id)
+
+        with self._lock:
+            call = self._llm_calls.pop(call_id, None)
+            if call is None:
+                return
+
+            call.end_time = time.time()
+            call.error = str(error)
+            self._completed_llm_calls.append(call)
+
+        logger.warning(f"Chat model error: {call_id} error={error}")
+
     def on_llm_end(
         self,
         response: LLMResult,
