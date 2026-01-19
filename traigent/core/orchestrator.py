@@ -6,6 +6,8 @@ import asyncio
 import copy
 import inspect
 import math
+import os
+import sys
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -140,6 +142,16 @@ class OptimizationOrchestrator:
         self.timeout = timeout
         self.traigent_config = config or TraigentConfig()
         self.config = kwargs
+        self._interactive = sys.stdin.isatty()
+        pause_requested = (
+            os.getenv("TRAIGENT_PAUSE_ON_ERROR", "true").lower() == "true"
+        )
+        self._pause_on_error = pause_requested and self._interactive
+        if pause_requested and not self._interactive:
+            logger.info(
+                "TRAIGENT_PAUSE_ON_ERROR requested but stdin is not a TTY; "
+                "pausing disabled."
+            )
         self.parallel_trials = normalize_parallel_trials(parallel_trials)
         self.parallel_execution_manager = ParallelExecutionManager(
             parallel_trials=self.parallel_trials,
@@ -1429,6 +1441,41 @@ class OptimizationOrchestrator:
                 f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
             )
 
+    def _handle_vendor_exception(self, error: Exception) -> bool:
+        """Handle vendor errors with optional pause/resume."""
+        if not self._pause_on_error:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on vendor error.")
+            return False
+        from traigent.core.exception_handler import handle_vendor_exception
+
+        return handle_vendor_exception(error)
+
+    def _handle_budget_limit_pause(self) -> bool:
+        """Handle cost limit pause/raise flow. Returns True to continue."""
+        if not self._pause_on_error or self.cost_enforcer is None:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on cost limit.")
+            return False
+        from traigent.core.exception_handler import handle_budget_limit_reached
+
+        status = self.cost_enforcer.get_status()
+        should_continue, new_limit = handle_budget_limit_reached(
+            status.limit_usd, status.accumulated_cost_usd
+        )
+        if should_continue:
+            logger.info(
+                "User raised cost limit from $%.2f to $%.2f",
+                status.limit_usd,
+                new_limit,
+            )
+            self.cost_enforcer.update_limit(new_limit)
+            self._stop_reason = None
+            return True
+        return False
+
     def _check_budget_limits(
         self, trial_count: int
     ) -> tuple[float, float, StopReason | None]:
@@ -1474,6 +1521,8 @@ class OptimizationOrchestrator:
                 break
 
             if self._should_stop(trial_count):
+                if self._stop_reason == "cost_limit" and self._handle_budget_limit_pause():
+                    continue
                 break
 
             if self.parallel_trials > 1:
@@ -1496,6 +1545,8 @@ class OptimizationOrchestrator:
                 )
 
             if action == "break":
+                if self._stop_reason == "cost_limit" and self._handle_budget_limit_pause():
+                    continue
                 break
 
         return trial_count
