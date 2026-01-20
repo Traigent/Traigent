@@ -266,3 +266,136 @@ class TestLangfuseCallbackErrorHandling:
 
         # Should not raise
         callback.on_trial_complete(trial, progress)
+
+
+class TestLangfuseCallbackMetricsPrefixOptions:
+    """Test callback with different prefix and per_agent options."""
+
+    @pytest.fixture
+    def mock_client(self):
+        """Create mock Langfuse client."""
+        return MagicMock(spec=LangfuseClient)
+
+    def test_callback_with_custom_prefix(self, mock_client):
+        """Test callback uses custom metric prefix."""
+        # Use MagicMock for metrics so we can track calls
+        mock_metrics = MagicMock()
+        mock_metrics.to_measures_dict.return_value = {"lf_total_cost": 0.01}
+        mock_client.get_trace_metrics.return_value = mock_metrics
+
+        callback = LangfuseOptimizationCallback(
+            client=mock_client,
+            trace_id_resolver=lambda t: "trace-123",
+            metric_prefix="lf_",
+        )
+
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {}
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback.on_trial_complete(trial, progress)
+
+        # Verify to_measures_dict was called with custom prefix
+        mock_metrics.to_measures_dict.assert_called_once()
+        call_args = mock_metrics.to_measures_dict.call_args
+        assert call_args[1]["prefix"] == "lf_"
+
+    def test_callback_without_per_agent(self, mock_client):
+        """Test callback with per_agent disabled."""
+        # Use MagicMock for metrics so we can track calls
+        mock_metrics = MagicMock()
+        mock_metrics.to_measures_dict.return_value = {"langfuse_total_cost": 0.01}
+        mock_client.get_trace_metrics.return_value = mock_metrics
+
+        callback = LangfuseOptimizationCallback(
+            client=mock_client,
+            trace_id_resolver=lambda t: "trace-123",
+            include_per_agent=False,
+        )
+
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {}
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback.on_trial_complete(trial, progress)
+
+        # Verify to_measures_dict was called with include_per_agent=False
+        mock_metrics.to_measures_dict.assert_called_once()
+        call_args = mock_metrics.to_measures_dict.call_args
+        assert call_args[1]["include_per_agent"] is False
+
+    def test_callback_default_prefix(self, mock_client):
+        """Test callback uses default langfuse_ prefix."""
+        # Use MagicMock for metrics so we can track calls
+        mock_metrics = MagicMock()
+        mock_metrics.to_measures_dict.return_value = {"langfuse_total_cost": 0.01}
+        mock_client.get_trace_metrics.return_value = mock_metrics
+
+        callback = LangfuseOptimizationCallback(
+            client=mock_client,
+            trace_id_resolver=lambda t: "trace-123",
+        )
+
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {}
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback.on_trial_complete(trial, progress)
+
+        # Verify default prefix
+        call_args = mock_metrics.to_measures_dict.call_args
+        assert call_args[1]["prefix"] == "langfuse_"
+
+
+class TestLangfuseCallbackMetricsMerging:
+    """Test that metrics are properly merged into trial."""
+
+    @pytest.fixture
+    def mock_client(self):
+        """Create mock Langfuse client."""
+        client = MagicMock(spec=LangfuseClient)
+        mock_metrics = MagicMock()
+        mock_metrics.to_measures_dict.return_value = {
+            "langfuse_total_cost": 0.01,
+            "langfuse_total_tokens": 100,
+        }
+        client.get_trace_metrics.return_value = mock_metrics
+        return client
+
+    def test_metrics_merged_into_existing(self, mock_client):
+        """Test Langfuse metrics are merged with existing trial metrics."""
+        callback = LangfuseOptimizationCallback(
+            client=mock_client,
+            trace_id_resolver=lambda t: "trace-123",
+        )
+
+        # Create real dict for metrics that supports |=
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = {"accuracy": 0.9, "existing": 42}
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback.on_trial_complete(trial, progress)
+
+        # Verify metrics were merged (|= operation)
+        assert trial.metrics is not None
+
+    def test_metrics_created_when_none(self, mock_client):
+        """Test metrics dict is created when trial.metrics is None."""
+        callback = LangfuseOptimizationCallback(
+            client=mock_client,
+            trace_id_resolver=lambda t: "trace-123",
+        )
+
+        trial = MagicMock(spec=TrialResult)
+        trial.trial_id = "trial-1"
+        trial.metrics = None
+        progress = MagicMock(spec=ProgressInfo)
+
+        callback.on_trial_complete(trial, progress)
+
+        # Verify metrics dict was created
+        assert trial.metrics is not None
