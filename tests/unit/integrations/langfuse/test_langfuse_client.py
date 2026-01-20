@@ -523,3 +523,329 @@ class TestLangfuseClientGetTraceMetrics:
             assert result.trace_id == "trace-123"
             assert result.total_cost == 0.002
             assert result.total_tokens == 100
+
+
+class TestLangfuseClientTimestampParsing:
+    """Test timestamp parsing utilities."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_parse_timestamp_none(self, client):
+        """Test parsing None timestamp."""
+        result = client._parse_timestamp(None)
+        assert result is None
+
+    def test_parse_timestamp_datetime_object(self, client):
+        """Test parsing datetime object."""
+        now = datetime.now(timezone.utc)
+        result = client._parse_timestamp(now)
+        assert result == now
+
+    def test_parse_timestamp_iso_string(self, client):
+        """Test parsing ISO format string."""
+        ts_str = "2024-01-15T10:30:00Z"
+        result = client._parse_timestamp(ts_str)
+        assert result is not None
+        assert result.year == 2024
+        assert result.month == 1
+        assert result.day == 15
+
+    def test_parse_timestamp_invalid_string(self, client):
+        """Test parsing invalid string returns None."""
+        result = client._parse_timestamp("not-a-timestamp")
+        assert result is None
+
+
+class TestLangfuseClientTraceConversion:
+    """Test trace object to dict conversion."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_trace_to_dict_with_dict_input(self, client):
+        """Test _trace_to_dict with dict input passes through."""
+        trace_dict = {"id": "trace-123", "name": "test"}
+        result = client._trace_to_dict(trace_dict)
+        assert result == trace_dict
+
+    def test_trace_to_dict_with_object(self, client):
+        """Test _trace_to_dict with SDK-like object."""
+        mock_trace = MagicMock()
+        mock_trace.id = "trace-123"
+        mock_trace.name = "test-trace"
+        mock_trace.metadata = {"key": "value"}
+        mock_trace.session_id = "session-1"
+        mock_trace.user_id = "user-1"
+        mock_trace.input = "input text"
+        mock_trace.output = "output text"
+        mock_trace.observations = []
+
+        result = client._trace_to_dict(mock_trace)
+        assert result["id"] == "trace-123"
+        assert result["name"] == "test-trace"
+        assert result["sessionId"] == "session-1"
+
+    def test_observation_to_dict_with_dict_input(self, client):
+        """Test _observation_to_dict with dict input passes through."""
+        obs_dict = {"id": "obs-123", "name": "test"}
+        result = client._observation_to_dict(obs_dict)
+        assert result == obs_dict
+
+
+class TestLangfuseClientObservationsRetrieval:
+    """Test observations retrieval."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+    def test_get_observations_http_single_page(self, client):
+        """Test getting observations via HTTP with single page."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "data": [
+                {"id": "obs-1", "name": "llm-call", "type": "GENERATION"},
+                {"id": "obs-2", "name": "embed", "type": "SPAN"},
+            ],
+            "meta": {"totalItems": 2},
+        }
+
+        with patch("requests.get", return_value=mock_response):
+            result = client._get_observations_http("trace-123")
+            assert len(result) == 2
+            assert result[0].id == "obs-1"
+            assert result[1].id == "obs-2"
+
+    @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+    def test_get_observations_http_empty(self, client):
+        """Test getting observations when none exist."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": [], "meta": {"totalItems": 0}}
+
+        with patch("requests.get", return_value=mock_response):
+            result = client._get_observations_http("trace-123")
+            assert result == []
+
+
+class TestLangfuseClientWaitForTrace:
+    """Test wait_for_trace functionality."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_wait_for_trace_found_immediately(self, client):
+        """Test wait_for_trace when trace is immediately available."""
+        with patch.object(client, "get_trace", return_value={"id": "trace-123"}), patch.object(
+            client, "get_observations_for_trace", return_value=[MagicMock()]
+        ):
+            result = client.wait_for_trace("trace-123", timeout_seconds=5.0)
+            assert result is True
+
+    def test_wait_for_trace_timeout(self, client):
+        """Test wait_for_trace when trace is never found."""
+        with patch.object(client, "get_trace", return_value=None):
+            result = client.wait_for_trace("trace-123", timeout_seconds=0.1, poll_interval=0.05)
+            assert result is False
+
+
+class TestLangfuseClientErrorHandling:
+    """Test error handling in client methods."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+    def test_get_trace_http_handles_request_exception(self, client):
+        """Test that HTTP errors are handled gracefully."""
+        import requests
+
+        with patch("requests.get", side_effect=requests.exceptions.ConnectionError("Failed")):
+            result = client._get_trace_http("trace-123")
+            assert result is None
+
+    @pytest.mark.skipif(not REQUESTS_AVAILABLE, reason="requests not installed")
+    def test_get_observations_http_handles_request_exception(self, client):
+        """Test that observations HTTP errors return partial results."""
+        import requests
+
+        with patch("requests.get", side_effect=requests.exceptions.Timeout("Timeout")):
+            result = client._get_observations_http("trace-123")
+            assert result == []
+
+
+class TestLangfuseClientGetTrace:
+    """Test get_trace method with SDK fallback."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_get_trace_falls_back_to_http(self, client):
+        """Test get_trace falls back to HTTP when SDK unavailable."""
+        client._sdk_client = None
+        with patch.object(client, "_get_trace_http") as mock_http:
+            mock_http.return_value = {"id": "trace-123"}
+            result = client.get_trace("trace-123")
+            assert result is not None
+            mock_http.assert_called_once_with("trace-123")
+
+    def test_get_trace_sdk_exception_falls_back(self, client):
+        """Test get_trace falls back to HTTP on SDK exception."""
+        mock_sdk = MagicMock()
+        mock_sdk.get_trace.side_effect = Exception("SDK error")
+        client._sdk_client = mock_sdk
+
+        with patch.object(client, "_get_trace_http") as mock_http:
+            mock_http.return_value = {"id": "trace-123"}
+            result = client.get_trace("trace-123")
+            assert result is not None
+            mock_http.assert_called_once()
+
+
+class TestLangfuseClientMetricsAggregation:
+    """Test metrics aggregation edge cases."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_extract_metrics_with_trace_metadata(self, client):
+        """Test extraction preserves trace-level metadata."""
+        trace_data = {
+            "id": "trace-123",
+            "name": "my-workflow",
+            "metadata": {"environment": "production"},
+            "sessionId": "session-abc",
+            "userId": "user-xyz",
+            "observations": [],
+        }
+        metrics = client._extract_metrics_from_trace(trace_data)
+        assert metrics.trace_name == "my-workflow"
+        assert metrics.session_id == "session-abc"
+        assert metrics.user_id == "user-xyz"
+        assert metrics.trace_metadata == {"environment": "production"}
+
+    def test_extract_metrics_fetches_observations_when_missing(self, client):
+        """Test that observations are fetched if not in trace data."""
+        trace_data = {"id": "trace-123", "name": "test"}  # No observations key
+        with patch.object(client, "get_observations_for_trace") as mock_get_obs:
+            mock_get_obs.return_value = []
+            client._extract_metrics_from_trace(trace_data)
+            mock_get_obs.assert_called_once_with("trace-123")
+
+    def test_aggregate_multiple_agents_accumulates(self, client):
+        """Test that metrics accumulate correctly for same agent."""
+        trace_data = {
+            "id": "trace-123",
+            "observations": [
+                {
+                    "id": "obs-1",
+                    "name": "grader-1",
+                    "type": "GENERATION",
+                    "usage": {"total": 50},
+                    "calculatedTotalCost": 0.001,
+                    "metadata": {"langgraph_node": "grader"},
+                },
+                {
+                    "id": "obs-2",
+                    "name": "grader-2",
+                    "type": "GENERATION",
+                    "usage": {"total": 75},
+                    "calculatedTotalCost": 0.002,
+                    "metadata": {"langgraph_node": "grader"},
+                },
+            ],
+        }
+        metrics = client._extract_metrics_from_trace(trace_data)
+        # Same agent should accumulate
+        assert metrics.per_agent_costs["grader"] == 0.003
+        assert metrics.per_agent_tokens["grader"] == 125
+
+
+class TestLangfuseClientUsageFormats:
+    """Test handling of different usage data formats."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_dict_to_observation_promptTokens_format(self, client):
+        """Test parsing promptTokens/completionTokens format."""
+        obs_data = {
+            "id": "obs-1",
+            "name": "llm",
+            "type": "GENERATION",
+            "usage": {"promptTokens": 80, "completionTokens": 40, "totalTokens": 120},
+        }
+        obs = client._dict_to_observation(obs_data)
+        assert obs.input_tokens == 80
+        assert obs.output_tokens == 40
+        assert obs.total_tokens == 120
+
+    def test_dict_to_observation_calculates_total_from_parts(self, client):
+        """Test that total is calculated if not provided."""
+        obs_data = {
+            "id": "obs-1",
+            "name": "llm",
+            "type": "GENERATION",
+            "usage": {"input": 60, "output": 30},  # No total
+        }
+        obs = client._dict_to_observation(obs_data)
+        assert obs.input_tokens == 60
+        assert obs.output_tokens == 30
+        assert obs.total_tokens == 90  # Calculated
+
+    def test_dict_to_observation_latency_from_timestamps(self, client):
+        """Test latency calculation from start/end times."""
+        obs_data = {
+            "id": "obs-1",
+            "name": "llm",
+            "type": "GENERATION",
+            "startTime": "2024-01-15T10:00:00Z",
+            "endTime": "2024-01-15T10:00:01.500Z",  # 1.5 seconds later
+        }
+        obs = client._dict_to_observation(obs_data)
+        assert obs.latency_ms == 1500.0
+
+    def test_dict_to_observation_error_status(self, client):
+        """Test that ERROR level is mapped to error status."""
+        obs_data = {
+            "id": "obs-1",
+            "name": "llm",
+            "type": "GENERATION",
+            "level": "ERROR",
+        }
+        obs = client._dict_to_observation(obs_data)
+        assert obs.status == "error"
