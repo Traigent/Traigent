@@ -99,10 +99,6 @@ class InjectionOptions(BaseModel):
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
         framework_targets: List of framework names to target.
-        allow_parallel_attribute: Opt-in to allow attribute mode with parallel trials.
-            Attribute mode is unsafe for parallel trials (race condition on shared
-            function attribute). Set to True only if you understand the risk and
-            are using context-based access inside the function body.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -111,7 +107,6 @@ class InjectionOptions(BaseModel):
     config_param: str | None = None
     auto_override_frameworks: bool = True
     framework_targets: list[str] | None = None
-    allow_parallel_attribute: bool = False
 
 
 class ExecutionOptions(BaseModel):
@@ -270,7 +265,6 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "config_param": None,
     "auto_override_frameworks": True,
     "framework_targets": None,
-    "allow_parallel_attribute": False,
     "execution_mode": "edge_analytics",
     "local_storage_path": None,
     "minimal_logging": True,
@@ -612,9 +606,8 @@ def _resolve_injection_bundle_options(
     config_param: Any,
     auto_override_frameworks: Any,
     framework_targets: Any,
-    allow_parallel_attribute: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any]:
     """Resolve injection options from bundle."""
     if injection_bundle is None:
         return (
@@ -622,7 +615,6 @@ def _resolve_injection_bundle_options(
             config_param,
             auto_override_frameworks,
             framework_targets,
-            allow_parallel_attribute,
         )
 
     return (
@@ -642,12 +634,6 @@ def _resolve_injection_bundle_options(
             "framework_targets",
             framework_targets,
             injection_bundle.framework_targets,
-            defaults,
-        ),
-        _resolve_option(
-            "allow_parallel_attribute",
-            allow_parallel_attribute,
-            injection_bundle.allow_parallel_attribute,
             defaults,
         ),
     )
@@ -1070,8 +1056,6 @@ def optimize(
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
             framework_targets: Explicit list of framework classes to override.
-            allow_parallel_attribute: Opt-in to allow attribute mode with parallel
-                trials (unsafe by default due to shared function attributes).
 
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
@@ -1248,7 +1232,6 @@ def optimize(
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
-    allow_parallel_attribute = combined_settings["allow_parallel_attribute"]
     execution_mode = combined_settings["execution_mode"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
@@ -1298,14 +1281,12 @@ def optimize(
         config_param,
         auto_override_frameworks,
         framework_targets,
-        allow_parallel_attribute,
     ) = _resolve_injection_bundle_options(
         injection_bundle,
         injection_mode,
         config_param,
         auto_override_frameworks,
         framework_targets,
-        allow_parallel_attribute,
         defaults,
     )
 
@@ -1419,7 +1400,6 @@ def optimize(
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
-            allow_parallel_attribute=allow_parallel_attribute,
             execution_mode=execution_mode_enum,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,

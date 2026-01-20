@@ -2,12 +2,14 @@
 
 This module tests that:
 1. ValueError is raised when injection_mode='attribute' with trial_concurrency > 1
-2. Warning is logged when allow_parallel_attribute=True is used
-3. No error/warning for attribute mode with sequential execution
-4. No error/warning for other injection modes with parallel execution
-"""
+2. No error for attribute mode with sequential execution (trial_concurrency=1)
+3. No error for other injection modes (context, parameter) with parallel execution
 
-import logging
+Note: The allow_parallel_attribute opt-in was removed because it provided false
+security. Users who opted in could still accidentally use my_func.current_config
+(unsafe) instead of traigent.get_config() (safe), leading to silent data corruption.
+The block is now unconditional - use injection_mode='context' for parallel trials.
+"""
 
 import pytest
 
@@ -33,8 +35,13 @@ class TestAttributeParallelSafetyGuard:
     """Tests for the attribute mode + parallel trials safety guard."""
 
     @pytest.mark.asyncio
-    async def test_attribute_mode_parallel_raises_by_default(self, mock_mode_env):
-        """Attribute mode with parallel trials should raise ValueError by default."""
+    async def test_attribute_mode_parallel_raises_unconditionally(self, mock_mode_env):
+        """Attribute mode with parallel trials should always raise ValueError.
+
+        This is an unconditional block - no opt-in is allowed because attribute
+        mode is fundamentally incompatible with parallel execution due to the
+        shared mutable function attribute (my_func.current_config).
+        """
 
         @traigent.optimize(
             objectives=["accuracy"],
@@ -55,77 +62,17 @@ class TestAttributeParallelSafetyGuard:
             "Expected injection_mode='attribute' to be mentioned in the error message.",
         )
         _require(
-            "unsafe with parallel trials" in error_message,
-            "Expected safety warning about parallel trials in the error message.",
+            "not supported with parallel trials" in error_message,
+            "Expected clear message that attribute mode is not supported with parallel.",
         )
         _require(
-            "allow_parallel_attribute" in error_message,
-            "Expected allow_parallel_attribute guidance in the error message.",
+            "race conditions" in error_message,
+            "Expected explanation about race conditions in the error message.",
         )
-
-    @pytest.mark.asyncio
-    async def test_attribute_mode_parallel_with_opt_in_warns(
-        self, mock_mode_env, caplog
-    ):
-        """Attribute mode with parallel trials and opt-in should warn but not raise."""
-
-        @traigent.optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["a", "b"]},
-            eval_dataset=EVAL_DATASET,
-            injection={"injection_mode": "attribute", "allow_parallel_attribute": True},
-            parallel_config={"trial_concurrency": 2, "mode": "parallel"},
-        )
-        def my_func(question: str) -> str:
-            return "answer"
-
-        # Should not raise, but should log warning
-        with caplog.at_level(logging.WARNING):
-            await my_func.optimize(max_trials=2)
-
-        # Check warning was logged
-        warning_found = any(
-            "injection_mode='attribute' with parallel trials" in record.message
-            and "not safe" in record.message
-            for record in caplog.records
-        )
+        # Verify alternatives are suggested
         _require(
-            warning_found,
-            "Expected warning about attribute mode parallel safety, got: "
-            f"{[r.message for r in caplog.records]}",
-        )
-
-    @pytest.mark.asyncio
-    async def test_attribute_mode_parallel_with_top_level_opt_in_warns(
-        self, mock_mode_env, caplog
-    ):
-        """Top-level allow_parallel_attribute should behave like the injection bundle."""
-
-        @traigent.optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["a", "b"]},
-            eval_dataset=EVAL_DATASET,
-            injection_mode="attribute",
-            allow_parallel_attribute=True,
-            parallel_config={"trial_concurrency": 2, "mode": "parallel"},
-        )
-        def my_func(question: str) -> str:
-            return "answer"
-
-        # Should not raise, but should log warning
-        with caplog.at_level(logging.WARNING):
-            await my_func.optimize(max_trials=2)
-
-        # Check warning was logged
-        warning_found = any(
-            "injection_mode='attribute' with parallel trials" in record.message
-            and "not safe" in record.message
-            for record in caplog.records
-        )
-        _require(
-            warning_found,
-            "Expected warning about attribute mode parallel safety, got: "
-            f"{[r.message for r in caplog.records]}",
+            "injection_mode='context'" in error_message,
+            "Expected context mode to be suggested as alternative.",
         )
 
     @pytest.mark.asyncio
@@ -205,50 +152,36 @@ class TestAttributeParallelSafetyGuard:
         _require(result is not None, "Expected an optimization result, got None.")
 
 
-class TestAttributeParallelSafetyUnitLevel:
-    """Unit-level tests for the validation logic."""
+class TestInjectionOptionsNoAllowParallelAttribute:
+    """Verify allow_parallel_attribute has been removed from InjectionOptions."""
 
-    def test_injection_options_has_allow_parallel_attribute_field(self):
-        """InjectionOptions should have allow_parallel_attribute field."""
+    def test_injection_options_no_allow_parallel_attribute_field(self):
+        """InjectionOptions should NOT have allow_parallel_attribute field.
+
+        This field was removed because it provided false security - users could
+        opt in but still accidentally use the unsafe attribute access pattern.
+        """
         from traigent.api.decorators import InjectionOptions
 
         options = InjectionOptions()
         _require(
-            hasattr(options, "allow_parallel_attribute"),
-            "Expected InjectionOptions to have allow_parallel_attribute.",
-        )
-        _require(
-            options.allow_parallel_attribute is False,
-            "Expected allow_parallel_attribute to default to False.",
+            not hasattr(options, "allow_parallel_attribute"),
+            "InjectionOptions should NOT have allow_parallel_attribute field "
+            "(it was removed for safety reasons).",
         )
 
-    def test_injection_options_allow_parallel_attribute_true(self):
-        """InjectionOptions should accept allow_parallel_attribute=True."""
+    def test_injection_options_rejects_allow_parallel_attribute(self):
+        """InjectionOptions should reject allow_parallel_attribute as unknown field."""
+        from pydantic import ValidationError
+
         from traigent.api.decorators import InjectionOptions
 
-        options = InjectionOptions(allow_parallel_attribute=True)
-        _require(
-            options.allow_parallel_attribute is True,
-            "Expected allow_parallel_attribute to be True when set.",
-        )
+        with pytest.raises(ValidationError) as exc_info:
+            InjectionOptions(allow_parallel_attribute=True)
 
-    def test_optimized_function_stores_allow_parallel_attribute(self, mock_mode_env):
-        """OptimizedFunction should store allow_parallel_attribute."""
-
-        @traigent.optimize(
-            objectives=["accuracy"],
-            configuration_space={"model": ["a"]},
-            eval_dataset=EVAL_DATASET,
-            injection={"injection_mode": "attribute", "allow_parallel_attribute": True},
-        )
-        def my_func(question: str) -> str:
-            return "answer"
-
+        error_str = str(exc_info.value)
         _require(
-            hasattr(my_func, "allow_parallel_attribute"),
-            "Expected optimized function to expose allow_parallel_attribute.",
-        )
-        _require(
-            my_func.allow_parallel_attribute is True,
-            "Expected allow_parallel_attribute to be True on optimized function.",
+            "allow_parallel_attribute" in error_str.lower()
+            or "extra" in error_str.lower(),
+            f"Expected validation error for unknown field, got: {error_str}",
         )
