@@ -274,7 +274,7 @@ def compute_per_agent_metrics(
     result: dict[str, dict[str, float]] = {}
 
     for agent in agents:
-        agent_metrics = extract_agent_metrics(measures, agent)
+        agent_metrics = extract_agent_metrics(dict(measures), agent)
 
         # Strip agent prefix to get raw metric names
         prefix = f"{agent}_"
@@ -471,11 +471,12 @@ def build_agent_objectives(
     if include_quality:
         metrics.extend(["accuracy", "quality_score"])
 
-    return build_per_agent_objectives(
+    result: list[str] = build_per_agent_objectives(
         agents=list(agents),
         metrics=metrics,
         include_totals=include_totals,
     )
+    return result
 
 
 def extract_namespaced_config_for_agent(

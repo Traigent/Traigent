@@ -26,7 +26,7 @@ from traigent.utils.callbacks import OptimizationCallback
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
-    from traigent.core.types import OptimizationResult, TrialResult
+    from traigent.api.types import OptimizationResult, TrialResult
     from traigent.integrations.langfuse.client import LangfuseClient
     from traigent.utils.callbacks import ProgressInfo
 

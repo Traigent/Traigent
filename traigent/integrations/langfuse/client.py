@@ -303,7 +303,8 @@ class LangfuseClient:
                 return None
 
             response.raise_for_status()
-            return response.json()
+            result: dict[str, Any] = response.json()
+            return result
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to get trace {trace_id}: {e}")
             return None
@@ -463,7 +464,8 @@ class LangfuseClient:
                     if response.status == 404:
                         return None
                     response.raise_for_status()
-                    return await response.json()
+                    result: dict[str, Any] = await response.json()
+                    return result
         except aiohttp.ClientError as e:
             logger.error(f"Failed to get trace {trace_id}: {e}")
             return None

@@ -659,7 +659,7 @@ class TraigentHandler(BaseCallbackHandler):
         try:
             from tokencost import calculate_cost_by_tokens
 
-            return calculate_cost_by_tokens(input_tokens, output_tokens, model)
+            return float(calculate_cost_by_tokens(input_tokens, output_tokens, model))
         except ImportError:
             # Fallback estimates (per 1M tokens)
             cost_per_1m = {
