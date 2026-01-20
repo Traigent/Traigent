@@ -849,3 +849,164 @@ class TestLangfuseClientUsageFormats:
         }
         obs = client._dict_to_observation(obs_data)
         assert obs.status == "error"
+
+
+class TestLangfuseClientAsync:
+    """Test async methods of LangfuseClient."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_get_trace_async_method_exists(self, client):
+        """Test that async trace retrieval method exists."""
+        # Just verify the method exists and has correct signature
+        assert hasattr(client, "get_trace_async")
+        assert callable(client.get_trace_async)
+
+    @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+    @pytest.mark.asyncio
+    async def test_get_trace_metrics_async(self, client):
+        """Test async metrics retrieval."""
+        # Mock get_trace_async
+        trace_data = {
+            "id": "trace-123",
+            "observations": [
+                {"id": "obs-1", "name": "llm", "type": "GENERATION", "usage": {"total": 100}}
+            ],
+        }
+        with patch.object(client, "get_trace_async", return_value=trace_data):
+            result = await client.get_trace_metrics_async("trace-123")
+            assert result is not None
+            assert result.trace_id == "trace-123"
+
+    @pytest.mark.skipif(not AIOHTTP_AVAILABLE, reason="aiohttp not installed")
+    @pytest.mark.asyncio
+    async def test_get_trace_metrics_async_not_found(self, client):
+        """Test async metrics when trace not found."""
+        with patch.object(client, "get_trace_async", return_value=None):
+            result = await client.get_trace_metrics_async("nonexistent")
+            assert result is None
+
+
+class TestLangfuseClientSDK:
+    """Test SDK integration paths."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_get_observations_for_trace_sdk_fallback(self, client):
+        """Test get_observations_for_trace with SDK fallback."""
+        client._sdk_client = None
+        with patch.object(client, "_get_observations_http") as mock_http:
+            mock_http.return_value = []
+            result = client.get_observations_for_trace("trace-123")
+            mock_http.assert_called_once()
+
+    def test_get_trace_with_sdk_success(self, client):
+        """Test get_trace using SDK."""
+        mock_sdk = MagicMock()
+        mock_trace = MagicMock()
+        mock_trace.id = "trace-123"
+        mock_trace.name = "test"
+        mock_trace.observations = []
+        mock_sdk.get_trace.return_value = mock_trace
+        client._sdk_client = mock_sdk
+
+        result = client.get_trace("trace-123")
+        assert result is not None
+        assert result["id"] == "trace-123"
+        mock_sdk.get_trace.assert_called_once_with("trace-123")
+
+    def test_get_observations_for_trace_sdk_success(self, client):
+        """Test get_observations_for_trace using SDK."""
+        mock_sdk = MagicMock()
+        mock_obs = MagicMock()
+        mock_obs.id = "obs-123"
+        mock_obs.name = "test"
+        mock_obs.type = "GENERATION"
+        mock_sdk.get_observations.return_value = MagicMock(data=[mock_obs])
+        client._sdk_client = mock_sdk
+
+        result = client.get_observations_for_trace("trace-123")
+        assert len(result) == 1
+        mock_sdk.get_observations.assert_called_once()
+
+    def test_get_observations_for_trace_sdk_exception(self, client):
+        """Test get_observations_for_trace falls back on SDK exception."""
+        mock_sdk = MagicMock()
+        mock_sdk.get_observations.side_effect = Exception("SDK error")
+        client._sdk_client = mock_sdk
+
+        with patch.object(client, "_get_observations_http") as mock_http:
+            mock_http.return_value = []
+            result = client.get_observations_for_trace("trace-123")
+            mock_http.assert_called_once()
+
+
+class TestLangfuseAgentSanitization:
+    """Test agent name sanitization in metrics."""
+
+    @pytest.fixture
+    def client(self, monkeypatch):
+        """Create a client for testing."""
+        monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+        monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+        return LangfuseClient()
+
+    def test_agent_name_with_dots_sanitized(self, client):
+        """Test that dots in agent names are replaced with underscores."""
+        trace_data = {
+            "id": "trace-123",
+            "observations": [
+                {
+                    "id": "obs-1",
+                    "name": "agent.name.with.dots",
+                    "type": "GENERATION",
+                    "usage": {"total": 100},
+                    "calculatedTotalCost": 0.001,
+                    "metadata": {"langgraph_node": "agent.name.with.dots"},
+                }
+            ],
+        }
+        metrics = client._extract_metrics_from_trace(trace_data)
+        # Dots should be converted to underscores
+        assert "agent_name_with_dots" in metrics.per_agent_costs
+
+    def test_agent_name_with_dashes_sanitized(self, client):
+        """Test that dashes in agent names are replaced with underscores."""
+        trace_data = {
+            "id": "trace-123",
+            "observations": [
+                {
+                    "id": "obs-1",
+                    "name": "agent-with-dashes",
+                    "type": "GENERATION",
+                    "usage": {"total": 100},
+                    "calculatedTotalCost": 0.001,
+                    "metadata": {"langgraph_node": "agent-with-dashes"},
+                }
+            ],
+        }
+        metrics = client._extract_metrics_from_trace(trace_data)
+        # Dashes should be converted to underscores
+        assert "agent_with_dashes" in metrics.per_agent_costs
+
+    def test_to_measures_dict_sanitizes_agent_names(self):
+        """Test that to_measures_dict sanitizes agent names."""
+        metrics = LangfuseTraceMetrics(
+            trace_id="trace-123",
+            per_agent_costs={"agent.with.dots": 0.001, "agent-with-dashes": 0.002},
+            per_agent_latencies={},
+            per_agent_tokens={},
+        )
+        measures = metrics.to_measures_dict()
+        assert "agent_with_dots_cost" in measures
+        assert "agent_with_dashes_cost" in measures
