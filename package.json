@@ -1,0 +1,98 @@
+{
+  "name": "@traigent/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Traigent LLM optimization platform",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./langchain": {
+      "types": "./dist/integrations/langchain/index.d.ts",
+      "import": "./dist/integrations/langchain/index.js",
+      "require": "./dist/integrations/langchain/index.cjs"
+    },
+    "./vercel-ai": {
+      "types": "./dist/integrations/vercel-ai/index.d.ts",
+      "import": "./dist/integrations/vercel-ai/index.js",
+      "require": "./dist/integrations/vercel-ai/index.cjs"
+    },
+    "./openai": {
+      "types": "./dist/integrations/openai/index.d.ts",
+      "import": "./dist/integrations/openai/index.js",
+      "require": "./dist/integrations/openai/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "traigent-js": "./dist/cli/runner.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup && tsup --config tsup.cli.config.ts",
+    "build:sdk": "tsup",
+    "build:cli": "tsup --config tsup.cli.config.ts",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src tests --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "peerDependencies": {
+    "@langchain/core": ">=0.1.0",
+    "ai": ">=3.0.0",
+    "openai": ">=4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@langchain/core": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "openai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@langchain/core": "^0.2.0",
+    "@langchain/openai": "^0.2.0",
+    "@types/node": "^20.0.0",
+    "ai": "^3.0.0",
+    "eslint": "^8.0.0",
+    "openai": "^4.0.0",
+    "prettier": "^3.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "traigent",
+    "llm",
+    "optimization",
+    "langchain",
+    "openai",
+    "ai"
+  ],
+  "author": "Traigent",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/traigent/traigent-js.git"
+  }
+}
