@@ -732,11 +732,17 @@ class OpenAIAgentExecutor(AgentExecutor):
         """Calculate cost based on token usage with robust fallbacks."""
         model_mapped = MODEL_ALIASES.get(model, model)
         # Deterministic per-1k token pricing to match current expectations
+
         per_1k_rates = {
-            "gpt-4o-mini": {"prompt": 0.005, "completion": 0.012},
-            "gpt-4o": {"prompt": 0.01, "completion": 0.03},
-            "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
-        }
+    "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},  #
+    "gpt-4o": {"prompt": 0.0025, "completion": 0.01},          #
+    "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},       #
+    "gpt-5-nano": {"prompt": 0.00005, "completion": 0.0004},   #
+    "gpt-4.1-nano": {"prompt": 0.0001, "completion": 0.0004},  #
+    "gpt-5.1": {"prompt": 0.00125, "completion": 0.01},        #
+    "gpt-5.2": {"prompt": 0.00175, "completion": 0.014},       #
+}
+
         rates = per_1k_rates.get(model_mapped.lower(), per_1k_rates["gpt-4o-mini"])
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
