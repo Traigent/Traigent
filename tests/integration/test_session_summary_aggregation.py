@@ -226,10 +226,14 @@ async def test_hybrid_mode_includes_measures_when_privacy_off():
         measures = submission["metadata"]["measures"]
         assert isinstance(measures, list)
         assert len(measures) > 0
-        # Each measure should have metrics but no raw data
+        # Each measure should have nested metrics format
         for measure in measures:
-            assert "score" in measure or any(
-                k in measure for k in ["accuracy", "latency", "cost"]
+            # Measures now use nested format with example_id and metrics dict
+            assert "example_id" in measure
+            assert "metrics" in measure
+            metrics = measure["metrics"]
+            assert "score" in metrics or any(
+                k in metrics for k in ["accuracy", "latency", "cost"]
             )
             # Privacy checks - no raw data even in hybrid mode when privacy is off
             assert "input_data" not in measure
@@ -450,9 +454,13 @@ async def test_privacy_mode_excludes_raw_data():
         # Check measures if present
         if "measures" in metadata:
             for measure in metadata["measures"]:
+                # Measures now use nested format with example_id and metrics dict
+                assert "example_id" in measure
+                assert "metrics" in measure
+                metrics = measure["metrics"]
                 # Should have sanitized metrics
-                assert "score" in measure or any(
-                    k in measure for k in ["accuracy", "latency", "cost"]
+                assert "score" in metrics or any(
+                    k in metrics for k in ["accuracy", "latency", "cost"]
                 )
                 # Must not have raw data
                 assert "input_data" not in measure
