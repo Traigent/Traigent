@@ -39,6 +39,7 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.8.0",
+    "requests>=2.28.0",  # Required by Langfuse integration sync fallback
     "jsonschema>=4.0.0",
     "cryptography>=44.0.1",
     "typing-extensions>=4.0.0; python_version<'3.11'",
@@ -224,7 +225,7 @@ profile = "black"
 line_length = 88
 known_first_party = ["traigent"]
 known_third_party = [
-    "click", "rich", "aiohttp", "jsonschema", "numpy", "pandas",
+    "click", "rich", "aiohttp", "requests", "jsonschema", "numpy", "pandas",
     "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
     "mlflow", "wandb", "pyjwt", "cryptography"
 ]
@@ -333,7 +334,7 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["traigent"]
 known-third-party = [
-    "click", "rich", "aiohttp", "jsonschema", "numpy", "pandas",
+    "click", "rich", "aiohttp", "requests", "jsonschema", "numpy", "pandas",
     "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
     "mlflow", "wandb", "pyjwt", "cryptography"
 ]

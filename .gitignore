@@ -396,3 +396,8 @@ tests/optimizer_validation/TEST_REVIEW_CHECKLIST.md
 .env
 _bmad-output/
 coverage.json
+
+# Local development artifacts
+tests/manual/
+tmp/
+walkthrough/myfiles.md
