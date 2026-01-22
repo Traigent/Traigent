@@ -47,7 +47,7 @@ load_dotenv()
 # Initialize Traigent
 traigent.initialize(execution_mode="edge_analytics")
 
-SCRIPT_DIR = Path(__file__).parent.parent  # Go up to mock/ directory
+SCRIPT_DIR = Path(__file__).parent  # Current directory (advanced/)
 
 # Check if we're in mock mode
 MOCK_MODE = os.environ.get("TRAIGENT_MOCK_LLM", "false").lower() == "true"
