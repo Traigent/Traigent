@@ -14,47 +14,73 @@ logger = get_logger(__name__)
 
 
 def _validate_measure_dict(measure: dict[str, Any], example_index: int) -> None:
-    """Validate measure against MeasuresDict constraints from TraigentSchema.
+    """Validate measure against nested MeasuresDict format from TraigentSchema.
 
-    MeasuresDict constraints (from traigent_schema/schemas/measures/):
-    1. Max 50 keys per measure
-    2. Keys must be valid Python identifiers (^[a-zA-Z_][a-zA-Z0-9_]*$)
-    3. Values must be numeric (int, float) or None (except example_id which can be str)
+    Expected nested format:
+        {
+            "example_id": "ex_a3f4b2c8_0",
+            "metrics": {"score": 0.85, "cost": 0.05, ...}
+        }
+
+    Constraints:
+    1. Must have "example_id" (string) at top level
+    2. Must have "metrics" (dict) at top level
+    3. metrics keys must be valid Python identifiers (^[a-zA-Z_][a-zA-Z0-9_]*$)
+    4. metrics values must be numeric (int, float) or None
+    5. Max 50 keys in metrics
 
     Args:
-        measure: Measure dict to validate
+        measure: Measure dict to validate (nested format)
         example_index: Index of the example (for error messages)
 
     Raises:
         ValueError: If validation fails
     """
-    # Constraint 1: Max 50 keys
-    if len(measure) > 50:
+    # Constraint 1: Must have example_id as string
+    if "example_id" not in measure:
         raise ValueError(
-            f"Example {example_index}: Measure has {len(measure)} keys, "
-            f"exceeds MeasuresDict limit of 50"
+            f"Example {example_index}: Missing required 'example_id' field"
+        )
+    if not isinstance(measure["example_id"], str):
+        raise ValueError(
+            f"Example {example_index}: 'example_id' must be string, "
+            f"got {type(measure['example_id']).__name__}"
         )
 
-    # Constraint 2: Keys must be Python identifiers
-    for key in measure.keys():
+    # Constraint 2: Must have metrics dict
+    if "metrics" not in measure:
+        raise ValueError(
+            f"Example {example_index}: Missing required 'metrics' field"
+        )
+    if not isinstance(measure["metrics"], dict):
+        raise ValueError(
+            f"Example {example_index}: 'metrics' must be dict, "
+            f"got {type(measure['metrics']).__name__}"
+        )
+
+    metrics = measure["metrics"]
+
+    # Constraint 5: Max 50 keys in metrics
+    if len(metrics) > 50:
+        raise ValueError(
+            f"Example {example_index}: metrics has {len(metrics)} keys, "
+            f"exceeds limit of 50"
+        )
+
+    # Constraint 3 & 4: Validate metric keys and values
+    for key, value in metrics.items():
+        # Keys must be Python identifiers
         if not key.isidentifier():
             raise ValueError(
-                f"Example {example_index}: Invalid measure key '{key}', "
+                f"Example {example_index}: Invalid metric key '{key}', "
                 f"must be Python identifier (^[a-zA-Z_][a-zA-Z0-9_]*$)"
             )
-
-    # Constraint 3: Values must be numeric or None (except example_id)
-    for key, value in measure.items():
-        if value is not None:
-            # example_id is allowed to be string
-            if key == "example_id" and isinstance(value, str):
-                continue
-            # All other values must be numeric
-            if not isinstance(value, (int, float)):
-                raise ValueError(
-                    f"Example {example_index}: Measure key '{key}' has invalid type "
-                    f"{type(value).__name__}, must be int, float, or None"
-                )
+        # Values must be numeric or None
+        if value is not None and not isinstance(value, (int, float)):
+            raise ValueError(
+                f"Example {example_index}: Metric '{key}' has invalid type "
+                f"{type(value).__name__}, must be int, float, or None"
+            )
 
 
 def merge_run_metrics_into_session_summary(result: OptimizationResult) -> None:
@@ -231,6 +257,13 @@ def _build_measures_full(
 ) -> list[dict[str, Any]]:
     """Build full per-example measures with stable IDs and content scores (non-privacy mode).
 
+    Returns nested format where example_id is at top level and all numeric
+    metrics are in a 'metrics' sub-object:
+        {
+            "example_id": "ex_a3f4b2c8_0",
+            "metrics": {"score": 0.85, "cost": 0.05, ...}
+        }
+
     Args:
         example_results: List of example evaluation results
         primary_objective: Primary optimization objective name
@@ -239,7 +272,7 @@ def _build_measures_full(
                        example_index -> score
 
     Returns:
-        List of measure dicts with all available metrics
+        List of nested measure dicts with example_id and metrics sub-object
 
     Raises:
         ValueError: If measures violate MeasuresDict constraints
@@ -248,36 +281,36 @@ def _build_measures_full(
     measures = []
 
     for idx, example_result in enumerate(example_results):
-        measure_result: dict[str, Any] = {}
-
         # Generate stable example_id (format: ex_{hash}_{index})
         example_id = generate_stable_example_id(dataset_hash, idx)
-        measure_result["example_id"] = example_id
 
-        # Extract score from metrics
-        metrics = getattr(example_result, "metrics", {}) or {}
+        # Build metrics sub-object (numeric values only)
+        metrics_dict: dict[str, Any] = {}
+
+        # Extract score from evaluation result metrics
+        eval_metrics = getattr(example_result, "metrics", {}) or {}
         example_score: float | None = None
-        if metrics:
+        if eval_metrics:
             logger.debug(
                 "Example %s metrics: %s",
                 idx,
-                metrics,
+                eval_metrics,
             )
             for candidate in (
                 primary_objective,
                 "score",
                 "accuracy",
             ):
-                if candidate and candidate in metrics:
-                    value = metrics[candidate]
+                if candidate and candidate in eval_metrics:
+                    value = eval_metrics[candidate]
                     if value is not None:
                         example_score = float(value)
                         break
 
             # Add all scalar metrics (numeric only per MeasuresDict constraints)
-            for metric_key, metric_value in metrics.items():
+            for metric_key, metric_value in eval_metrics.items():
                 if isinstance(metric_value, (int, float)) or metric_value is None:
-                    measure_result[metric_key] = metric_value
+                    metrics_dict[metric_key] = metric_value
 
         # Fallback score calculation
         if example_score is None:
@@ -287,24 +320,30 @@ def _build_measures_full(
                 example_score = 1.0 if actual == expected else 0.0
 
         if example_score is not None:
-            measure_result["score"] = float(example_score)
+            metrics_dict["score"] = float(example_score)
 
         # Add execution time
         if hasattr(example_result, "execution_time"):
-            measure_result["response_time"] = example_result.execution_time
+            metrics_dict["response_time"] = example_result.execution_time
 
         # Add content scores if available (privacy-safe: numeric only)
         if content_scores:
             if "uniqueness" in content_scores:
-                measure_result["content_uniqueness"] = content_scores["uniqueness"].get(
+                metrics_dict["content_uniqueness"] = content_scores["uniqueness"].get(
                     idx, 0.5
                 )
             if "novelty" in content_scores:
-                measure_result["content_novelty"] = content_scores["novelty"].get(
+                metrics_dict["content_novelty"] = content_scores["novelty"].get(
                     idx, 0.5
                 )
 
-        # Validate against MeasuresDict constraints
+        # Build nested measure result
+        measure_result: dict[str, Any] = {
+            "example_id": example_id,
+            "metrics": metrics_dict,
+        }
+
+        # Validate against nested MeasuresDict constraints
         _validate_measure_dict(measure_result, idx)
 
         logger.debug(
@@ -325,8 +364,14 @@ def _build_measures_privacy(
 ) -> list[dict[str, Any]]:
     """Build sanitized per-example measures with stable IDs (privacy mode).
 
-    Only includes:
-    - Stable example_id (privacy-safe: hash-based, no PII)
+    Returns nested format where example_id is at top level and privacy-safe
+    metrics are in a 'metrics' sub-object:
+        {
+            "example_id": "ex_a3f4b2c8_0",
+            "metrics": {"score": 0.85, "response_time": 1.2, ...}
+        }
+
+    Only includes in metrics:
     - Score, response time, tokens, and cost metrics
     - Content scores (privacy-safe: numeric only, no raw text)
 
@@ -338,7 +383,7 @@ def _build_measures_privacy(
                        example_index -> score
 
     Returns:
-        List of sanitized measure dicts
+        List of nested sanitized measure dicts
 
     Raises:
         ValueError: If measures violate MeasuresDict constraints
@@ -347,23 +392,23 @@ def _build_measures_privacy(
     measures = []
 
     for idx, example_result in enumerate(example_results):
-        measure_result: dict[str, Any] = {}
-
         # Stable example_id (privacy-safe: just a hash, no content)
         example_id = generate_stable_example_id(dataset_hash, idx)
-        measure_result["example_id"] = example_id
 
-        # Extract score from metrics
-        metrics = getattr(example_result, "metrics", {}) or {}
+        # Build metrics sub-object (privacy-safe values only)
+        metrics_dict: dict[str, Any] = {}
+
+        # Extract score from evaluation result metrics
+        eval_metrics = getattr(example_result, "metrics", {}) or {}
         example_score: float | None = None
-        if metrics:
+        if eval_metrics:
             for candidate in (
                 primary_objective,
                 "score",
                 "accuracy",
             ):
-                if candidate and candidate in metrics:
-                    value = metrics[candidate]
+                if candidate and candidate in eval_metrics:
+                    value = eval_metrics[candidate]
                     if value is not None:
                         example_score = float(value)
                         break
@@ -376,35 +421,41 @@ def _build_measures_privacy(
                 example_score = 1.0 if actual == expected else 0.0
 
         if example_score is not None:
-            measure_result["score"] = float(example_score)
+            metrics_dict["score"] = float(example_score)
 
         # Add execution time
         if hasattr(example_result, "execution_time"):
-            measure_result["response_time"] = example_result.execution_time
+            metrics_dict["response_time"] = example_result.execution_time
 
         # Add token metrics (privacy-safe)
-        if metrics:
+        if eval_metrics:
             for token_key in ("input_tokens", "output_tokens", "total_tokens"):
-                if token_key in metrics:
-                    measure_result[token_key] = metrics[token_key]
+                if token_key in eval_metrics:
+                    metrics_dict[token_key] = eval_metrics[token_key]
 
             # Add cost metrics (privacy-safe)
             for cost_key in ("input_cost", "output_cost", "total_cost"):
-                if cost_key in metrics:
-                    measure_result[cost_key] = metrics[cost_key]
+                if cost_key in eval_metrics:
+                    metrics_dict[cost_key] = eval_metrics[cost_key]
 
         # Content scores are privacy-safe (just floats, no raw text)
         if content_scores:
             if "uniqueness" in content_scores:
-                measure_result["content_uniqueness"] = content_scores["uniqueness"].get(
+                metrics_dict["content_uniqueness"] = content_scores["uniqueness"].get(
                     idx, 0.5
                 )
             if "novelty" in content_scores:
-                measure_result["content_novelty"] = content_scores["novelty"].get(
+                metrics_dict["content_novelty"] = content_scores["novelty"].get(
                     idx, 0.5
                 )
 
-        # Validate against MeasuresDict constraints
+        # Build nested measure result
+        measure_result: dict[str, Any] = {
+            "example_id": example_id,
+            "metrics": metrics_dict,
+        }
+
+        # Validate against nested MeasuresDict constraints
         _validate_measure_dict(measure_result, idx)
 
         measures.append(measure_result)

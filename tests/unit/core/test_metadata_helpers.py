@@ -307,6 +307,26 @@ class TestBuildBackendMetadataPrivacy:
 class TestBuildMeasuresFull:
     """Test _build_measures_full function."""
 
+    def test_generates_nested_format(self, example_result):
+        """Should generate {example_id, metrics: {...}} structure."""
+        example_result.metrics = {"accuracy": 0.9}
+
+        measures = _build_measures_full([example_result], "accuracy")
+
+        assert len(measures) == 1
+        assert "example_id" in measures[0]
+        assert "metrics" in measures[0]
+        assert isinstance(measures[0]["metrics"], dict)
+
+    def test_example_id_at_top_level(self, example_result):
+        """example_id should be at top level, not in metrics."""
+        example_result.metrics = {"accuracy": 0.9}
+
+        measures = _build_measures_full([example_result], "accuracy")
+
+        assert "example_id" in measures[0]
+        assert "example_id" not in measures[0]["metrics"]
+
     def test_extract_score_from_primary_objective(self, example_result):
         """Test score extraction from primary objective."""
         example_result.metrics = {"accuracy": 0.9}
@@ -314,7 +334,7 @@ class TestBuildMeasuresFull:
         measures = _build_measures_full([example_result], "accuracy")
 
         assert len(measures) == 1
-        assert measures[0]["score"] == 0.9
+        assert measures[0]["metrics"]["score"] == 0.9
 
     def test_fallback_to_score_field(self, example_result):
         """Test fallback to 'score' field if primary not found."""
@@ -322,7 +342,7 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "nonexistent")
 
-        assert measures[0]["score"] == 0.85
+        assert measures[0]["metrics"]["score"] == 0.85
 
     def test_fallback_to_accuracy_field(self, example_result):
         """Test fallback to 'accuracy' field."""
@@ -330,7 +350,7 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "nonexistent")
 
-        assert measures[0]["score"] == 0.8
+        assert measures[0]["metrics"]["score"] == 0.8
 
     def test_fallback_to_expected_actual_comparison(self, example_result):
         """Test fallback to expected/actual comparison."""
@@ -340,7 +360,7 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "accuracy")
 
-        assert measures[0]["score"] == 1.0
+        assert measures[0]["metrics"]["score"] == 1.0
 
     def test_expected_actual_mismatch(self, example_result):
         """Test expected/actual mismatch gives score 0."""
@@ -350,10 +370,10 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "accuracy")
 
-        assert measures[0]["score"] == 0.0
+        assert measures[0]["metrics"]["score"] == 0.0
 
-    def test_include_all_scalar_metrics(self, example_result):
-        """Test all numeric metrics are included (per MeasuresDict constraints)."""
+    def test_all_numeric_fields_in_metrics(self, example_result):
+        """All numeric evaluation fields should be in metrics."""
         example_result.metrics = {
             "accuracy": 0.9,
             "cost": 0.02,
@@ -363,21 +383,21 @@ class TestBuildMeasuresFull:
 
         measures = _build_measures_full([example_result], "accuracy")
 
-        measure = measures[0]
-        assert "accuracy" in measure
-        assert "cost" in measure
-        assert "latency" in measure
+        metrics = measures[0]["metrics"]
+        assert metrics["accuracy"] == 0.9
+        assert metrics["cost"] == 0.02
+        assert metrics["latency"] == 0.5
         # String values are excluded per MeasuresDict constraints
-        assert "model" not in measure
+        assert "model" not in metrics
 
     def test_include_execution_time(self, example_result):
-        """Test execution_time is included as response_time."""
+        """Test execution_time is included as response_time in metrics."""
         example_result.execution_time = 1.5
 
         measures = _build_measures_full([example_result], "accuracy")
 
-        assert "response_time" in measures[0]
-        assert measures[0]["response_time"] == 1.5
+        assert "response_time" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["response_time"] == 1.5
 
     def test_multiple_examples(self, example_result):
         """Test building measures for multiple examples."""
@@ -388,12 +408,42 @@ class TestBuildMeasuresFull:
         measures = _build_measures_full([example_result, example2], "accuracy")
 
         assert len(measures) == 2
-        assert measures[0]["score"] == 0.9
-        assert measures[1]["score"] == 0.8
+        assert measures[0]["metrics"]["score"] == 0.9
+        assert measures[1]["metrics"]["score"] == 0.8
+
+    def test_none_values_excluded_from_metrics(self, example_result):
+        """None values in source metrics should still be included."""
+        example_result.metrics = {"accuracy": 0.9, "cost": None}
+
+        measures = _build_measures_full([example_result], "accuracy")
+
+        # None values are allowed (they represent missing data)
+        assert "cost" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["cost"] is None
 
 
 class TestBuildMeasuresPrivacy:
     """Test _build_measures_privacy function."""
+
+    def test_generates_nested_format(self, example_result):
+        """Should generate {example_id, metrics: {...}} structure."""
+        example_result.metrics = {"accuracy": 0.9}
+
+        measures = _build_measures_privacy([example_result], "accuracy")
+
+        assert len(measures) == 1
+        assert "example_id" in measures[0]
+        assert "metrics" in measures[0]
+        assert isinstance(measures[0]["metrics"], dict)
+
+    def test_example_id_at_top_level(self, example_result):
+        """example_id should be at top level, not in metrics."""
+        example_result.metrics = {"accuracy": 0.9}
+
+        measures = _build_measures_privacy([example_result], "accuracy")
+
+        assert "example_id" in measures[0]
+        assert "example_id" not in measures[0]["metrics"]
 
     def test_extract_score_privacy(self, example_result):
         """Test score extraction in privacy mode."""
@@ -402,19 +452,19 @@ class TestBuildMeasuresPrivacy:
         measures = _build_measures_privacy([example_result], "accuracy")
 
         assert len(measures) == 1
-        assert measures[0]["score"] == 0.9
+        assert measures[0]["metrics"]["score"] == 0.9
 
     def test_include_response_time(self, example_result):
-        """Test response_time is included in privacy mode."""
+        """Test response_time is included in privacy mode metrics."""
         example_result.execution_time = 1.5
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        assert "response_time" in measures[0]
-        assert measures[0]["response_time"] == 1.5
+        assert "response_time" in measures[0]["metrics"]
+        assert measures[0]["metrics"]["response_time"] == 1.5
 
     def test_include_token_metrics(self, example_result):
-        """Test token metrics are included in privacy mode."""
+        """Test token metrics are included in privacy mode metrics."""
         example_result.metrics = {
             "accuracy": 0.9,
             "input_tokens": 100,
@@ -424,14 +474,14 @@ class TestBuildMeasuresPrivacy:
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        measure = measures[0]
-        assert "input_tokens" in measure
-        assert "output_tokens" in measure
-        assert "total_tokens" in measure
-        assert measure["input_tokens"] == 100
+        metrics = measures[0]["metrics"]
+        assert "input_tokens" in metrics
+        assert "output_tokens" in metrics
+        assert "total_tokens" in metrics
+        assert metrics["input_tokens"] == 100
 
     def test_include_cost_metrics(self, example_result):
-        """Test cost metrics are included in privacy mode."""
+        """Test cost metrics are included in privacy mode metrics."""
         example_result.metrics = {
             "accuracy": 0.9,
             "input_cost": 0.01,
@@ -441,11 +491,11 @@ class TestBuildMeasuresPrivacy:
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        measure = measures[0]
-        assert "input_cost" in measure
-        assert "output_cost" in measure
-        assert "total_cost" in measure
-        assert measure["total_cost"] == 0.03
+        metrics = measures[0]["metrics"]
+        assert "input_cost" in metrics
+        assert "output_cost" in metrics
+        assert "total_cost" in metrics
+        assert metrics["total_cost"] == 0.03
 
     def test_exclude_sensitive_metrics(self, example_result):
         """Test sensitive metrics are excluded in privacy mode."""
@@ -457,10 +507,10 @@ class TestBuildMeasuresPrivacy:
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        measure = measures[0]
-        assert "score" in measure
-        assert "user_input" not in measure
-        assert "model_output" not in measure
+        metrics = measures[0]["metrics"]
+        assert "score" in metrics
+        assert "user_input" not in metrics
+        assert "model_output" not in metrics
 
     def test_fallback_score_calculation_privacy(self, example_result):
         """Test fallback score calculation in privacy mode."""
@@ -470,7 +520,7 @@ class TestBuildMeasuresPrivacy:
 
         measures = _build_measures_privacy([example_result], "accuracy")
 
-        assert measures[0]["score"] == 1.0
+        assert measures[0]["metrics"]["score"] == 1.0
 
 
 class TestBuildBackendMetadataIntegration:
