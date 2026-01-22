@@ -428,6 +428,7 @@ class OptimizationLogger:
                 "status": trial.status,
                 "duration": trial.duration,
                 "timestamp": trial.timestamp.isoformat() if trial.timestamp else None,
+                "metadata": trial.metadata,  # Include metadata (abandoned flag, stop_reason, etc.)
             }
             self._append_jsonl(trials_file, trial_data)
             if trial.metadata and trial.metadata.get("example_results"):
