@@ -38,15 +38,11 @@ def validate_measure_results(measure: Any) -> bool:
         # Nested format validation
         example_id = measure.get("example_id")
         if example_id is not None and not isinstance(example_id, str):
-            raise ValueError(
-                f"example_id must be a string, got {type(example_id)}"
-            )
+            raise ValueError(f"example_id must be a string, got {type(example_id)}")
 
         metrics = measure.get("metrics")
         if not isinstance(metrics, dict):
-            raise ValueError(
-                f"metrics must be a dict, got {type(metrics)}"
-            )
+            raise ValueError(f"metrics must be a dict, got {type(metrics)}")
 
         # Validate metrics dict
         for key, value in metrics.items():

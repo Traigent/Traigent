@@ -105,7 +105,9 @@ class ExampleMeasure:
         }
 
     def __repr__(self) -> str:
-        return f"ExampleMeasure(example_id={self.example_id!r}, metrics={self.metrics!r})"
+        return (
+            f"ExampleMeasure(example_id={self.example_id!r}, metrics={self.metrics!r})"
+        )
 
 
 class MeasuresDict(UserDict):

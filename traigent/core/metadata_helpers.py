@@ -49,9 +49,7 @@ def _validate_measure_dict(measure: dict[str, Any], example_index: int) -> None:
 
     # Constraint 2: Must have metrics dict
     if "metrics" not in measure:
-        raise ValueError(
-            f"Example {example_index}: Missing required 'metrics' field"
-        )
+        raise ValueError(f"Example {example_index}: Missing required 'metrics' field")
     if not isinstance(measure["metrics"], dict):
         raise ValueError(
             f"Example {example_index}: 'metrics' must be dict, "
