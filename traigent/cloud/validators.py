@@ -13,6 +13,10 @@ from typing import Any
 def validate_measure_results(measure: Any) -> bool:
     """Validate a single MeasureResults object according to Traigent schema.
 
+    Supports two formats:
+    1. Flat format (legacy): {metric_key: value, ...}
+    2. Nested format: {example_id: str, metrics: {metric_key: value, ...}}
+
     Args:
         measure: The measure object to validate
 
@@ -27,18 +31,47 @@ def validate_measure_results(measure: Any) -> bool:
     # Validate that all keys match the pattern [a-zA-Z_][a-zA-Z0-9_]*
     pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
-    for key, value in measure.items():
-        # Check key format
-        if not pattern.match(key):
+    # Check if this is nested format (has example_id and metrics)
+    is_nested = "example_id" in measure and "metrics" in measure
+
+    if is_nested:
+        # Nested format validation
+        example_id = measure.get("example_id")
+        if example_id is not None and not isinstance(example_id, str):
             raise ValueError(
-                f"Invalid measure key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                f"example_id must be a string, got {type(example_id)}"
             )
 
-        # Check value type (must be number, string, or null)
-        if value is not None and not isinstance(value, (int, float, str)):
+        metrics = measure.get("metrics")
+        if not isinstance(metrics, dict):
             raise ValueError(
-                f"Measure value for '{key}' must be number, string, or null, got {type(value)}"
+                f"metrics must be a dict, got {type(metrics)}"
             )
+
+        # Validate metrics dict
+        for key, value in metrics.items():
+            if not pattern.match(key):
+                raise ValueError(
+                    f"Invalid metric key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                )
+            if value is not None and not isinstance(value, (int, float, str)):
+                raise ValueError(
+                    f"Metric value for '{key}' must be number, string, or null, got {type(value)}"
+                )
+    else:
+        # Flat format validation (legacy)
+        for key, value in measure.items():
+            # Check key format
+            if not pattern.match(key):
+                raise ValueError(
+                    f"Invalid measure key '{key}': must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                )
+
+            # Check value type (must be number, string, or null)
+            if value is not None and not isinstance(value, (int, float, str)):
+                raise ValueError(
+                    f"Measure value for '{key}' must be number, string, or null, got {type(value)}"
+                )
 
     return True
 

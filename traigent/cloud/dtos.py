@@ -27,11 +27,95 @@ except ImportError:
     logger.debug("optigen_schemas not available, validation disabled")
 
 
+class ExampleMeasure:
+    """Type-safe per-example measure with nested format.
+
+    Expected structure:
+        {
+            "example_id": "ex_a3f4b2c8_0",
+            "metrics": {"score": 0.85, "cost": 0.05, ...}
+        }
+
+    Validates:
+    - example_id must be a string
+    - metrics must be a dict with Python identifier keys
+    - metrics values must be numeric (int, float) or None
+    - Maximum 50 keys in metrics
+
+    Use this class for per-example results. For trial-level measures,
+    use MeasuresDict instead.
+    """
+
+    MAX_METRICS = 50
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        """Initialize from a nested measure dict.
+
+        Args:
+            data: Dict with 'example_id' (str) and 'metrics' (dict) keys
+
+        Raises:
+            ValueError: If validation fails
+        """
+        self.example_id: str | None = data.get("example_id")
+        self.metrics: dict[str, float | int | None] = data.get("metrics", {})
+        self._validate()
+
+    def _validate(self) -> None:
+        """Validate the nested measure structure."""
+        # example_id must be string if present
+        if self.example_id is not None and not isinstance(self.example_id, str):
+            raise ValueError(
+                f"example_id must be a string, got {type(self.example_id).__name__}"
+            )
+
+        # metrics must be a dict
+        if not isinstance(self.metrics, dict):
+            raise ValueError(
+                f"metrics must be a dict, got {type(self.metrics).__name__}"
+            )
+
+        # Check max keys
+        if len(self.metrics) > self.MAX_METRICS:
+            raise ValueError(
+                f"metrics cannot exceed {self.MAX_METRICS} keys, got {len(self.metrics)}"
+            )
+
+        # Validate each metric
+        for key, value in self.metrics.items():
+            # Keys must be Python identifiers
+            if not isinstance(key, str):
+                raise ValueError(f"metric key must be string, got {type(key).__name__}")
+            if not self.KEY_PATTERN.match(key):
+                raise ValueError(
+                    f"metric key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                )
+            # Values must be numeric or None
+            if value is not None and not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"metric '{key}' must be numeric, got {type(value).__name__}"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for serialization."""
+        return {
+            "example_id": self.example_id,
+            "metrics": self.metrics,
+        }
+
+    def __repr__(self) -> str:
+        return f"ExampleMeasure(example_id={self.example_id!r}, metrics={self.metrics!r})"
+
+
 class MeasuresDict(UserDict):
-    """Type-safe measures dict with validation.
+    """Type-safe measures dict with validation for trial-level metrics.
 
     Inherits from UserDict (not dict) to properly intercept all mutation
     operations including update(), |=, and other bulk operations.
+
+    Note: This class is for TRIAL-LEVEL measures (aggregated metrics).
+    For per-example measures with nested format, use ExampleMeasure instead.
 
     Enforces:
     - Maximum 50 keys to prevent unbounded memory usage
