@@ -143,11 +143,15 @@ class TestContentScoringIntegration:
             assert "example_id" in measure
             assert measure["example_id"].startswith("ex_")
 
-            # Should have content scores
-            assert "content_uniqueness" in measure
-            assert "content_novelty" in measure
-            assert measure["content_uniqueness"] == content_scores["uniqueness"][i]
-            assert measure["content_novelty"] == content_scores["novelty"][i]
+            # Should have metrics dict (nested format)
+            assert "metrics" in measure
+            metrics = measure["metrics"]
+
+            # Should have content scores in metrics
+            assert "content_uniqueness" in metrics
+            assert "content_novelty" in metrics
+            assert metrics["content_uniqueness"] == content_scores["uniqueness"][i]
+            assert metrics["content_novelty"] == content_scores["novelty"][i]
 
     def test_metadata_builder_validates_measures(self):
         """Metadata builder should validate measures against MeasuresDict constraints."""
@@ -179,10 +183,11 @@ class TestContentScoringIntegration:
             trial_result, "accuracy", config, dataset_name="test_dataset"
         )
 
-        # Verify string metric was excluded
+        # Verify string metric was excluded (check in nested metrics dict)
         measures = metadata["measures"]
-        assert "invalid_metric" not in measures[0]
-        assert "score" in measures[0]
+        metrics = measures[0]["metrics"]
+        assert "invalid_metric" not in metrics
+        assert "score" in metrics
 
 
 @pytest.mark.skipif(not HTTPX_AVAILABLE, reason="httpx not installed")
@@ -538,10 +543,12 @@ class TestEndToEndWorkflow:
             expected_id = generate_stable_example_id(dataset_hash, i)
 
             assert measure["example_id"] == expected_id
-            assert measure["content_uniqueness"] == uniqueness[i]
-            assert measure["content_novelty"] == novelty[i]
-            assert 0.0 <= measure["content_uniqueness"] <= 1.0
-            assert 0.0 <= measure["content_novelty"] <= 1.0
+            # Metrics are now nested in 'metrics' dict
+            metrics = measure["metrics"]
+            assert metrics["content_uniqueness"] == uniqueness[i]
+            assert metrics["content_novelty"] == novelty[i]
+            assert 0.0 <= metrics["content_uniqueness"] <= 1.0
+            assert 0.0 <= metrics["content_novelty"] <= 1.0
 
         # Step 6: Simulate backend retrieval (with mocked HTTP client)
         with patch("traigent.analytics.example_insights.httpx") as mock_httpx:
