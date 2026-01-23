@@ -63,6 +63,7 @@ export const ErrorCodeSchema = z.enum([
   'BUDGET_EXCEEDED',
   'INTERNAL_ERROR',
   'USER_FUNCTION_ERROR',
+  'CANCELLED',
 ]);
 
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;

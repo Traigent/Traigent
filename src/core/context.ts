@@ -8,10 +8,18 @@ import { AsyncLocalStorage, AsyncResource } from 'node:async_hooks';
 import type { TrialConfig } from '../dtos/trial.js';
 
 /**
+ * Extended trial context that includes cancellation support.
+ */
+interface TrialContextData {
+  config: TrialConfig;
+  abortSignal?: AbortSignal;
+}
+
+/**
  * AsyncLocalStorage instance for trial context propagation.
  * This is the Node.js equivalent of Python's contextvars.
  */
-const trialStorage = new AsyncLocalStorage<TrialConfig>();
+const trialStorage = new AsyncLocalStorage<TrialContextData>();
 
 /**
  * Error thrown when accessing trial context outside of a trial.
@@ -20,6 +28,16 @@ export class TrialContextError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'TrialContextError';
+  }
+}
+
+/**
+ * Error thrown when a trial is cancelled.
+ */
+export class TrialCancelledError extends Error {
+  constructor(message: string = 'Trial was cancelled') {
+    super(message);
+    this.name = 'TrialCancelledError';
   }
 }
 
@@ -41,10 +59,12 @@ export const TrialContext = {
    *
    * @param config - Trial configuration from the orchestrator
    * @param fn - Async function to execute within the context
+   * @param abortSignal - Optional AbortSignal for cancellation support
    * @returns Promise resolving to the function's return value
    */
-  run<T>(config: TrialConfig, fn: () => T | Promise<T>): T | Promise<T> {
-    return trialStorage.run(config, fn);
+  run<T>(config: TrialConfig, fn: () => T | Promise<T>, abortSignal?: AbortSignal): T | Promise<T> {
+    const contextData: TrialContextData = { config, abortSignal };
+    return trialStorage.run(contextData, fn);
   },
 
   /**
@@ -54,14 +74,14 @@ export const TrialContext = {
    * @returns The current trial configuration
    */
   getConfig(): TrialConfig {
-    const config = trialStorage.getStore();
-    if (!config) {
+    const contextData = trialStorage.getStore();
+    if (!contextData) {
       throw new TrialContextError(
         'TrialContext.getConfig() called outside of a trial. ' +
           'Ensure your code is running within TrialContext.run() or a Traigent optimization trial.'
       );
     }
-    return config;
+    return contextData.config;
   },
 
   /**
@@ -70,7 +90,7 @@ export const TrialContext = {
    * @returns The current trial configuration or undefined
    */
   getConfigOrUndefined(): TrialConfig | undefined {
-    return trialStorage.getStore();
+    return trialStorage.getStore()?.config;
   },
 
   /**
@@ -88,7 +108,7 @@ export const TrialContext = {
    * @returns The trial ID or undefined
    */
   getTrialId(): string | undefined {
-    return trialStorage.getStore()?.trial_id;
+    return trialStorage.getStore()?.config.trial_id;
   },
 
   /**
@@ -97,7 +117,38 @@ export const TrialContext = {
    * @returns The trial number or undefined
    */
   getTrialNumber(): number | undefined {
-    return trialStorage.getStore()?.trial_number;
+    return trialStorage.getStore()?.config.trial_number;
+  },
+
+  /**
+   * Check if the current trial has been cancelled.
+   *
+   * @returns true if the trial has been cancelled, false otherwise
+   */
+  isCancelled(): boolean {
+    const contextData = trialStorage.getStore();
+    return contextData?.abortSignal?.aborted ?? false;
+  },
+
+  /**
+   * Check if cancelled and throw if so.
+   * Use this for cooperative cancellation in long-running operations.
+   *
+   * @throws {TrialCancelledError} If the trial has been cancelled
+   */
+  checkCancellation(): void {
+    if (this.isCancelled()) {
+      throw new TrialCancelledError('Trial was cancelled');
+    }
+  },
+
+  /**
+   * Get the abort signal for the current trial, if any.
+   *
+   * @returns The AbortSignal or undefined
+   */
+  getAbortSignal(): AbortSignal | undefined {
+    return trialStorage.getStore()?.abortSignal;
   },
 };
 
@@ -155,10 +206,11 @@ export function wrapCallback<T extends (...args: any[]) => any>(fn: T): T {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function bindContext<T extends (...args: any[]) => any>(fn: T): T {
   const currentConfig = TrialContext.getConfigOrUndefined();
+  const currentAbortSignal = TrialContext.getAbortSignal();
   if (!currentConfig) {
     return fn;
   }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return ((...args: any[]) =>
-    TrialContext.run(currentConfig, () => fn(...args))) as T;
+    TrialContext.run(currentConfig, () => fn(...args), currentAbortSignal)) as T;
 }

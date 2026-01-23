@@ -8,6 +8,22 @@
  * Usage:
  *   node dist/cli/runner.js --module ./my-trial.js --function runTrial
  */
+
+// IMPORTANT: Redirect console.log to stderr BEFORE any user code loads.
+// This prevents user code from corrupting the NDJSON protocol on stdout.
+console.log = (...args: unknown[]) => {
+  console.error('[user:log]', ...args);
+};
+console.info = (...args: unknown[]) => {
+  console.error('[user:info]', ...args);
+};
+console.debug = (...args: unknown[]) => {
+  console.error('[user:debug]', ...args);
+};
+console.trace = (...args: unknown[]) => {
+  console.error('[user:trace]', ...args);
+};
+
 import { createInterface } from 'node:readline';
 import { parseArgs } from 'node:util';
 import { TrialContext } from '../core/context.js';
@@ -31,6 +47,10 @@ import {
 /** Start time for uptime calculation */
 const startTime = Date.now();
 
+/** Current trial state for cancellation support */
+let currentTrialId: string | null = null;
+let currentTrialAbortController: AbortController | null = null;
+
 /** Parsed CLI arguments */
 interface RunnerArgs {
   module?: string;
@@ -43,7 +63,11 @@ interface RunnerArgs {
  */
 type UserTrialFunction = (
   config: TrialConfig
-) => Promise<{ metrics: Record<string, unknown>; duration?: number }>;
+) => Promise<{
+  metrics: Record<string, unknown>;
+  duration?: number;
+  metadata?: Record<string, unknown>;
+}>;
 
 /**
  * Parse command line arguments.
@@ -122,6 +146,9 @@ function log(message: string): void {
   console.error(`[traigent-js] ${message}`);
 }
 
+/** Default timeout for trial execution (5 minutes) */
+const DEFAULT_TIMEOUT_MS = 300_000;
+
 /**
  * Handle a run_trial request.
  */
@@ -131,16 +158,56 @@ async function handleRunTrial(
 ): Promise<CLIResponse> {
   const trialStartTime = Date.now();
 
+  // Validate payload FIRST with proper error code (not USER_FUNCTION_ERROR)
+  const parseResult = TrialConfigSchema.safeParse(request.payload);
+  if (!parseResult.success) {
+    const errorMessage = `Invalid trial config: ${parseResult.error.message}`;
+    log(`Validation error: ${errorMessage}`);
+
+    const trialId =
+      (request.payload as { trial_id?: string } | undefined)?.trial_id ??
+      'unknown';
+
+    const payload = createFailureResult(
+      trialId,
+      errorMessage,
+      'VALIDATION_ERROR',
+      false,
+      0
+    );
+
+    return createSuccessResponse(request.request_id, payload);
+  }
+
+  const config = parseResult.data;
+  const timeoutMs =
+    (request.payload as { timeout_ms?: number } | undefined)?.timeout_ms ??
+    DEFAULT_TIMEOUT_MS;
+
+  // Set up cancellation support
+  currentTrialId = config.trial_id;
+  currentTrialAbortController = new AbortController();
+  const abortSignal = currentTrialAbortController.signal;
+
+  log(`Running trial ${config.trial_id} (trial #${config.trial_number}, timeout: ${timeoutMs}ms)`);
+
   try {
-    // Validate payload as TrialConfig
-    const config = TrialConfigSchema.parse(request.payload);
-
-    log(`Running trial ${config.trial_id} (trial #${config.trial_number})`);
-
-    // Execute trial within context
-    const result = await TrialContext.run(config, async () => {
+    // Execute trial within context with timeout and cancellation support
+    const trialPromise = TrialContext.run(config, async () => {
       return await trialFn(config);
+    }, abortSignal);
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Trial timeout after ${timeoutMs}ms`)), timeoutMs);
     });
+
+    const abortPromise = new Promise<never>((_, reject) => {
+      abortSignal.addEventListener('abort', () => {
+        reject(new Error('Trial cancelled'));
+      });
+    });
+
+    const result = await Promise.race([trialPromise, timeoutPromise, abortPromise]);
 
     const duration = (Date.now() - trialStartTime) / 1000;
 
@@ -150,11 +217,21 @@ async function handleRunTrial(
       warn: (msg) => log(`Warning: ${msg}`),
     });
 
-    // Create success result
+    // Normalize duration: if user provides value > 1000, assume milliseconds and convert
+    const userDuration = result.duration;
+    const normalizedDuration =
+      userDuration !== undefined
+        ? userDuration > 1000
+          ? userDuration / 1000
+          : userDuration
+        : duration;
+
+    // Create success result with metadata if provided
     const payload = createSuccessResult(
       config.trial_id,
       metrics,
-      result.duration ?? duration
+      normalizedDuration,
+      result.metadata
     );
 
     log(`Trial ${config.trial_id} completed in ${duration.toFixed(2)}s`);
@@ -163,23 +240,29 @@ async function handleRunTrial(
   } catch (error) {
     const duration = (Date.now() - trialStartTime) / 1000;
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const isTimeout = errorMessage.includes('Trial timeout');
+    const isCancelled = errorMessage.includes('Trial cancelled') || abortSignal.aborted;
 
     log(`Trial failed: ${errorMessage}`);
 
-    // Try to extract trial_id from payload if possible
-    const trialId =
-      (request.payload as { trial_id?: string } | undefined)?.trial_id ??
-      'unknown';
-
     const payload = createFailureResult(
-      trialId,
+      config.trial_id,
       errorMessage,
-      'USER_FUNCTION_ERROR',
-      false,
+      isCancelled ? 'CANCELLED' : isTimeout ? 'TIMEOUT' : 'USER_FUNCTION_ERROR',
+      isTimeout, // Timeouts are retryable, cancellations are not
       duration
     );
 
+    // Set status to 'cancelled' if aborted
+    if (isCancelled) {
+      (payload as { status: string }).status = 'cancelled';
+    }
+
     return createSuccessResponse(request.request_id, payload);
+  } finally {
+    // Clear trial state
+    currentTrialId = null;
+    currentTrialAbortController = null;
   }
 }
 
@@ -198,9 +281,47 @@ function handlePing(request: CLIRequest): CLIResponse {
  */
 function handleShutdown(request: CLIRequest): CLIResponse {
   log('Shutdown requested');
+  // Cancel any in-flight trial first
+  if (currentTrialAbortController) {
+    currentTrialAbortController.abort();
+  }
   // Schedule exit after response is sent
   setImmediate(() => process.exit(0));
   return createSuccessResponse(request.request_id, { status: 'shutting_down' });
+}
+
+/**
+ * Handle a cancel request.
+ */
+function handleCancel(request: CLIRequest): CLIResponse {
+  const payload = request.payload as { trial_id?: string } | undefined;
+  const requestedTrialId = payload?.trial_id;
+
+  // If a specific trial ID is requested, check if it matches current
+  if (requestedTrialId && currentTrialId !== requestedTrialId) {
+    log(`Cancel requested for trial ${requestedTrialId} but current trial is ${currentTrialId ?? 'none'}`);
+    return createSuccessResponse(request.request_id, {
+      cancelled: false,
+      reason: 'trial_not_found',
+      requested_trial_id: requestedTrialId,
+      current_trial_id: currentTrialId,
+    });
+  }
+
+  if (currentTrialAbortController) {
+    log(`Cancelling trial ${currentTrialId}`);
+    currentTrialAbortController.abort();
+    return createSuccessResponse(request.request_id, {
+      cancelled: true,
+      trial_id: currentTrialId,
+    });
+  }
+
+  log('Cancel requested but no trial is running');
+  return createSuccessResponse(request.request_id, {
+    cancelled: false,
+    reason: 'no_trial_running',
+  });
 }
 
 /**
@@ -227,6 +348,9 @@ async function processRequest(
         break;
       case 'shutdown':
         response = handleShutdown(request);
+        break;
+      case 'cancel':
+        response = handleCancel(request);
         break;
       default:
         response = createErrorResponse(requestId, `Unknown action: ${request.action}`);
@@ -281,8 +405,10 @@ async function main(): Promise<void> {
   log('Stdin closed, exiting');
 }
 
-// Run main
-main().catch((error) => {
+// Run main with top-level await
+try {
+  await main();
+} catch (error) {
   console.error('Fatal error:', error);
   process.exit(1);
-});
+}

@@ -21,6 +21,7 @@
 export {
   TrialContext,
   TrialContextError,
+  TrialCancelledError,
   getTrialConfig,
   getTrialParam,
   wrapCallback,

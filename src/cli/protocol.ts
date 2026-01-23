@@ -20,6 +20,7 @@ export const ActionSchema = z.enum([
   'run_trial',
   'ping',
   'shutdown',
+  'cancel', // Cancel an in-flight trial
 ]);
 
 export type Action = z.infer<typeof ActionSchema>;
@@ -69,6 +70,19 @@ export const ShutdownRequestSchema = CLIRequestSchema.extend({
 });
 
 export type ShutdownRequest = z.infer<typeof ShutdownRequestSchema>;
+
+/**
+ * Cancel request to abort an in-flight trial.
+ */
+export const CancelRequestSchema = CLIRequestSchema.extend({
+  action: z.literal('cancel'),
+  payload: z.object({
+    /** Trial ID to cancel (optional - if not provided, cancels current trial) */
+    trial_id: z.string().optional(),
+  }).optional(),
+});
+
+export type CancelRequest = z.infer<typeof CancelRequestSchema>;
 
 /**
  * Response status.
