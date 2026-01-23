@@ -31,11 +31,17 @@ except ImportError:
             raise ImportError("MCP not available") from None
 
     class StdioServerParameters:  # type: ignore[no-redef]
+        """Stub class when MCP package is not installed."""
+
         def __init__(self, *args, **kwargs) -> None:
+            # Stub: MCP package not available, this class is never used at runtime
             pass
 
     class StdioClientTransport:  # type: ignore[no-redef]
+        """Stub class when MCP package is not installed."""
+
         def __init__(self, *args, **kwargs) -> None:
+            # Stub: MCP package not available, this class is never used at runtime
             pass
 
 
