@@ -629,6 +629,11 @@ class OptimizedFunction:
             kwargs, sentinel, "global_measures", None
         )
 
+        # JS runtime configuration
+        self.js_runtime_config = self._store_optional_param(
+            kwargs, sentinel, "js_runtime_config", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -1466,6 +1471,17 @@ class OptimizedFunction:
                 metrics=self.objectives,
                 timeout=timeout or 60.0,
                 capture_llm_metrics=True,
+            )
+
+        # Check if JS runtime is configured
+        js_config = getattr(self, "js_runtime_config", None)
+        if js_config is not None and getattr(js_config, "is_js_runtime", False):
+            from traigent.evaluators.js_evaluator import JSEvaluator
+
+            return JSEvaluator(
+                js_module=js_config.js_module,
+                js_function=js_config.js_function,
+                js_timeout=js_config.js_timeout,
             )
 
         effective_metric_functions = self._build_metric_functions()
