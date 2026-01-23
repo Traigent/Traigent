@@ -134,6 +134,14 @@ class ExecutionOptions(BaseModel):
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
         reps_aggregation: How to aggregate metrics across repetitions.
             Options: "mean" (default), "median", "min", "max".
+        runtime: Runtime to execute trials in ("python" or "node").
+            When set to "node", trials are executed in a Node.js subprocess.
+        js_module: Path to the JS module containing the trial function.
+            Required when runtime="node".
+        js_function: Name of the exported function to call in the JS module.
+            Default is "runTrial".
+        js_timeout: Timeout for JS trial execution in seconds.
+            Default is 300 (5 minutes).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -147,6 +155,11 @@ class ExecutionOptions(BaseModel):
     samples_include_pruned: bool = True
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
+    # JS Bridge options
+    runtime: str = "python"
+    js_module: str | None = None
+    js_function: str = "runTrial"
+    js_timeout: float = 300.0
 
 
 class MockModeOptions(BaseModel):
@@ -682,6 +695,21 @@ def _resolve_injection_bundle_options(
     )
 
 
+@dataclass
+class JSRuntimeConfig:
+    """Configuration for JS runtime execution."""
+
+    runtime: str = "python"
+    js_module: str | None = None
+    js_function: str = "runTrial"
+    js_timeout: float = 300.0
+
+    @property
+    def is_js_runtime(self) -> bool:
+        """Return True if this is a JS runtime configuration."""
+        return self.runtime == "node"
+
+
 def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
     execution_mode: Any,
@@ -692,7 +720,7 @@ def _resolve_execution_bundle_options(
     max_total_examples: Any,
     samples_include_pruned: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, JSRuntimeConfig | None]:
     """Resolve execution options from bundle and validate enterprise features."""
     if execution_bundle is None:
         return (
@@ -703,6 +731,7 @@ def _resolve_execution_bundle_options(
             privacy_enabled,
             max_total_examples,
             samples_include_pruned,
+            None,  # js_runtime_config
         )
 
     # Validate enterprise-gated features
@@ -717,6 +746,21 @@ def _resolve_execution_bundle_options(
             "reps_aggregation is not available in this version. "
             "This feature requires Traigent Enterprise. "
             "Contact sales@traigent.ai for more information."
+        )
+
+    # Build JS runtime config if runtime is "node"
+    js_runtime_config = None
+    if execution_bundle.runtime == "node":
+        if not execution_bundle.js_module:
+            raise ValueError(
+                "js_module is required when runtime='node'. "
+                "Specify the path to your JS module containing the trial function."
+            )
+        js_runtime_config = JSRuntimeConfig(
+            runtime=execution_bundle.runtime,
+            js_module=execution_bundle.js_module,
+            js_function=execution_bundle.js_function,
+            js_timeout=execution_bundle.js_timeout,
         )
 
     return (
@@ -759,6 +803,7 @@ def _resolve_execution_bundle_options(
             execution_bundle.samples_include_pruned,
             defaults,
         ),
+        js_runtime_config,
     )
 
 
@@ -1377,6 +1422,7 @@ def optimize(
         privacy_enabled,
         max_total_examples,
         samples_include_pruned,
+        js_runtime_config,
     ) = _resolve_execution_bundle_options(
         execution_bundle,
         execution_mode,
@@ -1500,6 +1546,8 @@ def optimize(
             # Config persistence
             auto_load_best=auto_load_best_config,
             load_from=load_from_config,
+            # JS runtime configuration
+            js_runtime_config=js_runtime_config,
             **combined_runtime_overrides,
         )
 
