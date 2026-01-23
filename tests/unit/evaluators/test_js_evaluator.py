@@ -477,3 +477,87 @@ class TestSampleBudgetIntegration:
 
         # Should not consume samples on failure
         mock_sample_lease.consume.assert_not_called()
+
+
+# =============================================================================
+# JSEvaluator with Process Pool Tests
+# =============================================================================
+
+
+class TestJSEvaluatorWithPool:
+    """Tests for JSEvaluator with process pool integration."""
+
+    @pytest.fixture
+    def sample_dataset(self):
+        """Create a sample dataset for testing."""
+        return Dataset(
+            [
+                EvaluationExample(
+                    input_data={"text": "sample"},
+                    expected_output={"label": "positive"},
+                )
+            ]
+        )
+
+    @pytest.fixture
+    def mock_pool(self):
+        """Create a mock process pool."""
+        pool = MagicMock()
+        pool.run_trial = AsyncMock(
+            return_value=JSTrialResult(
+                trial_id="pool-trial",
+                status="completed",
+                metrics={"accuracy": 0.95},
+                duration=2.0,
+                metadata={"workers": 4},
+            )
+        )
+        return pool
+
+    @pytest.mark.asyncio
+    async def test_evaluate_uses_pool_when_provided(self, sample_dataset, mock_pool):
+        """Test that evaluate() uses the process pool when provided."""
+        # Mock the bridge to prevent it from trying to start
+        mock_bridge = MagicMock()
+        mock_bridge.is_running = True
+
+        evaluator = JSEvaluator(
+            js_module="./test.js",
+            process_pool=mock_pool,
+        )
+        # Pre-set a mock bridge so _ensure_bridge doesn't try to start a real one
+        evaluator._bridge = mock_bridge
+
+        async def dummy_func(**kwargs):
+            return "result"
+
+        result = await evaluator.evaluate(
+            func=dummy_func,
+            config={"temperature": 0.7},
+            dataset=sample_dataset,
+        )
+
+        # Pool's run_trial should be called (not bridge's)
+        mock_pool.run_trial.assert_called_once()
+
+        # Bridge's run_trial should NOT be called
+        if hasattr(mock_bridge, "run_trial"):
+            mock_bridge.run_trial.assert_not_called()
+
+        # Verify result
+        assert result.aggregated_metrics["accuracy"] == 0.95
+        assert result.successful_examples == 1
+
+    @pytest.mark.asyncio
+    async def test_pool_not_closed_on_evaluator_close(self, mock_pool):
+        """Test that closing evaluator does not close the pool (pool is shared)."""
+        evaluator = JSEvaluator(
+            js_module="./test.js",
+            process_pool=mock_pool,
+        )
+
+        await evaluator.close()
+
+        # Pool should NOT be closed by evaluator
+        if hasattr(mock_pool, "shutdown"):
+            mock_pool.shutdown.assert_not_called()
