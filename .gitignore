@@ -336,6 +336,7 @@ results.json
 test_concurrent.db
 scripts/secrets/
 .scannerwork/
+sonar-project.local.properties
 
 # Traigent generated results and caches
 **/.traigent_results/

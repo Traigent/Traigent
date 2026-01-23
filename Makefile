@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -149,6 +149,24 @@ dev: install-dev install-hooks  ## Complete development setup
 check: quality-check  ## Alias for quality-check
 
 fix: quick-fix  ## Alias for quick-fix
+
+# SonarQube scanning
+sonar-scan:  ## Run SonarQube scan using local config file
+	@if ! command -v sonar-scanner >/dev/null 2>&1; then \
+		echo "Error: sonar-scanner not found. Install from https://docs.sonarqube.org/latest/analyzing-source-code/scanners/sonarscanner/"; \
+		exit 1; \
+	fi
+	@if [ ! -f "sonar-project.local.properties" ]; then \
+		echo "Error: sonar-project.local.properties not found"; \
+		exit 1; \
+	fi
+	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \
+		echo "Error: SONAR_LOCAL_TOKEN not set."; \
+		echo "Create a token at http://localhost:9000 -> My Account -> Security -> Generate Tokens"; \
+		exit 1; \
+	fi
+	sonar-scanner -Dproject.settings=sonar-project.local.properties -Dsonar.token=$$SONAR_LOCAL_TOKEN
+	@echo "Scan complete. View results at: http://localhost:9000/dashboard?id=TraigentSDK"
 
 # Local SonarQube (avoids consuming cloud tokens)
 sonar-local-start:  ## Start local SonarQube server (Docker)
