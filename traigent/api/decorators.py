@@ -52,6 +52,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 if TYPE_CHECKING:
     from traigent.api.config_space import ConfigSpace
     from traigent.api.constraints import BoolExpr, Constraint
+    from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
 from pydantic import BaseModel, ConfigDict
 
@@ -160,6 +161,7 @@ class ExecutionOptions(BaseModel):
     js_module: str | None = None
     js_function: str = "runTrial"
     js_timeout: float = 300.0
+    js_parallel_workers: int = 1
 
 
 class MockModeOptions(BaseModel):
@@ -280,6 +282,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "configuration_space": None,
     "default_config": None,
     "constraints": None,
+    "safety_constraints": None,
     "tvl_spec": None,
     "tvl_environment": None,
     "tvl": None,
@@ -346,6 +349,9 @@ class LegacyOptimizeArgs:
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
     constraints: list[Callable[..., Any]] | None = None
+    safety_constraints: list[Any] | None = (
+        None  # SafetyConstraint | CompoundSafetyConstraint
+    )
     tvl_spec: str | None = None
     tvl_environment: str | None = None
     tvl: TVLOptions | dict[str, Any] | None = None
@@ -412,6 +418,7 @@ class LegacyOptimizeArgs:
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
             ("constraints", self.constraints),
+            ("safety_constraints", self.safety_constraints),
             ("tvl_spec", self.tvl_spec),
             ("tvl_environment", self.tvl_environment),
             ("tvl", self.tvl),
@@ -703,6 +710,7 @@ class JSRuntimeConfig:
     js_module: str | None = None
     js_function: str = "runTrial"
     js_timeout: float = 300.0
+    js_parallel_workers: int = 1
 
     @property
     def is_js_runtime(self) -> bool:
@@ -761,6 +769,7 @@ def _resolve_execution_bundle_options(
             js_module=execution_bundle.js_module,
             js_function=execution_bundle.js_function,
             js_timeout=execution_bundle.js_timeout,
+            js_parallel_workers=execution_bundle.js_parallel_workers,
         )
 
     return (
@@ -1084,6 +1093,7 @@ def optimize(
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
+    safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
@@ -1289,6 +1299,7 @@ def optimize(
         "configuration_space": configuration_space,
         "default_config": default_config,
         "constraints": constraints,
+        "safety_constraints": safety_constraints,
         "tvl_spec": tvl_spec,
         "tvl_environment": tvl_environment,
         "tvl": tvl,
@@ -1322,6 +1333,7 @@ def optimize(
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
+    safety_constraints = combined_settings["safety_constraints"]
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (
@@ -1521,6 +1533,7 @@ def optimize(
             configuration_space=configuration_space,
             default_config=default_config,
             constraints=normalized_constraints,
+            safety_constraints=safety_constraints,
             injection_mode=actual_injection_mode,
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,

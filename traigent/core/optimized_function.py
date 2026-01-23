@@ -634,6 +634,14 @@ class OptimizedFunction:
             kwargs, sentinel, "js_runtime_config", None
         )
 
+        # JS process pool (created lazily for parallel JS execution)
+        self._js_process_pool: Any = None
+
+        # Safety constraints
+        self.safety_constraints = self._store_optional_param(
+            kwargs, sentinel, "safety_constraints", None
+        )
+
         self.kwargs = kwargs
         excluded_runtime_keys = {
             "algorithm",
@@ -654,6 +662,8 @@ class OptimizedFunction:
             "agent_prefixes",
             "agent_measures",
             "global_measures",
+            # Safety constraints
+            "safety_constraints",
         }
         self._decorator_runtime_overrides = {
             key: value
@@ -1478,10 +1488,34 @@ class OptimizedFunction:
         if js_config is not None and getattr(js_config, "is_js_runtime", False):
             from traigent.evaluators.js_evaluator import JSEvaluator
 
+            # Check if parallel execution is requested
+            js_parallel_workers = getattr(js_config, "js_parallel_workers", 1)
+            process_pool = None
+
+            if js_parallel_workers > 1:
+                from traigent.bridges.process_pool import (
+                    JSProcessPool,
+                    JSProcessPoolConfig,
+                )
+
+                pool_config = JSProcessPoolConfig(
+                    max_workers=js_parallel_workers,
+                    module_path=js_config.js_module,
+                    function_name=js_config.js_function,
+                    trial_timeout=js_config.js_timeout,
+                )
+                process_pool = JSProcessPool(pool_config)
+                self._js_process_pool = process_pool
+                logger.info(
+                    "Created JS process pool with %d workers for parallel execution",
+                    js_parallel_workers,
+                )
+
             return JSEvaluator(
                 js_module=js_config.js_module,
                 js_function=js_config.js_function,
                 js_timeout=js_config.js_timeout,
+                process_pool=process_pool,
             )
 
         effective_metric_functions = self._build_metric_functions()
@@ -1675,6 +1709,16 @@ class OptimizedFunction:
             # Set state to ERROR on failure
             self._state = OptimizationState.ERROR
             raise
+        finally:
+            # Clean up JS process pool if it was created
+            if self._js_process_pool is not None:
+                try:
+                    await self._js_process_pool.shutdown()
+                    logger.debug("JS process pool shut down successfully")
+                except Exception as e:
+                    logger.warning("Error shutting down JS process pool: %s", e)
+                finally:
+                    self._js_process_pool = None
 
         # Save results if requested
         if save_to:
@@ -2063,7 +2107,8 @@ class OptimizedFunction:
             return
 
         # No valid approval found
-        raise OptimizationError("""
+        raise OptimizationError(
+            """
 CI/CD Approval Required
 
 This optimization was triggered in a CI environment and requires approval.
@@ -2079,7 +2124,8 @@ To approve, use one of these methods:
 
 3. GitHub Actions with environment protection:
    Use 'environment: production' with required reviewers
-        """)
+        """
+        )
 
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization.

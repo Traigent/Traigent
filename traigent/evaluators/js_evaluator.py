@@ -24,6 +24,7 @@ from traigent.bridges.js_bridge import (
     JSBridgeError,
     JSTrialTimeoutError,
 )
+from traigent.bridges.process_pool import JSProcessPool
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.utils.logging import get_logger
 
@@ -57,6 +58,10 @@ class JSEvaluator(BaseEvaluator):
     JSBridge. It is used when execution.runtime="node" is specified in
     the @traigent.optimize decorator.
 
+    Supports two execution modes:
+    - Sequential (default): Single JSBridge, one trial at a time
+    - Parallel: Uses a JSProcessPool for concurrent trial execution
+
     The JS trial function receives:
     - trial_id: Unique trial identifier
     - trial_number: Sequential trial number
@@ -76,6 +81,7 @@ class JSEvaluator(BaseEvaluator):
         js_function: str = "runTrial",
         js_timeout: float = 300.0,
         experiment_run_id: str | None = None,
+        process_pool: JSProcessPool | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize JSEvaluator.
@@ -85,6 +91,9 @@ class JSEvaluator(BaseEvaluator):
             js_function: Name of the exported function to call.
             js_timeout: Timeout for trial execution in seconds.
             experiment_run_id: ID of the experiment run for trial tracking.
+            process_pool: Optional process pool for parallel execution.
+                If provided, trials will be executed via the pool instead of
+                a single bridge, enabling concurrent execution.
             **kwargs: Additional arguments passed to BaseEvaluator.
         """
         super().__init__(**kwargs)
@@ -95,6 +104,7 @@ class JSEvaluator(BaseEvaluator):
             experiment_run_id=experiment_run_id,
         )
         self._bridge: JSBridge | None = None
+        self._process_pool = process_pool
         self._trial_counter = 0
 
     async def _ensure_bridge(self) -> JSBridge:
@@ -110,10 +120,16 @@ class JSEvaluator(BaseEvaluator):
         return self._bridge
 
     async def close(self) -> None:
-        """Close the JS bridge and release resources."""
+        """Close the JS bridge and release resources.
+
+        Note: If using a process pool, the pool is NOT closed here since it
+        may be shared across multiple evaluators. The pool should be closed
+        by the orchestrator.
+        """
         if self._bridge is not None:
             await self._bridge.stop()
             self._bridge = None
+        # Note: Don't close process_pool here - it may be shared
 
     async def evaluate(
         self,
@@ -140,8 +156,6 @@ class JSEvaluator(BaseEvaluator):
         Returns:
             EvaluationResult with metrics from the JS trial.
         """
-        bridge = await self._ensure_bridge()
-
         # Generate trial ID
         self._trial_counter += 1
         trial_number = self._trial_counter
@@ -176,7 +190,14 @@ class JSEvaluator(BaseEvaluator):
         )
 
         try:
-            result = await bridge.run_trial(trial_config)
+            # Choose execution path: pool or single bridge
+            if self._process_pool is not None:
+                # Parallel mode: Use pool worker
+                result = await self._process_pool.run_trial(trial_config)
+            else:
+                # Sequential mode: Use single bridge (lazy start)
+                bridge = await self._ensure_bridge()
+                result = await bridge.run_trial(trial_config)
         except JSTrialTimeoutError as e:
             logger.error("JS trial %s timed out: %s", trial_id, e)
             return EvaluationResult(
@@ -224,7 +245,9 @@ class JSEvaluator(BaseEvaluator):
                 examples_consumed=consumed,
             )
         else:
-            error_msg = result.error_message or f"Trial failed with status: {result.status}"
+            error_msg = (
+                result.error_message or f"Trial failed with status: {result.status}"
+            )
             return EvaluationResult(
                 config=config,
                 example_results=[],
@@ -233,5 +256,8 @@ class JSEvaluator(BaseEvaluator):
                 successful_examples=0,
                 duration=result.duration,
                 errors=[error_msg],
-                summary_stats={"error_code": result.error_code, "retryable": result.retryable},
+                summary_stats={
+                    "error_code": result.error_code,
+                    "retryable": result.retryable,
+                },
             )
