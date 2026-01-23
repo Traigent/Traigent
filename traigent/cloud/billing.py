@@ -24,6 +24,8 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Storage file name constant
+_USAGE_STORAGE_FILENAME = "usage.json"
 
 # Cost Tracking Enums and Classes (from cost_tracking.py)
 
@@ -187,9 +189,9 @@ class UsageTracker:
             # Respect TRAIGENT_RESULTS_FOLDER if set, otherwise fall back to ~/.traigent
             results_folder = os.environ.get("TRAIGENT_RESULTS_FOLDER")
             if results_folder:
-                self.storage_path = Path(results_folder) / "usage.json"
+                self.storage_path = Path(results_folder) / _USAGE_STORAGE_FILENAME
             else:
-                self.storage_path = Path.home() / ".traigent" / "usage.json"
+                self.storage_path = Path.home() / ".traigent" / _USAGE_STORAGE_FILENAME
 
         try:
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +200,7 @@ class UsageTracker:
             logger.warning(
                 f"Cannot write to {self.storage_path.parent}, using ./.traigent_local/"
             )
-            self.storage_path = Path.cwd() / ".traigent_local" / "usage.json"
+            self.storage_path = Path.cwd() / ".traigent_local" / _USAGE_STORAGE_FILENAME
             self.storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._usage_records: list[UsageRecord] = []
         self._load_usage_data()
