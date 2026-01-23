@@ -66,12 +66,28 @@ import { createTraigentOpenAI } from '@traigent/sdk/openai';
 - `TrialContext` - Manage trial context using AsyncLocalStorage
 - `getTrialConfig()` - Get current trial's configuration parameters
 - `getTrialParam(key, defaultValue?)` - Get a specific config parameter
+- `TrialContext.isCancelled()` - Check if current trial is cancelled
+- `TrialContext.checkCancellation()` - Throw if cancelled (for cooperative cancellation)
+- `bindContext(fn)` - Bind a function to the current trial context
+- `wrapCallback(fn)` - Wrap a callback to preserve trial context
 
 ### DTOs
 
 - `TrialConfig` - Trial configuration from orchestrator
 - `TrialResultPayload` - Trial result to return
 - `MeasuresDict` - Validated metrics dictionary
+
+## CLI Runner
+
+The SDK includes a CLI runner for executing trials via the Python-to-JS bridge:
+
+```bash
+npx traigent-runner --module ./dist/my-agent.js --function runTrial
+```
+
+The runner communicates with the Python orchestrator via NDJSON over stdin/stdout.
+
+See [agent.md](./agent.md) for detailed bridge architecture and protocol documentation.
 
 ## Requirements
 
