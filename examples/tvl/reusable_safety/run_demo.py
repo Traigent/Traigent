@@ -484,7 +484,6 @@ def _run_single_qa_trial(
 
     if REAL_LLM_MODE:
         # Real LLM mode: Evaluate multiple queries for statistical validity
-        start_time = time.time()
         total_cost = 0.0
         total_latency = 0.0
 
@@ -540,7 +539,7 @@ def _run_single_qa_trial(
                 total_cost += ex_cost
                 total_latency += ex_latency
 
-            except Exception as e:
+            except Exception:
                 # Log error but continue with other examples
                 example_results.append(
                     ExampleResult(
@@ -714,7 +713,6 @@ def _run_single_support_trial(
 
     if REAL_LLM_MODE:
         # Real LLM mode: Evaluate multiple queries for statistical validity
-        start_time = time.time()
         total_cost = 0.0
         total_latency = 0.0
 
@@ -777,7 +775,7 @@ def _run_single_support_trial(
                 total_cost += ex_cost
                 total_latency += ex_latency
 
-            except Exception as e:
+            except Exception:
                 example_results.append(
                     ExampleResult(
                         example_id=f"trial_{trial_id}_ex_{ex_idx}",
