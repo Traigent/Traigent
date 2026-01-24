@@ -358,8 +358,18 @@ class TestBridgeLifecycle:
         config = JSBridgeConfig(module_path="./test.js")
 
         mock_process = mock_subprocess_factory(
-            ping_response={"version": "1.0", "request_id": "test", "status": "success", "payload": {"ok": True}},
-            shutdown_response={"version": "1.0", "request_id": "test", "status": "success", "payload": {}},
+            ping_response={
+                "version": "1.0",
+                "request_id": "test",
+                "status": "success",
+                "payload": {"ok": True},
+            },
+            shutdown_response={
+                "version": "1.0",
+                "request_id": "test",
+                "status": "success",
+                "payload": {},
+            },
         )
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
@@ -448,7 +458,9 @@ class TestErrorHandling:
         # Simulate the reader task detecting stdout close and failing requests
         for f in bridge._pending_requests.values():
             if not f.done():
-                f.set_exception(JSProcessError("JS process exited unexpectedly (exit code: 1)"))
+                f.set_exception(
+                    JSProcessError("JS process exited unexpectedly (exit code: 1)")
+                )
 
         # Verify the pending request was failed
         with pytest.raises(JSProcessError):
@@ -475,7 +487,11 @@ class TestProtocol:
         sent_requests: list[dict] = []
 
         mock_process = mock_subprocess_factory(
-            ping_response={"version": "1.0", "status": "success", "payload": {"ok": True}},
+            ping_response={
+                "version": "1.0",
+                "status": "success",
+                "payload": {"ok": True},
+            },
             shutdown_response={"version": "1.0", "status": "success", "payload": {}},
         )
 
@@ -597,12 +613,17 @@ def mock_subprocess_factory():
                 return json.dumps(response).encode() + b"\n"
             else:
                 # Default response
-                return json.dumps({
-                    "version": "1.0",
-                    "request_id": request_id,
-                    "status": "success",
-                    "payload": {"ok": True}
-                }).encode() + b"\n"
+                return (
+                    json.dumps(
+                        {
+                            "version": "1.0",
+                            "request_id": request_id,
+                            "status": "success",
+                            "payload": {"ok": True},
+                        }
+                    ).encode()
+                    + b"\n"
+                )
 
         mock_process.stdout = MagicMock()
         mock_process.stdout.readline = mock_readline
@@ -623,8 +644,18 @@ async def mock_bridge_started(mock_subprocess_factory):
     bridge = JSBridge(config)
 
     mock_process = mock_subprocess_factory(
-        ping_response={"version": "1.0", "request_id": "ping", "status": "success", "payload": {"ok": True}},
-        shutdown_response={"version": "1.0", "request_id": "shutdown", "status": "success", "payload": {}},
+        ping_response={
+            "version": "1.0",
+            "request_id": "ping",
+            "status": "success",
+            "payload": {"ok": True},
+        },
+        shutdown_response={
+            "version": "1.0",
+            "request_id": "shutdown",
+            "status": "success",
+            "payload": {},
+        },
     )
 
     with patch("asyncio.create_subprocess_exec", return_value=mock_process):

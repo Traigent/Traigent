@@ -31,9 +31,13 @@ from traigent.bridges.process_pool import (
     PoolCapacityError,
 )
 
-
 # Path to the JS demo app
-JS_DEMO_DIR = Path(__file__).parent.parent.parent.parent.parent / "traigent-js" / "demos" / "agent-app"
+JS_DEMO_DIR = (
+    Path(__file__).parent.parent.parent.parent.parent
+    / "traigent-js"
+    / "demos"
+    / "agent-app"
+)
 JS_DEMO_DIST = JS_DEMO_DIR / "dist"
 JS_TRIAL_MODULE = JS_DEMO_DIST / "trial.js"
 
@@ -49,18 +53,16 @@ def js_demo_built() -> bool:
 
 
 skip_no_node = pytest.mark.skipif(
-    not node_available(),
-    reason="Node.js not available in PATH"
+    not node_available(), reason="Node.js not available in PATH"
 )
 
 skip_no_demo = pytest.mark.skipif(
-    not js_demo_built(),
-    reason=f"JS demo not built at {JS_DEMO_DIST}"
+    not js_demo_built(), reason=f"JS demo not built at {JS_DEMO_DIST}"
 )
 
 requires_js_runtime = pytest.mark.skipif(
     not (node_available() and js_demo_built()),
-    reason="Node.js or JS demo not available"
+    reason="Node.js or JS demo not available",
 )
 
 
@@ -169,8 +171,7 @@ class TestJSBridgeE2E:
             # Try to cancel - may or may not succeed depending on timing
             try:
                 cancel_result = await asyncio.wait_for(
-                    bridge.cancel("test-cancel-001"),
-                    timeout=2.0
+                    bridge.cancel("test-cancel-001"), timeout=2.0
                 )
                 cancel_succeeded = cancel_result.get("cancelled", False)
             except (asyncio.TimeoutError, Exception):

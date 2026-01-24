@@ -771,6 +771,11 @@ def _resolve_execution_bundle_options(
             js_timeout=execution_bundle.js_timeout,
             js_parallel_workers=execution_bundle.js_parallel_workers,
         )
+    elif execution_bundle.runtime not in ("python", "node"):
+        raise ValueError(
+            f"Invalid runtime '{execution_bundle.runtime}'. "
+            "Supported values are 'python' (default) or 'node' (JavaScript)."
+        )
 
     return (
         _resolve_option(
@@ -835,6 +840,56 @@ def _resolve_injection_mode_enum(
         return InjectionMode(injection_mode)
     except ValueError:
         return injection_mode
+
+
+# Injection modes that are incompatible with JS runtime
+_JS_INCOMPATIBLE_INJECTION_MODES = frozenset(
+    {
+        InjectionMode.CONTEXT,  # Uses Python's contextvars
+        InjectionMode.ATTRIBUTE,  # Stores on Python function attribute
+        InjectionMode.SEAMLESS,  # Modifies Python source code
+    }
+)
+
+
+def _validate_js_runtime_injection_mode(
+    js_runtime_config: JSRuntimeConfig | None,
+    injection_mode: str | InjectionMode,
+) -> None:
+    """Validate that injection mode is compatible with JS runtime.
+
+    When runtime='node', Python-specific injection modes are not supported
+    because the trial config is passed directly to the JS function via the
+    NDJSON protocol.
+
+    Args:
+        js_runtime_config: JS runtime configuration (None if runtime='python')
+        injection_mode: The injection mode being used
+
+    Raises:
+        ValueError: If injection mode is incompatible with JS runtime
+    """
+    if js_runtime_config is None or not js_runtime_config.is_js_runtime:
+        return
+
+    # Normalize to enum for comparison
+    mode_enum = (
+        injection_mode
+        if isinstance(injection_mode, InjectionMode)
+        else (
+            InjectionMode(injection_mode)
+            if injection_mode in [m.value for m in InjectionMode]
+            else None
+        )
+    )
+
+    if mode_enum in _JS_INCOMPATIBLE_INJECTION_MODES:
+        raise ValueError(
+            f"injection_mode='{mode_enum.value if mode_enum else injection_mode}' "
+            f"is not compatible with runtime='node'. "
+            f"When using JavaScript runtime, config is passed directly to the JS function "
+            f"via the trial protocol. Use injection_mode='parameter' or omit it."
+        )
 
 
 def _resolve_execution_mode_enum(
@@ -1494,6 +1549,9 @@ def optimize(
         actual_execution_mode = _resolve_actual_execution_mode(execution_mode)
 
         actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
+
+        # Validate injection mode is compatible with JS runtime
+        _validate_js_runtime_injection_mode(js_runtime_config, actual_injection_mode)
 
         execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
             actual_execution_mode, privacy_enabled

@@ -402,3 +402,6 @@ coverage.json
 tests/manual/
 tmp/
 walkthrough/myfiles.md
+
+# Presentations (internal/sensitive)
+presentations/
