@@ -421,7 +421,7 @@ class CompoundSafetyConstraint:
 
     def __init__(
         self,
-        constraints: list[SafetyConstraint],
+        constraints: list[SafetyConstraint | CompoundSafetyConstraint],
         combinator: str = "and",
     ) -> None:
         """Initialize compound constraint.
@@ -434,7 +434,7 @@ class CompoundSafetyConstraint:
         self._combinator = combinator
 
     @property
-    def constraints(self) -> tuple[SafetyConstraint, ...]:
+    def constraints(self) -> tuple[SafetyConstraint | CompoundSafetyConstraint, ...]:
         """Constituent safety constraints."""
         return self._constraints
 
