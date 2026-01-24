@@ -24,7 +24,7 @@ import signal
 import sys
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from traigent.utils.logging import get_logger
 
@@ -299,64 +299,72 @@ class JSBridge:
             finally:
                 await self._terminate()
 
-    async def _terminate(self) -> None:
-        """Force terminate the Node.js process and all its children.
+    def _send_signal_to_group(self, sig: signal.Signals) -> bool:
+        """Send signal to process group (Unix only).
 
-        Uses process group termination (SIGTERM to process group) to ensure
-        all child processes are also terminated, preventing orphans.
-        Falls back to direct process termination on Windows or if group
-        termination fails.
+        Returns True if signal was sent, False if fallback to direct is needed.
         """
-        if self._process is not None:
-            pid = self._process.pid
-            try:
-                # First try process group termination (Unix only)
-                if sys.platform != "win32" and pid is not None:
-                    try:
-                        os.killpg(pid, signal.SIGTERM)
-                        logger.debug("Sent SIGTERM to process group %d", pid)
-                    except (ProcessLookupError, PermissionError):
-                        # Process group doesn't exist or no permission
-                        # Fall back to direct termination
-                        self._process.terminate()
-                else:
-                    # Windows: use direct termination
-                    self._process.terminate()
+        if self._process is None:
+            return False
+        pid = self._process.pid
+        if sys.platform == "win32" or pid is None:
+            return False
+        try:
+            os.killpg(pid, sig)
+            logger.debug("Sent %s to process group %d", sig.name, pid)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
 
-                # Give it a moment to terminate gracefully
-                try:
-                    await asyncio.wait_for(self._process.wait(), timeout=5.0)
-                except TimeoutError:
-                    logger.warning("JS process did not terminate, sending SIGKILL")
-                    # Force kill the process group
-                    if sys.platform != "win32" and pid is not None:
-                        try:
-                            os.killpg(pid, signal.SIGKILL)
-                        except (ProcessLookupError, PermissionError):
-                            self._process.kill()
-                    else:
-                        self._process.kill()
-                    await self._process.wait()
-            except ProcessLookupError:
-                pass  # Already dead
-
-        # Cancel pending requests
-        for _request_id, future in self._pending_requests.items():
+    def _fail_pending_requests(self, error: Exception) -> None:
+        """Fail all pending requests with the given error."""
+        for future in self._pending_requests.values():
             if not future.done():
-                future.set_exception(JSBridgeError("Bridge shutdown"))
+                future.set_exception(error)
         self._pending_requests.clear()
 
-        # Cancel reader task
+    async def _cancel_reader_task(self) -> None:
+        """Cancel and await the reader task."""
         if self._reader_task is not None:
             self._reader_task.cancel()
             try:
                 await self._reader_task
             except asyncio.CancelledError:
-                pass
+                pass  # Intentionally suppress - we initiated this cancellation
+
+    async def _terminate(self) -> None:
+        """Force terminate the Node.js process and all its children."""
+        if self._process is not None:
+            await self._terminate_process()
+
+        self._fail_pending_requests(JSBridgeError("Bridge shutdown"))
+        await self._cancel_reader_task()
 
         self._process = None
         self._reader_task = None
         self._started = False
+
+    async def _terminate_process(self) -> None:
+        """Terminate the Node.js process with graceful fallback to force kill."""
+        if self._process is None:
+            return
+
+        try:
+            # Try process group termination first, fall back to direct
+            if not self._send_signal_to_group(signal.SIGTERM):
+                self._process.terminate()
+
+            # Wait for graceful termination
+            try:
+                async with asyncio.timeout(5.0):
+                    await self._process.wait()
+            except TimeoutError:
+                logger.warning("JS process did not terminate, sending SIGKILL")
+                if not self._send_signal_to_group(signal.SIGKILL):
+                    self._process.kill()
+                await self._process.wait()
+        except ProcessLookupError:
+            pass  # Already dead
 
     async def ping(self, timeout: float | None = None) -> dict[str, Any]:
         """Ping the Node.js process to check health.
@@ -376,7 +384,7 @@ class JSBridge:
             payload={},
             timeout=timeout,
         )
-        return response["payload"]
+        return cast(dict[str, Any], response["payload"])
 
     async def cancel(self, trial_id: str | None = None) -> dict[str, Any]:
         """Cancel an in-flight trial.
@@ -392,7 +400,7 @@ class JSBridge:
             payload={"trial_id": trial_id} if trial_id else {},
             timeout=self._config.command_timeout_seconds,
         )
-        return response["payload"]
+        return cast(dict[str, Any], response["payload"])
 
     async def run_trial(
         self,
@@ -536,7 +544,8 @@ class JSBridge:
             logger.debug("Sent request: %s", action)
 
             # Wait for response
-            response = await asyncio.wait_for(response_future, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                response = await response_future
             return response
 
         except TimeoutError:
@@ -548,6 +557,25 @@ class JSBridge:
         finally:
             self._pending_requests.pop(request_id, None)
 
+    def _handle_process_exit(self) -> None:
+        """Handle unexpected process exit by failing pending requests."""
+        logger.info("JS process stdout closed")
+        exit_code = self._process.returncode if self._process else None
+        error = JSProcessError(
+            f"JS process exited unexpectedly (exit code: {exit_code})"
+        )
+        self._fail_pending_requests(error)
+
+    def _dispatch_response(self, response: dict[str, Any]) -> None:
+        """Dispatch a parsed response to its waiting future."""
+        request_id = response.get("request_id")
+        if request_id and request_id in self._pending_requests:
+            future = self._pending_requests[request_id]
+            if not future.done():
+                future.set_result(response)
+        else:
+            logger.warning("Received response for unknown request: %s", request_id)
+
     async def _read_responses(self) -> None:
         """Background task to read responses from Node.js stdout."""
         if self._process is None or self._process.stdout is None:
@@ -557,16 +585,7 @@ class JSBridge:
             while True:
                 line = await self._process.stdout.readline()
                 if not line:
-                    logger.info("JS process stdout closed")
-                    # Process exited - fail all pending requests immediately
-                    # instead of letting them wait for timeout
-                    exit_code = self._process.returncode if self._process else None
-                    error_msg = (
-                        f"JS process exited unexpectedly (exit code: {exit_code})"
-                    )
-                    for future in self._pending_requests.values():
-                        if not future.done():
-                            future.set_exception(JSProcessError(error_msg))
+                    self._handle_process_exit()
                     break
 
                 try:
@@ -575,25 +594,13 @@ class JSBridge:
                     logger.warning("Invalid JSON from JS process: %s", e)
                     continue
 
-                request_id = response.get("request_id")
-                if request_id and request_id in self._pending_requests:
-                    future = self._pending_requests[request_id]
-                    if not future.done():
-                        future.set_result(response)
-                else:
-                    logger.warning(
-                        "Received response for unknown request: %s", request_id
-                    )
+                self._dispatch_response(response)
 
         except asyncio.CancelledError:
-            # Re-raise to signal clean task completion
-            raise
+            raise  # Re-raise to signal clean task completion
         except Exception as e:
             logger.error("Error reading from JS process: %s", e)
-            # Fail all pending requests
-            for future in self._pending_requests.values():
-                if not future.done():
-                    future.set_exception(JSProtocolError(f"Read error: {e}"))
+            self._fail_pending_requests(JSProtocolError(f"Read error: {e}"))
 
     async def _log_stderr(self) -> None:
         """Background task to log stderr output from Node.js."""

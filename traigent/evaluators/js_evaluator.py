@@ -29,6 +29,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
+    from traigent.bridges.js_bridge import JSTrialResult
     from traigent.core.sample_budget import SampleBudgetLease
 
 logger = get_logger(__name__)
@@ -131,6 +132,94 @@ class JSEvaluator(BaseEvaluator):
             self._bridge = None
         # Note: Don't close process_pool here - it may be shared
 
+    def _build_trial_config(
+        self,
+        trial_id: str,
+        trial_number: int,
+        config: dict[str, Any],
+        dataset: Dataset,
+        indices: list[int],
+    ) -> dict[str, Any]:
+        """Build the trial configuration dict for JS execution."""
+        dataset_metadata = getattr(dataset, "metadata", {}) or {}
+        trial_config: dict[str, Any] = {
+            "trial_id": trial_id,
+            "trial_number": trial_number,
+            "experiment_run_id": self._js_config.experiment_run_id or "unknown",
+            "config": config,
+            "dataset_subset": {"indices": indices, "total": len(dataset)},
+        }
+
+        # Add dataset info if available
+        dataset_path = dataset_metadata.get("source_path")
+        dataset_hash = dataset_metadata.get("dataset_hash")
+        dataset_name = getattr(dataset, "name", None)
+        if dataset_path or dataset_hash or dataset_name:
+            trial_config["dataset_info"] = {
+                "path": dataset_path,
+                "hash": dataset_hash,
+                "name": dataset_name,
+            }
+        return trial_config
+
+    def _build_error_result(
+        self, config: dict[str, Any], indices: list[int], error: str
+    ) -> EvaluationResult:
+        """Build an EvaluationResult for error cases."""
+        return EvaluationResult(
+            config=config,
+            example_results=[],
+            aggregated_metrics={},
+            total_examples=len(indices),
+            successful_examples=0,
+            duration=0.0,
+            errors=[error],
+        )
+
+    def _convert_js_result(
+        self,
+        result: JSTrialResult,
+        config: dict[str, Any],
+        indices: list[int],
+        sample_lease: SampleBudgetLease | None,
+    ) -> EvaluationResult:
+        """Convert JSTrialResult to EvaluationResult."""
+        if result.status == "completed":
+            consumed = len(indices)
+            if sample_lease is not None:
+                sample_lease.try_take(consumed)
+
+            aggregated_metrics = {
+                k: float(v)
+                for k, v in result.metrics.items()
+                if isinstance(v, (int, float))
+            }
+            return EvaluationResult(
+                config=config,
+                example_results=[],
+                aggregated_metrics=aggregated_metrics,
+                total_examples=consumed,
+                successful_examples=consumed,
+                duration=result.duration,
+                summary_stats=result.metadata,
+                examples_consumed=consumed,
+            )
+
+        error_msg = result.error_message or f"Trial failed with status: {result.status}"
+        return EvaluationResult(
+            config=config,
+            example_results=[],
+            aggregated_metrics={},
+            total_examples=len(indices),
+            successful_examples=0,
+            duration=result.duration,
+            errors=[error_msg],
+            summary_stats={
+                "error_code": result.error_code,
+                "retryable": result.retryable,
+            },
+        )
+
     async def evaluate(
         self,
         func: Callable[..., Any],
@@ -156,45 +245,21 @@ class JSEvaluator(BaseEvaluator):
         Returns:
             EvaluationResult with metrics from the JS trial.
         """
-        # Generate trial ID
         self._trial_counter += 1
         trial_number = self._trial_counter
         trial_id = f"js_trial_{uuid.uuid4().hex[:8]}"
 
-        # Build dataset subset info
+        # Build dataset subset based on sample budget
         dataset_size = len(dataset)
         if sample_lease is not None:
-            # Respect sample budget
-            available = min(sample_lease.remaining, dataset_size)
+            available = min(int(sample_lease.remaining()), dataset_size)
             indices = list(range(available))
         else:
             indices = list(range(dataset_size))
 
-        # Extract dataset metadata for JS
-        dataset_metadata = getattr(dataset, "metadata", {}) or {}
-        dataset_path = dataset_metadata.get("source_path")
-        dataset_hash = dataset_metadata.get("dataset_hash")
-        dataset_name = getattr(dataset, "name", None)
-
-        # Build trial config for JS
-        trial_config: dict[str, Any] = {
-            "trial_id": trial_id,
-            "trial_number": trial_number,
-            "experiment_run_id": self._js_config.experiment_run_id or "unknown",
-            "config": config,
-            "dataset_subset": {
-                "indices": indices,
-                "total": dataset_size,
-            },
-        }
-
-        # Add dataset info if available (for JS to load the dataset)
-        if dataset_path or dataset_hash or dataset_name:
-            trial_config["dataset_info"] = {
-                "path": dataset_path,
-                "hash": dataset_hash,
-                "name": dataset_name,
-            }
+        trial_config = self._build_trial_config(
+            trial_id, trial_number, config, dataset, indices
+        )
 
         logger.info(
             "Running JS trial %s (trial #%d) with config: %s",
@@ -204,74 +269,13 @@ class JSEvaluator(BaseEvaluator):
         )
 
         try:
-            # Choose execution path: pool or single bridge
             if self._process_pool is not None:
-                # Parallel mode: Use pool worker
                 result = await self._process_pool.run_trial(trial_config)
             else:
-                # Sequential mode: Use single bridge (lazy start)
                 bridge = await self._ensure_bridge()
                 result = await bridge.run_trial(trial_config)
-        except JSTrialTimeoutError as e:
-            logger.error("JS trial %s timed out: %s", trial_id, e)
-            return EvaluationResult(
-                config=config,
-                example_results=[],
-                aggregated_metrics={},
-                total_examples=len(indices),
-                successful_examples=0,
-                duration=0.0,
-                errors=[str(e)],
-            )
-        except JSBridgeError as e:
-            logger.error("JS bridge error for trial %s: %s", trial_id, e)
-            return EvaluationResult(
-                config=config,
-                example_results=[],
-                aggregated_metrics={},
-                total_examples=len(indices),
-                successful_examples=0,
-                duration=0.0,
-                errors=[str(e)],
-            )
+        except (JSTrialTimeoutError, JSBridgeError) as e:
+            logger.error("JS trial %s failed: %s", trial_id, e)
+            return self._build_error_result(config, indices, str(e))
 
-        # Convert JS result to EvaluationResult
-        if result.status == "completed":
-            # Mark samples consumed if we have a lease
-            consumed = len(indices)
-            if sample_lease is not None:
-                sample_lease.consume(consumed)
-
-            # Convert metrics to float for aggregated_metrics
-            aggregated_metrics: dict[str, float] = {}
-            for key, value in result.metrics.items():
-                if isinstance(value, (int, float)):
-                    aggregated_metrics[key] = float(value)
-
-            return EvaluationResult(
-                config=config,
-                example_results=[],  # JS trials don't return individual outputs
-                aggregated_metrics=aggregated_metrics,
-                total_examples=consumed,
-                successful_examples=consumed,
-                duration=result.duration,
-                summary_stats=result.metadata,
-                examples_consumed=consumed,
-            )
-        else:
-            error_msg = (
-                result.error_message or f"Trial failed with status: {result.status}"
-            )
-            return EvaluationResult(
-                config=config,
-                example_results=[],
-                aggregated_metrics={},
-                total_examples=len(indices),
-                successful_examples=0,
-                duration=result.duration,
-                errors=[error_msg],
-                summary_stats={
-                    "error_code": result.error_code,
-                    "retryable": result.retryable,
-                },
-            )
+        return self._convert_js_result(result, config, indices, sample_lease)
