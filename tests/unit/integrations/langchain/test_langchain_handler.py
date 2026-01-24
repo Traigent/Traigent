@@ -484,9 +484,7 @@ class TestTraigentHandlerChatModelCallbacks:
             run_id=run_id,
         )
 
-        handler.on_chat_model_error(
-            error=Exception("Chat model failed"), run_id=run_id
-        )
+        handler.on_chat_model_error(error=Exception("Chat model failed"), run_id=run_id)
 
         assert len(handler._completed_llm_calls) == 1
         call = handler._completed_llm_calls[0]

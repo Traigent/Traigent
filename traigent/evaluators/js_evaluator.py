@@ -170,8 +170,14 @@ class JSEvaluator(BaseEvaluator):
         else:
             indices = list(range(dataset_size))
 
+        # Extract dataset metadata for JS
+        dataset_metadata = getattr(dataset, "metadata", {}) or {}
+        dataset_path = dataset_metadata.get("source_path")
+        dataset_hash = dataset_metadata.get("dataset_hash")
+        dataset_name = getattr(dataset, "name", None)
+
         # Build trial config for JS
-        trial_config = {
+        trial_config: dict[str, Any] = {
             "trial_id": trial_id,
             "trial_number": trial_number,
             "experiment_run_id": self._js_config.experiment_run_id or "unknown",
@@ -181,6 +187,14 @@ class JSEvaluator(BaseEvaluator):
                 "total": dataset_size,
             },
         }
+
+        # Add dataset info if available (for JS to load the dataset)
+        if dataset_path or dataset_hash or dataset_name:
+            trial_config["dataset_info"] = {
+                "path": dataset_path,
+                "hash": dataset_hash,
+                "name": dataset_name,
+            }
 
         logger.info(
             "Running JS trial %s (trial #%d) with config: %s",

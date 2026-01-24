@@ -1837,3 +1837,386 @@ objectives:
         model_tvar = artifact.tvars[0]
         assert model_tvar.agent is None
         assert artifact.parameter_agents is None
+
+
+class TestSpecLevelInheritance:
+    """Tests for TVL spec-level inheritance via 'extends' keyword."""
+
+    def test_basic_extends_inherits_tvars(self, tmp_path: Path) -> None:
+        """Child spec inherits tvars from base spec."""
+        # Create base spec
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: base_param
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        # Create child spec that extends base
+        child_content = """
+extends: ./base.tvl.yml
+
+tvars:
+  - name: child_param
+    type: int
+    domain:
+      range: [1, 10]
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both base and child tvars
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "base_param" in tvar_names
+        assert "child_param" in tvar_names
+
+    def test_extends_inherits_objectives(self, tmp_path: Path) -> None:
+        """Child spec inherits objectives from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: base_objective
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+objectives:
+  - name: child_objective
+    direction: minimize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both base and child objectives
+        assert artifact.objective_schema is not None
+        obj_names = [o.name for o in artifact.objective_schema.objectives]
+        assert "base_objective" in obj_names
+        assert "child_objective" in obj_names
+
+    def test_extends_inherits_constraints(self, tmp_path: Path) -> None:
+        """Child spec inherits constraints from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+constraints:
+  structural:
+    - expr: 'params.temperature <= 0.5'
+      id: base-constraint
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+constraints:
+  structural:
+    - expr: 'params.temperature >= 0.1'
+      id: child-constraint
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both constraints
+        assert len(artifact.constraints) == 2
+        constraint_ids = [
+            getattr(c, "__tvl_constraint__", {}).get("id", "")
+            for c in artifact.constraints
+        ]
+        assert "base-constraint" in constraint_ids
+        assert "child-constraint" in constraint_ids
+
+    def test_extends_child_overrides_scalar_fields(self, tmp_path: Path) -> None:
+        """Child spec overrides scalar fields from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+metadata:
+  owner: "base-owner@example.com"
+  description: "Base description"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+metadata:
+  owner: "child-owner@example.com"
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Child should override owner but inherit description via deep merge
+        assert artifact.metadata["owner"] == "child-owner@example.com"
+
+    def test_extends_relative_path_resolution(self, tmp_path: Path) -> None:
+        """Extends path is resolved relative to child spec location."""
+        # Create subdirectory
+        subdir = tmp_path / "specs"
+        subdir.mkdir()
+
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: base_var
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ../base.tvl.yml
+
+tvars:
+  - name: child_var
+    type: int
+    domain:
+      range: [1, 10]
+"""
+        child_file = subdir / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "base_var" in tvar_names
+        assert "child_var" in tvar_names
+
+    def test_extends_circular_dependency_raises_error(self, tmp_path: Path) -> None:
+        """Circular extends chain raises TVLValidationError."""
+        # Create circular dependency: A -> B -> A
+        spec_a_content = """
+extends: ./spec_b.tvl.yml
+
+tvars:
+  - name: a_var
+    type: int
+    domain: [1, 2, 3]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_b_content = """
+extends: ./spec_a.tvl.yml
+
+tvars:
+  - name: b_var
+    type: int
+    domain: [4, 5, 6]
+
+objectives:
+  - name: latency
+    direction: minimize
+"""
+        spec_a_file = tmp_path / "spec_a.tvl.yml"
+        spec_b_file = tmp_path / "spec_b.tvl.yml"
+        spec_a_file.write_text(spec_a_content)
+        spec_b_file.write_text(spec_b_content)
+
+        with pytest.raises(TVLValidationError, match="[Cc]ircular"):
+            load_tvl_spec(spec_path=spec_a_file)
+
+    def test_extends_base_not_found_raises_error(self, tmp_path: Path) -> None:
+        """Missing base spec raises TVLValidationError."""
+        child_content = """
+extends: ./nonexistent.tvl.yml
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        with pytest.raises(TVLValidationError, match="[Bb]ase spec not found"):
+            load_tvl_spec(spec_path=child_file)
+
+    def test_extends_invalid_type_raises_error(self, tmp_path: Path) -> None:
+        """Non-string extends value raises TVLValidationError."""
+        child_content = """
+extends: 123  # Invalid - should be string
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        with pytest.raises(TVLValidationError, match="string"):
+            load_tvl_spec(spec_path=child_file)
+
+    def test_extends_chain_multiple_levels(self, tmp_path: Path) -> None:
+        """Supports multiple levels of inheritance: grandparent -> parent -> child."""
+        # Grandparent spec
+        grandparent_content = """
+tvl_version: "0.9"
+tvars:
+  - name: grandparent_var
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: base_accuracy
+    direction: maximize
+"""
+        grandparent_file = tmp_path / "grandparent.tvl.yml"
+        grandparent_file.write_text(grandparent_content)
+
+        # Parent spec extends grandparent
+        parent_content = """
+extends: ./grandparent.tvl.yml
+
+tvars:
+  - name: parent_var
+    type: int
+    domain:
+      range: [1, 10]
+
+objectives:
+  - name: parent_latency
+    direction: minimize
+"""
+        parent_file = tmp_path / "parent.tvl.yml"
+        parent_file.write_text(parent_content)
+
+        # Child spec extends parent
+        child_content = """
+extends: ./parent.tvl.yml
+
+tvars:
+  - name: child_var
+    type: bool
+    domain: [true, false]
+
+objectives:
+  - name: child_cost
+    direction: minimize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have all three levels of tvars
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "grandparent_var" in tvar_names
+        assert "parent_var" in tvar_names
+        assert "child_var" in tvar_names
+
+        # Should have all three levels of objectives
+        assert artifact.objective_schema is not None
+        obj_names = [o.name for o in artifact.objective_schema.objectives]
+        assert "base_accuracy" in obj_names
+        assert "parent_latency" in obj_names
+        assert "child_cost" in obj_names
+
+    def test_extends_with_derived_constraints(self, tmp_path: Path) -> None:
+        """Derived constraints from base and child are combined."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+  - name: max_tokens
+    type: int
+    domain:
+      range: [100, 1000]
+
+constraints:
+  derived:
+    - require: "params.temperature <= 0.5"
+      description: "Base temperature limit"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+constraints:
+  derived:
+    - require: "params.max_tokens >= 200"
+      description: "Child token minimum"
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Both derived constraints should be present
+        assert artifact.derived_constraints is not None
+        assert len(artifact.derived_constraints) == 2
+        descriptions = [dc.description for dc in artifact.derived_constraints]
+        assert "Base temperature limit" in descriptions
+        assert "Child token minimum" in descriptions

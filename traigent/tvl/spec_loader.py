@@ -221,6 +221,10 @@ _KNOWN_TVL_SECTIONS = frozenset(
         "env_snapshot",
         "evaluation_set",
         "promotion_policy",
+        "extends",  # Spec-level inheritance
+        "safety_constraints",  # Safety constraint definitions
+        "datasets",  # Dataset references for evaluation
+        "evaluators",  # Evaluator definitions
         # Legacy sections (deprecated but still valid)
         "configuration_space",
         "optimization",
@@ -242,6 +246,10 @@ _SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
     "env_snapshot": dict,
     "evaluation_set": dict,
     "promotion_policy": dict,
+    "extends": str,  # Path to base spec (spec-level inheritance)
+    "safety_constraints": list,  # Safety constraint definitions
+    "datasets": dict,  # Dataset references for evaluation
+    "evaluators": dict,  # Evaluator definitions
     "configuration_space": dict,
     "optimization": dict,
 }
@@ -620,6 +628,9 @@ def load_tvl_spec(
     """
     path = Path(spec_path).expanduser()
     raw_data = _load_and_parse_yaml(path)
+
+    # Resolve spec-level inheritance (extends) before any other processing
+    raw_data = _resolve_spec_extends(raw_data, path)
 
     # T-5: Early schema validation before detailed parsing
     if validate_schema:
@@ -1638,6 +1649,147 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _deep_merge_lists(
+    base: dict[str, Any], overlay: dict[str, Any], list_keys: set[str]
+) -> dict[str, Any]:
+    """Deep merge with list concatenation for specified keys.
+
+    Unlike _deep_merge which replaces lists, this function concatenates lists
+    for specified keys (e.g., safety_constraints, objectives).
+
+    Args:
+        base: Base dictionary to merge into.
+        overlay: Overlay dictionary with values to merge.
+        list_keys: Set of keys where lists should be concatenated rather than replaced.
+
+    Returns:
+        Merged dictionary with lists concatenated for specified keys.
+    """
+    result = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if key in list_keys and isinstance(value, list):
+            # Concatenate lists for inheritance
+            base_list = result.get(key, [])
+            if isinstance(base_list, list):
+                result[key] = base_list + copy.deepcopy(value)
+            else:
+                result[key] = copy.deepcopy(value)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_lists(result[key], value, list_keys)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def _resolve_spec_extends(
+    raw_data: dict[str, Any],
+    spec_path: Path,
+    seen_paths: set[Path] | None = None,
+) -> dict[str, Any]:
+    """Resolve spec-level inheritance via 'extends' key.
+
+    Supports inheriting from another TVL spec file. The base spec is loaded
+    and deep-merged with the current spec. Lists for safety_constraints,
+    objectives, tvars, and constraints are concatenated (not replaced).
+
+    Args:
+        raw_data: Parsed YAML data (raw dictionary).
+        spec_path: Path to the current spec file (for relative path resolution).
+        seen_paths: Set of already-visited paths for cycle detection.
+
+    Returns:
+        Resolved spec with inheritance applied.
+
+    Raises:
+        TVLValidationError: If there's a cycle in the extends chain or
+            the base spec cannot be loaded.
+
+    Example:
+        # child.tvl.yml
+        extends: ./base_safety.tvl.yml
+        tvars:
+          - name: model
+            domain: ["gpt-4o"]
+
+        # The child spec inherits all sections from base_safety.tvl.yml
+        # and can override or extend them.
+    """
+    if seen_paths is None:
+        seen_paths = set()
+
+    extends = raw_data.get("extends")
+    if not extends:
+        return raw_data
+
+    if not isinstance(extends, str):
+        raise TVLValidationError(
+            f"'extends' must be a string path, got {type(extends).__name__}"
+        )
+
+    # Resolve path relative to current spec
+    base_path = (spec_path.parent / extends).resolve()
+
+    # Cycle detection
+    if base_path in seen_paths:
+        cycle_list = " -> ".join(str(p) for p in seen_paths) + f" -> {base_path}"
+        raise TVLValidationError(f"Circular extends detected: {cycle_list}")
+
+    seen_paths.add(spec_path.resolve())
+
+    # Load base spec
+    if not base_path.is_file():
+        raise TVLValidationError(
+            f"Base spec not found: {extends} (resolved to {base_path})"
+        )
+
+    try:
+        base_data = yaml.safe_load(base_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise TVLValidationError(f"Failed to parse base spec {extends}: {exc}") from exc
+
+    if not isinstance(base_data, dict):
+        raise TVLValidationError(f"Base spec {extends} must be a mapping")
+
+    # Recursively resolve base spec's extends
+    resolved_base = _resolve_spec_extends(base_data, base_path, seen_paths)
+
+    # Remove 'extends' from current spec before merging
+    current_data = {k: v for k, v in raw_data.items() if k != "extends"}
+
+    # Keys where lists should be concatenated (inherited + child)
+    list_concat_keys = {
+        "safety_constraints",
+        "objectives",
+        "tvars",
+        # Note: constraints can be list or dict, handle dict case separately
+    }
+
+    # Deep merge with list concatenation for specified keys
+    merged = _deep_merge_lists(resolved_base, current_data, list_concat_keys)
+
+    # Special handling for constraints: if both are lists, concatenate
+    base_constraints = resolved_base.get("constraints")
+    current_constraints = current_data.get("constraints")
+    if isinstance(base_constraints, list) and isinstance(current_constraints, list):
+        merged["constraints"] = base_constraints + current_constraints
+    elif isinstance(base_constraints, dict) and isinstance(current_constraints, dict):
+        # Merge structural and derived separately
+        merged_constraints: dict[str, Any] = {}
+        for section in ("structural", "derived"):
+            base_list = base_constraints.get(section, [])
+            current_list = current_constraints.get(section, [])
+            if isinstance(base_list, list) and isinstance(current_list, list):
+                merged_constraints[section] = base_list + current_list
+            elif current_list:
+                merged_constraints[section] = current_list
+            elif base_list:
+                merged_constraints[section] = base_list
+        merged["constraints"] = merged_constraints
+
+    logger.debug("Resolved spec extends: %s -> %s", spec_path.name, base_path.name)
+    return merged
 
 
 def _translate_expression(expression: str) -> str:

@@ -94,7 +94,9 @@ class TestCostPermitFlow:
             permits_acquired.append(True)
             return {"accuracy": 0.9}
 
-        results, cancelled = await parallel_manager.run_with_cost_permits([mock_trial()])
+        results, cancelled = await parallel_manager.run_with_cost_permits(
+            [mock_trial()]
+        )
 
         assert len(results) == 1
         assert len(permits_acquired) == 1
@@ -103,10 +105,13 @@ class TestCostPermitFlow:
     @pytest.mark.asyncio
     async def test_permit_released_after_success(self, parallel_manager, cost_enforcer):
         """Verify permit is carried through for tracking after success."""
+
         async def mock_trial():
             return {"accuracy": 0.9}
 
-        results, cancelled = await parallel_manager.run_with_cost_permits([mock_trial()])
+        results, cancelled = await parallel_manager.run_with_cost_permits(
+            [mock_trial()]
+        )
 
         assert len(results) == 1
         # Permit should be active (not released yet - released in track_cost_async)
@@ -117,6 +122,7 @@ class TestCostPermitFlow:
     @pytest.mark.asyncio
     async def test_permit_released_on_exception(self, parallel_manager, cost_enforcer):
         """Verify permit is released when trial raises exception."""
+
         async def failing_trial():
             raise RuntimeError("Trial failed")
 
@@ -188,29 +194,47 @@ class TestBudgetLimitEnforcement:
 
     @pytest.mark.asyncio
     async def test_permit_denied_returns_sentinel(self):
-        """Verify denied permits return the sentinel value."""
+        """Verify denied permits return the sentinel value when budget exhausted.
+
+        This test verifies that when the estimated cost exceeds the budget limit,
+        permits are denied and the cancel_sentinel is returned instead of executing
+        the trial coroutine.
+        """
+        # Budget $0.001, but each trial estimated at $0.01 = immediate denial
         config = CostEnforcerConfig(limit=0.001, estimated_cost_per_trial=0.01)
         enforcer = CostEnforcer(config)
-        enforcer._estimated_cost = 0.01  # Higher than budget
+        enforcer._estimated_cost = 0.01  # 10x the budget
 
         manager = ParallelExecutionManager(
             parallel_trials=2,
             cost_enforcer=enforcer,
         )
 
+        trial_executed = False
+
         async def mock_trial():
+            nonlocal trial_executed
+            trial_executed = True
             return {"accuracy": 0.9}
 
+        # Request multiple trials to ensure denial behavior
         results, cancelled = await manager.run_with_cost_permits(
-            [mock_trial()],
+            [mock_trial(), mock_trial(), mock_trial()],
             cancel_sentinel="CANCELLED",
         )
 
-        # Should have cancelled due to budget
-        # The first trial might still go through if budget allows initial permit
-        has_cancelled = any(r.result == "CANCELLED" for r in results)
-        # Either cancelled count > 0 or we got a cancelled sentinel
-        assert cancelled > 0 or has_cancelled or len(results) == 1
+        # With budget of $0.001 and cost of $0.01, permits should be denied
+        # Assert specific expected behavior:
+        # 1. Cancelled count should be > 0 (at least some denied)
+        assert cancelled > 0, "Expected some trials to be cancelled due to budget"
+
+        # 2. At least one result should have the sentinel value
+        sentinel_results = [r for r in results if r.result == "CANCELLED"]
+        assert len(sentinel_results) > 0, "Expected cancelled trials to return sentinel"
+
+        # 3. Denied permits should NOT be granted
+        for r in sentinel_results:
+            assert not r.permit.is_granted, "Denied permit should not be granted"
 
 
 class TestWorkerFailureWithBudget:
@@ -451,6 +475,7 @@ class TestEarlyStoppingWithBudget:
 
         # Simulate multiple batches
         for batch in range(5):
+
             async def mock_trial():
                 return {"accuracy": 0.9}
 
@@ -542,3 +567,154 @@ class TestPermitTrackingIntegration:
         # Reserved should decrease, accumulated cost should increase
         assert enforcer._reserved_cost < after_acquire_reserved
         assert enforcer._accumulated_cost > 0
+
+
+class TestCancelledErrorPermitHandling:
+    """Tests for permit handling when coroutines are cancelled (Codex feedback).
+
+    These tests verify that permits are properly released when asyncio.CancelledError
+    is raised (common during shutdown/early-stop), ensuring no reserved budget leaks.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cancelled_after_permit_granted_releases_permit(self):
+        """Verify permit is released when coroutine cancelled after permit granted."""
+        config = CostEnforcerConfig(limit=1.0, estimated_cost_per_trial=0.10)
+        enforcer = CostEnforcer(config)
+
+        initial_reserved = enforcer._reserved_cost
+
+        manager = ParallelExecutionManager(
+            parallel_trials=2,
+            cost_enforcer=enforcer,
+        )
+
+        async def trial_that_gets_cancelled():
+            # Simulate work that will be cancelled
+            await asyncio.sleep(10)  # Long sleep to be cancelled
+            return {"accuracy": 0.9}
+
+        # Start trial then cancel it
+        async def run_and_cancel():
+            # Create task and cancel it mid-execution
+            task = asyncio.create_task(
+                manager.run_with_cost_permits([trial_that_gets_cancelled()])
+            )
+            # Wait a tiny bit for permit to be acquired
+            await asyncio.sleep(0.01)
+            # Cancel the task
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        await run_and_cancel()
+
+        # After cancellation, reserved cost should return to initial (no leak)
+        # Allow some time for cleanup
+        await asyncio.sleep(0.01)
+        assert enforcer._reserved_cost == initial_reserved, (
+            f"Reserved cost should return to initial after cancellation. "
+            f"Initial: {initial_reserved}, Final: {enforcer._reserved_cost}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_gather_cancelled_releases_all_permits(self):
+        """Verify all permits released when asyncio.gather is cancelled."""
+        config = CostEnforcerConfig(limit=1.0, estimated_cost_per_trial=0.05)
+        enforcer = CostEnforcer(config)
+        enforcer._estimated_cost = 0.05
+
+        initial_reserved = enforcer._reserved_cost
+
+        manager = ParallelExecutionManager(
+            parallel_trials=4,
+            cost_enforcer=enforcer,
+        )
+
+        permits_acquired = 0
+
+        async def slow_trial():
+            nonlocal permits_acquired
+            permits_acquired += 1
+            await asyncio.sleep(10)  # Will be cancelled
+            return {"accuracy": 0.9}
+
+        # Run multiple trials and cancel them all
+        async def run_and_cancel():
+            task = asyncio.create_task(
+                manager.run_with_cost_permits([slow_trial() for _ in range(4)])
+            )
+            # Wait for permits to be acquired
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        await run_and_cancel()
+
+        # Verify permits were acquired
+        assert permits_acquired > 0, "Should have acquired some permits before cancel"
+
+        # Reserved cost should return to initial (no leaks)
+        # Use approximate comparison due to floating point arithmetic
+        await asyncio.sleep(0.01)
+        assert abs(enforcer._reserved_cost - initial_reserved) < 1e-10, (
+            f"All permits should be released after gather cancelled. "
+            f"Expected reserved: {initial_reserved}, Actual: {enforcer._reserved_cost}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_shutdown_cancellation_no_permit_leak(self):
+        """Simulate shutdown scenario where running trials are cancelled."""
+        config = CostEnforcerConfig(limit=0.50, estimated_cost_per_trial=0.05)
+        enforcer = CostEnforcer(config)
+        enforcer._estimated_cost = 0.05
+
+        manager = ParallelExecutionManager(
+            parallel_trials=4,
+            cost_enforcer=enforcer,
+        )
+
+        initial_reserved = enforcer._reserved_cost
+        trials_started = 0
+
+        async def long_running_trial():
+            nonlocal trials_started
+            trials_started += 1
+            # Simulate a long-running trial (like an LLM call)
+            await asyncio.sleep(60)
+            return {"accuracy": 0.9, "cost": 0.03}
+
+        # Simulate shutdown: start trials then cancel
+        async def simulate_shutdown():
+            # Start trials
+            task = asyncio.create_task(
+                manager.run_with_cost_permits([long_running_trial() for _ in range(3)])
+            )
+
+            # Wait for trials to start
+            while trials_started < 3:
+                await asyncio.sleep(0.01)
+                if trials_started >= 3:
+                    break
+
+            # Simulate shutdown signal (cancel)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass  # Expected
+
+        await simulate_shutdown()
+
+        # Verify no permit leak (use approximate comparison for floating point)
+        await asyncio.sleep(0.01)
+        assert abs(enforcer._reserved_cost - initial_reserved) < 1e-10, (
+            f"Reserved cost leaked after shutdown cancellation. "
+            f"Initial: {initial_reserved}, Final: {enforcer._reserved_cost}, "
+            f"Trials started: {trials_started}"
+        )

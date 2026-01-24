@@ -654,8 +654,11 @@ class TestLangfuseClientWaitForTrace:
 
     def test_wait_for_trace_found_immediately(self, client):
         """Test wait_for_trace when trace is immediately available."""
-        with patch.object(client, "get_trace", return_value={"id": "trace-123"}), patch.object(
-            client, "get_observations_for_trace", return_value=[MagicMock()]
+        with (
+            patch.object(client, "get_trace", return_value={"id": "trace-123"}),
+            patch.object(
+                client, "get_observations_for_trace", return_value=[MagicMock()]
+            ),
         ):
             result = client.wait_for_trace("trace-123", timeout_seconds=5.0)
             assert result is True
@@ -663,7 +666,9 @@ class TestLangfuseClientWaitForTrace:
     def test_wait_for_trace_timeout(self, client):
         """Test wait_for_trace when trace is never found."""
         with patch.object(client, "get_trace", return_value=None):
-            result = client.wait_for_trace("trace-123", timeout_seconds=0.1, poll_interval=0.05)
+            result = client.wait_for_trace(
+                "trace-123", timeout_seconds=0.1, poll_interval=0.05
+            )
             assert result is False
 
 
@@ -682,7 +687,9 @@ class TestLangfuseClientErrorHandling:
         """Test that HTTP errors are handled gracefully."""
         import requests
 
-        with patch("requests.get", side_effect=requests.exceptions.ConnectionError("Failed")):
+        with patch(
+            "requests.get", side_effect=requests.exceptions.ConnectionError("Failed")
+        ):
             result = client._get_trace_http("trace-123")
             assert result is None
 
@@ -875,7 +882,12 @@ class TestLangfuseClientAsync:
         trace_data = {
             "id": "trace-123",
             "observations": [
-                {"id": "obs-1", "name": "llm", "type": "GENERATION", "usage": {"total": 100}}
+                {
+                    "id": "obs-1",
+                    "name": "llm",
+                    "type": "GENERATION",
+                    "usage": {"total": 100},
+                }
             ],
         }
         with patch.object(client, "get_trace_async", return_value=trace_data):

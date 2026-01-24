@@ -235,6 +235,20 @@ def _build_dataset(
     if registry_entry and registry_entry.metadata:
         metadata = {**(metadata or {}), **registry_entry.metadata}
 
+    # Store source path for JS runtime and other consumers
+    if metadata is None:
+        metadata = {}
+    metadata["source_path"] = str(resolved_path)
+
+    # Compute dataset hash for cache invalidation (file size + mtime_ns for efficiency)
+    # Uses nanosecond precision mtime to detect rapid changes within the same second
+    try:
+        stat_info = resolved_path.stat()
+        metadata["dataset_hash"] = f"{stat_info.st_size}_{stat_info.st_mtime_ns}"
+    except OSError:
+        # If we can't stat the file, skip the hash
+        pass
+
     metadata_out = metadata or None
 
     description = (

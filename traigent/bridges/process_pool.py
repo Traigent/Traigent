@@ -36,6 +36,11 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Note: We intentionally do NOT use atexit handlers for pool cleanup.
+# See js_bridge.py for the rationale - atexit handlers with os.killpg()
+# are dangerous due to PID reuse race conditions.
+# Pools should be explicitly shut down via shutdown() or context manager.
+
 # Default timeout values
 DEFAULT_ACQUIRE_TIMEOUT_SECONDS = 60.0
 DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
