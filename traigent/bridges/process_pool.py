@@ -182,7 +182,7 @@ class JSProcessPool:
         results = await asyncio.gather(*start_tasks, return_exceptions=True)
 
         # Check for failures
-        failed = [i for i, r in enumerate(results) if isinstance(r, Exception)]
+        failed = [i for i, r in enumerate(results) if isinstance(r, BaseException)]
         if failed:
             # Clean up any successfully started workers
             for worker in self._workers:
@@ -192,7 +192,10 @@ class JSProcessPool:
                     except Exception:
                         pass
             self._workers.clear()
-            raise results[failed[0]]
+            first_error = results[failed[0]]
+            if isinstance(first_error, BaseException):
+                raise first_error
+            raise RuntimeError(f"Worker startup failed: {first_error}")
 
         # All workers started successfully - add to available queue
         for worker in self._workers:
