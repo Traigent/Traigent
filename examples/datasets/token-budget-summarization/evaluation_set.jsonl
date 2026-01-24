@@ -1,0 +1,3 @@
+{"input": {"text": "We discussed expenses, cost caps, and revising the quarterly budget."}, "output": "budget"}
+{"input": {"text": "Decision pending next week, after we compare two proposals."}, "output": "decision"}
+{"input": {"text": "Timeline slipped by two weeks due to integration testing."}, "output": "timeline"}

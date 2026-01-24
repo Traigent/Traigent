@@ -1,0 +1,50 @@
+{"input": {"question": "Evaluate (33 - 8) / 3 + 8."}, "output": "16"}
+{"input": {"question": "Compute (5 * 5) + 23."}, "output": "48"}
+{"input": {"question": "What is (30 + 6) * 2 - 1?"}, "output": "71"}
+{"input": {"question": "Evaluate (32 // 6) + 6."}, "output": "11"}
+{"input": {"question": "Evaluate bin(60).count('1') * 2."}, "output": "8"}
+{"input": {"question": "Evaluate (6 ** 2) + (7 ** 2)."}, "output": "85"}
+{"input": {"question": "Compute 63 + 71."}, "output": "134"}
+{"input": {"question": "Calculate 17 * 12."}, "output": "204"}
+{"input": {"question": "Evaluate 96 / 8 + 17."}, "output": "29"}
+{"input": {"question": "Evaluate 20 / 5 + 14."}, "output": "18"}
+{"input": {"question": "Compute (38 + 6) * (5 + 1)."}, "output": "264"}
+{"input": {"question": "What is 83 - 50?"}, "output": "33"}
+{"input": {"question": "What is pow(2, 2) + 35?"}, "output": "39"}
+{"input": {"question": "Compute 62 + 93."}, "output": "155"}
+{"input": {"question": "Compute (29 + 9) * (5 + 1)."}, "output": "228"}
+{"input": {"question": "Calculate (10 + 10 + 3) * 2."}, "output": "46"}
+{"input": {"question": "Find the value of (5 + 10) * (5)."}, "output": "75"}
+{"input": {"question": "What is (6 * 7) - (3 ** 2)?"}, "output": "33"}
+{"input": {"question": "What is (5 * 9) - (3 ** 2)?"}, "output": "36"}
+{"input": {"question": "Compute int(bin(57), 2) - 21."}, "output": "36"}
+{"input": {"question": "Evaluate (80 // 5) + 5."}, "output": "21"}
+{"input": {"question": "What is 69 - 52?"}, "output": "17"}
+{"input": {"question": "Evaluate (116 / 3) - 4."}, "output": "35"}
+{"input": {"question": "What is (51 + 7) * 2 - 2?"}, "output": "114"}
+{"input": {"question": "Evaluate 88 / 8 + 16."}, "output": "27"}
+{"input": {"question": "Compute 96 + 69."}, "output": "165"}
+{"input": {"question": "Calculate 18 * 7."}, "output": "126"}
+{"input": {"question": "Calculate (10 + 8 + 7) * 2."}, "output": "50"}
+{"input": {"question": "Compute int(bin(50), 2) - 9."}, "output": "41"}
+{"input": {"question": "What is (33 + 4) * 7 - 7?"}, "output": "252"}
+{"input": {"question": "Find the value of (4 + 8) * (2)."}, "output": "24"}
+{"input": {"question": "Compute 57 + 45."}, "output": "102"}
+{"input": {"question": "Evaluate (28 - 8) / 3 + 8."}, "output": "15"}
+{"input": {"question": "Compute (6 + 6) * 3."}, "output": "36"}
+{"input": {"question": "Calculate 10 * 11."}, "output": "110"}
+{"input": {"question": "What is 95 - 47?"}, "output": "48"}
+{"input": {"question": "Evaluate (7 ** 2) + (9 ** 2)."}, "output": "130"}
+{"input": {"question": "Compute 71 + 79."}, "output": "150"}
+{"input": {"question": "Evaluate (10 ** 2) + (5 ** 2)."}, "output": "125"}
+{"input": {"question": "Compute (7 + 10) * 3."}, "output": "51"}
+{"input": {"question": "What is (55 + 7) * 2 - 2?"}, "output": "122"}
+{"input": {"question": "What is (8 * 8) - (3 ** 2)?"}, "output": "55"}
+{"input": {"question": "Evaluate 70 / 7 + 8."}, "output": "18"}
+{"input": {"question": "Find the value of (12 + 12) * (5)."}, "output": "120"}
+{"input": {"question": "What is (20 + 9) * 4 - 2?"}, "output": "114"}
+{"input": {"question": "Evaluate bin(20).count('1') * 4."}, "output": "8"}
+{"input": {"question": "Find the value of (10 + 4) * (3)."}, "output": "42"}
+{"input": {"question": "Find the value of (6 + 7) * (10)."}, "output": "130"}
+{"input": {"question": "Evaluate bin(79).count('1') * 2."}, "output": "10"}
+{"input": {"question": "Evaluate (46 - 4) / 4 + 4."}, "output": "14"}
