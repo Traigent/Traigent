@@ -38,9 +38,7 @@ def _validate_metrics_field(measure: dict[str, Any], example_index: int) -> dict
     return measure["metrics"]
 
 
-def _validate_metric_entry(
-    key: str, value: Any, example_index: int
-) -> None:
+def _validate_metric_entry(key: str, value: Any, example_index: int) -> None:
     """Validate a single metric key-value pair."""
     if not key.isidentifier():
         raise ValueError(

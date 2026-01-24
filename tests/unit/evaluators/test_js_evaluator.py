@@ -200,9 +200,7 @@ class TestJSEvaluatorEvaluate:
     @pytest.mark.asyncio
     async def test_evaluate_bridge_error(self, sample_dataset, mock_bridge):
         """Test evaluation with bridge error."""
-        mock_bridge.run_trial = AsyncMock(
-            side_effect=JSBridgeError("Process crashed")
-        )
+        mock_bridge.run_trial = AsyncMock(side_effect=JSBridgeError("Process crashed"))
 
         evaluator = JSEvaluator(js_module="./test.js")
         evaluator._bridge = mock_bridge

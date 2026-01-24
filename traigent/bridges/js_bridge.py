@@ -20,6 +20,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import signal
+import sys
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -30,6 +32,22 @@ logger = get_logger(__name__)
 
 # Protocol version must match traigent-js/src/cli/protocol.ts
 PROTOCOL_VERSION = "1.0"
+
+# Note: We intentionally do NOT use atexit handlers for process cleanup.
+#
+# Reason: atexit handlers with os.killpg() are dangerous because:
+# 1. asyncio subprocess.returncode is only updated after wait() is called
+# 2. The process might have exited but returncode is still None
+# 3. The PID could be reused by the system for a different process
+# 4. os.killpg() would then kill a completely different process group!
+#
+# Instead, we rely on:
+# - start_new_session=True: Creates a new process group, so child processes
+#   don't receive signals sent to the parent's process group
+# - Explicit cleanup: JSBridge.stop() and context manager __aexit__
+# - OS cleanup: When Python exits, orphan processes in separate sessions
+#   continue running but are eventually cleaned up by the OS (init/systemd)
+
 
 # Default timeout for trial execution (5 minutes)
 DEFAULT_TRIAL_TIMEOUT_SECONDS = 300
@@ -193,9 +211,7 @@ class JSBridge:
             else:
                 # Try to find runner in node_modules
                 cwd = self._config.cwd or os.getcwd()
-                runner_path = os.path.join(
-                    cwd, "node_modules", ".bin", "traigent-js"
-                )
+                runner_path = os.path.join(cwd, "node_modules", ".bin", "traigent-js")
                 if not os.path.exists(runner_path):
                     raise JSProcessError(
                         "traigent-js not found. Install it with 'npm install traigent-js' "
@@ -219,6 +235,11 @@ class JSBridge:
             logger.info("Starting JS bridge: %s", " ".join(cmd))
 
             try:
+                # start_new_session=True creates a new process group on Unix.
+                # This allows us to kill all child processes at once with killpg(),
+                # preventing orphan processes if the bridge is terminated.
+                start_new_session = sys.platform != "win32"
+
                 self._process = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=asyncio.subprocess.PIPE,
@@ -226,6 +247,7 @@ class JSBridge:
                     stderr=asyncio.subprocess.PIPE,
                     env=env,
                     cwd=self._config.cwd,
+                    start_new_session=start_new_session,
                 )
             except FileNotFoundError as e:
                 raise JSProcessError(
@@ -278,16 +300,42 @@ class JSBridge:
                 await self._terminate()
 
     async def _terminate(self) -> None:
-        """Force terminate the Node.js process."""
+        """Force terminate the Node.js process and all its children.
+
+        Uses process group termination (SIGTERM to process group) to ensure
+        all child processes are also terminated, preventing orphans.
+        Falls back to direct process termination on Windows or if group
+        termination fails.
+        """
         if self._process is not None:
+            pid = self._process.pid
             try:
-                self._process.terminate()
+                # First try process group termination (Unix only)
+                if sys.platform != "win32" and pid is not None:
+                    try:
+                        os.killpg(pid, signal.SIGTERM)
+                        logger.debug("Sent SIGTERM to process group %d", pid)
+                    except (ProcessLookupError, PermissionError):
+                        # Process group doesn't exist or no permission
+                        # Fall back to direct termination
+                        self._process.terminate()
+                else:
+                    # Windows: use direct termination
+                    self._process.terminate()
+
                 # Give it a moment to terminate gracefully
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=5.0)
                 except TimeoutError:
-                    logger.warning("JS process did not terminate, killing")
-                    self._process.kill()
+                    logger.warning("JS process did not terminate, sending SIGKILL")
+                    # Force kill the process group
+                    if sys.platform != "win32" and pid is not None:
+                        try:
+                            os.killpg(pid, signal.SIGKILL)
+                        except (ProcessLookupError, PermissionError):
+                            self._process.kill()
+                    else:
+                        self._process.kill()
                     await self._process.wait()
             except ProcessLookupError:
                 pass  # Already dead
@@ -475,7 +523,9 @@ class JSBridge:
         }
 
         # Create future for response
-        response_future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        response_future: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
         self._pending_requests[request_id] = response_future
 
         try:
@@ -510,10 +560,10 @@ class JSBridge:
                     logger.info("JS process stdout closed")
                     # Process exited - fail all pending requests immediately
                     # instead of letting them wait for timeout
-                    exit_code = (
-                        self._process.returncode if self._process else None
+                    exit_code = self._process.returncode if self._process else None
+                    error_msg = (
+                        f"JS process exited unexpectedly (exit code: {exit_code})"
                     )
-                    error_msg = f"JS process exited unexpectedly (exit code: {exit_code})"
                     for future in self._pending_requests.values():
                         if not future.done():
                             future.set_exception(JSProcessError(error_msg))
@@ -531,7 +581,9 @@ class JSBridge:
                     if not future.done():
                         future.set_result(response)
                 else:
-                    logger.warning("Received response for unknown request: %s", request_id)
+                    logger.warning(
+                        "Received response for unknown request: %s", request_id
+                    )
 
         except asyncio.CancelledError:
             # Re-raise to signal clean task completion
@@ -564,4 +616,8 @@ class JSBridge:
     @property
     def is_running(self) -> bool:
         """Check if the bridge is running."""
-        return self._started and self._process is not None and self._process.returncode is None
+        return (
+            self._started
+            and self._process is not None
+            and self._process.returncode is None
+        )

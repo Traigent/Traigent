@@ -85,7 +85,7 @@ PY
 ## Troubleshooting (quick fixes)
 
 - **`ModuleNotFoundError: langchain`** — install integrations: `pip install -e ".[integrations]"`.
-- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`).
+- **Missing API keys** — copy `.env.example` to `.env` and set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` (skip if using `TRAIGENT_MOCK_LLM=true`). On Ubuntu desktop, you can also store keys in GNOME Keyring and run via `python3 tools/keyring_run.py` (see `docs/guides/secrets_management.md`).
 - **Virtualenv confusion** — recreate: `deactivate; rm -rf .venv; python -m venv .venv; source .venv/bin/activate; pip install -e ".[integrations]"`.
 
 ---

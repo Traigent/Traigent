@@ -357,6 +357,269 @@ python my_optimization.py
 
 5. **Test Locally First**: Run a few trials with `max_trials=3` before full optimization
 
+## Complete Example
+
+A full working example is available in the repository:
+
+**Python orchestration script**: `examples/js_bridge/optimize_js_agent.py`
+**JS trial function**: `traigent-js/demos/agent-app/src/run-trial.ts`
+
+To run the example:
+
+```bash
+# 1. Build the JS demo
+cd traigent-js/demos/agent-app
+npm install && npm run build
+
+# 2. Run Python orchestration
+cd ../../../
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true python examples/js_bridge/optimize_js_agent.py
+```
+
+The example demonstrates:
+- Python SDK orchestrating JS agent optimization
+- Grid/random search over model, temperature, and prompt configurations
+- Parallel trial execution with 2 Node.js workers
+- Dataset subset evaluation
+- Result aggregation and best config selection
+
+## Budget Guardrails
+
+The JS Bridge integrates with Traigent's budget enforcement system to prevent runaway costs.
+
+### How Budget Enforcement Works
+
+1. **Pre-Trial Cost Check**: Before dispatching a trial to JS, the orchestrator reserves an estimated cost
+2. **Post-Trial Tracking**: After JS returns, actual cost from metrics is tracked
+3. **Budget Stop Condition**: When cumulative cost exceeds the limit, optimization stops
+
+### Configuration
+
+```python
+@traigent.optimize(
+    execution={
+        "runtime": "node",
+        "js_module": "./dist/agent.js",
+    },
+    budget={
+        "max_cost_usd": 5.00,  # Stop when total cost exceeds $5
+    },
+    # ...
+)
+```
+
+### Reporting Cost from JavaScript
+
+Your trial function should return cost in the metrics:
+
+```typescript
+export async function runTrial(config: TrialConfig): Promise<TrialFunctionResult> {
+  const result = await runAgent(config);
+
+  return {
+    metrics: {
+      accuracy: result.accuracy,
+      cost: result.totalCostUsd,  // Report actual cost
+      latency_ms: result.latency,
+    },
+  };
+}
+```
+
+### Budget Behavior in Sequential vs Parallel Modes
+
+| Mode | Behavior |
+|------|----------|
+| Sequential (`js_parallel_workers=1`) | Each trial runs after budget check. Stops immediately when limit reached. |
+| Parallel (`js_parallel_workers>1`) | Multiple trials may be in-flight. Stop triggers cancellation of running trials. |
+
+### Cost Estimation
+
+For the first few trials, Traigent estimates costs using an Exponential Moving Average (EMA) of observed costs. To improve estimation:
+
+1. Run a few warm-up trials with `max_trials=3` to establish baseline
+2. Use consistent cost metrics (e.g., always report in USD)
+3. Consider setting conservative initial estimates via budget config
+
+## Stop Conditions
+
+Stop conditions trigger early termination when optimization goals are met.
+
+### Available Stop Conditions
+
+| Condition | Trigger | JS Behavior |
+|-----------|---------|-------------|
+| `max_trials` | Fixed number of trials completed | Normal completion |
+| `plateau` | No improvement for N consecutive trials | In-flight trials may complete |
+| `budget` | Cost limit exceeded | Cancellation sent to running trials |
+| `timeout` | Wall-clock time exceeded | Cancellation sent to running trials |
+
+### Configuration
+
+```python
+@traigent.optimize(
+    execution={
+        "runtime": "node",
+        "js_module": "./dist/agent.js",
+        "js_parallel_workers": 4,
+    },
+    max_trials=50,
+    stop_conditions={
+        "plateau_after_n": 10,      # Stop if no improvement in 10 trials
+        "timeout_seconds": 3600,    # Stop after 1 hour
+    },
+    budget={
+        "max_cost_usd": 10.00,
+    },
+)
+```
+
+### Cooperative Cancellation for Stop Conditions
+
+When a stop condition triggers during parallel execution:
+
+1. **No new trials dispatched**: Orchestrator stops queueing trials
+2. **Cancel signal sent**: Running JS trials receive `cancel` action
+3. **Graceful handling**: JS should check `TrialContext.isCancelled()` and return partial results
+
+```typescript
+export async function runTrial(config: TrialConfig): Promise<TrialFunctionResult> {
+  const metrics = { accuracy: 0, cost: 0, processed: 0 };
+
+  for (const example of dataset) {
+    // Check cancellation periodically
+    if (TrialContext.isCancelled()) {
+      return {
+        metrics,
+        metadata: { cancelled: true, partial: true },
+      };
+    }
+
+    const result = await evaluateExample(example);
+    metrics.accuracy += result.correct ? 1 : 0;
+    metrics.cost += result.cost;
+    metrics.processed += 1;
+  }
+
+  return { metrics };
+}
+```
+
+### Sequential vs Parallel Stop Condition Behavior
+
+**Sequential Mode** (`js_parallel_workers=1`):
+- Stop condition checked after each trial completes
+- Clean stop without in-flight trials
+- No cancellation needed
+
+**Parallel Mode** (`js_parallel_workers>1`):
+- Stop condition checked as trials complete
+- Multiple trials may be running when stop triggers
+- Cancel signals sent to all in-flight trials
+- Results from completed trials are preserved
+
+### Testing Stop Conditions
+
+To verify stop conditions work correctly with your JS agent:
+
+```python
+# Test max_trials stop condition
+@traigent.optimize(
+    execution={"runtime": "node", "js_module": "./dist/agent.js"},
+    max_trials=5,  # Should stop after exactly 5 trials
+)
+def test_max_trials(text: str): pass
+
+# Test budget stop condition
+@traigent.optimize(
+    execution={"runtime": "node", "js_module": "./dist/agent.js"},
+    budget={"max_cost_usd": 0.10},  # Low budget for testing
+    max_trials=100,
+)
+def test_budget_stop(text: str): pass
+
+# Test plateau stop condition
+@traigent.optimize(
+    execution={"runtime": "node", "js_module": "./dist/agent.js"},
+    stop_conditions={"plateau_after_n": 3},
+    max_trials=100,
+)
+def test_plateau_stop(text: str): pass
+```
+
+## Testing JavaScript Agents
+
+### Local Development
+
+For local testing without API calls:
+
+```bash
+# Set mock mode
+export TRAIGENT_MOCK_LLM=true
+export TRAIGENT_OFFLINE_MODE=true
+
+# Run optimization
+python optimize.py
+```
+
+### Unit Testing Trial Functions
+
+Test your JS trial function directly:
+
+```typescript
+// test/trial.test.ts
+import { runTrial } from '../src/run-trial';
+
+describe('runTrial', () => {
+  it('returns valid metrics', async () => {
+    const config = {
+      trial_id: 'test-1',
+      trial_number: 1,
+      config: { model: 'gpt-4o-mini', temperature: 0.7 },
+      dataset_subset: { indices: [0, 1, 2], total: 10 },
+    };
+
+    const result = await runTrial(config);
+
+    expect(result.metrics).toBeDefined();
+    expect(typeof result.metrics.accuracy).toBe('number');
+    expect(typeof result.metrics.cost).toBe('number');
+  });
+});
+```
+
+### Integration Testing with Python
+
+```python
+# tests/integration/test_js_bridge.py
+import pytest
+from traigent.bridges.js_bridge import JSBridge, JSBridgeConfig
+
+@pytest.mark.asyncio
+async def test_js_bridge_roundtrip():
+    config = JSBridgeConfig(
+        module_path="./dist/agent.js",
+        function_name="runTrial",
+    )
+    bridge = JSBridge(config)
+
+    try:
+        await bridge.start()
+
+        trial_config = {
+            "trial_id": "test-1",
+            "trial_number": 1,
+            "config": {"temperature": 0.5},
+            "dataset_subset": {"indices": [0], "total": 1},
+        }
+
+        result = await bridge.run_trial(trial_config)
+        assert result.status == "completed"
+        assert "accuracy" in result.metrics
+    finally:
+        await bridge.stop()
+```
+
 ## Related Documentation
 
 - [Decorator Reference](../api-reference/decorator-reference.md) - Full decorator options
