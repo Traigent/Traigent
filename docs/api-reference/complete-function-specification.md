@@ -98,8 +98,6 @@ def my_agent(question: str) -> str:
 | `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
-| `reps_per_trial` | `int` | `1` | Number of repeated evaluations per configuration to stabilize noisy metrics. |
-| `reps_aggregation` | `str` | `"mean"` | Aggregation strategy for repeated metrics (`"mean"`, `"median"`, `"min"`, `"max"`). |
 
 **Legacy Compatibility**
 

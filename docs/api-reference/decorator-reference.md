@@ -437,8 +437,6 @@ from traigent.config.parallel import ParallelConfig
 - `privacy_enabled`: Redact sensitive data
 - `max_total_examples`: Global sample budget
 - `samples_include_pruned`: Count pruned trials in budget
-- `reps_per_trial`: Number of repetitions per configuration (default: 1)
-- `reps_aggregation`: Aggregation method for repetitions ("mean", "median", "min", "max")
 
 **JavaScript Runtime Fields** (for `runtime="node"`):
 
