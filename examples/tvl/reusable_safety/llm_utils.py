@@ -17,8 +17,15 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
+
+# Silence LiteLLM's verbose logging before importing
+os.environ["LITELLM_LOG"] = "ERROR"  # Suppress info/debug messages
+logging.getLogger("LiteLLM").setLevel(logging.ERROR)
+logging.getLogger("litellm").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # LiteLLM provides a unified interface for multiple LLM providers
 try:
@@ -26,6 +33,8 @@ try:
     from litellm import completion
 
     LITELLM_AVAILABLE = True
+    litellm.set_verbose = False
+    litellm.suppress_debug_info = True
 except ImportError:
     LITELLM_AVAILABLE = False
     litellm = None  # type: ignore
@@ -34,19 +43,6 @@ except ImportError:
 # Default models for agent and judge calls
 DEFAULT_CHAT_MODEL = "groq/llama-3.3-70b-versatile"  # High quality, ~$0.59/M tokens
 JUDGE_MODEL = "groq/llama-3.1-8b-instant"  # Fast + cheap, ~$0.05/M tokens
-
-# Silence LiteLLM's verbose logging and "Provider List" messages
-import logging
-import os
-
-os.environ["LITELLM_LOG"] = "ERROR"  # Suppress info/debug messages
-logging.getLogger("LiteLLM").setLevel(logging.ERROR)
-logging.getLogger("litellm").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-if LITELLM_AVAILABLE:
-    litellm.set_verbose = False
-    litellm.suppress_debug_info = True
 
 
 def get_groq_api_key() -> str:
