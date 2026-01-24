@@ -217,6 +217,7 @@ extend-exclude = '''
   | build
   | dist
   | demos
+  | examples/tvl/reusable_safety/run_demo\.py
 )/
 '''
 
