@@ -76,7 +76,12 @@ from traigent.utils.exceptions import (
 )
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import safe_open, validate_path
+from traigent.utils.secure_path import (
+    PathTraversalError,
+    safe_open,
+    validate_path,
+    validate_user_path,
+)
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -2431,13 +2436,13 @@ To approve, use one of these methods:
             Configuration dict, or None if loading failed.
         """
         try:
-            config_path = Path(path).expanduser()
+            # Security: Validate user-provided path to prevent file inclusion attacks
+            config_path = validate_user_path(path, for_write=False)
             if not config_path.exists():
                 logger.warning(f"Config file not found: {path}")
                 return None
 
-            # Security: config_path is validated Path from user input (load_from parameter)
-            with open(config_path, encoding="utf-8") as f:  # noqa: S311
+            with open(config_path, encoding="utf-8") as f:
                 data = json.load(f)
 
             # Handle different formats
@@ -2461,6 +2466,9 @@ To approve, use one of these methods:
 
         except json.JSONDecodeError as e:
             logger.warning(f"Invalid JSON in config file {path}: {e}")
+            return None
+        except PathTraversalError as e:
+            logger.warning(f"Security: {e}")
             return None
         except Exception as e:
             logger.warning(f"Error loading config from {path}: {e}")
@@ -2558,6 +2566,7 @@ To approve, use one of these methods:
 
         Raises:
             ConfigurationError: If no best configuration is available
+            PathTraversalError: If path points to a sensitive system location
 
         Example::
 
@@ -2580,7 +2589,8 @@ To approve, use one of these methods:
                 "Please run optimization first using .optimize() or load a config."
             )
 
-        output_path = Path(path).expanduser()
+        # Security: Validate user-provided path to prevent file inclusion attacks
+        output_path = validate_user_path(path, for_write=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if format == "slim":
@@ -2592,8 +2602,7 @@ To approve, use one of these methods:
                 f"Unknown export format: {format}. Use 'slim' or 'full'."
             )
 
-        # Security: output_path is user-provided API parameter (export_config method)
-        with open(output_path, "w", encoding="utf-8") as f:  # noqa: S311
+        with open(output_path, "w", encoding="utf-8") as f:
             json.dump(export_data, f, indent=2, default=str)
 
         logger.info(f"Exported config for {self.func.__name__} to {output_path}")
