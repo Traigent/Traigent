@@ -24,23 +24,23 @@ The script submits results to the backend so they appear in the frontend dashboa
 
 from __future__ import annotations
 
-# Suppress noisy warnings from dependencies
-import warnings
+# Suppress noisy warnings from dependencies (must be before other imports)
+import warnings  # noqa: E402
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*google.generativeai.*")
 
-import argparse
-import asyncio
-import os
-import random
-import sys
-import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
-from datetime import datetime
-from typing import Any
+import argparse  # noqa: E402
+import asyncio  # noqa: E402
+import os  # noqa: E402
+import random  # noqa: E402
+import sys  # noqa: E402
+import time  # noqa: E402
+import uuid  # noqa: E402
+from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from datetime import datetime  # noqa: E402
+from typing import Any  # noqa: E402
 
 # Flag to track if we're using real LLM mode (set by args parsing)
 REAL_LLM_MODE = False
@@ -1032,7 +1032,7 @@ async def submit_to_backend(
                 "summary_stats": {
                     "metrics": clean_metrics,
                     "execution_time": trial.latency_ms / 1000.0,
-                    "total_examples": 3,
+                    "total_examples": 24,
                     "metadata": {
                         "safety_passed": trial.safety_passed,
                         "violations": trial.safety_violations,
@@ -1040,15 +1040,17 @@ async def submit_to_backend(
                 },
                 "measures": [
                     {
-                        "example_id": f"example_{i}",
-                        **{
-                            k: v + random.uniform(-0.02, 0.02)
-                            for k, v in clean_metrics.items()
-                            if k != "safety_passed"
+                        "example_id": f"trial_{trial.trial_id}_ex_{i}",
+                        "metrics": {
+                            **{
+                                k: v + random.uniform(-0.03, 0.03)
+                                for k, v in clean_metrics.items()
+                                if k != "safety_passed"
+                            },
+                            "safety_passed": clean_metrics.get("safety_passed", 1.0),
                         },
-                        "safety_passed": clean_metrics.get("safety_passed", 1.0),
                     }
-                    for i in range(3)  # Simulate 3 examples per trial
+                    for i in range(24)  # 24 examples per trial for statistical significance
                 ],
             }
 

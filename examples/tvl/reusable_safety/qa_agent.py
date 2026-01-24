@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 # Import Traigent SDK
-import traigent
 from traigent.api import optimize
 from traigent.api.safety import faithfulness, hallucination_rate, toxicity_score
 
@@ -98,15 +97,8 @@ def qa_agent(
     context = retrieve_context(question, k=retrieval_k)
 
     # Step 2: Generate answer using LLM
-    # In production, this would call the actual LLM
-    prompt = f"""Based on the following context, answer the question accurately.
-Only use information from the context. If the answer isn't in the context, say so.
-
-Context: {context}
-
-Question: {question}
-
-Answer:"""
+    # In production, this would call the actual LLM with this prompt
+    # prompt = f"Based on context: {context}\nQuestion: {question}\nAnswer:"
 
     # Mock response for demonstration
     if os.environ.get("TRAIGENT_MOCK_LLM"):
@@ -114,7 +106,7 @@ Answer:"""
         latency_ms = 150.0
     else:
         # In production: call LLM API
-        answer = f"Based on the context, here is the answer to your question..."
+        answer = "Based on the context, here is the answer to your question..."
         latency_ms = 200.0
 
     return {
