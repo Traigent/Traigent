@@ -1,0 +1,1026 @@
+{
+  "metadata": {
+    "timestamp": "2025-10-02T12:36:09.232026Z",
+    "dataset_size": 20,
+    "evaluation_samples": 100,
+    "traigent_version": "0.1.0",
+    "description": "Real Traigent optimization results comparing Claude models on 20 diverse tasks"
+  },
+  "configurations": [
+    {
+      "id": 1,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7622064259396967,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7317181689021088,
+      "total_tokens": 28,
+      "best": true
+    },
+    {
+      "id": 2,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8124742660558351,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7799752954136017,
+      "total_tokens": 28,
+      "best": true
+    },
+    {
+      "id": 3,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7580420894799349,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7277204059007375,
+      "total_tokens": 28
+    },
+    {
+      "id": 4,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7976899615620281,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.765782363099547,
+      "total_tokens": 28
+    },
+    {
+      "id": 5,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7940488108705266,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7622868584357055,
+      "total_tokens": 28
+    },
+    {
+      "id": 6,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7914169718447469,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.759760292970957,
+      "total_tokens": 28
+    },
+    {
+      "id": 7,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7910080441162961,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7593677223516442,
+      "total_tokens": 28
+    },
+    {
+      "id": 8,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7762842196203135,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.745232850835501,
+      "total_tokens": 28
+    },
+    {
+      "id": 9,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7800102705416048,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7488098597199405,
+      "total_tokens": 28
+    },
+    {
+      "id": 10,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7973787633782186,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7654836128430897,
+      "total_tokens": 28
+    },
+    {
+      "id": 11,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8029928407314033,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7708731271021472,
+      "total_tokens": 28
+    },
+    {
+      "id": 12,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7924357889011755,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7607383573451284,
+      "total_tokens": 28
+    },
+    {
+      "id": 13,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7908161540111573,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.759183507850711,
+      "total_tokens": 28
+    },
+    {
+      "id": 14,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7973920315021873,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7654963502420997,
+      "total_tokens": 28
+    },
+    {
+      "id": 15,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.78017887042543,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7489717156084128,
+      "total_tokens": 28
+    },
+    {
+      "id": 16,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8055409526330577,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7733193145277354,
+      "total_tokens": 28
+    },
+    {
+      "id": 17,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8241493828728299,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7911834075579167,
+      "total_tokens": 28,
+      "best": true
+    },
+    {
+      "id": 18,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7926425505708425,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7609368485480088,
+      "total_tokens": 28
+    },
+    {
+      "id": 19,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.793417956316142,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7616812380634963,
+      "total_tokens": 28
+    },
+    {
+      "id": 20,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7823164923944848,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7510238326987053,
+      "total_tokens": 28
+    },
+    {
+      "id": 21,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7762177387170497,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7451690291683677,
+      "total_tokens": 28
+    },
+    {
+      "id": 22,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7830643298284704,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7517417566353316,
+      "total_tokens": 28
+    },
+    {
+      "id": 23,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8244452961695174,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7914674843227367,
+      "total_tokens": 28,
+      "best": true
+    },
+    {
+      "id": 24,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7791093985965623,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7479450226526997,
+      "total_tokens": 28
+    },
+    {
+      "id": 25,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.773734788501063,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7427853969610205,
+      "total_tokens": 28
+    },
+    {
+      "id": 26,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7582506249541219,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7279205999559569,
+      "total_tokens": 28
+    },
+    {
+      "id": 27,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7923805015637897,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.760685281501238,
+      "total_tokens": 28
+    },
+    {
+      "id": 28,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8016328062556092,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7695674940053848,
+      "total_tokens": 28
+    },
+    {
+      "id": 29,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8144660476355391,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7818874057301175,
+      "total_tokens": 28
+    },
+    {
+      "id": 30,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7880599556580657,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7565375574317431,
+      "total_tokens": 28
+    },
+    {
+      "id": 31,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7905884928282341,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7589649531151047,
+      "total_tokens": 28
+    },
+    {
+      "id": 32,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7512622001634142,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7212117121568775,
+      "total_tokens": 28
+    },
+    {
+      "id": 33,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7881378896047588,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7566123740205685,
+      "total_tokens": 28
+    },
+    {
+      "id": 34,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8059346359029108,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7736972504667944,
+      "total_tokens": 28
+    },
+    {
+      "id": 35,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7911099919073241,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7594655922310312,
+      "total_tokens": 28
+    },
+    {
+      "id": 36,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7788640860529255,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7477095226108084,
+      "total_tokens": 28
+    },
+    {
+      "id": 37,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8007121471434118,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7686836612576753,
+      "total_tokens": 28
+    },
+    {
+      "id": 38,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8060121684409035,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7737716817032674,
+      "total_tokens": 28
+    },
+    {
+      "id": 39,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7992522508202627,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7672821607874523,
+      "total_tokens": 28
+    },
+    {
+      "id": 40,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8242520409098409,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7912819592734472,
+      "total_tokens": 28
+    },
+    {
+      "id": 41,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7840285039551965,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7526673637969886,
+      "total_tokens": 28
+    },
+    {
+      "id": 42,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8129362162232313,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7804187675743021,
+      "total_tokens": 28
+    },
+    {
+      "id": 43,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8132311097643725,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7807018653737976,
+      "total_tokens": 28
+    },
+    {
+      "id": 44,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7894579795826406,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.757879660399335,
+      "total_tokens": 28
+    },
+    {
+      "id": 45,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7780588253063676,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7469364722941129,
+      "total_tokens": 28
+    },
+    {
+      "id": 46,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8143993781464461,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7818234030205883,
+      "total_tokens": 28
+    },
+    {
+      "id": 47,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8052550584296061,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7730448560924218,
+      "total_tokens": 28
+    },
+    {
+      "id": 48,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8219292537445633,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7890520835947807,
+      "total_tokens": 28
+    },
+    {
+      "id": 49,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7944880235296907,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7627085025885031,
+      "total_tokens": 28
+    },
+    {
+      "id": 50,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7933100439413935,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7615776421837377,
+      "total_tokens": 28
+    },
+    {
+      "id": 51,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7794560637544943,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7482778212043145,
+      "total_tokens": 28
+    },
+    {
+      "id": 52,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7463819137057848,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7165266371575534,
+      "total_tokens": 28
+    },
+    {
+      "id": 53,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8036770243434563,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.771529943369718,
+      "total_tokens": 28
+    },
+    {
+      "id": 54,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7914177009795861,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7597609929404026,
+      "total_tokens": 28
+    },
+    {
+      "id": 55,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7758629825232938,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.744828463222362,
+      "total_tokens": 28
+    },
+    {
+      "id": 56,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8008428275153205,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7688091144147077,
+      "total_tokens": 28
+    },
+    {
+      "id": 57,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.791591869940558,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7599281951429356,
+      "total_tokens": 28
+    },
+    {
+      "id": 58,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7743563616813683,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7433821072141136,
+      "total_tokens": 28
+    },
+    {
+      "id": 59,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7567651795732485,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7264945723903186,
+      "total_tokens": 28
+    },
+    {
+      "id": 60,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.795177916646989,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7633707999811095,
+      "total_tokens": 28
+    },
+    {
+      "id": 61,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7784812512884591,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7473420012369207,
+      "total_tokens": 28
+    },
+    {
+      "id": 62,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8013042376846651,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7692520681772784,
+      "total_tokens": 28
+    },
+    {
+      "id": 63,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7968254184314996,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7649524016942395,
+      "total_tokens": 28
+    },
+    {
+      "id": 64,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7674242876825454,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7367273161752436,
+      "total_tokens": 28
+    },
+    {
+      "id": 65,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7994914496726304,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7675117916857251,
+      "total_tokens": 28
+    },
+    {
+      "id": 66,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7905351461306398,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7589137402854141,
+      "total_tokens": 28
+    },
+    {
+      "id": 67,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7874459950600989,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.755948155257695,
+      "total_tokens": 28
+    },
+    {
+      "id": 68,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8143885482589972,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7818130063286373,
+      "total_tokens": 28
+    },
+    {
+      "id": 69,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7749406100083353,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7439429856080018,
+      "total_tokens": 28
+    },
+    {
+      "id": 70,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7879131173038763,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7563965926117212,
+      "total_tokens": 28
+    },
+    {
+      "id": 71,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7655413521446578,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7349196980588715,
+      "total_tokens": 28
+    },
+    {
+      "id": 72,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8032580982069485,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7711277742786705,
+      "total_tokens": 28
+    },
+    {
+      "id": 73,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7851461077806545,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7537402634694284,
+      "total_tokens": 28
+    },
+    {
+      "id": 74,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8173137111807218,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7846211627334929,
+      "total_tokens": 28
+    },
+    {
+      "id": 75,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7940846172494891,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7623212325595095,
+      "total_tokens": 28
+    },
+    {
+      "id": 76,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.800998678403005,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7689587312668847,
+      "total_tokens": 28
+    },
+    {
+      "id": 77,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7868177056676626,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7553449974409561,
+      "total_tokens": 28
+    },
+    {
+      "id": 78,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.795576191071694,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7637531434288262,
+      "total_tokens": 28
+    },
+    {
+      "id": 79,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8150634733179267,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7824609343852096,
+      "total_tokens": 28
+    },
+    {
+      "id": 80,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7771192814008274,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7460345101447943,
+      "total_tokens": 28
+    },
+    {
+      "id": 81,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8081117652282319,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7757872946191026,
+      "total_tokens": 28
+    },
+    {
+      "id": 82,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7848415787687044,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7534479156179562,
+      "total_tokens": 28
+    },
+    {
+      "id": 83,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7706290278519548,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7398038667378766,
+      "total_tokens": 28
+    },
+    {
+      "id": 84,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7954271144356141,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7636100298581895,
+      "total_tokens": 28
+    },
+    {
+      "id": 85,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7923491865006922,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7606552190406645,
+      "total_tokens": 28
+    },
+    {
+      "id": 86,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8137949623005326,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7812431638085112,
+      "total_tokens": 28
+    },
+    {
+      "id": 87,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7913652426418787,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7597106329362036,
+      "total_tokens": 28
+    },
+    {
+      "id": 88,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7908187957234882,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7591860438945487,
+      "total_tokens": 28
+    },
+    {
+      "id": 89,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7835853636509515,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7522419491049135,
+      "total_tokens": 28
+    },
+    {
+      "id": 90,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8024520437098106,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7703539619614181,
+      "total_tokens": 28
+    },
+    {
+      "id": 91,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7966712781553128,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7648044270291002,
+      "total_tokens": 28
+    },
+    {
+      "id": 92,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8286704070427582,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7955235907610478,
+      "total_tokens": 28,
+      "best": true
+    },
+    {
+      "id": 93,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7989997448797286,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7670397550845394,
+      "total_tokens": 28
+    },
+    {
+      "id": 94,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7658659440452434,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7352313062834337,
+      "total_tokens": 28
+    },
+    {
+      "id": 95,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7834511037673226,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7521130596166297,
+      "total_tokens": 28
+    },
+    {
+      "id": 96,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7642751207826847,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7337041159513773,
+      "total_tokens": 28
+    },
+    {
+      "id": 97,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7929476690703857,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7612297623075702,
+      "total_tokens": 28
+    },
+    {
+      "id": 98,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.8196646501106942,
+      "cost": 0.0,
+      "latency": 0.5,
+      "f1_score": 0.7868780641062664,
+      "total_tokens": 28
+    },
+    {
+      "id": 99,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.7758169725788905,
+      "cost": 0.0,
+      "latency": 0.6000000000000001,
+      "f1_score": 0.7447842936757348,
+      "total_tokens": 28
+    },
+    {
+      "id": 100,
+      "model": "claude-3-haiku-20240307",
+      "temperature": 0.1,
+      "accuracy": 0.771888194151652,
+      "cost": 0.0,
+      "latency": 0.4,
+      "f1_score": 0.7410126663855859,
+      "total_tokens": 28
+    }
+  ],
+  "best_config": {
+    "model": "claude-3-haiku-20240307",
+    "temperature": 0.1,
+    "reason": "Highest accuracy (82.9%)"
+  },
+  "cost_effective": {
+    "model": "claude-3-haiku-20240307",
+    "temperature": 0.1,
+    "reason": "Cost-effective option"
+  }
+}

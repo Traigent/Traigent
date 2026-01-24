@@ -1,0 +1,16 @@
+{
+  "session_id": "sess_multi_agent_mock",
+  "objective_order": ["accuracy"],
+  "trials": [
+    {"id": "trial_01", "config": {"temperature": 0.0}, "metrics": {"accuracy": 0.8}},
+    {"id": "trial_02", "config": {"temperature": 0.3}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_03", "config": {"temperature": 0.0}, "metrics": {"accuracy": 0.8}},
+    {"id": "trial_04", "config": {"temperature": 0.3}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_05", "config": {"temperature": 0.0}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_06", "config": {"temperature": 0.3}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_07", "config": {"temperature": 0.0}, "metrics": {"accuracy": 0.8}},
+    {"id": "trial_08", "config": {"temperature": 0.3}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_09", "config": {"temperature": 0.0}, "metrics": {"accuracy": 0.9}},
+    {"id": "trial_10", "config": {"temperature": 0.3}, "metrics": {"accuracy": 0.9}}
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "session_id": "sess_cost_reduction_mock",
+  "objective_order": ["cost"],
+  "trials": [
+    {"id": "t01", "config": {"model": "gpt-4o"}, "metrics": {"cost": 0.0, "response_time": 0.03}},
+    {"id": "t02", "config": {"model": "gpt-4o-mini"}, "metrics": {"cost": 0.0, "response_time": 0.02}},
+    {"id": "t03", "config": {"model": "gpt-3.5-turbo"}, "metrics": {"cost": 0.0, "response_time": 0.02}}
+  ]
+}

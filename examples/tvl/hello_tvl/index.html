@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hello TVL - TVL Example</title>
+    <link rel="stylesheet" href="../../docs/sections/shared-styles.css">
+    <style>
+        .example-page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        .breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 14px; color: var(--text-secondary); }
+        .breadcrumb a { color: var(--primary); text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .breadcrumb .current { color: var(--text-primary); font-weight: 500; }
+        .example-header { margin-bottom: 32px; }
+        .example-badge { display: inline-block; background: #fbbf24; color: #1a1a1a; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 6px; margin-bottom: 12px; }
+        .example-title { font-size: 36px; font-weight: 700; margin-bottom: 12px; color: var(--text-primary); }
+        .example-meta { display: flex; gap: 16px; font-size: 14px; color: var(--text-secondary); }
+        .difficulty-beginner { color: #22c55e; font-weight: 500; }
+        .content-section { margin-bottom: 32px; }
+        .content-section h2 { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+        .content-section p { line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px; }
+        .content-section ul { line-height: 1.8; color: var(--text-secondary); list-style-position: inside; padding-left: 0; }
+        .content-section ul li { margin-bottom: 8px; }
+        .code-block { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
+        .code-block code { font-family: 'Courier New', monospace; font-size: 14px; white-space: pre; display: block; }
+        .action-buttons { display: flex; gap: 12px; margin: 24px 0; flex-wrap: wrap; }
+        .btn { padding: 12px 24px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: var(--hover-bg); }
+        .example-nav { display: flex; justify-content: space-between; align-items: center; margin: 48px 0 24px 0; padding: 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; }
+        .nav-button { padding: 10px 16px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; transition: all 0.2s; }
+        .nav-button:hover { background: var(--primary-hover); transform: translateY(-1px); }
+    </style>
+</head>
+<body>
+    <div class="example-page">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="../../docs/index.html">Home</a>
+            <span>&rsaquo;</span>
+            <a href="../../docs/index.html#tvl">TVL Examples</a>
+            <span>&rsaquo;</span>
+            <span class="current">Hello TVL</span>
+        </nav>
+
+        <header class="example-header">
+            <span class="example-badge">TVL Example</span>
+            <h1 class="example-title">Hello TVL</h1>
+            <div class="example-meta">
+                <span class="difficulty-beginner">Beginner</span>
+                <span>5 min</span>
+                <span>Core sections introduction</span>
+            </div>
+        </header>
+
+        <section class="content-section">
+            <h2>What You'll Learn</h2>
+            <p>
+                This minimal TVL spec introduces the core sections of the Tuned Variable Language,
+                providing a foundation for defining optimization experiments.
+            </p>
+            <ul>
+                <li>Define a <code>configuration_space</code> with categorical, continuous, and discrete parameters</li>
+                <li>Specify <code>objectives</code> with maximize/minimize directions</li>
+                <li>Add basic <code>constraints</code> using CEL expressions</li>
+                <li>Set up <code>promotion</code> gates for deployment</li>
+                <li>Configure <code>optimization</code> strategy and budget</li>
+            </ul>
+        </section>
+
+        <section class="content-section">
+            <h2>TVL Spec Structure</h2>
+            <div class="code-block">
+                <code>spec:
+  id: hello-tvl
+  version: 0.0.1
+
+metadata:
+  owner: "students@traigent.ai"
+  description: "Minimal TVL spec"
+
+units:
+  time: [milliseconds, seconds]
+  ratio: [dimensionless]
+
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini", "claude-3-haiku"]
+  temperature:
+    type: continuous
+    range: [0.0, 0.8]
+    unit: ratio
+
+objectives:
+  - name: faithfulness
+    direction: maximize
+  - name: latency
+    direction: minimize
+
+constraints:
+  - id: mild-temperature
+    type: expression
+    rule: 'params.temperature <= 0.8'
+
+promotion:
+  gate: manual_review
+  reviewers: ["mentor@traigent.ai"]</code>
+            </div>
+        </section>
+
+        <section class="content-section">
+            <h2>Running This Example</h2>
+            <div class="code-block">
+                <code># Validate the TVL spec
+tvl-lint examples/tvl/hello_tvl/hello_tvl.tvl.yml
+
+# Check structural validity
+tvl-check-structural examples/tvl/hello_tvl/hello_tvl.tvl.yml</code>
+            </div>
+        </section>
+
+        <div class="action-buttons">
+            <a href="hello_tvl.tvl.yml" class="btn">View TVL Spec</a>
+            <a href="../../docs/index.html#tvl" class="btn-secondary">Back to TVL Gallery</a>
+        </div>
+
+        <nav class="example-nav" aria-label="Example Navigation">
+            <span></span>
+            <a href="../constraints_units/index.html" class="nav-button">Next: Constraints & Units</a>
+        </nav>
+    </div>
+
+    <script src="../../docs/sections/theme.js"></script>
+</body>
+</html>

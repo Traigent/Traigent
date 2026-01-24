@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Environment Overlays - TVL Example</title>
+    <link rel="stylesheet" href="../../docs/sections/shared-styles.css">
+    <style>
+        .example-page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        .breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 14px; color: var(--text-secondary); }
+        .breadcrumb a { color: var(--primary); text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .breadcrumb .current { color: var(--text-primary); font-weight: 500; }
+        .example-header { margin-bottom: 32px; }
+        .example-badge { display: inline-block; background: #fbbf24; color: #1a1a1a; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 6px; margin-bottom: 12px; }
+        .example-title { font-size: 36px; font-weight: 700; margin-bottom: 12px; color: var(--text-primary); }
+        .example-meta { display: flex; gap: 16px; font-size: 14px; color: var(--text-secondary); }
+        .difficulty-advanced { color: #ef4444; font-weight: 500; }
+        .content-section { margin-bottom: 32px; }
+        .content-section h2 { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+        .content-section p { line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px; }
+        .content-section ul { line-height: 1.8; color: var(--text-secondary); list-style-position: inside; padding-left: 0; }
+        .content-section ul li { margin-bottom: 8px; }
+        .code-block { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
+        .code-block code { font-family: 'Courier New', monospace; font-size: 14px; white-space: pre; display: block; }
+        .action-buttons { display: flex; gap: 12px; margin: 24px 0; flex-wrap: wrap; }
+        .btn { padding: 12px 24px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: var(--hover-bg); }
+        .example-nav { display: flex; justify-content: space-between; align-items: center; margin: 48px 0 24px 0; padding: 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; }
+        .nav-button { padding: 10px 16px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; transition: all 0.2s; }
+        .nav-button:hover { background: var(--primary-hover); transform: translateY(-1px); }
+        .env-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+        .env-staging { background: #fbbf24; color: #1a1a1a; }
+        .env-production { background: #22c55e; color: white; }
+    </style>
+</head>
+<body>
+    <div class="example-page">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="../../docs/index.html">Home</a>
+            <span>&rsaquo;</span>
+            <a href="../../docs/index.html#tvl">TVL Examples</a>
+            <span>&rsaquo;</span>
+            <span class="current">Environment Overlays</span>
+        </nav>
+
+        <header class="example-header">
+            <span class="example-badge">TVL Example</span>
+            <h1 class="example-title">Environment Overlays</h1>
+            <div class="example-meta">
+                <span class="difficulty-advanced">Advanced</span>
+                <span>15 min</span>
+                <span>Multi-environment deployment</span>
+            </div>
+        </header>
+
+        <section class="content-section">
+            <h2>What You'll Learn</h2>
+            <p>
+                This advanced example demonstrates how to manage multiple deployment environments
+                using TVL's extends/overrides pattern for staging and production configurations.
+            </p>
+            <ul>
+                <li>Define environment-specific <code>overrides</code> for configuration space</li>
+                <li>Use <code>extends</code> for inheritance between environments</li>
+                <li>Set environment-specific objective thresholds</li>
+                <li>Configure different promotion gates per environment</li>
+                <li>Integrate with Traigent deployment targets</li>
+            </ul>
+        </section>
+
+        <section class="content-section">
+            <h2>Environment Structure</h2>
+            <div class="code-block">
+                <code>environments:
+  <span class="env-badge env-staging">staging</span>:
+    overrides:
+      configuration_space:
+        model:
+          values: ["gpt-4o-mini", "claude-3-haiku"]
+        temperature:
+          range: [0.2, 0.6]
+      optimization:
+        budget:
+          max_trials:
+            value: 30
+            unit: count
+
+  <span class="env-badge env-production">production</span>:
+    extends: staging  # Inherit from staging
+    overrides:
+      configuration_space:
+        max_tokens:
+          range: [256, 768]
+      objectives:
+        - name: latency
+          threshold:
+            value: 750
+            unit: milliseconds
+      promotion:
+        gate: strict_dominance</code>
+            </div>
+        </section>
+
+        <section class="content-section">
+            <h2>Deployment Integration</h2>
+            <div class="code-block">
+                <code># Traigent deployment configuration
+triagent:
+  pipeline: SupportChat
+  deployment_targets: ["staging", "production"]
+
+# This enables:
+# 1. Automatic environment detection
+# 2. Configuration resolution based on target
+# 3. Promotion gate enforcement per environment</code>
+            </div>
+        </section>
+
+        <section class="content-section">
+            <h2>Running This Example</h2>
+            <div class="code-block">
+                <code># Validate operational configuration
+tvl-check-operational examples/tvl/environment_overlays/overlays.tvl.yml
+
+# Check for specific environment
+tvl-check-operational examples/tvl/environment_overlays/overlays.tvl.yml --env staging
+tvl-check-operational examples/tvl/environment_overlays/overlays.tvl.yml --env production</code>
+            </div>
+        </section>
+
+        <div class="action-buttons">
+            <a href="overlays.tvl.yml" class="btn">View TVL Spec</a>
+            <a href="../../docs/index.html#tvl" class="btn-secondary">Back to TVL Gallery</a>
+        </div>
+
+        <nav class="example-nav" aria-label="Example Navigation">
+            <a href="../constraints_units/index.html" class="nav-button">Previous: Constraints & Units</a>
+            <span></span>
+        </nav>
+    </div>
+
+    <script src="../../docs/sections/theme.js"></script>
+</body>
+</html>

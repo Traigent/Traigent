@@ -1,0 +1,16 @@
+{
+  "session_id": "sess_creative_poem_mock",
+  "objective_order": ["cost", "response_time"],
+  "trials": [
+    {"id": "trial_01", "config": {"temperature": 0.6}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_02", "config": {"temperature": 0.9}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_03", "config": {"temperature": 0.6}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_04", "config": {"temperature": 0.9}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_05", "config": {"temperature": 0.6}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_06", "config": {"temperature": 0.9}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_07", "config": {"temperature": 0.6}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_08", "config": {"temperature": 0.9}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_09", "config": {"temperature": 0.6}, "metrics": {"response_time": 0.02, "cost": 0.0}},
+    {"id": "trial_10", "config": {"temperature": 0.9}, "metrics": {"response_time": 0.02, "cost": 0.0}}
+  ]
+}
