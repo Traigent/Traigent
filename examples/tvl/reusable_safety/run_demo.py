@@ -160,44 +160,68 @@ def call_agent_llm(query: str, model: str, temperature: float) -> dict[str, Any]
     )
 
 
-# Groq model configs for real LLM mode (12 configs for statistical significance)
+# fmt: off
+# Groq model configs for real LLM mode (24 configs: 8 per model for statistical significance)
 GROQ_CONFIGS_QA = [
-    # High quality configs - llama-3.3-70b
+    # llama-3.3-70b (8 configs)
     {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.15, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
     {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.25, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
     {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.3, "retrieval_k": 5, "chunk_size": 1024, "use_reranking": True},
-    # Fast/cheap configs - llama-3.1-8b
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "retrieval_k": 10, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "retrieval_k": 3, "chunk_size": 256, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.6, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
+    # llama-3.1-8b (8 configs)
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.15, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.25, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "retrieval_k": 3, "chunk_size": 256, "use_reranking": True},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "retrieval_k": 10, "chunk_size": 1024, "use_reranking": True},
-    # Alternative model - qwen
-    {"model": "groq/qwen/qwen3-32b", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
-    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
-    # Risky configs (high temp, low retrieval) - expect some to fail safety
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.5, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.7, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
-    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.6, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
+    # qwen (8 configs)
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.15, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.25, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.3, "retrieval_k": 5, "chunk_size": 1024, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.1, "retrieval_k": 3, "chunk_size": 256, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "retrieval_k": 10, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.5, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
 ]
 
 GROQ_CONFIGS_SUPPORT = [
-    # Fast configs - llama-3.1-8b with streaming
+    # llama-3.1-8b (8 configs)
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.15, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.80},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.25, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.80},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.3, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.80},
-    # Quality configs - llama-3.3-70b
-    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
-    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
-    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.90},
-    # Alternative model - qwen
-    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
-    {"model": "groq/qwen/qwen3-32b", "temperature": 0.3, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.80},
-    # Risky configs (high temp, low canned threshold) - expect some to fail safety
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.5, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.60},
     {"model": "groq/llama-3.1-8b-instant", "temperature": 0.6, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.55},
+    # llama-3.3-70b (8 configs)
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.15, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.25, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.90},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.3, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.90},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.5, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.60},
     {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.6, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.50},
+    # qwen (8 configs)
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.1, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.15, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.25, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.3, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.80},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.35, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.80},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.5, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.60},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.6, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.55},
 ]
+# fmt: on
 
 # Sample queries for real evaluation
 SAMPLE_QUERIES = [
