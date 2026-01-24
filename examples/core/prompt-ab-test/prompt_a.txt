@@ -1,0 +1,4 @@
+Respond with exactly one of:
+- Artificial Intelligence
+- Uses data and algorithms
+- Retrieval Augmented Generation

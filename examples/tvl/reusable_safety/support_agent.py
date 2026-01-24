@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Any
 
 # Import Traigent SDK
-import traigent
 from traigent.api import optimize
 from traigent.api.safety import (
     bias_score,
@@ -140,7 +139,7 @@ def support_agent(
         cost_usd = 0.002 if model == "gpt-4o-mini" else 0.008
     else:
         # In production: call LLM API with appropriate model
-        response = f"Thank you for reaching out. I'm here to help with your concern..."
+        response = "Thank you for reaching out. I'm here to help with your concern..."
         latency_ms = 100.0 if use_streaming else 200.0
         cost_usd = 0.003
 
