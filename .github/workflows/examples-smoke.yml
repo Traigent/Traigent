@@ -97,7 +97,7 @@ jobs:
     - name: Check code formatting with black
       run: |
         # Exclude documentation examples and templates (intentionally formatted for readability)
-        black --check examples/ --exclude 'examples/(archive|.*/docs/page-inline|templates|advanced/(execution-modes|results-analysis)|tvl/reusable_safety/run_demo\.py)'
+        black --check examples/ --exclude '(examples/(archive|templates|tvl/reusable_safety/run_demo\.py|advanced/(execution-modes|results-analysis))|docs/page-inline)'
 
   docs-validation:
     runs-on: ubuntu-latest

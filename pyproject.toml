@@ -217,7 +217,7 @@ extend-exclude = '''
   | build
   | dist
   | demos
-  | examples/.*/docs/page-inline
+  | docs/page-inline
   | examples/templates
   | examples/advanced/execution-modes
   | examples/advanced/results-analysis
