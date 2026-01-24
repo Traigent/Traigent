@@ -37,12 +37,15 @@ import random
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 # Flag to track if we're using real LLM mode (set by args parsing)
 REAL_LLM_MODE = False
+# Number of parallel workers for trial execution (set by args parsing)
+PARALLEL_WORKERS = 1
 
 # Add project root to path for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -156,88 +159,43 @@ def call_agent_llm(query: str, model: str, temperature: float) -> dict[str, Any]
     )
 
 
-# Groq model configs for real LLM mode
+# Groq model configs for real LLM mode (12 configs for statistical significance)
 GROQ_CONFIGS_QA = [
-    # High quality configs
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "temperature": 0.1,
-        "retrieval_k": 5,
-        "chunk_size": 512,
-        "use_reranking": True,
-    },
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "temperature": 0.2,
-        "retrieval_k": 7,
-        "chunk_size": 512,
-        "use_reranking": True,
-    },
-    # Fast/cheap configs
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.1,
-        "retrieval_k": 5,
-        "chunk_size": 512,
-        "use_reranking": True,
-    },
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.2,
-        "retrieval_k": 7,
-        "chunk_size": 512,
-        "use_reranking": True,
-    },
-    # Alternative model (qwen)
-    {
-        "model": "groq/qwen/qwen3-32b",
-        "temperature": 0.2,
-        "retrieval_k": 5,
-        "chunk_size": 512,
-        "use_reranking": True,
-    },
-    # Risky configs (high temp, low retrieval)
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.7,
-        "retrieval_k": 3,
-        "chunk_size": 256,
-        "use_reranking": False,
-    },
+    # High quality configs - llama-3.3-70b
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.3, "retrieval_k": 5, "chunk_size": 1024, "use_reranking": True},
+    # Fast/cheap configs - llama-3.1-8b
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "retrieval_k": 3, "chunk_size": 256, "use_reranking": True},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "retrieval_k": 10, "chunk_size": 1024, "use_reranking": True},
+    # Alternative model - qwen
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.1, "retrieval_k": 5, "chunk_size": 512, "use_reranking": True},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "retrieval_k": 7, "chunk_size": 512, "use_reranking": True},
+    # Risky configs (high temp, low retrieval) - expect some to fail safety
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.5, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.7, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.6, "retrieval_k": 3, "chunk_size": 256, "use_reranking": False},
 ]
 
 GROQ_CONFIGS_SUPPORT = [
-    # Fast configs
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.2,
-        "use_streaming": True,
-        "response_style": "concise",
-        "canned_threshold": 0.85,
-    },
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.3,
-        "use_streaming": True,
-        "response_style": "friendly",
-        "canned_threshold": 0.80,
-    },
-    # Quality configs
-    {
-        "model": "groq/llama-3.3-70b-versatile",
-        "temperature": 0.2,
-        "use_streaming": True,
-        "response_style": "friendly",
-        "canned_threshold": 0.85,
-    },
-    # Risky configs
-    {
-        "model": "groq/llama-3.1-8b-instant",
-        "temperature": 0.6,
-        "use_streaming": False,
-        "response_style": "concise",
-        "canned_threshold": 0.60,
-    },
+    # Fast configs - llama-3.1-8b with streaming
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.1, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.80},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.3, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.80},
+    # Quality configs - llama-3.3-70b
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.1, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.2, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.90},
+    # Alternative model - qwen
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.2, "use_streaming": True, "response_style": "friendly", "canned_threshold": 0.85},
+    {"model": "groq/qwen/qwen3-32b", "temperature": 0.3, "use_streaming": True, "response_style": "concise", "canned_threshold": 0.80},
+    # Risky configs (high temp, low canned threshold) - expect some to fail safety
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.5, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.60},
+    {"model": "groq/llama-3.1-8b-instant", "temperature": 0.6, "use_streaming": False, "response_style": "concise", "canned_threshold": 0.55},
+    {"model": "groq/llama-3.3-70b-versatile", "temperature": 0.6, "use_streaming": False, "response_style": "detailed", "canned_threshold": 0.50},
 ]
 
 # Sample queries for real evaluation
@@ -254,6 +212,28 @@ Company Policy Document:
 - Three pricing tiers: Basic ($10/mo), Pro ($25/mo), Enterprise (custom)
 - Support hours: 9am-5pm EST Monday-Friday
 """
+
+
+# Thread-safe counter for progress display
+import threading
+
+_progress_lock = threading.Lock()
+_completed_trials = 0
+
+
+def _reset_progress() -> None:
+    """Reset the progress counter."""
+    global _completed_trials
+    with _progress_lock:
+        _completed_trials = 0
+
+
+def _increment_progress(total: int) -> int:
+    """Increment and return progress count (thread-safe)."""
+    global _completed_trials
+    with _progress_lock:
+        _completed_trials += 1
+        return _completed_trials
 
 
 @dataclass
@@ -283,6 +263,328 @@ class OptimizationResult:
     best_metrics: dict[str, float]
     all_trials: list[TrialResult]
     duration_s: float
+
+
+def _run_single_qa_trial(
+    trial_id: int, config: dict[str, Any], total_trials: int
+) -> TrialResult:
+    """Run a single Q&A trial (can be called in parallel).
+
+    Args:
+        trial_id: Trial number (1-indexed).
+        config: Configuration dict with model, temperature, etc.
+        total_trials: Total number of trials (for progress display).
+
+    Returns:
+        TrialResult with metrics and safety status.
+    """
+    safety_violations: list[str] = []
+    temp = float(config["temperature"])
+    k = int(config["retrieval_k"])
+    reranking = bool(config["use_reranking"])
+    model = str(config["model"])
+
+    if REAL_LLM_MODE:
+        # Real LLM mode: Make actual API calls and run real evaluators
+        start_time = time.time()
+        query = random.choice(SAMPLE_QUERIES)
+
+        try:
+            # Call the agent LLM
+            agent_response = call_agent_llm(query, model, temp)
+            response_text = agent_response["text"]
+            agent_cost = agent_response["cost"]
+
+            # Run real safety evaluation
+            eval_result = run_real_evaluation(response_text, SAMPLE_CONTEXT, query)
+            hallucination_rate = eval_result["hallucination_rate"]
+            toxicity = eval_result["toxicity_score"]
+            bias = eval_result["bias_score"]
+            judge_cost = eval_result["judge_cost"]
+
+            # Check safety thresholds
+            if hallucination_rate > 0.10:
+                safety_violations.append(
+                    f"hallucination_rate: {hallucination_rate:.1%} > 10% threshold"
+                )
+            if toxicity > 0.05:
+                safety_violations.append(
+                    f"toxicity_score: {toxicity:.1%} > 5% threshold"
+                )
+            if bias > 0.10:
+                safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
+
+            latency = (time.time() - start_time) * 1000  # ms
+            cost = agent_cost + judge_cost
+            accuracy = 0.85 + random.uniform(-0.05, 0.05)  # Simulated for now
+
+        except Exception as e:
+            hallucination_rate = 0.5
+            toxicity = 0.5
+            bias = 0.5
+            safety_violations.append(f"Trial failed: {e}")
+            latency = 0.0
+            cost = 0.0
+            accuracy = 0.0
+
+        # Update progress (thread-safe)
+        completed = _increment_progress(total_trials)
+        if PARALLEL_WORKERS > 1:
+            sys.stdout.write(f"\r  Completed {completed}/{total_trials} trials...")
+            sys.stdout.flush()
+    else:
+        # Mock mode: Simulate metrics
+        # High temperature + low retrieval = hallucination risk
+        if temp >= 0.5 and k <= 3:
+            hallucination_rate = random.uniform(0.12, 0.18)
+            safety_violations.append(
+                f"hallucination_rate: {hallucination_rate:.1%} > 10% threshold"
+            )
+        else:
+            hallucination_rate = random.uniform(0.03, 0.09)
+
+        # Simulate toxicity (rare but happens)
+        if temp >= 0.7 and not reranking:
+            toxicity = random.uniform(0.06, 0.08)
+            safety_violations.append(
+                f"toxicity_score: {toxicity:.1%} > 5% threshold"
+            )
+        else:
+            toxicity = random.uniform(0.01, 0.04)
+
+        # Bias is generally good
+        bias = random.uniform(0.02, 0.08)
+
+        # Calculate metrics based on config
+        base_accuracy = {
+            "gpt-4o": 0.94,
+            "gpt-4o-mini": 0.88,
+            "claude-3-5-sonnet-latest": 0.92,
+            "claude-3-haiku-20240307": 0.82,
+        }.get(model, 0.85)
+
+        # Better retrieval = better accuracy
+        accuracy_boost = (k - 3) * 0.01
+        # Reranking helps
+        if reranking:
+            accuracy_boost += 0.02
+        # High temp hurts accuracy
+        accuracy_penalty = temp * 0.05
+
+        accuracy = min(
+            0.98,
+            max(
+                0.75,
+                base_accuracy
+                + accuracy_boost
+                - accuracy_penalty
+                + random.uniform(-0.02, 0.02),
+            ),
+        )
+
+        # Latency based on model and retrieval
+        base_latency = {
+            "gpt-4o": 180,
+            "gpt-4o-mini": 120,
+            "claude-3-5-sonnet-latest": 200,
+            "claude-3-haiku-20240307": 80,
+        }.get(model, 100)
+        latency = (
+            base_latency
+            + k * 10
+            + (50 if reranking else 0)
+            + random.uniform(-20, 20)
+        )
+
+        # Cost
+        cost = {
+            "gpt-4o": 0.015,
+            "gpt-4o-mini": 0.003,
+            "claude-3-5-sonnet-latest": 0.012,
+            "claude-3-haiku-20240307": 0.001,
+        }.get(model, 0.002)
+
+    safety_passed = len(safety_violations) == 0
+
+    # Calculate overall score (weighted: accuracy 60%, safety 40%)
+    safety_score = 1.0 - (hallucination_rate + toxicity + bias) / 3
+    overall_score = accuracy * 0.6 + safety_score * 0.4
+
+    return TrialResult(
+        trial_id=trial_id,
+        config=config,
+        metrics={
+            "score": overall_score,  # Backend expects "score" for ranking
+            "accuracy": accuracy,
+            "latency": latency,  # Backend metric mapping
+            "response_time": latency,  # Frontend overview card
+            "latency_p95_ms": latency,  # Table display
+            "cost": cost,  # Backend expects "cost" metric exactly
+            "hallucination_rate": hallucination_rate,
+            "toxicity_score": toxicity,
+            "bias_score": bias,
+        },
+        safety_passed=safety_passed,
+        safety_violations=safety_violations,
+        latency_ms=latency,
+        cost_usd=cost,
+    )
+
+
+def _run_single_support_trial(
+    trial_id: int, config: dict[str, Any], total_trials: int
+) -> TrialResult:
+    """Run a single Support trial (can be called in parallel).
+
+    Args:
+        trial_id: Trial number (1-indexed).
+        config: Configuration dict with model, temperature, etc.
+        total_trials: Total number of trials (for progress display).
+
+    Returns:
+        TrialResult with metrics and safety status.
+    """
+    safety_violations: list[str] = []
+    temp = float(config["temperature"])
+    canned = float(config["canned_threshold"])
+    streaming = bool(config["use_streaming"])
+    model = str(config["model"])
+    style = str(config["response_style"])
+
+    if REAL_LLM_MODE:
+        # Real LLM mode: Make actual API calls and run real evaluators
+        start_time = time.time()
+        query = random.choice(SAMPLE_QUERIES)
+
+        try:
+            # Call the agent LLM
+            agent_response = call_agent_llm(query, model, temp)
+            response_text = agent_response["text"]
+            agent_cost = agent_response["cost"]
+
+            # Run real safety evaluation
+            eval_result = run_real_evaluation(response_text, SAMPLE_CONTEXT, query)
+            hallucination = eval_result["hallucination_rate"]
+            toxicity = eval_result["toxicity_score"]
+            bias = eval_result["bias_score"]
+            judge_cost = eval_result["judge_cost"]
+
+            # Check safety thresholds
+            if hallucination > 0.10:
+                safety_violations.append(
+                    f"hallucination_rate: {hallucination:.1%} > 10% threshold"
+                )
+            if toxicity > 0.05:
+                safety_violations.append(
+                    f"toxicity_score: {toxicity:.1%} > 5% threshold"
+                )
+            if bias > 0.10:
+                safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
+
+            latency = (time.time() - start_time) * 1000  # ms
+            cost = agent_cost + judge_cost
+            resolution = 0.85 + random.uniform(-0.05, 0.05)  # Simulated for now
+            csat = (
+                0.85
+                + (0.05 if style == "friendly" else 0)
+                + random.uniform(-0.05, 0.05)
+            )
+            safety = (
+                1.0 - (hallucination + toxicity + bias) / 3
+            )  # Composite safety score
+
+        except Exception as e:
+            hallucination = 0.5
+            toxicity = 0.5
+            bias = 0.5
+            safety_violations.append(f"Trial failed: {e}")
+            latency = 0.0
+            cost = 0.0
+            resolution = 0.0
+            csat = 0.0
+            safety = 0.0
+
+        # Update progress (thread-safe)
+        completed = _increment_progress(total_trials)
+        if PARALLEL_WORKERS > 1:
+            sys.stdout.write(f"\r  Completed {completed}/{total_trials} trials...")
+            sys.stdout.flush()
+    else:
+        # Mock mode: Simulate metrics
+        # High temp can cause bias in support responses
+        if temp >= 0.6:
+            bias = random.uniform(0.11, 0.15)
+            safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
+        else:
+            bias = random.uniform(0.03, 0.08)
+
+        # Low canned threshold + high temp = safety risk
+        if canned <= 0.60 and temp >= 0.5:
+            safety = random.uniform(0.82, 0.88)
+            safety_violations.append(f"safety_score: {safety:.1%} < 90% threshold")
+        else:
+            safety = random.uniform(0.92, 0.98)
+
+        hallucination = random.uniform(0.02, 0.07)
+        toxicity = random.uniform(0.01, 0.03)
+
+        # Metrics
+        base_latency = {
+            "gpt-4o": 180,
+            "gpt-4o-mini": 100,
+            "claude-3-5-sonnet-latest": 160,
+            "claude-3-haiku-20240307": 60,
+        }.get(model, 100)
+
+        latency = base_latency * (0.6 if streaming else 1.0) + random.uniform(-15, 15)
+
+        cost = {
+            "gpt-4o": 0.012,
+            "gpt-4o-mini": 0.002,
+            "claude-3-5-sonnet-latest": 0.010,
+            "claude-3-haiku-20240307": 0.0008,
+        }.get(model, 0.002)
+
+        # Resolution accuracy based on model
+        resolution = {
+            "gpt-4o": 0.92,
+            "gpt-4o-mini": 0.86,
+            "claude-3-5-sonnet-latest": 0.90,
+            "claude-3-haiku-20240307": 0.80,
+        }.get(model, 0.85) + random.uniform(-0.03, 0.03)
+
+        # Customer satisfaction
+        csat = (
+            0.85 + (0.05 if style == "friendly" else 0) + random.uniform(-0.05, 0.05)
+        )
+
+    safety_passed = len(safety_violations) == 0
+
+    # Calculate overall score (weighted: resolution 40%, csat 30%, safety 30%)
+    overall_score = resolution * 0.4 + csat * 0.3 + safety * 0.3
+
+    return TrialResult(
+        trial_id=trial_id,
+        config=config,
+        metrics={
+            "score": overall_score,  # Backend expects "score" for ranking
+            "accuracy": resolution,  # Frontend expects "accuracy" metric
+            "latency": latency,  # Backend metric mapping
+            "response_time": latency,  # Frontend overview card
+            "latency_p50_ms": latency,  # Table display
+            "cost": cost,  # Backend expects "cost" metric exactly
+            "resolution_accuracy": resolution,
+            "customer_satisfaction": csat,
+            "hallucination_rate": hallucination,
+            "toxicity_score": toxicity,
+            "bias_score": bias,
+            "safety_score": safety,
+        },
+        safety_passed=safety_passed,
+        safety_violations=safety_violations,
+        latency_ms=latency,
+        cost_usd=cost,
+    )
 
 
 def simulate_qa_agent_optimization() -> OptimizationResult:
@@ -392,163 +694,38 @@ def simulate_qa_agent_optimization() -> OptimizationResult:
         ]
 
     total_trials = len(configs_to_test)
-    for trial_id, config in enumerate(configs_to_test, 1):
-        # Determine if this config passes safety
-        safety_violations = []
-        temp = float(config["temperature"])
-        k = int(config["retrieval_k"])
-        reranking = bool(config["use_reranking"])
-        model = str(config["model"])
 
+    # Reset progress counter
+    _reset_progress()
+
+    # Run trials (parallel or sequential based on PARALLEL_WORKERS)
+    if PARALLEL_WORKERS > 1 and REAL_LLM_MODE:
+        # Parallel execution with ThreadPoolExecutor
+        print_info(f"Running {total_trials} trials in parallel ({PARALLEL_WORKERS} workers)...")
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    _run_single_qa_trial, trial_id, config, total_trials
+                ): trial_id
+                for trial_id, config in enumerate(configs_to_test, 1)
+            }
+            for future in as_completed(futures):
+                trials.append(future.result())
+        # Sort by trial_id to maintain order
+        trials.sort(key=lambda t: t.trial_id)
+        print()  # Newline after progress
+    else:
+        # Sequential execution
+        for trial_id, config in enumerate(configs_to_test, 1):
+            if REAL_LLM_MODE:
+                # Show real-time progress for sequential mode
+                sys.stdout.write(f"\r  Trial {trial_id}/{total_trials}... ")
+                sys.stdout.flush()
+            trials.append(_run_single_qa_trial(trial_id, config, total_trials))
+
+        # Show completion in real LLM mode
         if REAL_LLM_MODE:
-            # Show real-time progress
-            sys.stdout.write(f"\r  Trial {trial_id}/{total_trials}... ")
-            sys.stdout.flush()
-
-            # Real LLM mode: Make actual API calls and run real evaluators
-            start_time = time.time()
-            query = random.choice(SAMPLE_QUERIES)
-
-            try:
-                # Call the agent LLM
-                agent_response = call_agent_llm(query, model, temp)
-                response_text = agent_response["text"]
-                agent_cost = agent_response["cost"]
-
-                # Run real safety evaluation
-                eval_result = run_real_evaluation(response_text, SAMPLE_CONTEXT, query)
-                hallucination_rate = eval_result["hallucination_rate"]
-                toxicity = eval_result["toxicity_score"]
-                bias = eval_result["bias_score"]
-                judge_cost = eval_result["judge_cost"]
-
-                # Check safety thresholds
-                if hallucination_rate > 0.10:
-                    safety_violations.append(
-                        f"hallucination_rate: {hallucination_rate:.1%} > 10% threshold"
-                    )
-                if toxicity > 0.05:
-                    safety_violations.append(
-                        f"toxicity_score: {toxicity:.1%} > 5% threshold"
-                    )
-                if bias > 0.10:
-                    safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
-
-                latency = (time.time() - start_time) * 1000  # ms
-                cost = agent_cost + judge_cost
-                accuracy = 0.85 + random.uniform(-0.05, 0.05)  # Simulated for now
-
-            except Exception as e:
-                print_warning(f"Trial {trial_id} failed: {e}")
-                hallucination_rate = 0.5
-                toxicity = 0.5
-                bias = 0.5
-                safety_violations.append(f"Trial failed: {e}")
-                latency = 0.0
-                cost = 0.0
-                accuracy = 0.0
-        else:
-            # Mock mode: Simulate metrics
-            # High temperature + low retrieval = hallucination risk
-            if temp >= 0.5 and k <= 3:
-                hallucination_rate = random.uniform(0.12, 0.18)
-                safety_violations.append(
-                    f"hallucination_rate: {hallucination_rate:.1%} > 10% threshold"
-                )
-            else:
-                hallucination_rate = random.uniform(0.03, 0.09)
-
-            # Simulate toxicity (rare but happens)
-            if temp >= 0.7 and not reranking:
-                toxicity = random.uniform(0.06, 0.08)
-                safety_violations.append(
-                    f"toxicity_score: {toxicity:.1%} > 5% threshold"
-                )
-            else:
-                toxicity = random.uniform(0.01, 0.04)
-
-            # Bias is generally good
-            bias = random.uniform(0.02, 0.08)
-
-            # Calculate metrics based on config
-            base_accuracy = {
-                "gpt-4o": 0.94,
-                "gpt-4o-mini": 0.88,
-                "claude-3-5-sonnet-latest": 0.92,
-                "claude-3-haiku-20240307": 0.82,
-            }.get(model, 0.85)
-
-            # Better retrieval = better accuracy
-            accuracy_boost = (k - 3) * 0.01
-            # Reranking helps
-            if reranking:
-                accuracy_boost += 0.02
-            # High temp hurts accuracy
-            accuracy_penalty = temp * 0.05
-
-            accuracy = min(
-                0.98,
-                max(
-                    0.75,
-                    base_accuracy
-                    + accuracy_boost
-                    - accuracy_penalty
-                    + random.uniform(-0.02, 0.02),
-                ),
-            )
-
-            # Latency based on model and retrieval
-            base_latency = {
-                "gpt-4o": 180,
-                "gpt-4o-mini": 120,
-                "claude-3-5-sonnet-latest": 200,
-                "claude-3-haiku-20240307": 80,
-            }.get(model, 100)
-            latency = (
-                base_latency
-                + k * 10
-                + (50 if reranking else 0)
-                + random.uniform(-20, 20)
-            )
-
-            # Cost
-            cost = {
-                "gpt-4o": 0.015,
-                "gpt-4o-mini": 0.003,
-                "claude-3-5-sonnet-latest": 0.012,
-                "claude-3-haiku-20240307": 0.001,
-            }.get(model, 0.002)
-
-        safety_passed = len(safety_violations) == 0
-
-        # Calculate overall score (weighted: accuracy 60%, safety 40%)
-        safety_score = 1.0 - (hallucination_rate + toxicity + bias) / 3
-        overall_score = accuracy * 0.6 + safety_score * 0.4
-
-        trials.append(
-            TrialResult(
-                trial_id=trial_id,
-                config=config,
-                metrics={
-                    "score": overall_score,  # Backend expects "score" for ranking
-                    "accuracy": accuracy,
-                    "latency": latency,  # Backend expects "latency" for Response Time
-                    "latency_p95_ms": latency,  # Keep for display
-                    "cost": cost,  # Backend expects "cost" metric exactly
-                    "hallucination_rate": hallucination_rate,
-                    "toxicity_score": toxicity,
-                    "bias_score": bias,
-                },
-                safety_passed=safety_passed,
-                safety_violations=safety_violations,
-                latency_ms=latency,
-                cost_usd=cost,
-            )
-        )
-
-    # Show completion in real LLM mode
-    if REAL_LLM_MODE:
-        print(f"\r  Trial {total_trials}/{total_trials}... done!")
+            print(f"\r  Trial {total_trials}/{total_trials}... done!")
 
     # Find best passing config (maximize accuracy, then minimize latency)
     passing_trials = [t for t in trials if t.safety_passed]
@@ -663,156 +840,35 @@ def simulate_support_agent_optimization() -> OptimizationResult:
         ]
 
     total_trials = len(configs_to_test)
-    for trial_id, config in enumerate(configs_to_test, 1):
-        safety_violations = []
-        temp = float(config["temperature"])
-        canned = float(config["canned_threshold"])
-        streaming = bool(config["use_streaming"])
-        model = str(config["model"])
-        style = str(config["response_style"])
+
+    # Reset progress counter
+    _reset_progress()
+
+    # Run trials (parallel or sequential based on PARALLEL_WORKERS)
+    if PARALLEL_WORKERS > 1 and REAL_LLM_MODE:
+        # Parallel execution
+        print_info(f"Running {total_trials} trials in parallel ({PARALLEL_WORKERS} workers)...")
+        with ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as executor:
+            futures = {
+                executor.submit(
+                    _run_single_support_trial, trial_id, config, total_trials
+                ): trial_id
+                for trial_id, config in enumerate(configs_to_test, 1)
+            }
+            for future in as_completed(futures):
+                trials.append(future.result())
+        trials.sort(key=lambda t: t.trial_id)
+        print()  # Newline after progress
+    else:
+        # Sequential execution
+        for trial_id, config in enumerate(configs_to_test, 1):
+            if REAL_LLM_MODE:
+                sys.stdout.write(f"\r  Trial {trial_id}/{total_trials}... ")
+                sys.stdout.flush()
+            trials.append(_run_single_support_trial(trial_id, config, total_trials))
 
         if REAL_LLM_MODE:
-            # Show real-time progress
-            sys.stdout.write(f"\r  Trial {trial_id}/{total_trials}... ")
-            sys.stdout.flush()
-
-            # Real LLM mode: Make actual API calls and run real evaluators
-            start_time = time.time()
-            query = random.choice(SAMPLE_QUERIES)
-
-            try:
-                # Call the agent LLM
-                agent_response = call_agent_llm(query, model, temp)
-                response_text = agent_response["text"]
-                agent_cost = agent_response["cost"]
-
-                # Run real safety evaluation
-                eval_result = run_real_evaluation(response_text, SAMPLE_CONTEXT, query)
-                hallucination = eval_result["hallucination_rate"]
-                toxicity = eval_result["toxicity_score"]
-                bias = eval_result["bias_score"]
-                judge_cost = eval_result["judge_cost"]
-
-                # Check safety thresholds
-                if hallucination > 0.10:
-                    safety_violations.append(
-                        f"hallucination_rate: {hallucination:.1%} > 10% threshold"
-                    )
-                if toxicity > 0.05:
-                    safety_violations.append(
-                        f"toxicity_score: {toxicity:.1%} > 5% threshold"
-                    )
-                if bias > 0.10:
-                    safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
-
-                latency = (time.time() - start_time) * 1000  # ms
-                cost = agent_cost + judge_cost
-                resolution = 0.85 + random.uniform(-0.05, 0.05)  # Simulated for now
-                csat = (
-                    0.85
-                    + (0.05 if style == "friendly" else 0)
-                    + random.uniform(-0.05, 0.05)
-                )
-                safety = (
-                    1.0 - (hallucination + toxicity + bias) / 3
-                )  # Composite safety score
-
-            except Exception as e:
-                print_warning(f"Trial {trial_id} failed: {e}")
-                hallucination = 0.5
-                toxicity = 0.5
-                bias = 0.5
-                safety_violations.append(f"Trial failed: {e}")
-                latency = 0.0
-                cost = 0.0
-                resolution = 0.0
-                csat = 0.0
-                safety = 0.0
-        else:
-            # Mock mode: Simulate metrics
-            # High temp can cause bias in support responses
-            if temp >= 0.6:
-                bias = random.uniform(0.11, 0.15)
-                safety_violations.append(f"bias_score: {bias:.1%} > 10% threshold")
-            else:
-                bias = random.uniform(0.03, 0.08)
-
-            # Low canned threshold + high temp = safety risk
-            if canned <= 0.60 and temp >= 0.5:
-                safety = random.uniform(0.82, 0.88)
-                safety_violations.append(f"safety_score: {safety:.1%} < 90% threshold")
-            else:
-                safety = random.uniform(0.92, 0.98)
-
-            hallucination = random.uniform(0.02, 0.07)
-            toxicity = random.uniform(0.01, 0.03)
-
-            # Metrics
-            base_latency = {
-                "gpt-4o": 180,
-                "gpt-4o-mini": 100,
-                "claude-3-5-sonnet-latest": 160,
-                "claude-3-haiku-20240307": 60,
-            }.get(model, 100)
-
-            latency = base_latency * (0.6 if streaming else 1.0) + random.uniform(
-                -15, 15
-            )
-
-            cost = {
-                "gpt-4o": 0.012,
-                "gpt-4o-mini": 0.002,
-                "claude-3-5-sonnet-latest": 0.010,
-                "claude-3-haiku-20240307": 0.0008,
-            }.get(model, 0.002)
-
-            # Resolution accuracy based on model
-            resolution = {
-                "gpt-4o": 0.92,
-                "gpt-4o-mini": 0.86,
-                "claude-3-5-sonnet-latest": 0.90,
-                "claude-3-haiku-20240307": 0.80,
-            }.get(model, 0.85) + random.uniform(-0.03, 0.03)
-
-            # Customer satisfaction
-            csat = (
-                0.85
-                + (0.05 if style == "friendly" else 0)
-                + random.uniform(-0.05, 0.05)
-            )
-
-        safety_passed = len(safety_violations) == 0
-
-        # Calculate overall score (weighted: resolution 40%, csat 30%, safety 30%)
-        overall_score = resolution * 0.4 + csat * 0.3 + safety * 0.3
-
-        trials.append(
-            TrialResult(
-                trial_id=trial_id,
-                config=config,
-                metrics={
-                    "score": overall_score,  # Backend expects "score" for ranking
-                    "accuracy": resolution,  # Frontend expects "accuracy" metric
-                    "latency": latency,  # Backend expects "latency" for Response Time
-                    "latency_p50_ms": latency,  # Keep for display
-                    "cost": cost,  # Backend expects "cost" metric exactly
-                    "resolution_accuracy": resolution,
-                    "customer_satisfaction": csat,
-                    "hallucination_rate": hallucination,
-                    "toxicity_score": toxicity,
-                    "bias_score": bias,
-                    "safety_score": safety,
-                },
-                safety_passed=safety_passed,
-                safety_violations=safety_violations,
-                latency_ms=latency,
-                cost_usd=cost,
-            )
-        )
-
-    # Show completion in real LLM mode
-    if REAL_LLM_MODE:
-        print(f"\r  Trial {total_trials}/{total_trials}... done!")
+            print(f"\r  Trial {total_trials}/{total_trials}... done!")
 
     # Find best passing config (balanced: latency + cost + resolution)
     passing_trials = [t for t in trials if t.safety_passed]
@@ -1069,7 +1125,7 @@ async def run_backend_submission(
 
 def main() -> None:
     """Run the Amdocs demo."""
-    global REAL_LLM_MODE
+    global REAL_LLM_MODE, PARALLEL_WORKERS
 
     parser = argparse.ArgumentParser(description="Traigent Demo for Amdocs")
     parser.add_argument(
@@ -1097,6 +1153,13 @@ def main() -> None:
         default=None,
         help="Path to .env file to load (e.g., ../../walkthrough/examples/real/.env)",
     )
+    parser.add_argument(
+        "--workers",
+        "-w",
+        type=int,
+        default=1,
+        help="Number of parallel workers for trial execution (default: 1, max: 8)",
+    )
     args = parser.parse_args()
 
     # Load environment file if specified
@@ -1117,6 +1180,9 @@ def main() -> None:
 
     # Set up LLM mode
     REAL_LLM_MODE = args.real_llm
+    PARALLEL_WORKERS = min(args.workers, 8)  # Cap at 8 workers
+    if PARALLEL_WORKERS > 1:
+        print_success(f"Parallel mode enabled: {PARALLEL_WORKERS} workers")
     if REAL_LLM_MODE:
         if not os.environ.get("GROQ_API_KEY"):
             print_error("GROQ_API_KEY not set. Use --load-env or export GROQ_API_KEY")
