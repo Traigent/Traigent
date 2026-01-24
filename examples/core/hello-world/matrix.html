@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Traigent Examples Matrix</title>
+  <style>
+    :root { --line:#e7ebef; --muted:#6b7380; --bg:#fff; --fg:#0b0f13; }
+    body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; margin: 0; background: var(--bg); color: var(--fg); }
+    .wrap-page { max-width: 1600px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 28px; margin: 0 0 6px 0; }
+    .subtitle { color: var(--muted); margin: 0 0 16px 0; }
+    table { border-collapse: collapse; width: auto; min-width: 100%; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; direction: ltr; }
+    .table-wrapper {
+        width: 100%;
+        position: relative;
+        margin-top: 16px;
+    }
+    .table-scroll-container {
+        overflow-x: auto;
+        width: 100%;
+        scrollbar-width: thick;
+        scrollbar-color: var(--muted) var(--bg);
+        transform: rotateX(180deg);
+    }
+    .table-scroll-container table {
+        transform: rotateX(180deg);
+    }
+    .table-scroll-container::-webkit-scrollbar {
+        height: 16px;
+        width: 16px;
+    }
+    .table-scroll-container::-webkit-scrollbar-track {
+        background: var(--bg);
+    }
+    .table-scroll-container::-webkit-scrollbar-thumb {
+        background: var(--muted);
+        border-radius: 8px;
+    }
+    .table-scroll-container::-webkit-scrollbar-thumb:hover {
+        background: var(--line);
+    }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 16px; overflow: hidden; text-overflow: ellipsis; min-width: 250px; }
+    th { cursor: pointer; background: #fbfcfd; position: sticky; top: 0; text-align: left; font-weight: 600; }
+    td.wrap { white-space: normal; }
+    tr:nth-child(even) { background-color: #fcfdfe; }
+    .controls { margin-bottom: 12px; }
+    .filters { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input[type="text"], select { padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; }
+    input[type="text"] { width: 320px; }
+    .small { font-size: 0.9em; color: var(--muted); }
+    .nowrap { white-space: nowrap; }
+    .tag { display: inline-block; background:#f3f5f8; color:#2a2f36; border:1px solid var(--line); border-radius:999px; padding:2px 8px; margin: 1px 4px 1px 0; font-size: 12px; }
+    .badge { display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--line); font-size: 12px; }
+    .ok { background:#effaf3; color:#18794e; border-color:#c6f0d5; }
+    .no { background:#fff1f2; color:#b42318; border-color:#ffd5d6; }
+    .btn { padding:8px 12px; border:1px solid var(--line); background:#fff; cursor:pointer; border-radius:8px; }
+    .btn:hover { background:#f9fafb; }
+    .run-cell { display:flex; align-items:center; gap:.5rem; }
+    .toast { position: fixed; bottom: 12px; right:12px; background:#1f2937; color:#fff; padding:10px 14px; border-radius:8px; opacity:0; transition:opacity .2s; box-shadow: 0 10px 24px rgba(0,0,0,.2); }
+    .toast.show { opacity: 0.95; }
+    /* Row and cell interactions */
+    tbody tr { transition: background-color .15s ease-in-out; }
+    tbody tr:hover { background: #f3f6fb; }
+    td.clickable { cursor: pointer; }
+    td.clickable:hover { background: #f6f8fb; }
+
+    /* Focus states */
+    input[type="text"]:focus, select:focus, .btn:focus {
+      outline: none; border-color: #94a3b8; box-shadow: 0 0 0 3px rgba(148,163,184,.25);
+    }
+
+    /* Code snippets */
+    code { background:#f7f8fa; border:1px solid var(--line); padding:2px 6px; border-radius:6px; }
+
+    /* Modal overlay & content */
+    .modal { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; background: rgba(11,15,19,.45); backdrop-filter: blur(2px); }
+    .modal.show { display: flex; }
+    .modal .modal-content { background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 12px; width: min(90vw, 900px); max-height: 80vh; padding: 16px; box-shadow: 0 20px 48px rgba(0,0,0,.25); overflow: hidden; }
+    .modal .modal-content pre { margin: 0; max-height: 60vh; overflow: auto; background: #0b0f13; color: #e5e7eb; border-radius: 8px; padding: 12px; }
+    .modal .close { position:absolute; top:8px; right:8px; background:transparent; border:0; color:inherit; cursor:pointer; padding:6px; border-radius:6px; }
+    .modal .close:hover { background: rgba(0,0,0,.06); }
+
+    /* Dropzone hover */
+    #dropzone.hover { border-color:#94a3b8; background:#fbfdff; }
+
+    /* Column selector */
+    #column-selector label { display:flex; align-items:center; gap:8px; padding:4px 2px; }
+    #column-selector .popover-actions { display:flex; gap:8px; margin-bottom:8px; }
+
+    /* Sticky header subtle divider */
+    thead th { box-shadow: 0 1px 0 var(--line); z-index: 1; }
+
+    /* Dark mode */
+    @media (prefers-color-scheme: dark) {
+      :root { --line:#2a2f36; --muted:#9aa4b2; --bg:#0b0f13; --fg:#e5e7eb; }
+      th { background: #0f141a; }
+      tr:nth-child(even) { background-color: #0e1319; }
+      tbody tr:hover { background: #131a22; }
+      td.clickable:hover { background: #131a22; }
+      .tag { background:#111820; color:#e5e7eb; border-color:#2a2f36; }
+      .badge { border-color:#2a2f36; }
+      .btn { background:#0f141a; color: #e5e7eb; border-color: #3b4451; }
+      .btn:hover { background:#131a22; }
+      .toast { background:#111820; }
+      code { background:#111820; border-color:#2a2f36; color:#e5e7eb; }
+      .modal .modal-content pre { background:#0f141a; color:#e5e7eb; }
+      #dropzone.hover { background:#0f141a; border-color:#3b4451; }
+      input[type="text"], select { background:#0f141a; color:#e5e7eb; border-color:#2a2f36; }
+      input::placeholder { color:#9aa4b2; }
+      .modal .close:hover { background: rgba(255,255,255,.1); }
+    }
+  </style>
+  <script>
+    async function loadCSV(path) {
+      const res = await fetch(path);
+      const text = await res.text();
+      return parseCSV(text);
+    }
+
+    // Simple CSV parser that handles quoted fields
+    function parseCSV(text) {
+      const lines = text.replace(/\r/g,'').split('\n').filter(l=>l.trim().length>0);
+      if (lines.length === 0) return { headers: [], rows: [] };
+      const headers = splitCSVLine(lines[0]);
+      const rows = lines.slice(1).map(line => {
+        const cols = splitCSVLine(line);
+        const obj = {};
+        headers.forEach((h, i) => obj[h] = (cols[i] ?? ''));
+        return obj;
+      });
+      return { headers, rows };
+    }
+
+    function splitCSVLine(line) {
+      const result = [];
+      let cur = '';
+      let inQuotes = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') {
+          if (inQuotes && line[i+1] === '"') { cur += '"'; i++; }
+          else { inQuotes = !inQuotes; }
+        } else if (ch === ',' && !inQuotes) {
+          result.push(cur); cur = '';
+        } else {
+          cur += ch;
+        }
+      }
+      result.push(cur);
+      return result;
+    }
+
+    const DISPLAY_NAMES = {
+      id: 'ID', name: 'Name', description: 'Description', expected: 'Expected',
+      execution_mode: 'Mode', objectives: 'Objectives', algorithm: 'Algorithm',
+      max_trials: 'Max Trials', configuration_space: 'Configuration Space',
+      evaluator: 'Evaluator', metric_functions: 'Metric Functions',
+      scoring_function: 'Scoring Function', injection_mode: 'Injection Mode',
+      framework_targets: 'Framework Targets', dataset: 'Dataset',
+      parallel_config: 'Parallel Config',
+      privacy_enabled: 'Privacy', mock_mode: 'Mock Mode', integration: 'Integration',
+      notes: 'Notes'
+    };
+
+    function tryParse(str){
+      const attempt = (s) => { try { return JSON.parse(s); } catch(e){ return null; } };
+      let raw = String(str||'').trim();
+      // Try as-is
+      let val = attempt(raw); if (val !== null) return val;
+      // Strip surrounding quotes
+      if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
+        raw = raw.slice(1, -1);
+      }
+      // Unescape CSV-style sequences
+      raw = raw.replace(/\\\"/g, '"').replace(/\\\\/g, '\\');
+      val = attempt(raw); if (val !== null) return val;
+      // Quote keys of form \key: → "key":
+      raw = raw.replace(/\\([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '"$1":');
+      val = attempt(raw); if (val !== null) return val;
+      // Quote unquoted keys after { or ,
+      raw = raw.replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:/g, '$1"$2":');
+      val = attempt(raw); if (val !== null) return val;
+      // Convert single-quoted strings to double quotes
+      raw = raw.replace(/'([^']*)'/g, '"$1"');
+      val = attempt(raw); if (val !== null) return val;
+      return null;
+    }
+
+    function renderTable(headers, rows) {
+      const table = document.getElementById('table');
+      const thead = table.querySelector('thead');
+      const tbody = table.querySelector('tbody');
+      thead.innerHTML = '';
+      tbody.innerHTML = '';
+
+      const displayHeaders = visibleHeaders.length > 0 ? visibleHeaders : headers;
+
+      const trh = document.createElement('tr');
+      displayHeaders.forEach((h, idx) => {
+        const th = document.createElement('th');
+        th.textContent = DISPLAY_NAMES[h] || h;
+        th.onclick = () => sortBy(idx);
+        trh.appendChild(th);
+      });
+      const thRun = document.createElement('th'); thRun.textContent = 'Run'; trh.appendChild(thRun);
+      thead.appendChild(trh);
+
+      rows.forEach(r => {
+        const tr = document.createElement('tr');
+        displayHeaders.forEach(h => {
+          const td = document.createElement('td');
+          td.classList.add('wrap');
+          const rawVal = r[h];
+          td.innerHTML = formatCell(h, rawVal);
+          const parsed = tryParse(rawVal);
+          if (parsed && (Array.isArray(parsed) || (typeof parsed === 'object'))) {
+            td.classList.add('clickable');
+            td.title = 'Click to view JSON';
+            td.dataset.json = JSON.stringify(parsed, null, 2);
+            td.onclick = () => openModal(td.dataset.json);
+          } else {
+            td.title = rawVal;
+          }
+          tr.appendChild(td);
+        });
+        const tdRun = document.createElement('td');
+        const cmd = `python examples/run_template.py --row ${r['id']}`;
+        tdRun.innerHTML = `<div class="run-cell"><code class="small nowrap">${cmd}</code><button class="btn" onclick="copyCmd('${cmd.replace(/'/g, "\\'")}')">Copy</button></div>`;
+        tr.appendChild(tdRun);
+        tbody.appendChild(tr);
+      });
+    }
+
+    let gData = { headers: [], rows: [] };
+    let sortState = { col: 0, asc: true };
+    let visibleHeaders = [];
+
+    function sortBy(idx) {
+      const headers = gData.headers;
+      const rows = [...gData.rows];
+      const key = headers[idx];
+      if (sortState.col === idx) sortState.asc = !sortState.asc; else { sortState.col = idx; sortState.asc = true; }
+      rows.sort((a, b) => {
+        const av = a[key] || ''; const bv = b[key] || '';
+        const na = parseFloat(av); const nb = parseFloat(bv);
+        if (!isNaN(na) && !isNaN(nb)) return (na - nb) * (sortState.asc ? 1 : -1);
+        return (String(av).localeCompare(String(bv))) * (sortState.asc ? 1 : -1);
+      });
+      renderTable(headers, rows);
+      gData.rows = rows;
+    }
+
+    function filterRows(q) {
+      q = q.trim().toLowerCase();
+      let rows = [...gData.rowsOrig];
+      // Apply dropdown filters first
+      const em = document.getElementById('f_exec').value;
+      const ev = document.getElementById('f_eval').value;
+      const ig = document.getElementById('f_integ').value;
+      rows = rows.filter(r => (!em || r.execution_mode === em) && (!ev || r.evaluator === ev) && (!ig || r.integration === ig));
+      // Then apply text filter
+      if (q) rows = rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)) );
+      gData.rows = rows;
+      renderTable(gData.headers, rows);
+    }
+
+    async function tryFetchDefault() {
+      try {
+        const data = await loadCSV('../../datasets/matrices/test_matrix.csv');
+        gData.headers = data.headers;
+        gData.rows = data.rows;
+        gData.rowsOrig = [...data.rows];
+        renderTable(gData.headers, gData.rows);
+        initFilters(gData.rows);
+        initColumnSelector(gData.headers);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function enableLocalFileFallback() {
+      const msg = `Failed to fetch CSV via file://. Select datasets/matrices/test_matrix.csv manually below.`;
+      document.getElementById('info').textContent = msg;
+      const picker = document.getElementById('filePicker');
+      const drop = document.getElementById('dropzone');
+      picker.style.display = 'block';
+      drop.style.display = 'block';
+
+      picker.addEventListener('change', async (ev) => {
+        const file = ev.target.files && ev.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const data = parseCSV(text);
+        gData.headers = data.headers;
+        gData.rows = data.rows;
+        gData.rowsOrig = [...data.rows];
+        renderTable(gData.headers, gData.rows);
+        initFilters(gData.rows);
+        document.getElementById('info').textContent = '';
+      });
+
+      drop.addEventListener('dragover', (ev) => { ev.preventDefault(); drop.classList.add('hover'); });
+      drop.addEventListener('dragleave', () => drop.classList.remove('hover'));
+      drop.addEventListener('drop', async (ev) => {
+        ev.preventDefault();
+        drop.classList.remove('hover');
+        const file = ev.dataTransfer.files && ev.dataTransfer.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const data = parseCSV(text);
+        gData.headers = data.headers;
+        gData.rows = data.rows;
+        gData.rowsOrig = [...data.rows];
+        renderTable(gData.headers, gData.rows);
+        initFilters(gData.rows);
+        document.getElementById('info').textContent = '';
+      });
+    }
+
+    function initFilters(rows) {
+      const setOptions = (id, key) => {
+        const sel = document.getElementById(id);
+        const uniq = Array.from(new Set(rows.map(r => r[key]).filter(Boolean))).sort();
+        sel.innerHTML = '<option value="">All</option>' + uniq.map(v => `<option>${v}</option>`).join('');
+        sel.onchange = () => filterRows(document.getElementById('q').value);
+      };
+      setOptions('f_exec', 'execution_mode');
+      setOptions('f_eval', 'evaluator');
+      setOptions('f_integ', 'integration');
+    }
+
+    function copyCmd(text) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied')); }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg; t.classList.add('show');
+      setTimeout(()=> t.classList.remove('show'), 900);
+    }
+
+    function normalizeHeader(h){return String(h||'').toLowerCase().replace(/\s+/g,'_');}
+    function tryParse(rawStr){
+      let raw = String(rawStr||'').trim();
+      try { return JSON.parse(raw); } catch(e) {}
+      if ((raw.startsWith('"')&&raw.endsWith('"'))||(raw.startsWith("'")&&raw.endsWith("'"))) raw = raw.slice(1,-1);
+      raw = raw.replace(/\\\"/g,'"').replace(/\\\\/g,'\\');
+      try { return JSON.parse(raw); } catch(e) { return null; }
+    }
+    function formatCell(header, value) {
+      const raw = String(value || '').trim();
+      const key = normalizeHeader(header);
+      if (key==='objectives'||key==='objective'){
+        const arr = tryParse(raw); if (Array.isArray(arr)) return arr.map(x=>`<span class="tag">${x}</span>`).join(' ');
+      }
+      if (key==='configuration_space'||key==='config_space'||key==='configuration space'||key==='config space'){
+        const obj = tryParse(raw); if (obj && typeof obj==='object'){const parts=Object.keys(obj).map(k=>{const v=obj[k];const count=Array.isArray(v)?v.length:(typeof v==='object'&&v!==null?Object.keys(v).length:1);return `<span class="tag">${k}:${count}</span>`;});return parts.join(' ');} }
+      if (key==='framework_targets'||key==='framework target'||key==='frameworks'){
+        const arr = tryParse(raw); if (Array.isArray(arr)) return arr.map(x=>`<span class="tag">${x}</span>`).join(' ');
+      }
+      if (key==='metric_functions'){
+        const obj = tryParse(raw); if (obj && typeof obj==='object'){const parts=Object.keys(obj).map(k=>`<span class="tag">${k}:${obj[k]}</span>`);return parts.join(' ');} }
+      if (key==='privacy_enabled'||key==='mock_mode'){
+        const b=['true','1','yes','y'].includes(raw.toLowerCase());return `<span class="badge ${b?'ok':'no'}">${b?'Yes':'No'}</span>`;
+      }
+      const data = tryParse(raw);
+      if (data){ if(Array.isArray(data)){return data.map(x=>`<span class="tag">${x}</span>`).join(' ');} if(typeof data==='object'){return Object.keys(data).map(k=>`<span class="tag">${k}</span>`).join(' ');} }
+      const esc = raw.replace(/[&<>]/g, s=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[s]));
+      if (esc.length > 120) return `<span title="${esc}">${esc.slice(0,117)}...</span>`;
+      return esc||'&nbsp;';
+    }
+
+    function initColumnSelector(headers) {
+      const selector = document.getElementById('column-selector');
+      selector.innerHTML = '';
+      headers.forEach(h => {
+        const label = document.createElement('label');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = true;
+        checkbox.value = h;
+        checkbox.onchange = updateVisibleHeaders;
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(DISPLAY_NAMES[h] || h));
+        selector.appendChild(label);
+      });
+    }
+
+    function updateVisibleHeaders() {
+      visibleHeaders = Array.from(document.querySelectorAll('#column-selector input:checked')).map(cb => cb.value);
+      filterRows(document.getElementById('q').value);
+    }
+
+    function toggleColumnSelector() {
+      const selector = document.getElementById('column-selector');
+      const button = document.getElementById('columnsBtn');
+      const rect = button.getBoundingClientRect();
+      selector.style.top = `${rect.bottom + window.scrollY}px`;
+      selector.style.left = `${rect.left + window.scrollX}px`;
+      selector.style.display = selector.style.display === 'none' ? 'flex' : 'none';
+    }
+
+    function selectAllColumns(checked) {
+      document.querySelectorAll('#column-selector input[type="checkbox"]').forEach(cb => cb.checked = checked);
+      updateVisibleHeaders();
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        if (location && location.protocol === 'file:') {
+          // Avoid fetch() under file:// to prevent CORS errors; show picker/drag-drop instead
+          enableLocalFileFallback();
+          return;
+        }
+        const ok = await tryFetchDefault();
+        if (!ok) enableLocalFileFallback();
+        else initFilters(gData.rows);
+      } catch (e) {
+        enableLocalFileFallback();
+      }
+    });
+  </script>
+</head>
+<body>
+  <div class="wrap-page">
+  <header style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px;">
+    <img src="/docs/static/assets/traigent.png" alt="Traigent Logo" style="max-height: 48px; width: auto;">
+    <div>
+      <h1>Traigent Examples Matrix</h1>
+      <div class="subtitle">Explore ready-made scenarios and run them from your terminal</div>
+    </div>
+  </header>
+  <p style="margin: 0 0 16px 0;">
+    <a href="index.html" style="color: var(--fg); text-decoration: none; font-weight: 500;">← Back to Hello World overview</a>
+  </p>
+  <div class="controls">
+    <div class="filters">
+      <button class="btn" onclick="document.getElementById('filePicker').click()">Load CSV</button>
+      <label>Search: <input id="q" type="text" oninput="filterRows(this.value)" placeholder="Search scenarios..." /></label>
+      <label>Mode: <select id="f_exec"></select></label>
+      <label>Evaluator: <select id="f_eval"></select></label>
+      <label>Integration: <select id="f_integ"></select></label>
+      <button id="columnsBtn" class="btn" onclick="toggleColumnSelector()">Columns</button>
+      <div id="column-selector" style="display: none; position: absolute; background: var(--bg); border: 1px solid var(--line); padding: 12px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,.15); z-index: 10; flex-direction: column; max-height: 300px; overflow-y: auto; min-width: 260px;">
+        <div class="popover-actions">
+          <button class="btn small" onclick="selectAllColumns(true)">Select all</button>
+          <button class="btn small" onclick="selectAllColumns(false)">Clear</button>
+        </div>
+        <!-- Checkboxes will be added here -->
+      </div>
+      <button class="btn" onclick="document.getElementById('q').value=''; document.getElementById('f_exec').value=''; document.getElementById('f_eval').value=''; document.getElementById('f_integ').value=''; visibleHeaders = []; filterRows('');">Reset</button>
+    </div>
+  </div>
+  <div id="info" class="small"></div>
+  <input id="filePicker" type="file" accept=".csv" style="display:none;margin-bottom:1rem;" />
+  <div id="dropzone" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' ') { event.preventDefault(); document.getElementById('filePicker').click(); }" style="display:none;padding:16px;border:1px dashed var(--line);border-radius:8px;margin-bottom:16px; color:var(--muted);">Drop CSV here</div>
+  <div class="table-wrapper" role="region" aria-label="Scannable examples table" tabindex="0">
+    <div class="table-scroll-container">
+      <table id="table">
+        <thead><tr><th>ID</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  <p class="small">Click headers to sort. Copy the run command to execute a scenario.</p>
+  <div id="toast" class="toast"></div>
+  <div id="modal" class="modal" role="dialog" aria-modal="true" aria-label="JSON details" onclick="if(event.target===this) closeModal()" onkeydown="if(event.key==='Escape') closeModal()">
+    <div class="modal-content" role="document">
+      <button class="close" aria-label="Close" onclick="closeModal()">✕</button>
+      <pre id="modal-pre"></pre>
+      <div style="text-align:right"><button class="btn" onclick="closeModal()">Close</button></div>
+    </div>
+  </div>
+  </div>
+  <script>
+    function openModal(jsonText){
+      const pre = document.getElementById('modal-pre');
+      pre.textContent = jsonText || '';
+      const modal = document.getElementById('modal');
+      modal.classList.add('show');
+      modal.setAttribute('tabindex','-1');
+      modal.focus();
+    }
+    function closeModal(){
+      const modal = document.getElementById('modal');
+      modal.classList.remove('show');
+    }
+    // Accessibility: close modal on Escape
+    document.addEventListener('keydown', function(ev){
+      if (ev.key === 'Escape') {
+        const modal = document.getElementById('modal');
+        if (modal.classList.contains('show')) closeModal();
+      }
+    });
+  </script>
+</body>
+</html>

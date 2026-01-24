@@ -35,6 +35,7 @@ import asyncio  # noqa: E402
 import os  # noqa: E402
 import random  # noqa: E402
 import sys  # noqa: E402
+import threading  # noqa: E402
 import time  # noqa: E402
 import uuid  # noqa: E402
 from concurrent.futures import ThreadPoolExecutor, as_completed  # noqa: E402
@@ -215,8 +216,6 @@ Company Policy Document:
 
 
 # Thread-safe counter for progress display
-import threading
-
 _progress_lock = threading.Lock()
 _completed_trials = 0
 

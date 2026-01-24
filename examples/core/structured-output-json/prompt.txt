@@ -1,0 +1,5 @@
+Extract the following fields as JSON and respond with JSON only:
+{
+  "vendor": string,
+  "amount": number
+}
