@@ -342,4 +342,4 @@ known-third-party = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
-# NOTE: examples folder moved to TraigentDemo
+"examples/*" = ["E402"]  # Examples often set env vars before imports
