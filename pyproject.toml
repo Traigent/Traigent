@@ -217,9 +217,10 @@ extend-exclude = '''
   | build
   | dist
   | demos
-  | examples/docs/page-inline
-  | examples/integrations/docs/page-inline
+  | examples/.*/docs/page-inline
   | examples/templates
+  | examples/advanced/execution-modes
+  | examples/advanced/results-analysis
   | examples/tvl/reusable_safety/run_demo\.py
 )/
 '''
