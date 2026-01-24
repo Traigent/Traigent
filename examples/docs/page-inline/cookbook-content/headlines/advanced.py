@@ -1,0 +1,80 @@
+#!/usr/bin/env python3
+"""Cookbook Content - Headline Generation (Advanced)
+
+Adds style control and strict format. Minimal configuration knobs.
+"""
+import os
+import sys
+from pathlib import Path
+
+# --- Setup for running from repo without installation ---
+# Add repo root to path so we can import examples.utils and traigent
+_module_path = Path(__file__).resolve()
+for _depth in range(1, 7):
+    try:
+        _repo_root = _module_path.parents[_depth]
+        if (_repo_root / "traigent").is_dir() and (_repo_root / "examples").is_dir():
+            if str(_repo_root) not in sys.path:
+                sys.path.insert(0, str(_repo_root))
+            break
+    except IndexError:
+        continue
+from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+
+try:
+    import traigent
+except ImportError:  # pragma: no cover - support IDE execution paths
+    import importlib
+
+    module_path = Path(__file__).resolve()
+    for depth in (2, 3):
+        try:
+            sys.path.append(str(module_path.parents[depth]))
+        except IndexError:
+            continue
+    traigent = importlib.import_module("traigent")
+
+DATASET = os.path.join(os.path.dirname(__file__), "headlines_eval.jsonl")
+
+
+@traigent.optimize(
+    configuration_space={
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+        "temperature": [0.2, 0.6, 0.9],
+        "style": ["neutral", "punchy", "formal"],
+        "max_words": [8, 12],
+    },
+    eval_dataset=DATASET,
+    objectives=["cost", "response_time"],
+    execution_mode="edge_analytics",
+    max_trials=10,
+)
+def generate_headline(topic: str) -> str:
+    cfg = traigent.get_trial_config()
+    style_hint = {
+        "neutral": "neutral journalistic tone",
+        "punchy": "bold, energetic wording",
+        "formal": "professional, formal tone",
+    }[cfg.get("style", "neutral")]
+
+    llm = ChatOpenAI(
+        model=cfg.get("model", "gpt-3.5-turbo"), temperature=cfg.get("temperature", 0.6)
+    )
+    prompt = (
+        f"Write a {style_hint} headline about: {topic}\n"
+        f"Max {int(cfg.get('max_words', 12))} words. One line only."
+    )
+    return extract_content(llm.invoke([HumanMessage(content=prompt)])).strip()
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    async def _main():
+        print("Optimizing headline generation (advanced)…")
+        res = await generate_headline.optimize(max_trials=10)
+        print("Best config:", res.best_config)
+        generate_headline.set_config(res.best_config)
+        print("Test:", generate_headline("Traigent SDK for LLM optimization"))
+
+    asyncio.run(_main())

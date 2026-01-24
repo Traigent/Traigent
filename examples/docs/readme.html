@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <script>(function(){var t=localStorage.getItem('traigent-theme')||'dark';if(t==='dark'){document.documentElement.classList.add('dark-pre');}})();</script>
+<style>html.dark-pre,html.dark-pre body{background:#0b0b0b;color:#fafafa}</style>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Traigent Documentation</title>
+    <link rel="preconnect" href="https://rsms.me">
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+    <link rel="stylesheet" href="docs/sections/shared-styles.css">
+    <script defer src="docs/sections/theme.js"></script>
+    <style>
+        .hero-section { text-align: left; padding: 32px 0 16px 0; border-bottom: 1px solid var(--border-light); margin-bottom: 24px; }
+        .hero-title { font-size: 32px; font-weight: 700; margin-bottom: 8px; color: var(--text-primary); }
+        .hero-subtitle { font-size: 16px; color: var(--text-secondary); }
+        .links-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 16px; }
+        .link-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px; padding: 16px; text-decoration: none; color: inherit; transition: all .2s; }
+        .link-card:hover { border-color: var(--card-hover-border); box-shadow: var(--shadow-md); transform: translateY(-2px); }
+        .link-title { font-weight: 600; color: var(--text-primary); margin-bottom: 6px; }
+        .link-desc { color: var(--text-secondary); font-size: 13px; }
+    </style>
+    </head>
+<body>
+    <nav class="sidebar" id="sidebar">
+        <button id="themeToggle" class="theme-toggle" aria-label="Toggle theme" title="Toggle theme">🌙</button>
+        <div class="logo">
+            <span style="font-size: 16px;">🚀</span>
+            <h1>Traigent</h1>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">First Steps</div>
+            <a href="index.html" class="nav-item">Get Started</a>
+            <a href="docs/sections/getting-started.html" class="nav-item">Quick Start</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Learn Traigent</div>
+            <a href="docs/sections/core-concepts.html" class="nav-item">Core Concepts</a>
+            <a href="docs/sections/configuration-management.html" class="nav-item">Configuration Management</a>
+            <a href="docs/sections/execution-modes.html" class="nav-item">Execution Modes</a>
+            <a href="docs/sections/results-analysis.html" class="nav-item">Results & Analysis</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Building with Traigent</div>
+            <a href="docs/sections/cookbook.html" class="nav-item">Cookbook</a>
+            <a href="docs/sections/learning-path.html" class="nav-item">Learning Path</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Production</div>
+            <a href="docs/sections/best-practices.html" class="nav-item">Best Practices</a>
+            <a href="docs/sections/deployment.html" class="nav-item">Deployment</a>
+        </div>
+
+        <div class="nav-section">
+            <div class="nav-title">Resources</div>
+            <a href="readme.html" class="nav-item active" aria-current="page">Documentation</a>
+            <a href="https://github.com/traigent/traigent" class="nav-item" target="_blank" rel="noopener">GitHub</a>
+        </div>
+    </nav>
+
+    <main class="main-content">
+        <header class="mobile-header">
+            <div class="mobile-brand"><span>🚀</span> Traigent</div>
+            <button class="menu-button" id="menuToggle" aria-controls="sidebar" aria-expanded="false">Menu</button>
+        </header>
+        <div class="backdrop" id="backdrop"></div>
+
+        <section class="hero-section">
+            <h1 class="hero-title">Documentation</h1>
+            <p class="hero-subtitle">Reference guides, architecture, and API docs for Traigent.</p>
+        </section>
+
+        <div class="links-list">
+            <a class="link-card" href="../README.md" target="_blank" rel="noopener">
+                <div class="link-title">Project README</div>
+                <div class="link-desc">Overview, installation, and quick usage.</div>
+            </a>
+            <a class="link-card" href="../docs/README.md" target="_blank" rel="noopener">
+                <div class="link-title">Docs Home</div>
+                <div class="link-desc">Documentation landing page under the docs/ folder.</div>
+            </a>
+            <a class="link-card" href="../docs/getting-started" target="_blank" rel="noopener">
+                <div class="link-title">Getting Started</div>
+                <div class="link-desc">Step-by-step guides to begin using Traigent.</div>
+            </a>
+            <a class="link-card" href="../docs/api" target="_blank" rel="noopener">
+                <div class="link-title">API Guides</div>
+                <div class="link-desc">SDK and API integration examples.</div>
+            </a>
+            <a class="link-card" href="../docs/api-reference" target="_blank" rel="noopener">
+                <div class="link-title">API Reference</div>
+                <div class="link-desc">Detailed reference for classes and functions.</div>
+            </a>
+            <a class="link-card" href="../docs/user-guide" target="_blank" rel="noopener">
+                <div class="link-title">User Guide</div>
+                <div class="link-desc">Concepts, best practices, and workflows.</div>
+            </a>
+        </div>
+
+        <footer class="footer">
+            <div class="footer-links">
+                <a href="readme.html" class="footer-link">Documentation</a>
+                <a href="https://github.com/traigent/traigent" class="footer-link" target="_blank" rel="noopener">GitHub</a>
+                <a href="https://github.com/traigent/traigent/issues" class="footer-link" target="_blank" rel="noopener">Issues</a>
+                <a href="https://github.com/traigent/traigent/discussions" class="footer-link" target="_blank" rel="noopener">Discussions</a>
+            </div>
+            <p style="color: var(--text-muted); font-size: 14px;">Traigent Documents and References</p>
+        </footer>
+    </main>
+
+    <script>
+    (function(){
+        const sidebar = document.querySelector('.sidebar');
+        const toggle = document.getElementById('menuToggle');
+        const backdrop = document.getElementById('backdrop');
+        function openSidebar(){
+            sidebar.style.transform = 'translateX(0)';
+            toggle.setAttribute('aria-expanded', 'true');
+            backdrop.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+        function closeSidebar(){
+            sidebar.style.transform = '';
+            toggle.setAttribute('aria-expanded', 'false');
+            backdrop.classList.remove('active');
+            document.body.style.overflow = '';
+        }
+        if (toggle){
+          toggle.addEventListener('click', function(){
+              const expanded = toggle.getAttribute('aria-expanded') === 'true';
+              if (expanded) closeSidebar(); else openSidebar();
+          });
+        }
+        if (backdrop){ backdrop.addEventListener('click', closeSidebar); }
+        document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closeSidebar(); });
+    })();
+    </script>
+</body>
+</html>

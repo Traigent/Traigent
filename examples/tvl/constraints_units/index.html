@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Constraints & Units - TVL Example</title>
+    <link rel="stylesheet" href="../../docs/sections/shared-styles.css">
+    <style>
+        .example-page { max-width: 900px; margin: 0 auto; padding: 40px 20px; }
+        .breadcrumb { display: flex; align-items: center; gap: 8px; margin-bottom: 24px; font-size: 14px; color: var(--text-secondary); }
+        .breadcrumb a { color: var(--primary); text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .breadcrumb .current { color: var(--text-primary); font-weight: 500; }
+        .example-header { margin-bottom: 32px; }
+        .example-badge { display: inline-block; background: #fbbf24; color: #1a1a1a; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 6px; margin-bottom: 12px; }
+        .example-title { font-size: 36px; font-weight: 700; margin-bottom: 12px; color: var(--text-primary); }
+        .example-meta { display: flex; gap: 16px; font-size: 14px; color: var(--text-secondary); }
+        .difficulty-intermediate { color: #fbbf24; font-weight: 500; }
+        .content-section { margin-bottom: 32px; }
+        .content-section h2 { font-size: 24px; font-weight: 600; margin-bottom: 16px; color: var(--text-primary); }
+        .content-section p { line-height: 1.6; color: var(--text-secondary); margin-bottom: 16px; }
+        .content-section ul { line-height: 1.8; color: var(--text-secondary); list-style-position: inside; padding-left: 0; }
+        .content-section ul li { margin-bottom: 8px; }
+        .code-block { background: var(--code-bg); border: 1px solid var(--border-color); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
+        .code-block code { font-family: 'Courier New', monospace; font-size: 14px; white-space: pre; display: block; }
+        .action-buttons { display: flex; gap: 12px; margin: 24px 0; flex-wrap: wrap; }
+        .btn { padding: 12px 24px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; border: none; cursor: pointer; transition: all 0.2s; }
+        .btn:hover { background: var(--primary-hover); }
+        .btn-secondary { background: transparent; color: var(--text-primary); border: 1px solid var(--border-color); }
+        .btn-secondary:hover { background: var(--hover-bg); }
+        .example-nav { display: flex; justify-content: space-between; align-items: center; margin: 48px 0 24px 0; padding: 20px; background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; }
+        .nav-button { padding: 10px 16px; background: var(--primary); color: white; text-decoration: none; border-radius: 8px; font-weight: 500; transition: all 0.2s; }
+        .nav-button:hover { background: var(--primary-hover); transform: translateY(-1px); }
+        .constraint-type { background: var(--tag-bg); color: var(--tag-text); padding: 2px 8px; border-radius: 4px; font-family: monospace; font-size: 13px; }
+    </style>
+</head>
+<body>
+    <div class="example-page">
+        <nav class="breadcrumb" aria-label="Breadcrumb">
+            <a href="../../docs/index.html">Home</a>
+            <span>&rsaquo;</span>
+            <a href="../../docs/index.html#tvl">TVL Examples</a>
+            <span>&rsaquo;</span>
+            <span class="current">Constraints & Units</span>
+        </nav>
+
+        <header class="example-header">
+            <span class="example-badge">TVL Example</span>
+            <h1 class="example-title">Constraints & Units</h1>
+            <div class="example-meta">
+                <span class="difficulty-intermediate">Intermediate</span>
+                <span>10 min</span>
+                <span>CEL expressions and type safety</span>
+            </div>
+        </header>
+
+        <section class="content-section">
+            <h2>What You'll Learn</h2>
+            <p>
+                This example explores the powerful constraint system in TVL, including CEL expressions
+                and unit typing for type-safe optimization.
+            </p>
+            <ul>
+                <li><span class="constraint-type">expression</span> constraints for simple rules</li>
+                <li><span class="constraint-type">conditional</span> constraints with when-then patterns</li>
+                <li><span class="constraint-type">forbidden</span> constraints for explicit prohibitions</li>
+                <li>Unit typing for dimensional analysis (ratio, tokens, hours)</li>
+                <li>Compound expressions for complex validation</li>
+            </ul>
+        </section>
+
+        <section class="content-section">
+            <h2>Constraint Types</h2>
+            <div class="code-block">
+                <code>constraints:
+  # Expression constraint: simple rule
+  - id: cache-ttl-unit-check
+    type: expression
+    rule: 'params.cache_ttl_hours >= 1.0'
+    error_message: "Cache needs at least 1 hour TTL."
+
+  # Expression constraint: compound expression
+  - id: token-temperature-budget
+    type: expression
+    rule: 'params.temperature * params.max_tokens <= 600'
+    error_message: "Token-temperature product keeps hallucinations manageable."
+
+  # Conditional constraint: when-then pattern
+  - id: rerank-mandate
+    type: conditional
+    when: 'params.max_tokens >= 512'
+    then: 'params.rerank_weight >= 0.4'
+    error_message: "Long answers must lean on reranking."
+
+  # Forbidden constraint: explicit prohibition
+  - id: rerank-cap
+    type: forbidden
+    rule: 'params.rerank_weight > 0.8'
+    error_message: "Rerank weight above 0.8 is unstable."</code>
+            </div>
+        </section>
+
+        <section class="content-section">
+            <h2>Unit Definitions</h2>
+            <div class="code-block">
+                <code>units:
+  time: [milliseconds, seconds]
+  currency: [USD]
+  ratio: [dimensionless]
+  percentage: [percent]
+
+configuration_space:
+  temperature:
+    type: continuous
+    range: [0.0, 1.0]
+    unit: ratio        # Dimensionless ratio
+  cache_ttl_hours:
+    type: continuous
+    range: [0.5, 12.0]
+    unit: hours        # Time unit</code>
+            </div>
+        </section>
+
+        <section class="content-section">
+            <h2>Running This Example</h2>
+            <div class="code-block">
+                <code># Check structural validity and constraint syntax
+tvl-check-structural examples/tvl/constraints_units/constraints.tvl.yml
+
+# Full validation with tvl-lint
+tvl-lint examples/tvl/constraints_units/constraints.tvl.yml</code>
+            </div>
+        </section>
+
+        <div class="action-buttons">
+            <a href="constraints.tvl.yml" class="btn">View TVL Spec</a>
+            <a href="../../docs/index.html#tvl" class="btn-secondary">Back to TVL Gallery</a>
+        </div>
+
+        <nav class="example-nav" aria-label="Example Navigation">
+            <a href="../hello_tvl/index.html" class="nav-button">Previous: Hello TVL</a>
+            <a href="../environment_overlays/index.html" class="nav-button">Next: Environment Overlays</a>
+        </nav>
+    </div>
+
+    <script src="../../docs/sections/theme.js"></script>
+</body>
+</html>

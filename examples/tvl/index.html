@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuned Variable Language (TVL) - Examples</title>
+    <link rel="stylesheet" href="../docs/sections/shared-styles.css">
+    <style>
+        .page-container { max-width: 900px; margin: 0 auto; padding: 40px 20px 80px; }
+        .hero h1 { font-size: 2.75rem; margin-bottom: 12px; }
+        .hero p { color: var(--text-secondary); margin-bottom: 24px; }
+        .section { margin-bottom: 40px; }
+        .section h2 { font-size: 1.75rem; margin-bottom: 16px; }
+        .section ul { margin-left: 20px; line-height: 1.8; color: var(--text-secondary); }
+        .examples-grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); margin-top: 24px; }
+        .example-card { background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 12px; padding: 20px; text-decoration: none; color: inherit; transition: all 0.2s; }
+        .example-card:hover { border-color: var(--primary); box-shadow: 0 4px 16px rgba(0,0,0,0.12); transform: translateY(-2px); }
+        .example-title { font-size: 1.2rem; font-weight: 600; margin-bottom: 8px; color: var(--text-primary); }
+        .example-desc { color: var(--text-secondary); font-size: 0.9rem; margin-bottom: 12px; }
+        .example-meta { display: flex; gap: 8px; flex-wrap: wrap; }
+        .tag { background: var(--chip-bg); color: var(--text-secondary); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; }
+        .difficulty { font-weight: 500; }
+        .difficulty-beginner { color: #22c55e; }
+        .difficulty-intermediate { color: #fbbf24; }
+        .difficulty-advanced { color: #ef4444; }
+        .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+        .cta a { padding: 12px 20px; border-radius: 8px; text-decoration: none; font-weight: 500; border: 1px solid var(--border-color); color: var(--text-primary); }
+        .cta a.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+        .cta a:hover { background: var(--hover-bg); }
+        .cta a.primary:hover { background: var(--primary-hover); }
+        .code-inline { background: var(--code-bg); padding: 2px 6px; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    </style>
+</head>
+<body>
+    <main class="page-container">
+        <section class="hero">
+            <h1>Tuned Variable Language (TVL)</h1>
+            <p>
+                TVL is a typed, analyzable configuration language for defining optimization experiments.
+                It provides explicit constraints, units, objectives, and promotion gates for tuning
+                pipelines with full validation and CI integration.
+            </p>
+            <div class="cta">
+                <a class="primary" href="../docs/index.html">Back to Gallery</a>
+                <a href="../docs/index.html#core">Core Examples</a>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>TVL Spec Examples</h2>
+            <p>Learn TVL through progressive examples, from basic specs to multi-environment deployments:</p>
+
+            <div class="examples-grid">
+                <a class="example-card" href="hello_tvl/index.html">
+                    <div class="example-title">Hello TVL</div>
+                    <div class="example-desc">Minimal TVL spec introducing core sections: configuration_space, objectives, constraints, and promotion gates.</div>
+                    <div class="example-meta">
+                        <span class="tag difficulty difficulty-beginner">Beginner</span>
+                        <span class="tag">quickstart</span>
+                        <span class="tag">pareto</span>
+                    </div>
+                </a>
+
+                <a class="example-card" href="constraints_units/index.html">
+                    <div class="example-title">Constraints & Units</div>
+                    <div class="example-desc">Explore CEL constraints and unit typing: expression, conditional, and forbidden constraint types.</div>
+                    <div class="example-meta">
+                        <span class="tag difficulty difficulty-intermediate">Intermediate</span>
+                        <span class="tag">constraints</span>
+                        <span class="tag">CEL</span>
+                    </div>
+                </a>
+
+                <a class="example-card" href="environment_overlays/index.html">
+                    <div class="example-title">Environment Overlays</div>
+                    <div class="example-desc">Manage staging/production environments with extends/overrides patterns and deployment targets.</div>
+                    <div class="example-meta">
+                        <span class="tag difficulty difficulty-advanced">Advanced</span>
+                        <span class="tag">environments</span>
+                        <span class="tag">deployment</span>
+                    </div>
+                </a>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Key Features</h2>
+            <ul>
+                <li><strong>Typed Configuration Space</strong>: Categorical, continuous, discrete, and integer parameter types with unit annotations</li>
+                <li><strong>CEL Constraints</strong>: Expression, conditional, and forbidden constraint types with clear error messages</li>
+                <li><strong>Multi-Objective Optimization</strong>: Pareto-optimal strategies with configurable budgets and timeouts</li>
+                <li><strong>Environment Overlays</strong>: Extends/overrides pattern for staging and production configurations</li>
+                <li><strong>Promotion Gates</strong>: Manual review, strict dominance, and epsilon-Pareto policies</li>
+            </ul>
+        </section>
+
+        <section class="section">
+            <h2>TVL Tooling</h2>
+            <ul>
+                <li><span class="code-inline">tvl-lint</span> - Validate TVL spec syntax and structure</li>
+                <li><span class="code-inline">tvl-check-structural</span> - Check structural validity and constraint syntax</li>
+                <li><span class="code-inline">tvl-check-operational</span> - Validate operational configuration with environment resolution</li>
+            </ul>
+        </section>
+    </main>
+
+    <script src="../docs/sections/theme.js"></script>
+</body>
+</html>
