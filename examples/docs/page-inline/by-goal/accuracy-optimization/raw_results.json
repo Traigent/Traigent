@@ -1,0 +1,9 @@
+{
+  "session_id": "sess_accuracy_mock",
+  "objective_order": ["accuracy"],
+  "trials": [
+    {"id": "t01", "config": {"model": "gpt-3.5-turbo"}, "metrics": {"accuracy": 0.8}},
+    {"id": "t02", "config": {"model": "gpt-4o-mini"}, "metrics": {"accuracy": 0.9}},
+    {"id": "t03", "config": {"model": "gpt-4o"}, "metrics": {"accuracy": 1.0}}
+  ]
+}
