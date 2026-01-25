@@ -4,7 +4,7 @@
 repos:
   # Python code formatting
   - repo: https://github.com/psf/black
-    rev: 24.1.1
+    rev: 26.1.0
     hooks:
       - id: black
         language_version: python3.12
@@ -12,7 +12,7 @@ repos:
 
   # Python linting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.2.1
+    rev: v0.14.14
     hooks:
       - id: ruff
         args: [--fix]
