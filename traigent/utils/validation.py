@@ -948,6 +948,85 @@ class Validators:
         return result
 
 
+# ===== Metric Validation Functions =====
+
+
+def validate_numeric_metric(
+    value: Any,
+    field_name: str,
+    trial_id: str | None = None,
+    example_id: str | None = None,
+) -> float:
+    """Validate and convert metric to float with strict checks.
+
+    This function NEVER returns a default value (like 0.0) on failure.
+    Instead, it raises MetricExtractionError to prevent silent data corruption
+    that could invalidate optimization results.
+
+    Args:
+        value: The value to validate and convert
+        field_name: Name of the metric field
+        trial_id: Optional trial identifier for error context
+        example_id: Optional example identifier for error context
+
+    Returns:
+        The validated value as a float
+
+    Raises:
+        MetricExtractionError: If value is None, NaN, Inf, or cannot be converted
+
+    Example:
+        >>> validate_numeric_metric(0.95, "accuracy")
+        0.95
+        >>> validate_numeric_metric("0.95", "accuracy")
+        0.95
+        >>> validate_numeric_metric(None, "accuracy")
+        MetricExtractionError: Metric 'accuracy' is None
+        >>> validate_numeric_metric(float('nan'), "accuracy")
+        MetricExtractionError: Metric 'accuracy' is NaN or Inf
+        >>> validate_numeric_metric("invalid", "accuracy")
+        MetricExtractionError: Cannot convert metric 'accuracy' to numeric
+    """
+    import math
+
+    from traigent.utils.exceptions import MetricExtractionError
+
+    if value is None:
+        raise MetricExtractionError(
+            f"Metric '{field_name}' is None",
+            field=field_name,
+            value=value,
+            trial_id=trial_id,
+            example_id=example_id,
+        )
+
+    if isinstance(value, (int, float)):
+        if math.isnan(value) or math.isinf(value):
+            raise MetricExtractionError(
+                f"Metric '{field_name}' is NaN or Inf",
+                field=field_name,
+                value=value,
+                trial_id=trial_id,
+                example_id=example_id,
+            )
+        return float(value)
+
+    try:
+        converted = float(value)
+        if math.isnan(converted) or math.isinf(converted):
+            raise ValueError("Converted to NaN or Inf")
+        return converted
+    except (TypeError, ValueError) as e:
+        raise MetricExtractionError(
+            f"Cannot convert metric '{field_name}' to numeric: {value!r}",
+            field=field_name,
+            value=value,
+            trial_id=trial_id,
+            example_id=example_id,
+            original_error=e,
+        ) from e
+
+
 # ===== Convenience Functions (Backward Compatibility) =====
 
 

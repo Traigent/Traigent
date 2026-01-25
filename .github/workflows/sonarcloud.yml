@@ -8,6 +8,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
+# Queue runs instead of canceling to prevent incomplete scans
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   sonarcloud:
     name: SonarCloud

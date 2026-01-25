@@ -4,7 +4,7 @@
 repos:
   # Python code formatting
   - repo: https://github.com/psf/black
-    rev: 24.1.1
+    rev: 26.1.0
     hooks:
       - id: black
         language_version: python3.12
@@ -12,7 +12,7 @@ repos:
 
   # Python linting
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.2.1
+    rev: v0.14.14
     hooks:
       - id: ruff
         args: [--fix]
@@ -58,6 +58,17 @@ repos:
           - --ignore-missing-imports
           - traigent/
         pass_filenames: false
+
+  # TVL specification validation (G-2)
+  - repo: local
+    hooks:
+      - id: validate-tvl-specs
+        name: Validate TVL specs
+        entry: python -m traigent.tvl --strict
+        language: python
+        files: '\.tvl\.ya?ml$'
+        types: [file]
+        additional_dependencies: ['pyyaml>=6.0']
 
 # Configuration for detect-secrets
 # Run: detect-secrets scan > .secrets.baseline

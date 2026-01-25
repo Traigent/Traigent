@@ -24,8 +24,8 @@ class BatchInvoker(LocalInvoker):
     configurable concurrency and adaptive batching strategies.
 
     Example:
-        >>> invoker = BatchInvoker(max_workers=4, batch_size=10)
-        >>> results = await invoker.invoke_batch(func, config, input_batch)
+        >>> invoker = BatchInvoker(max_workers=4, batch_size=10)  # doctest: +SKIP
+        >>> results = await invoker.invoke_batch(func, config, input_batch)  # doctest: +SKIP
     """
 
     def __init__(

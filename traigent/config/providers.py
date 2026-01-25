@@ -106,11 +106,12 @@ class ContextBasedProvider(ConfigurationProvider):
     This provider uses Python's contextvars to inject configuration,
     allowing functions to access configuration through get_config().
 
-    Example:
-        >>> @traigent.optimize(injection_mode="context")
-        ... def my_function(query: str) -> str:
-        ...     config = get_config()
-        ...     return f"Using model: {config.get('model')}"
+    Example::
+
+        @traigent.optimize(injection_mode="context")
+        def my_function(query: str) -> str:
+            config = get_config()
+            return f"Using model: {config.get('model')}"
 
     Thread Safety and Limitations:
         - **Thread Isolation**: Each thread maintains its own configuration context.
@@ -133,12 +134,12 @@ class ContextBasedProvider(ConfigurationProvider):
     Common Pitfalls:
         - **Thread Pools**: When using thread pools (e.g., ThreadPoolExecutor),
           each worker thread starts with an empty context. You must explicitly
-          set configuration in each thread:
+          set configuration in each thread::
 
-          >>> with ConfigurationContext(config):
-          ...     # This config is NOT automatically available in thread pool workers
-          ...     with ThreadPoolExecutor() as executor:
-          ...         future = executor.submit(my_function)  # Won't have config
+              with ConfigurationContext(config):
+                  # This config is NOT automatically available in thread pool workers
+                  with ThreadPoolExecutor() as executor:
+                      future = executor.submit(my_function)  # Won't have config
 
           Solution: Pass configuration explicitly or use run_in_executor with
           proper context copying.
@@ -204,13 +205,14 @@ class ParameterBasedProvider(ConfigurationProvider):
     This provider adds configuration as an explicit parameter to the function,
     providing type safety and clear dependency injection.
 
-    Example:
-        >>> @traigent.optimize(
-        ...     injection_mode="parameter",
-        ...     config_param="config"
-        ... )
-        ... def my_function(query: str, config: TraigentConfig) -> str:
-        ...     return f"Using model: {config.model}"
+    Example::
+
+        @traigent.optimize(
+            injection_mode="parameter",
+            config_param="config"
+        )
+        def my_function(query: str, config: TraigentConfig) -> str:
+            return f"Using model: {config.model}"
     """
 
     def __init__(self, default_param_name: str = "config") -> None:
@@ -285,11 +287,12 @@ class AttributeBasedProvider(ConfigurationProvider):
     on both the wrapper and original function to support accessing
     config from inside the function body.
 
-    Example:
-        >>> @traigent.optimize(injection_mode="attribute")
-        ... def my_function(query: str) -> str:
-        ...     config = my_function.current_config
-        ...     return f"Using model: {config['model']}"
+    Example::
+
+        @traigent.optimize(injection_mode="attribute")
+        def my_function(query: str) -> str:
+            config = my_function.current_config
+            return f"Using model: {config['model']}"
     """
 
     def __init__(self, attribute_name: str = "current_config") -> None:
@@ -974,13 +977,21 @@ class SeamlessParameterProvider(ConfigurationProvider):
             }
 
 
-# Provider registry
+# Provider registry - base injection modes always available
 _PROVIDERS: dict[str, type[ConfigurationProvider]] = {
     "context": ContextBasedProvider,
     "parameter": ParameterBasedProvider,
     "attribute": AttributeBasedProvider,
-    "seamless": SeamlessParameterProvider,
 }
+
+# Seamless provider is included in base for now, but will move to traigent-seamless plugin
+# TODO: When extracting to plugin, use:
+#   try:
+#       from traigent_seamless import SeamlessParameterProvider
+#       _PROVIDERS["seamless"] = SeamlessParameterProvider
+#   except ImportError:
+#       pass  # Seamless not available - get_provider will raise FeatureNotAvailableError
+_PROVIDERS["seamless"] = SeamlessParameterProvider
 
 
 def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
@@ -996,12 +1007,22 @@ def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
 
     Raises:
         ConfigurationError: If injection mode is not supported
+        FeatureNotAvailableError: If seamless mode requested but plugin not installed
     """
     # Handle backward compatibility
     if injection_mode == "decorator":
         injection_mode = "attribute"
 
     if injection_mode not in _PROVIDERS:
+        # Provide helpful error for seamless mode when plugin not installed
+        if injection_mode == "seamless":
+            from traigent.utils.exceptions import FeatureNotAvailableError
+
+            raise FeatureNotAvailableError(
+                "Seamless injection mode",
+                plugin_name="traigent-seamless",
+                install_hint="pip install traigent-seamless",
+            )
         raise ConfigurationError(
             f"Unknown injection mode: {injection_mode}. "
             f"Available modes: {list(_PROVIDERS.keys())}"

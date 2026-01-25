@@ -1,6 +1,6 @@
-"""Production MCP Client for OptiGen Backend Integration.
+"""Production MCP Client for Traigent Backend Integration.
 
-This module provides a production MCP client that connects to OptiGen Backend
+This module provides a production MCP client that connects to Traigent Backend
 MCP server, enabling real integration with backend services for optimization
 and agent management.
 """
@@ -31,11 +31,17 @@ except ImportError:
             raise ImportError("MCP not available") from None
 
     class StdioServerParameters:  # type: ignore[no-redef]
+        """Stub class when MCP package is not installed."""
+
         def __init__(self, *args, **kwargs) -> None:
+            # Stub: MCP package not available, this class is never used at runtime
             pass
 
     class StdioClientTransport:  # type: ignore[no-redef]
+        """Stub class when MCP package is not installed."""
+
         def __init__(self, *args, **kwargs) -> None:
+            # Stub: MCP package not available, this class is never used at runtime
             pass
 
 
@@ -109,9 +115,9 @@ class MCPResponse:
 
 
 class ProductionMCPClient:
-    """Production MCP client for OptiGen Backend integration.
+    """Production MCP client for Traigent Backend integration.
 
-    This client provides real integration with OptiGen Backend MCP server,
+    This client provides real integration with Traigent Backend MCP server,
     enabling experiment management, agent operations, and optimization workflows.
     """
 
@@ -860,7 +866,7 @@ def get_production_mcp_client(
     global _production_client
 
     if _production_client is None:
-        # Default server args for OptiGen Backend MCP
+        # Default server args for Traigent Backend MCP
         if server_args is None:
             server_args = [
                 "-m",

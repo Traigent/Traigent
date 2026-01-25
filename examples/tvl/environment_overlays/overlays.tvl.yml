@@ -1,92 +1,59 @@
-# TVL Legacy Example: Environment Overlays
-#
-# NOTE: This example uses legacy TVL format intentionally.
-# Environment overlays use deep-merge semantics that REPLACE lists rather than
-# merge by name. Migrating to TVL 0.9 tvars would require implementing merge-by-name
-# semantics for lists, which is out of scope.
-#
-# The overlay mechanics (extends/overrides) work identically for both legacy
-# and TVL 0.9 formats.
+# TVL Legacy Format Example: Environment Overlays
+# Uses legacy format to test deprecation warnings
 
 spec:
-  id: overlays-fleet
-  version: "0.2.0"
+  id: environment-overlays-example
+  version: 0.0.1
 
 metadata:
-  owner: "platform@traigent.ai"
-  description: "Shows how extends/overrides manage environments (legacy format)."
-units:
-  time: [milliseconds, seconds]
-  ratio: [dimensionless]
-  currency: [USD]
+  owner: "examples@traigent.ai"
+  description: "Legacy format example for deprecation testing"
+
+# Legacy configuration_space format (should emit deprecation warning)
 configuration_space:
   model:
     type: categorical
-    values: ["gpt-4o-mini", "claude-3-sonnet", "claude-3-haiku"]
+    values: ["gpt-4o-mini", "claude-3-haiku-20240307"]
   temperature:
     type: continuous
-    range: [0.2, 0.9]
-    unit: ratio
+    range: [0.0, 1.0]
   max_tokens:
-    type: integer
-    range: [128, 1024]
-    unit: tokens
-  reranker:
-    type: categorical
-    values: ["e5-large", "voyage-2", "semantic-router"]
+    type: discrete
+    values: [256, 512]
+
 objectives:
-  - name: helpfulness
+  - name: accuracy
     direction: maximize
   - name: latency
     direction: minimize
-  - name: cost
-    direction: minimize
+
+# Legacy optimization format (should emit deprecation warning)
 optimization:
   strategy: pareto_optimal
   budget:
     max_trials:
-      value: 80
-      unit: count
-    timeout_seconds: 3600
-  parallelism:
-    max_parallel_trials: 8
+      value: 30
+    timeout_seconds: 900
 
-# Environment-specific overrides
+# Legacy constraints format (should emit deprecation warning)
+constraints:
+  - id: temperature-limit
+    type: expression
+    rule: 'params.temperature <= 0.8'
+    error_message: "Keep temperature reasonable"
+
 environments:
-  staging:
-    overrides:
-      configuration_space:
-        model:
-          values: ["gpt-4o-mini", "claude-3-haiku"]
-        temperature:
-          range: [0.2, 0.6]
-      optimization:
-        budget:
-          max_trials:
-            value: 30
-            unit: count
+  base:
+    objectives:
+      - name: latency
+        threshold:
+          value: 500
+          unit: milliseconds
 
   production:
-    extends: staging  # Inherit from staging
+    extends: base
     overrides:
       configuration_space:
-        max_tokens:
-          range: [256, 768]
-      objectives:
-        - name: latency
-          threshold:
-            value: 750
-            unit: milliseconds
-      promotion:
-        gate: strict_dominance
-
-constraints:
-  - id: premium-model-reranker
-    type: conditional
-    when: 'params.model == "claude-3-sonnet"'
-    then: 'params.reranker in ["voyage-2", "semantic-router"]'
-    error_message: "Premium models require smarter reranking."
-
-triagent:
-  pipeline: SupportChat
-  deployment_targets: ["staging", "production"]
+        temperature:
+          type: continuous
+          range: [0.0, 0.5]

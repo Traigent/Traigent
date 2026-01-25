@@ -48,6 +48,13 @@ class TestTVLExamplesLoad:
     )
     def test_spec_has_configuration_space(self, spec_path: Path) -> None:
         """Each spec should define a non-empty configuration space."""
+        # Skip base specs that are meant for inheritance (they define constraints/evaluators
+        # but child specs provide the configuration space)
+        if "base_" in spec_path.name or spec_path.name.startswith("base"):
+            pytest.skip(
+                f"Base spec {spec_path.name} is meant for inheritance, no config space expected"
+            )
+
         artifact = load_tvl_spec(spec_path=spec_path)
 
         # All examples should have at least one tunable parameter

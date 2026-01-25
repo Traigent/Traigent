@@ -26,8 +26,8 @@ class LocalInvoker(BaseInvoker):
     Supports both synchronous and asynchronous functions with timeout handling.
 
     Example:
-        >>> invoker = LocalInvoker(timeout=30.0)
-        >>> result = await invoker.invoke(my_func, config, input_data)
+        >>> invoker = LocalInvoker(timeout=30.0)  # doctest: +SKIP
+        >>> result = await invoker.invoke(my_func, config, input_data)  # doctest: +SKIP
     """
 
     def __init__(

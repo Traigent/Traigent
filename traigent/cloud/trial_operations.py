@@ -21,6 +21,9 @@ from traigent.utils.logging import get_logger
 # Track whether we've warned about weighted score update failures
 _warned_weighted_score_failure: bool = False
 
+# HTTP Content-Type header constant
+_JSON_CONTENT_TYPE_HEADER = {"Content-Type": "application/json"}
+
 # Optional aiohttp dependency handling
 try:
     import aiohttp
@@ -257,7 +260,7 @@ class TrialOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                _JSON_CONTENT_TYPE_HEADER
             )
 
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -594,7 +597,7 @@ class TrialOperations:
                 )
 
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                _JSON_CONTENT_TYPE_HEADER
             )
 
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -729,7 +732,7 @@ class TrialOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                _JSON_CONTENT_TYPE_HEADER
             )
 
             async with aiohttp.ClientSession(connector=connector) as session:
@@ -833,7 +836,7 @@ class TrialOperations:
 
             # Prepare headers with API key
             headers = await self.client.auth_manager.augment_headers(
-                {"Content-Type": "application/json"}
+                _JSON_CONTENT_TYPE_HEADER
             )
 
             async with aiohttp.ClientSession(connector=connector) as session:

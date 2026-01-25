@@ -2,18 +2,23 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability CONC-Quality-Security FUNC-CLOUD-HYBRID FUNC-ORCH-LIFECYCLE REQ-CLOUD-009 REQ-ORCH-003 SYNC-CloudHybrid
 
+from __future__ import annotations
+
 import asyncio
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from traigent.api.types import (
+    AgentConfiguration,
     OptimizationResult,
     OptimizationStatus,
     TrialResult,
     TrialStatus,
 )
-from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.config.types import TraigentConfig
+
+if TYPE_CHECKING:
+    from traigent.cloud.backend_client import BackendIntegratedClient
 from traigent.core.metadata_helpers import build_backend_metadata
 from traigent.core.objectives import ObjectiveSchema
 from traigent.core.session_context import SessionContext
@@ -103,6 +108,7 @@ class BackendSessionManager:
         max_trials: int | None,
         start_time: float,
         max_total_examples: int | None = None,
+        agent_configuration: AgentConfiguration | None = None,
     ) -> SessionContext:
         """Create backend session and return context.
 
@@ -112,6 +118,8 @@ class BackendSessionManager:
             function_descriptor: Descriptor for the function being optimized
             max_trials: Maximum number of trials
             start_time: Optimization start timestamp
+            max_total_examples: Maximum total examples across all trials
+            agent_configuration: Multi-agent configuration for parameter grouping
 
         Returns:
             SessionContext with session_id (or None if backend disabled)
@@ -137,22 +145,27 @@ class BackendSessionManager:
                 function_slug,
             )
 
+            # Build metadata including agent configuration if present
+            session_metadata: dict[str, Any] = {
+                "optimization_id": self._optimization_id,
+                "max_trials": max_trials_value,
+                "max_total_examples": max_samples_value,
+                "dataset_size": len(dataset),
+                "function_name": function_identifier,
+                "function_display_name": function_display_name,
+                "function_module": function_descriptor.module,
+                "function_relative_path": function_descriptor.relative_path,
+                "function_slug": function_slug,
+                "evaluation_set": evaluation_set_name,
+            }
+            if agent_configuration is not None:
+                session_metadata["agent_configuration"] = agent_configuration.to_dict()
+
             session_id = self._backend_client.create_session(
                 function_name=function_slug,
                 search_space=getattr(self._optimizer, "config_space", {}),
                 optimization_goal="maximize",
-                metadata={
-                    "optimization_id": self._optimization_id,
-                    "max_trials": max_trials_value,
-                    "max_total_examples": max_samples_value,
-                    "dataset_size": len(dataset),
-                    "function_name": function_identifier,
-                    "function_display_name": function_display_name,
-                    "function_module": function_descriptor.module,
-                    "function_relative_path": function_descriptor.relative_path,
-                    "function_slug": function_slug,
-                    "evaluation_set": evaluation_set_name,
-                },
+                metadata=session_metadata,
             )
             logger.info("Created backend session: %s", session_id)
 
@@ -214,12 +227,17 @@ class BackendSessionManager:
         self,
         trial_result: TrialResult,
         session_id: str | None,
+        dataset_name: str = "dataset",
+        content_scores: dict[str, dict[int, float]] | None = None,
     ) -> bool:
         """Submit trial to backend.
 
         Args:
             trial_result: Completed trial result
             session_id: Backend session identifier
+            dataset_name: Name of the dataset (for stable example ID generation)
+            content_scores: Optional dict with keys "uniqueness", "novelty" mapping
+                           example_index -> score (0.0-1.0)
 
         Returns:
             True if submission succeeded
@@ -233,7 +251,11 @@ class BackendSessionManager:
 
         score = trial_result.get_metric(primary_objective, 0.0)
         trial_metadata = build_backend_metadata(
-            trial_result, primary_objective, self._traigent_config
+            trial_result,
+            primary_objective,
+            self._traigent_config,
+            dataset_name,
+            content_scores,
         )
 
         await self._log_trial_to_backend(
@@ -731,4 +753,15 @@ class BackendSessionManager:
         update_payload: dict[str, Any] = {"local_session_id": session_id}
         if session_summary is not None:
             update_payload["local_session_summary"] = session_summary
+
+        # Add experiment_id from session mapping if available
+        if self._backend_client is not None:
+            try:
+                mapping = self._backend_client.get_session_mapping(session_id)
+                if mapping is not None:
+                    update_payload["experiment_id"] = mapping.experiment_id
+                    update_payload["experiment_run_id"] = mapping.experiment_run_id
+            except Exception:
+                pass  # Silently ignore if mapping not available
+
         result.metadata.update(update_payload)

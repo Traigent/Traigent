@@ -1,0 +1,220 @@
+# TVL 0.9 Example: Customer Support Agent Specification
+# ======================================================
+#
+# This spec defines a customer support agent that inherits safety
+# constraints from base_safety.tvl.yml and adds task-specific
+# configuration optimizing for latency, cost, and accuracy balance.
+#
+# Key Features:
+# - Inherits all 3 safety constraints from base_safety.tvl.yml
+# - Balanced objectives: latency, cost, and accuracy
+# - Optimized for high-volume customer interactions
+# - Evaluated on task-specific support dataset (50 examples)
+#
+# Objectives Focus:
+# - Latency (weighted 2x) - Fast response for customer satisfaction
+# - Cost (weighted 2x) - Budget efficiency for high volume
+# - Accuracy (weighted 1x) - Correct resolutions
+
+# Inherit safety constraints and datasets from base spec
+extends: ./base_safety.tvl.yml
+
+tvl:
+  module: "corp.agents.support"
+  skip_budget_checks: false
+
+metadata:
+  owner: "support-team@example.com"
+  description: "Customer Support Agent - balanced latency, cost, accuracy"
+  tags:
+    - support
+    - latency
+    - cost-efficiency
+
+# =============================================================================
+# TVARS (Configuration Space)
+# =============================================================================
+# Agent-specific parameters for support task optimization.
+# Includes cost-efficient model options and streaming settings.
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      - "gpt-4o-mini"          # Cost-efficient
+      - "gpt-3.5-turbo"        # Very cost-efficient
+      - "claude-3-haiku-20240307"  # Fast and cheap
+      - "claude-3-5-sonnet-latest"  # Higher quality fallback
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 0.5]  # Moderate for helpful but consistent responses
+    default: 0.3
+    unit: "temperature"
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [128, 1024]  # Shorter for faster responses
+    default: 512
+    unit: "tokens"
+
+  - name: use_streaming
+    type: bool
+    domain: [true, false]
+    default: true
+    description: "Enable streaming for faster perceived latency"
+
+  - name: response_style
+    type: enum[str]
+    domain:
+      - "concise"
+      - "detailed"
+      - "friendly"
+    default: "friendly"
+    description: "Response tone and length style"
+
+  - name: include_escalation_option
+    type: bool
+    domain: [true, false]
+    default: true
+    description: "Include option to escalate to human agent"
+
+  - name: canned_response_threshold
+    type: float
+    domain:
+      range: [0.7, 0.95]
+    default: 0.85
+    description: "Confidence threshold for using canned responses"
+
+# =============================================================================
+# OBJECTIVES
+# =============================================================================
+# Balanced objectives for customer support: latency, cost, accuracy.
+
+objectives:
+  - name: latency_p50
+    direction: minimize
+    weight: 2.0  # High priority for customer experience
+    unit: "ms"
+    description: "Median response latency"
+    band:
+      target: [0, 500]  # Target under 500ms median
+      test: TOST
+      alpha: 0.05
+
+  - name: cost_per_request
+    direction: minimize
+    weight: 2.0  # High priority for budget
+    unit: "usd"
+    description: "Cost per support request"
+    band:
+      target: [0, 0.01]  # Target under $0.01 per request
+      test: TOST
+      alpha: 0.05
+
+  - name: resolution_accuracy
+    direction: maximize
+    weight: 1.0  # Important but balanced with efficiency
+    unit: "score"
+    description: "Accuracy of issue resolution"
+    band:
+      target: [0.75, 0.90]  # Target 75-90% accuracy
+      test: TOST
+      alpha: 0.05
+
+  - name: customer_satisfaction
+    direction: maximize
+    weight: 1.5
+    unit: "score"
+    description: "Predicted customer satisfaction score"
+
+# =============================================================================
+# CONSTRAINTS
+# =============================================================================
+# Task-specific constraints for support efficiency.
+
+constraints:
+  structural:
+    - expr: 'params.max_tokens <= 1024'
+      id: support-response-length
+      error_message: "Support responses should be concise"
+
+    - expr: 'params.temperature <= 0.5'
+      id: support-consistency
+      error_message: "Support needs consistent responses"
+
+  derived:
+    - require: 'params.use_streaming or params.max_tokens <= 512'
+      description: "Non-streaming requires shorter responses for latency"
+
+# =============================================================================
+# EVALUATION SET
+# =============================================================================
+# Task-specific support dataset for accuracy and resolution evaluation.
+
+evaluation_set:
+  dataset: "support_resolution"
+  seed: 42
+
+datasets:
+  support_resolution:
+    path: "./datasets/support_resolution.jsonl"
+    description: "50 customer support scenarios with expected resolutions"
+    size: 50
+    schema:
+      - name: id
+        type: string
+      - name: customer_query
+        type: string
+      - name: context
+        type: string
+        description: "Customer history and relevant knowledge base"
+      - name: expected_resolution
+        type: string
+        description: "Expected resolution or response category"
+      - name: priority
+        type: string
+        description: "Issue priority: low, medium, high"
+
+# =============================================================================
+# EXPLORATION
+# =============================================================================
+# Efficiency-focused exploration with cost constraints.
+
+exploration:
+  strategy: pareto_optimal  # Multi-objective optimization
+  budgets:
+    max_trials: 100
+    max_spend_usd: 25.0  # Lower budget for cost-conscious optimization
+    max_wallclock_s: 3600
+  parallelism:
+    max_parallel_trials: 6  # Higher parallelism for faster exploration
+  convergence:
+    metric: hypervolume_improvement
+    window: 8
+    threshold: 0.01
+
+# =============================================================================
+# PROMOTION POLICY
+# =============================================================================
+# Balanced promotion considering all objectives.
+
+promotion_policy:
+  dominance: epsilon_pareto
+  alpha: 0.05
+  min_effect:
+    latency_p50: 50.0      # 50ms improvement required
+    cost_per_request: 0.001  # $0.001 cost reduction
+    resolution_accuracy: 0.02  # 2% accuracy improvement
+    customer_satisfaction: 0.02
+  adjust: BH
+  tie_breakers:
+    - metric_name: cost_per_request
+      prefer: lower
+    - metric_name: latency_p50
+      prefer: lower
+    - metric_name: resolution_accuracy
+      prefer: higher

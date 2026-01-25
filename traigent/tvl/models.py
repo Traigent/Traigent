@@ -91,6 +91,7 @@ class TVarDecl:
         domain: Domain specification defining valid values.
         default: Optional default value.
         unit: Optional unit of measurement.
+        agent: Optional agent identifier for multi-agent experiments.
     """
 
     name: str
@@ -99,6 +100,7 @@ class TVarDecl:
     domain: DomainSpec
     default: Any | None = None
     unit: str | None = None
+    agent: str | None = None
 
     def to_configuration_space_entry(
         self,

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -382,6 +383,11 @@ class TrialLifecycle:
                 status="completed",
                 metrics=result.metrics,
             )
+
+            # Collect workflow span for backend visualization
+            end_time = time.time()
+            self._collect_workflow_span(trial_id, result, start_time, end_time)
+
             return result
 
         except TrialPrunedError as prune_error:
@@ -396,6 +402,8 @@ class TrialLifecycle:
                 is_pruned=True,
             )
             record_trial_result(span, status="pruned", error=str(prune_error))
+            end_time = time.time()
+            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except TVLConstraintError as constraint_error:
@@ -409,6 +417,8 @@ class TrialLifecycle:
                 constraint_error,
             )
             record_trial_result(span, status="failed", error=str(constraint_error))
+            end_time = time.time()
+            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         except APIKeyError:
@@ -428,6 +438,8 @@ class TrialLifecycle:
                 exc,
             )
             record_trial_result(span, status="failed", error=str(exc))
+            end_time = time.time()
+            self._collect_workflow_span(trial_id, result, start_time, end_time)
             return result
 
         finally:
@@ -513,11 +525,22 @@ class TrialLifecycle:
         ):
             return None, None
 
+        # Extract band target for banded objective pruning
+        band_target = None
+        if (
+            orchestrator.objective_schema is not None
+            and orchestrator.objective_schema.objectives
+        ):
+            primary_obj = orchestrator.objective_schema.objectives[0]
+            if hasattr(primary_obj, "band") and primary_obj.band is not None:
+                band_target = primary_obj.band
+
         tracker = PruningProgressTracker(
             optimizer=orchestrator.optimizer,
             dataset=dataset,
             trial_id=trial_id,
             optuna_trial_id=optuna_trial_id,
+            band_target=band_target,
         )
         return tracker.callback, tracker.state
 
@@ -628,6 +651,97 @@ class TrialLifecycle:
 
         trial_result.metadata = metadata
         trial_result.metrics = metrics
+
+    def _collect_workflow_span(
+        self,
+        trial_id: str,
+        trial_result: TrialResult,
+        start_time: float,
+        end_time: float,
+    ) -> None:
+        """Create and collect a workflow span for the completed trial.
+
+        Args:
+            trial_id: Trial identifier (used as configuration_run_id)
+            trial_result: The trial result containing metrics and status
+            start_time: Trial start timestamp
+            end_time: Trial end timestamp
+        """
+        orchestrator = self._orchestrator
+
+        # Only collect if tracker is configured (use getattr for mock compatibility)
+        tracker = getattr(orchestrator, "_workflow_traces_tracker", None)
+        if tracker is None:
+            return
+
+        try:
+            # Lazy import to avoid circular imports
+            from traigent.integrations.observability.workflow_traces import (
+                SpanPayload,
+                SpanStatus,
+                SpanType,
+            )
+
+            # Determine span status based on trial status
+            if trial_result.status == TrialStatus.COMPLETED:
+                span_status = SpanStatus.COMPLETED.value
+            elif trial_result.status == TrialStatus.PRUNED:
+                span_status = SpanStatus.REJECTED.value
+            else:
+                span_status = SpanStatus.FAILED.value
+
+            # Create span payload
+            # Note: trial_id IS the configuration_run_id (backend creates it at /next-trial)
+            # Use timezone-aware datetime with UTC; .isoformat() includes +00:00 offset
+            # DO NOT add "Z" suffix - that would create invalid "+00:00Z" format
+            span = SpanPayload(
+                span_id=uuid.uuid4().hex[:16],
+                trace_id=orchestrator._optimization_id,  # Use optimization ID as trace
+                configuration_run_id=trial_id,
+                span_name=f"trial_{trial_result.trial_id}",
+                span_type=SpanType.NODE.value,
+                start_time=datetime.fromtimestamp(start_time, UTC).isoformat(),
+                end_time=datetime.fromtimestamp(end_time, UTC).isoformat(),
+                status=span_status,
+                node_id="optimization_run",  # Links span to workflow graph node
+                error_message=trial_result.error_message,
+                input_tokens=(
+                    trial_result.metadata.get("input_tokens", 0)
+                    if trial_result.metadata
+                    else 0
+                ),
+                output_tokens=(
+                    trial_result.metadata.get("output_tokens", 0)
+                    if trial_result.metadata
+                    else 0
+                ),
+                cost_usd=(
+                    trial_result.metrics.get("total_cost", 0.0)
+                    if trial_result.metrics
+                    else 0.0
+                ),
+                input_data={"config": trial_result.config},
+                output_data={"metrics": trial_result.metrics},
+                metadata={
+                    "trial_number": (
+                        trial_result.metadata.get("trial_number")
+                        if trial_result.metadata
+                        else None
+                    ),
+                    "examples_attempted": (
+                        trial_result.metadata.get("examples_attempted")
+                        if trial_result.metadata
+                        else None
+                    ),
+                },
+            )
+
+            # Collect the span via orchestrator
+            orchestrator.collect_workflow_span(span)
+            logger.debug(f"Collected workflow span for trial {trial_id}")
+
+        except Exception as exc:
+            logger.debug(f"Failed to collect workflow span for trial {trial_id}: {exc}")
 
     # =========================================================================
     # Error Result Building

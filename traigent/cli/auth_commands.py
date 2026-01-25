@@ -318,7 +318,7 @@ class TraigentAuthCLI:
             console.print(f"\n[red]❌ Authentication failed: {e}[/red]")
             console.print("\nPlease check your credentials and try again.")
             console.print(
-                "If you don't have an account, visit: https://optigen.ai/signup\n"
+                "If you don't have an account, visit: https://traigent.ai/signup\n"
             )
             return False
 

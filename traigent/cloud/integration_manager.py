@@ -1,7 +1,7 @@
-"""Integration Manager for Traigent SDK and OptiGen Backend.
+"""Integration Manager for Traigent SDK and Traigent Backend.
 
 This module provides a unified interface for managing the integration between
-Traigent SDK and OptiGen Backend, coordinating all the integration components
+Traigent SDK and Traigent Backend, coordinating all the integration components
 including model bridges, session lifecycle management, dataset conversion,
 and MCP client operations.
 """
@@ -97,7 +97,7 @@ class IntegrationManager:
 
     This class coordinates all integration components and provides a simple
     interface for setting up and managing optimization workflows that span
-    both Traigent SDK and OptiGen Backend.
+    both Traigent SDK and Traigent Backend.
     """
 
     def __init__(self, config: IntegrationConfig | None = None) -> None:
