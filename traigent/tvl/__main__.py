@@ -44,7 +44,10 @@ def validate_tvl_files(
     failed = 0
 
     for file_path in files:
-        if not file_path.exists():
+        # Resolve to absolute path for consistent handling
+        resolved_path = file_path.resolve()
+
+        if not resolved_path.exists():
             print(f"ERROR: File not found: {file_path}", file=sys.stderr)
             failed += 1
             continue
@@ -53,8 +56,8 @@ def validate_tvl_files(
             # First validate schema (early validation)
             import yaml
 
-            # Security: file_path is from CLI args for TVL validation (expected behavior)
-            with open(file_path, encoding="utf-8") as f:  # noqa: S311
+            # Security: CLI tool intentionally reads user-specified files for validation
+            with open(resolved_path, encoding="utf-8") as f:
                 raw_data = yaml.safe_load(f)
 
             if raw_data is None:
