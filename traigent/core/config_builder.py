@@ -172,7 +172,7 @@ class OptimizedFunctionConfig:
         warnings = []
 
         # Validate injection mode
-        valid_injection_modes = ["context", "parameter", "decorator"]
+        valid_injection_modes = ["context", "parameter", "seamless"]
         if self.injection_mode not in valid_injection_modes:
             errors.append(
                 f"Invalid injection_mode: {self.injection_mode}. Must be one of {valid_injection_modes}"
