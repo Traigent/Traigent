@@ -5,12 +5,12 @@ This is NOT the real Traigent cloud implementation and does NOT represent
 Traigent's proprietary IP.
 
 This module provides a basic wrapper around Anthropic's API for testing
-framework override functionality and parameter mapping while the OptiGen
+framework override functionality and parameter mapping while the Traigent
 backend is under development.
 
 For production use:
 - Use @traigent.optimize(auto_override_frameworks=True)
-- Use real Traigent cloud services (via OptiGen backend)
+- Use real Traigent cloud services (via Traigent backend)
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-AGENTS FUNC-INTEGRATIONS REQ-AGNT-013 REQ-INT-008 SYNC-OptimizationFlow

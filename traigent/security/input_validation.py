@@ -223,19 +223,24 @@ class InputValidator:
 
         flags = get_security_flags()
 
+        # First, remove dangerous tags and their content using regex
+        # This handles script/iframe/etc content that bleach's strip=True preserves
+        sanitized = html_content
+        for pattern in cls.XSS_PATTERNS:
+            sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE | re.DOTALL)
+
         if BLEACH_AVAILABLE:
+            # Use bleach to strip any remaining HTML tags
             sanitized = str(
                 bleach.clean(
-                    html_content,
+                    sanitized,
                     tags=[],
                     attributes={},
                     strip=True,
                 )
             )
         else:
-            sanitized = html_content
-            for pattern in cls.XSS_PATTERNS:
-                sanitized = re.sub(pattern, "", sanitized, flags=re.IGNORECASE)
+            # Escape remaining HTML entities
             sanitized = html.escape(sanitized)
 
         if flags.emit_security_telemetry and sanitized != html_content:

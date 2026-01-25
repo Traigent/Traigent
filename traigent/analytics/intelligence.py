@@ -777,9 +777,9 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                 - recommendations: Optimization suggestions
 
         Example:
-            >>> analyzer = CostAnalysisEngine()
-            >>> results = analyzer.analyze_cost_patterns(days_back=7, safe_mode=True)
-            >>> print(f"Total cost: ${results['total_cost']:.2f}")
+            >>> analyzer = CostAnalysisEngine()  # doctest: +SKIP
+            >>> results = analyzer.analyze_cost_patterns(days_back=7, safe_mode=True)  # doctest: +SKIP
+            >>> print(f"Total cost: ${results['total_cost']:.2f}")  # doctest: +SKIP
         """
         usage_data = self._prepare_usage_data(usage_data)
 

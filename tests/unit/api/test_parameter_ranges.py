@@ -352,6 +352,51 @@ class TestChoices:
         c = Choices(["a", "b"])
         assert isinstance(c.values, tuple)
 
+    # Type enforcement tests (D-2 fix)
+    def test_choices_mixed_types_raises(self):
+        """Test validation: mixed types raise TypeError by default."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices(["string", 123])  # str and int mixed
+
+    def test_choices_mixed_str_bool_raises(self):
+        """Test validation: mixing str and bool raises."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices(["yes", True, "no", False])
+
+    def test_choices_mixed_int_bool_raises(self):
+        """Test validation: mixing int and bool raises (bool is subclass of int)."""
+        with pytest.raises(TypeError, match="consistent types"):
+            Choices([0, 1, True, False])
+
+    def test_choices_int_float_allowed(self):
+        """Test validation: int and float can coexist (both numeric)."""
+        c = Choices([1, 2.5, 3, 4.0])  # Should not raise
+        assert len(c) == 4
+
+    def test_choices_none_with_type_allowed(self):
+        """Test validation: None can coexist with any type."""
+        c = Choices([None, "default", "option"])  # Should not raise
+        assert None in c
+        assert "default" in c
+
+    def test_choices_all_none_allowed(self):
+        """Test validation: all None values allowed."""
+        c = Choices([None, None])
+        assert len(c) == 2
+
+    def test_choices_enforce_type_false(self):
+        """Test enforce_type=False allows mixed types."""
+        c = Choices(["string", 123, True], enforce_type=False)
+        assert len(c) == 3
+        assert "string" in c
+        assert 123 in c
+        assert True in c
+
+    def test_choices_single_value_no_validation(self):
+        """Test single value doesn't trigger type validation."""
+        c = Choices([42])  # Single value, no type comparison needed
+        assert len(c) == 1
+
 
 class TestIsParameterRange:
     """Tests for is_parameter_range function."""
@@ -580,3 +625,118 @@ class TestParameterRangeImmutability:
         c = Choices(["a", "b"])
         with pytest.raises(AttributeError):
             c.default = "a"  # type: ignore[misc]
+
+
+class TestAutoNamingFromKwargs:
+    """Tests for D-1: Auto-naming parameters from decorator kwargs."""
+
+    def test_range_name_auto_assigned(self):
+        """Test Range without name gets name from kwarg key."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        r = Range(0.0, 1.0)  # No name set
+        assert r.name is None
+
+        # Process entry - simulates what happens in normalize_configuration_space
+        returned_param = _process_param_entry("temperature", r, result, defaults)
+
+        # The returned param should have the name auto-assigned
+        assert returned_param is not None
+        assert returned_param.name == "temperature"
+        assert result["temperature"] == (0.0, 1.0)
+
+    def test_int_range_name_auto_assigned(self):
+        """Test IntRange without name gets name from kwarg key."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        r = IntRange(100, 4096)  # No name set
+        assert r.name is None
+
+        returned_param = _process_param_entry("max_tokens", r, result, defaults)
+
+        assert returned_param is not None
+        assert returned_param.name == "max_tokens"
+
+    def test_choices_name_auto_assigned(self):
+        """Test Choices without name gets name from kwarg key."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        c = Choices(["gpt-4", "gpt-3.5"])  # No name set
+        assert c.name is None
+
+        returned_param = _process_param_entry("model", c, result, defaults)
+
+        assert returned_param is not None
+        assert returned_param.name == "model"
+
+    def test_log_range_name_auto_assigned(self):
+        """Test LogRange without name gets name from kwarg key."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        r = LogRange(1e-5, 1e-1)  # No name set
+        assert r.name is None
+
+        returned_param = _process_param_entry("learning_rate", r, result, defaults)
+
+        assert returned_param is not None
+        assert returned_param.name == "learning_rate"
+
+    def test_explicit_name_not_overwritten(self):
+        """Test explicit name is preserved, not overwritten by kwarg key."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        r = Range(0.0, 1.0, name="temp")  # Explicit name set
+        assert r.name == "temp"
+
+        returned_param = _process_param_entry("temperature", r, result, defaults)
+
+        # Explicit name should be preserved
+        assert returned_param is not None
+        assert returned_param.name == "temp"
+
+    def test_auto_naming_preserves_other_attributes(self):
+        """Test auto-naming doesn't affect other attributes."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+        r = Range(0.0, 2.0, default=0.7, step=0.1, unit="ratio")
+
+        returned_param = _process_param_entry("temp", r, result, defaults)
+
+        assert returned_param is not None
+        assert isinstance(returned_param, Range)
+        assert returned_param.name == "temp"
+        assert returned_param.low == 0.0
+        assert returned_param.high == 2.0
+        assert returned_param.default == 0.7
+        assert returned_param.step == 0.1
+        assert returned_param.unit == "ratio"
+
+    def test_non_parameter_range_returns_none(self):
+        """Test non-ParameterRange values return None."""
+        from traigent.api.parameter_ranges import _process_param_entry
+
+        result: dict = {}
+        defaults: dict = {}
+
+        # Tuple (legacy syntax)
+        returned = _process_param_entry("temp", (0.0, 1.0), result, defaults)
+        assert returned is None
+        assert result["temp"] == (0.0, 1.0)
+
+        # List (legacy syntax)
+        result.clear()
+        returned = _process_param_entry("model", ["a", "b"], result, defaults)
+        assert returned is None
+        assert result["model"] == ["a", "b"]

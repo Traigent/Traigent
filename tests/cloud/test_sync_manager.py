@@ -146,34 +146,34 @@ class TestSyncManager:
         assert "team_collaboration" in benefits
         assert "vs. current 4 trial average" in benefits["unlimited_trials"]
 
-    def test_convert_session_to_optigen_format(self):
-        """Test converting local session to OptiGen format."""
+    def test_convert_session_to_traigent_format(self):
+        """Test converting local session to Traigent format."""
         self.test_session = self._create_test_session()
-        optigen_data = self.sync_manager.convert_session_to_optigen_format(
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(
             self.test_session
         )
 
         # Check structure
-        assert "agent" in optigen_data
-        assert "benchmark" in optigen_data
-        assert "model_parameters" in optigen_data
-        assert "experiment" in optigen_data
-        assert "experiment_run" in optigen_data
+        assert "agent" in traigent_data
+        assert "benchmark" in traigent_data
+        assert "model_parameters" in traigent_data
+        assert "experiment" in traigent_data
+        assert "experiment_run" in traigent_data
 
         # Check agent data
-        agent = optigen_data["agent"]
+        agent = traigent_data["agent"]
         assert agent["name"] == "Local Agent: test_llm_function"
         assert agent["agent_type"] == "custom"
         assert agent["source"] == "local_import"
 
         # Check benchmark data
-        benchmark = optigen_data["benchmark"]
+        benchmark = traigent_data["benchmark"]
         assert benchmark["name"] == "Local Benchmark: test_llm_function"
         assert benchmark["type"] == "custom"
         assert benchmark["examples_count"] == 4
 
         # Check experiment data
-        experiment = optigen_data["experiment"]
+        experiment = traigent_data["experiment"]
         assert experiment["name"] == "Local Import: test_llm_function"
         assert experiment["agent_id"] == agent["id"]
         assert experiment["benchmark_id"] == benchmark["id"]
@@ -181,7 +181,7 @@ class TestSyncManager:
         assert "original_session_id" in experiment["metadata"]
 
         # Check experiment run data
-        experiment_run = optigen_data["experiment_run"]
+        experiment_run = traigent_data["experiment_run"]
         assert experiment_run["experiment_id"] == experiment["id"]
         assert experiment_run["status"] == "completed"
         assert len(experiment_run["results"]) == 4
@@ -591,13 +591,13 @@ class TestSyncManager:
         storage.finalize_session(empty_session_id, "completed")
 
         empty_session = storage.load_session(empty_session_id)
-        optigen_data = self.sync_manager.convert_session_to_optigen_format(
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(
             empty_session
         )
 
         # Should handle empty trials gracefully
-        assert len(optigen_data["experiment_run"]["results"]) == 0
-        assert optigen_data["experiment_run"]["metadata"]["total_trials"] == 0
+        assert len(traigent_data["experiment_run"]["results"]) == 0
+        assert traigent_data["experiment_run"]["metadata"]["total_trials"] == 0
 
     def test_edge_case_large_session(self):
         """Test handling of session with many trials."""
@@ -613,13 +613,13 @@ class TestSyncManager:
         storage.finalize_session(large_session_id, "completed")
 
         large_session = storage.load_session(large_session_id)
-        optigen_data = self.sync_manager.convert_session_to_optigen_format(
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(
             large_session
         )
 
         # Should handle large number of trials
-        assert len(optigen_data["experiment_run"]["results"]) == 100
-        assert optigen_data["experiment_run"]["metadata"]["total_trials"] == 100
+        assert len(traigent_data["experiment_run"]["results"]) == 100
+        assert traigent_data["experiment_run"]["metadata"]["total_trials"] == 100
 
     def test_edge_case_special_characters(self):
         """Test handling of special characters in session data."""
@@ -636,14 +636,14 @@ class TestSyncManager:
         storage.finalize_session(special_session_id, "completed")
 
         special_session = storage.load_session(special_session_id)
-        optigen_data = self.sync_manager.convert_session_to_optigen_format(
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(
             special_session
         )
 
         # Should handle special characters without issues
-        assert "测试" in optigen_data["agent"]["name"]
+        assert "测试" in traigent_data["agent"]["name"]
         assert (
-            optigen_data["experiment_run"]["results"][0]["experiment_parameters"][
+            traigent_data["experiment_run"]["results"][0]["experiment_parameters"][
                 "unicode_param"
             ]
             == "测试"
@@ -698,6 +698,6 @@ class TestSyncManager:
         session.optimization_config = None  # Malformed config
 
         # Should handle gracefully without crashing
-        optigen_data = self.sync_manager.convert_session_to_optigen_format(session)
-        assert optigen_data is not None
-        assert "experiment" in optigen_data
+        traigent_data = self.sync_manager.convert_session_to_traigent_format(session)
+        assert traigent_data is not None
+        assert "experiment" in traigent_data

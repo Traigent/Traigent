@@ -369,7 +369,7 @@ for scenario in SCENARIOS:
 @pytest.fixture(autouse=True)
 def _patch_backend(monkeypatch):
     """Replace BackendIntegratedClient to avoid outbound traffic."""
-    from traigent.optigen_integration import BackendIntegratedClient as Original
+    from traigent.cloud.backend_client import BackendIntegratedClient as Original
 
     mock_backend = Mock(spec=Original)
     mock_backend.create_session.return_value = "mock-session"
@@ -379,18 +379,19 @@ def _patch_backend(monkeypatch):
     mock_backend.finalize_session.return_value = None
     mock_backend.delete_session.return_value = True
 
-    backend_client_path = ".".join(
-        ["traigent", "optigen_integration", "BackendIntegratedClient"]
+    # Patch at both locations where BackendIntegratedClient may be imported
+    traigent_client_path = ".".join(
+        ["traigent", "traigent_client", "BackendIntegratedClient"]
     )
-    orchestrator_client_path = ".".join(
-        ["traigent", "core", "orchestrator", "BackendIntegratedClient"]
+    cloud_client_path = ".".join(
+        ["traigent", "cloud", "backend_client", "BackendIntegratedClient"]
     )
     monkeypatch.setattr(
-        backend_client_path,
+        traigent_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     monkeypatch.setattr(
-        orchestrator_client_path,
+        cloud_client_path,
         lambda *args, **kwargs: mock_backend,
     )
     return mock_backend
@@ -441,7 +442,7 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     if combo.get("has_api_key"):
         api_key = TEST_KEY_PREFIX + ("x" * 12)
 
-    from traigent.optigen_integration import OptiGenClient
+    from traigent.traigent_client import TraigentClient as OptiGenClient
 
     client = OptiGenClient(
         execution_mode=combo.get("explicit_mode", "auto"), api_key=api_key

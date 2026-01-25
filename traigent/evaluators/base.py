@@ -235,6 +235,20 @@ def _build_dataset(
     if registry_entry and registry_entry.metadata:
         metadata = {**(metadata or {}), **registry_entry.metadata}
 
+    # Store source path for JS runtime and other consumers
+    if metadata is None:
+        metadata = {}
+    metadata["source_path"] = str(resolved_path)
+
+    # Compute dataset hash for cache invalidation (file size + mtime_ns for efficiency)
+    # Uses nanosecond precision mtime to detect rapid changes within the same second
+    try:
+        stat_info = resolved_path.stat()
+        metadata["dataset_hash"] = f"{stat_info.st_size}_{stat_info.st_mtime_ns}"
+    except OSError:
+        # If we can't stat the file, skip the hash
+        pass
+
     metadata_out = metadata or None
 
     description = (
@@ -948,6 +962,143 @@ class BaseEvaluator(ABC):
         return 0.0
 
     # Common evaluation methods to reduce duplication in subclasses
+
+    def _prepare_call_arguments(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        input_data: dict[str, Any],
+    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
+        """Determine call arguments based on injection mode.
+
+        Args:
+            func: Function to call
+            config: Configuration parameters
+            input_data: Input data for the function
+
+        Returns:
+            Tuple of (positional_args, keyword_args)
+        """
+        injection_mode = getattr(func, "_traigent_injection_mode", "context")
+
+        if injection_mode == "parameter" and isinstance(input_data, CollectionsMapping):
+            return (), {**input_data, **config}
+        if injection_mode == "parameter":
+            return (input_data,), dict(config)
+        if isinstance(
+            input_data, CollectionsMapping
+        ) and self._should_expand_input_mapping(func, input_data):
+            return (), dict(input_data)
+        return (input_data,), {}
+
+    async def _execute_async_with_timeout(
+        self,
+        func: Callable[..., Any],
+        call_args: tuple[Any, ...],
+        call_kwargs: dict[str, Any],
+    ) -> Any:
+        """Execute async function with optional timeout.
+
+        Args:
+            func: Async function to execute
+            call_args: Positional arguments
+            call_kwargs: Keyword arguments
+
+        Returns:
+            Function output
+        """
+        if self.timeout:
+            return await asyncio.wait_for(
+                func(*call_args, **call_kwargs), timeout=self.timeout
+            )
+        return await func(*call_args, **call_kwargs)
+
+    async def _execute_sync_in_thread(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        call_args: tuple[Any, ...],
+        call_kwargs: dict[str, Any],
+        executor: Any | None,
+        trial_ctx: Any | None,
+    ) -> tuple[Any, str | None]:
+        """Execute sync function in thread pool with context propagation.
+
+        Args:
+            func: Sync function to execute
+            config: Configuration for context
+            call_args: Positional arguments
+            call_kwargs: Keyword arguments
+            executor: Optional thread pool executor
+            trial_ctx: Trial context to propagate to thread
+
+        Returns:
+            Tuple of (output, error_message)
+        """
+        from traigent.config.context import (
+            ConfigurationContext,
+            set_trial_context,
+        )
+        from traigent.config.context import trial_context as trial_context_var
+
+        def call_with_config() -> Any:
+            # Re-establish context in thread (contextvars don't propagate)
+            trial_token = None
+            if trial_ctx is not None:
+                trial_token = set_trial_context(trial_ctx)
+            try:
+                with ConfigurationContext(config):
+                    return func(*call_args, **call_kwargs)
+            finally:
+                if trial_token is not None:
+                    trial_context_var.reset(trial_token)
+
+        loop = asyncio.get_event_loop()
+        temporary_executor = None
+        submit_executor = executor
+
+        if submit_executor is None:
+            from concurrent.futures import ThreadPoolExecutor
+
+            temporary_executor = ThreadPoolExecutor(max_workers=1)
+            submit_executor = temporary_executor
+
+        try:
+            future = loop.run_in_executor(submit_executor, call_with_config)
+            if self.timeout:
+                done, _ = await asyncio.wait(
+                    {future},
+                    timeout=self.timeout,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if not done:
+                    future.cancel()
+                    error_msg = f"Function call timed out after {self.timeout}s"
+                    logger.warning(error_msg)
+                    return None, error_msg
+                return next(iter(done)).result(), None
+            return await future, None
+        finally:
+            if temporary_executor is not None:
+                temporary_executor.shutdown(wait=False, cancel_futures=True)
+
+    def _check_api_key_error(self, error: Exception) -> None:
+        """Check if exception is an API key error and raise APIKeyError if so.
+
+        Args:
+            error: The exception to check
+
+        Raises:
+            APIKeyError: If the error appears to be API key related
+        """
+        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
+        if any(token in str(error).lower() for token in api_key_tokens):
+            raise APIKeyError(
+                f"API key error detected. Set the required API key environment "
+                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
+                f"Original error: {error}"
+            ) from error
+
     async def _execute_function(
         self,
         func: Callable[..., Any],
@@ -967,135 +1118,44 @@ class BaseEvaluator(ABC):
             func: Function to execute
             config: Configuration parameters
             input_data: Input data for the function
+            executor: Optional thread pool executor for sync functions
 
         Returns:
             Tuple of (output, error_message)
         """
         try:
-            # Import ConfigurationContext here to avoid circular imports
-            from traigent.config.context import (
-                ConfigurationContext,
-                get_trial_context,
-                set_trial_context,
-                trial_context,
+            from traigent.config.context import ConfigurationContext, get_trial_context
+
+            trial_ctx = get_trial_context()
+            call_args, call_kwargs = self._prepare_call_arguments(
+                func, config, input_data
             )
 
-            # Capture trial context for thread propagation (needed for get_config())
-            current_trial_ctx = get_trial_context()
-
-            # Set configuration context for function execution
             with ConfigurationContext(config):
-                # For parameter injection mode, only pass input_data
-                # Config is available via ConfigurationContext
-                if hasattr(func, "_traigent_injection_mode"):
-                    injection_mode = func._traigent_injection_mode
-                else:
-                    injection_mode = "context"  # Default
-
-                if injection_mode == "parameter" and isinstance(
-                    input_data, CollectionsMapping
-                ):
-                    call_args: tuple[Any, ...] = ()
-                    call_kwargs: dict[str, Any] = {**input_data, **config}
-                elif injection_mode == "parameter":
-                    call_args = (input_data,)
-                    call_kwargs = dict(config)
-                elif isinstance(
-                    input_data, CollectionsMapping
-                ) and self._should_expand_input_mapping(func, input_data):
-                    call_args = ()
-                    call_kwargs = dict(input_data)
-                else:
-                    call_args = (input_data,)
-                    call_kwargs = {}
-
                 if asyncio.iscoroutinefunction(func):
-                    # Async function
-                    if self.timeout:
-                        output = await asyncio.wait_for(
-                            func(*call_args, **call_kwargs), timeout=self.timeout
-                        )
-                    else:
-                        output = await func(*call_args, **call_kwargs)
+                    output = await self._execute_async_with_timeout(
+                        func, call_args, call_kwargs
+                    )
                 else:
-                    # Sync function - handle configuration differently for thread execution
-                    def call_with_config():
-                        # Re-establish both configuration and trial context in thread
-                        # (contextvars don't automatically propagate to ThreadPoolExecutor)
-                        trial_token = None
-                        if current_trial_ctx is not None:
-                            trial_token = set_trial_context(current_trial_ctx)
-                        try:
-                            with ConfigurationContext(config):
-                                # Use same injection logic for sync functions
-                                return func(*call_args, **call_kwargs)
-                        finally:
-                            if trial_token is not None:
-                                trial_context.reset(trial_token)
+                    output, error = await self._execute_sync_in_thread(
+                        func, config, call_args, call_kwargs, executor, trial_ctx
+                    )
+                    if error:
+                        return None, error
 
-                    loop = asyncio.get_event_loop()
-                    temporary_executor = None
-                    submit_executor = executor
-                    if submit_executor is None:
-                        from concurrent.futures import ThreadPoolExecutor
-
-                        temporary_executor = ThreadPoolExecutor(max_workers=1)
-                        submit_executor = temporary_executor
-
-                    try:
-                        future = loop.run_in_executor(submit_executor, call_with_config)
-                        if self.timeout:
-                            done, _ = await asyncio.wait(
-                                {future},
-                                timeout=self.timeout,
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            if not done:
-                                future.cancel()
-                                error_msg = (
-                                    f"Function call timed out after {self.timeout}s"
-                                )
-                                logger.warning(error_msg)
-                                return None, error_msg
-                            output = next(iter(done)).result()
-                        else:
-                            output = await future
-                    finally:
-                        if temporary_executor is not None:
-                            temporary_executor.shutdown(wait=False, cancel_futures=True)
-
-            # Apply mock delay if enabled (simulates LLM latency for trace visibility)
             await self._apply_mock_delay_if_enabled()
-
             return output, None
 
         except ConfigurationError:
-            # Configuration-related issues should surface so the orchestrator can
-            # mark the trial as failed rather than silently falling back.
             raise
         except TimeoutError:
             error_msg = f"Function call timed out after {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg
-
         except (FriendlyTraigentError, CoreTraigentError):
-            # Surface authentication/configuration issues immediately.
-            # Note: APIKeyError is a subclass of FriendlyTraigentError
             raise
         except Exception as e:
-            lowered = str(e).lower()
-
-            if any(
-                token in lowered
-                for token in ("api key", "api_key", "authentication", "openai_api_key")
-            ):
-                # Fail fast on API key errors - don't retry hundreds of times
-                raise APIKeyError(
-                    f"API key error detected. Set the required API key environment "
-                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                    f"Original error: {e}"
-                ) from e
-
+            self._check_api_key_error(e)
             error_msg = f"Function call failed: {e}"
             logger.warning(error_msg)
             return None, error_msg

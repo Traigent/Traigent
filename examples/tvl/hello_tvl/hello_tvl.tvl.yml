@@ -1,62 +1,37 @@
 # TVL 0.9 Example: Hello TVL
-#
-# This is the minimal TVL spec used in Chapter 2 to introduce the core sections.
-# Migrated from legacy format to TVL 0.9.
+# A minimal example demonstrating basic TVL structure
 
 spec:
   id: hello-tvl
-  version: "0.0.1"
+  version: 0.0.1
 
 metadata:
-  owner: "students@traigent.ai"
-  description: "Minimal TVL spec used in Chapter 2 to introduce the core sections."
-  reviewers: ["mentor@traigent.ai"]
+  owner: "examples@traigent.ai"
+  description: "Minimal TVL spec demonstrating basic structure"
 
-# TVL 0.9 typed variables (replaces configuration_space)
+# TVL 0.9 typed variables
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4o-mini", "claude-3-haiku"]
+    domain: ["gpt-4o-mini", "claude-3-haiku-20240307"]
     default: "gpt-4o-mini"
 
   - name: temperature
     type: float
     domain:
-      range: [0.0, 0.8]
-    default: 0.4
-    unit: dimensionless
-
-  - name: max_tokens
-    type: int
-    domain: [256, 384, 512]
-    default: 384
-    unit: tokens
+      range: [0.0, 1.0]
 
 objectives:
-  - name: faithfulness
+  - name: accuracy
     direction: maximize
 
-  - name: latency
-    direction: minimize
-
-# TVL 0.9 exploration (replaces optimization)
-exploration:
-  strategy:
-    type: pareto_optimal
-  budgets:
-    max_trials: 30
-    max_wallclock_s: 900
-
-# TVL 0.9 structural constraints
+# Basic constraints
 constraints:
   structural:
-    - expr: "params.temperature <= 0.8"
-
-evaluation:
-  workloads:
-    - name: tutorial
-      dataset: dvl://demo/tutorial
+    - expr: 'params.temperature <= 1.0'
+      id: max-temperature
+      error_message: "Temperature must be at most 1.0"
 
 promotion:
   gate: manual_review
-  reviewers: ["mentor@traigent.ai"]
+  reviewers: ["reviewer@traigent.ai"]

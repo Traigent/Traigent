@@ -1,75 +1,60 @@
-# TVL 0.9 Example: Constraints Lab
-#
-# Explores CEL constraints and unit typing.
-# Migrated from legacy format to TVL 0.9.
+# TVL 0.9 Example: Constraints and Units
+# Demonstrates structural constraints with units
 
 spec:
-  id: constraints-lab
-  version: "0.1.0"
+  id: constraints-units-example
+  version: 0.1.0
 
 metadata:
-  owner: "qa@traigent.ai"
-  description: "Explores CEL constraints and unit typing."
+  owner: "mlops@traigent.ai"
+  description: "Example demonstrating constraints and units"
 
-# TVL 0.9 typed variables (replaces configuration_space)
+units:
+  time: [milliseconds, seconds]
+  currency: [USD]
+  ratio: [dimensionless]
+
+# TVL 0.9 typed variables
 tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini", "gpt-4o", "claude-3-haiku-20240307"]
+
   - name: temperature
     type: float
     domain:
       range: [0.0, 1.0]
-    default: 0.5
-    unit: dimensionless
+    unit: ratio
 
   - name: max_tokens
     type: int
     domain:
-      range: [128, 1024]
-    default: 512
-    unit: tokens
-
-  - name: cache_ttl_hours
-    type: float
-    domain:
-      range: [0.5, 12.0]
-    default: 2.0
-    unit: hours
-
-  - name: rerank_weight
-    type: float
-    domain:
-      range: [0.0, 1.0]
-    default: 0.5
-    unit: dimensionless
+      range: [128, 2048]
 
 objectives:
-  - name: stability
+  - name: accuracy
     direction: maximize
-
-  - name: cost
+  - name: latency
     direction: minimize
+    unit: milliseconds
 
-# TVL 0.9 structural constraints (replaces flat constraints list)
+# TVL 0.9 structural constraints
 constraints:
   structural:
-    # Expression constraint: simple rule
-    - expr: "params.cache_ttl_hours >= 1.0"
+    - expr: 'params.temperature <= 0.8'
+      id: temperature-cap
+      error_message: "Keep temperature reasonable for consistency"
 
-    # Expression constraint: compound expression
-    - expr: "params.temperature * params.max_tokens <= 600"
+    - when: 'params.model == "gpt-4o"'
+      then: 'params.max_tokens <= 1024'
+      id: premium-token-limit
+      error_message: "Premium models have token budget limits"
 
-    # Conditional constraint: when-then pattern
-    - when: "params.max_tokens >= 512"
-      then: "params.rerank_weight >= 0.4"
+    - expr: 'params.max_tokens >= 256'
+      id: min-tokens
+      error_message: "Need at least 256 tokens for meaningful output"
 
-    # Forbidden constraint as expression (rerank_weight > 0.8 is forbidden)
-    - expr: "params.rerank_weight <= 0.8"
-
-evaluation:
-  workloads:
-    - name: stability_suite
-      dataset: dvl://qa/stability-suite
-  metrics:
-    stability:
-      aggregation: mean
-    cost:
-      aggregation: mean
+exploration:
+  strategy: pareto_optimal
+  budgets:
+    max_trials: 30

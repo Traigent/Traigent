@@ -112,7 +112,7 @@ def test_compiled_constraints_attach_metadata() -> None:
     meta = getattr(constraint, "__tvl_constraint__", {})
     # TVL 0.9 structural constraints use id from the constraint definition
     assert meta["id"] == "campus-hour-latency"
-    assert isinstance(constraint({"response_latency_ms": 800}), bool)
+    assert isinstance(constraint({"response_latency_ms": 800}, None), bool)
 
 
 def test_legacy_formats_emit_deprecation_warnings() -> None:
@@ -232,6 +232,98 @@ objectives:
         artifact = load_tvl_spec(spec_path=FIXTURE_SPEC)
         assert artifact.derived_constraints is None
 
+    def test_derived_constraints_compiled_to_callables(self) -> None:
+        """Derived constraints using params are compiled to runtime callables."""
+        spec_content = """
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 2.0]
+  - name: top_p
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+constraints:
+  derived:
+    - require: "params.temperature + params.top_p <= 1.5"
+      description: "Combined temperature and top_p should not exceed 1.5"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            artifact = load_tvl_spec(spec_path=f.name)
+
+            # Derived constraints should be parsed AND compiled as callables
+            assert artifact.derived_constraints is not None
+            assert len(artifact.derived_constraints) == 1
+
+            # The derived constraint should also be in the constraints list
+            # (structural constraints count + derived constraints count)
+            assert len(artifact.constraints) == 1  # 1 derived constraint compiled
+
+            # Test that the constraint callable works correctly
+            constraint_callable = artifact.constraints[0]
+
+            # Should pass: 0.5 + 0.5 = 1.0 <= 1.5
+            assert constraint_callable({"temperature": 0.5, "top_p": 0.5}, None) is True
+
+            # Should fail: 1.0 + 0.8 = 1.8 > 1.5
+            assert (
+                constraint_callable({"temperature": 1.0, "top_p": 0.8}, None) is False
+            )
+
+    def test_derived_constraints_combined_with_structural(self) -> None:
+        """Both structural and derived constraints are included in constraints list."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4", "gpt-3.5"]
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 4096]
+
+constraints:
+  structural:
+    - when: "params.model == 'gpt-4'"
+      then: "params.max_tokens <= 2048"
+  derived:
+    - require: "params.max_tokens >= 512"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".tvl.yml", delete=False
+        ) as f:
+            f.write(spec_content)
+            f.flush()
+
+            artifact = load_tvl_spec(spec_path=f.name)
+
+            # Should have both structural and derived constraints compiled
+            assert len(artifact.constraints) == 2  # 1 structural + 1 derived
+
+            # Test derived constraint callable (the second one)
+            derived_constraint = artifact.constraints[1]
+
+            # Should pass: 1024 >= 512
+            assert derived_constraint({"max_tokens": 1024}, None) is True
+
+            # Should fail: 256 < 512
+            assert derived_constraint({"max_tokens": 256}, None) is False
+
 
 class TestTVL09FormatParsing:
     """Tests for TVL 0.9 format with tvars."""
@@ -283,6 +375,7 @@ objectives:
             assert temp_tvar.type == "float"
             assert temp_tvar.domain.kind == "range"
             assert temp_tvar.domain.range == (0.0, 2.0)
+            assert temp_tvar.domain.resolution is not None
             assert abs(temp_tvar.domain.resolution - 0.1) < 1e-10
             assert temp_tvar.unit == "unitless"
 
@@ -877,6 +970,396 @@ class TestParseExplorationParallelism:
         assert result is True
 
 
+class TestTVLHeaderParsing:
+    """Tests for TVL 0.9 header (tvl section) parsing."""
+
+    def test_parses_module_namespace(self, tmp_path: Path) -> None:
+        """Test that tvl.module is correctly parsed."""
+        spec_content = """
+tvl:
+  module: corp.product.spec
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is not None
+        assert artifact.tvl_header.module == "corp.product.spec"
+
+    def test_parses_validation_flags(self, tmp_path: Path) -> None:
+        """Test that validation flags are correctly parsed."""
+        spec_content = """
+tvl:
+  module: test.spec
+  validation:
+    skip_budget_checks: true
+    skip_cost_estimation: true
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is not None
+        assert artifact.tvl_header.skip_budget_checks is True
+        assert artifact.tvl_header.skip_cost_estimation is True
+
+    def test_missing_module_raises_error(self, tmp_path: Path) -> None:
+        """Test that missing tvl.module raises TVLValidationError."""
+        spec_content = """
+tvl:
+  validation:
+    skip_budget_checks: true
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(TVLValidationError, match="'module' string"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_no_tvl_header_returns_none(self, tmp_path: Path) -> None:
+        """Test that missing tvl section returns None for tvl_header."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.tvl_header is None
+
+
+class TestEvaluationSetParsing:
+    """Tests for TVL 0.9 evaluation_set section parsing."""
+
+    def test_parses_dataset_and_seed(self, tmp_path: Path) -> None:
+        """Test parsing evaluation_set with dataset and seed."""
+        spec_content = """
+tvl:
+  module: test.eval
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://datasets/eval.jsonl
+  seed: 42
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is not None
+        assert artifact.evaluation_set.dataset == "s3://datasets/eval.jsonl"
+        assert artifact.evaluation_set.seed == 42
+
+    def test_seed_optional(self, tmp_path: Path) -> None:
+        """Test that evaluation_set.seed is optional."""
+        spec_content = """
+tvl:
+  module: test.eval
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://datasets/eval.jsonl
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is not None
+        assert artifact.evaluation_set.dataset == "s3://datasets/eval.jsonl"
+        assert artifact.evaluation_set.seed is None
+
+    def test_missing_dataset_raises_error(self, tmp_path: Path) -> None:
+        """Test that missing evaluation_set.dataset raises error."""
+        spec_content = """
+tvl:
+  module: test.eval
+evaluation_set:
+  seed: 42
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        with pytest.raises(TVLValidationError, match="'dataset' string"):
+            load_tvl_spec(spec_path=spec_file)
+
+    def test_no_evaluation_set_returns_none(self, tmp_path: Path) -> None:
+        """Test that missing evaluation_set returns None."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.evaluation_set is None
+
+
+class TestBandedObjectiveCenterTol:
+    """Tests for banded objectives with center/tolerance format."""
+
+    def test_parses_banded_objective_with_center_tol(self, tmp_path: Path) -> None:
+        """Test parsing banded objective with {center, tol} format."""
+        spec_content = """
+tvl:
+  module: test.banded
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: cost_per_query
+    band:
+      target:
+        center: 0.01
+        tol: 0.005
+      test: TOST
+      alpha: 0.05
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.objective_schema is not None
+        obj = artifact.objective_schema.objectives[0]
+        assert obj.name == "cost_per_query"
+        assert obj.orientation == "band"
+        assert obj.band is not None
+        # center=0.01, tol=0.005 -> low=0.005, high=0.015
+        assert obj.band.low == pytest.approx(0.005)
+        assert obj.band.high == pytest.approx(0.015)
+        assert obj.band_alpha == 0.05
+
+    def test_mixed_standard_and_banded_objectives(self, tmp_path: Path) -> None:
+        """Test parsing spec with both standard and banded objectives."""
+        spec_content = """
+tvl:
+  module: test.mixed
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4", "gpt-3.5"]
+objectives:
+  - name: quality
+    direction: maximize
+  - name: latency
+    direction: minimize
+  - name: response_length
+    band:
+      target: [100, 200]
+      test: TOST
+      alpha: 0.05
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        assert artifact.objective_schema is not None
+        objectives = artifact.objective_schema.objectives
+        assert len(objectives) == 3
+
+        # Standard objectives
+        assert objectives[0].name == "quality"
+        assert objectives[0].orientation == "maximize"
+        assert objectives[0].band is None
+
+        assert objectives[1].name == "latency"
+        assert objectives[1].orientation == "minimize"
+        assert objectives[1].band is None
+
+        # Banded objective
+        assert objectives[2].name == "response_length"
+        assert objectives[2].orientation == "band"
+        assert objectives[2].band is not None
+        assert objectives[2].band.low == 100
+        assert objectives[2].band.high == 200
+
+
+class TestConvergenceCriteriaWiring:
+    """Tests for TVL 0.9 convergence criteria in runtime overrides."""
+
+    def test_convergence_included_in_runtime_overrides(self, tmp_path: Path) -> None:
+        """Test that convergence criteria are included in runtime_overrides."""
+        spec_content = """
+tvl:
+  module: test.convergence
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+exploration:
+  convergence:
+    metric: hypervolume_improvement
+    window: 15
+    threshold: 0.005
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: quality
+    direction: maximize
+  - name: latency
+    direction: minimize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert overrides["convergence_metric"] == "hypervolume_improvement"
+        assert overrides["convergence_window"] == 15
+        assert overrides["convergence_threshold"] == 0.005
+
+    def test_no_convergence_when_not_specified(self, tmp_path: Path) -> None:
+        """Test that convergence keys are absent when not specified."""
+        spec_content = """
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4"]
+objectives:
+  - name: quality
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        overrides = artifact.runtime_overrides()
+
+        assert "convergence_metric" not in overrides
+        assert "convergence_window" not in overrides
+        assert "convergence_threshold" not in overrides
+
+    def test_convergence_default_values(self, tmp_path: Path) -> None:
+        """Test that convergence defaults are applied when partially specified."""
+        spec_content = """
+tvl:
+  module: test.defaults
+tvl_version: "0.9"
+environment:
+  snapshot_id: "2025-01-01T00:00:00Z"
+evaluation_set:
+  dataset: s3://test/data.parquet
+exploration:
+  convergence:
+    window: 10
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: quality
+    direction: maximize
+promotion_policy:
+  dominance: epsilon_pareto
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Defaults are: metric=hypervolume_improvement, threshold=0.01
+        overrides = artifact.runtime_overrides()
+        assert overrides["convergence_metric"] == "hypervolume_improvement"
+        assert overrides["convergence_window"] == 10
+        assert overrides["convergence_threshold"] == 0.01  # default
+
+
 class TestResolveAlgorithm:
     """Unit tests for _resolve_algorithm() function."""
 
@@ -970,3 +1453,770 @@ class TestResolveAlgorithm:
             }
         )
         assert result == "bayesian"
+
+
+# T-5: Early Schema Validation Tests
+
+
+class TestSchemaValidation:
+    """Tests for T-5: Early schema validation at parse time."""
+
+    def test_validate_tvl_schema_valid_spec(self) -> None:
+        """Valid spec returns empty issues list."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvl_version": "0.9",
+            "tvars": {
+                "temperature": {"domain": {"type": "range", "low": 0.0, "high": 1.0}}
+            },
+            "objectives": [{"name": "accuracy", "direction": "maximize"}],
+        }
+
+        issues = validate_tvl_schema(data)
+        assert issues == []
+
+    def test_validate_unknown_top_level_sections(self) -> None:
+        """Unknown top-level sections are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvl_version": "0.9",
+            "tvars": {"temperature": {"domain": [0.0, 1.0]}},
+            "unknown_section": "should warn",
+            "also_unknown": {"nested": "data"},
+        }
+
+        issues = validate_tvl_schema(data)
+        assert len(issues) == 1
+        assert "Unknown top-level sections" in issues[0]
+        assert "also_unknown" in issues[0]
+        assert "unknown_section" in issues[0]
+
+    def test_validate_wrong_section_type(self) -> None:
+        """Wrong type for known section is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": "should be list or dict",  # Wrong type (string)
+        }
+
+        issues = validate_tvl_schema(data)
+        # Should flag that tvars is wrong type (string instead of list/dict)
+        assert any("tvars" in issue and "should be" in issue for issue in issues)
+
+    def test_validate_tvar_missing_domain(self) -> None:
+        """TVAR without domain field is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": {
+                "temperature": {"description": "missing domain"},
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("temperature" in issue and "domain" in issue for issue in issues)
+
+    def test_validate_invalid_domain_type(self) -> None:
+        """Invalid domain type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": {
+                "model": {"domain": {"type": "invalid_type", "values": ["a", "b"]}}
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("invalid_type" in issue for issue in issues)
+
+    def test_validate_invalid_objective_direction(self) -> None:
+        """Invalid objective direction is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "objectives": [{"name": "accuracy", "direction": "increase"}]  # Invalid
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("direction" in issue and "increase" in issue for issue in issues)
+
+    def test_validate_constraint_missing_require(self) -> None:
+        """Structural constraint without require field is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "constraints": [
+                {"type": "structural", "description": "missing require field"}
+            ]
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("require" in issue for issue in issues)
+
+    def test_validate_invalid_constraint_type(self) -> None:
+        """Invalid constraint type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"constraints": [{"type": "unknown_type", "require": "x > 0"}]}
+
+        issues = validate_tvl_schema(data)
+        assert any("unknown_type" in issue for issue in issues)
+
+    def test_validate_strict_mode_raises(self) -> None:
+        """Strict mode raises TVLValidationError."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "tvars": "wrong type",
+            "unknown_field": "should error",
+        }
+
+        from traigent.utils.exceptions import TVLValidationError
+
+        with pytest.raises(TVLValidationError, match="schema validation failed"):
+            validate_tvl_schema(data, strict=True)
+
+    def test_load_tvl_spec_with_validate_schema_true(self, tmp_path: Path) -> None:
+        """load_tvl_spec validates schema and logs warnings."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+unknown_section: should_warn
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        # Should complete without raising
+        artifact = load_tvl_spec(spec_path=spec_file, validate_schema=True)
+        assert artifact is not None
+        assert "temperature" in artifact.configuration_space
+
+    def test_load_tvl_spec_with_validate_schema_false(self, tmp_path: Path) -> None:
+        """load_tvl_spec can skip schema validation."""
+        spec_content = """
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        # Should complete without validation
+        artifact = load_tvl_spec(spec_path=spec_file, validate_schema=False)
+        assert artifact is not None
+
+    def test_validate_dict_objectives_invalid_direction(self) -> None:
+        """Dict-style objectives with invalid direction are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "objectives": {
+                "accuracy": {"direction": "up"},  # Invalid
+                "latency": {"direction": "minimize"},  # Valid
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("accuracy" in issue and "direction" in issue for issue in issues)
+        # Valid one should not be flagged
+        assert not any("latency" in issue for issue in issues)
+
+    def test_validate_constraints_dict_structure(self) -> None:
+        """Dict-style constraints with wrong inner types are flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {
+            "constraints": {
+                "structural": "should be list",  # Wrong type
+                "derived": [{"require": "valid"}],
+            }
+        }
+
+        issues = validate_tvl_schema(data)
+        assert any("structural" in issue and "list" in issue for issue in issues)
+
+    def test_validate_exploration_budget_wrong_type(self) -> None:
+        """exploration.budget.max_trials with wrong type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"exploration": {"budget": {"max_trials": "not_an_int"}}}
+
+        issues = validate_tvl_schema(data)
+        assert any("max_trials" in issue and "integer" in issue for issue in issues)
+
+    def test_validate_convergence_threshold_wrong_type(self) -> None:
+        """exploration.convergence.threshold with wrong type is flagged."""
+        from traigent.tvl.spec_loader import validate_tvl_schema
+
+        data = {"exploration": {"convergence": {"threshold": "not_numeric"}}}
+
+        issues = validate_tvl_schema(data)
+        assert any("threshold" in issue and "numeric" in issue for issue in issues)
+
+
+class TestTVLMultiAgentSupport:
+    """Tests for multi-agent parameter mapping in TVL specs."""
+
+    def test_tvar_agent_field_parsed_and_stored(self, tmp_path: Path) -> None:
+        """Agent field on tvar is parsed and stored in TVarDecl."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: financial_model
+    type: enum[str]
+    domain: ["gpt-4o", "gpt-4o-mini"]
+    agent: financial
+
+  - name: financial_temperature
+    type: float
+    domain: [0.0, 1.0]
+    agent: financial
+
+  - name: legal_model
+    type: enum[str]
+    domain: ["claude-3-opus"]
+    agent: legal
+
+  - name: max_retries
+    type: int
+    domain: [1, 5]
+    # No agent - global parameter
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "multi_agent.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Verify tvars have agent field
+        assert artifact.tvars is not None
+        assert len(artifact.tvars) == 4
+
+        financial_model = next(t for t in artifact.tvars if t.name == "financial_model")
+        financial_temp = next(
+            t for t in artifact.tvars if t.name == "financial_temperature"
+        )
+        legal_model = next(t for t in artifact.tvars if t.name == "legal_model")
+        max_retries = next(t for t in artifact.tvars if t.name == "max_retries")
+
+        assert financial_model.agent == "financial"
+        assert financial_temp.agent == "financial"
+        assert legal_model.agent == "legal"
+        assert max_retries.agent is None
+
+    def test_parameter_agents_extracted_from_tvars(self, tmp_path: Path) -> None:
+        """parameter_agents dict is extracted from tvars with agent field."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model_a
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: agent_a
+
+  - name: model_b
+    type: enum[str]
+    domain: ["claude-3"]
+    agent: agent_b
+
+  - name: global_param
+    type: int
+    domain: [1, 10]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Verify parameter_agents is extracted
+        assert artifact.parameter_agents is not None
+        assert artifact.parameter_agents == {
+            "model_a": "agent_a",
+            "model_b": "agent_b",
+        }
+        # global_param should not be in parameter_agents (no agent field)
+        assert "global_param" not in artifact.parameter_agents
+
+    def test_parameter_agents_none_when_no_agents(self, tmp_path: Path) -> None:
+        """parameter_agents is None when no tvars have agent field."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain: [0.0, 1.0]
+
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # No agents specified, so parameter_agents should be None
+        assert artifact.parameter_agents is None
+
+    def test_parameter_agents_in_runtime_overrides(self, tmp_path: Path) -> None:
+        """parameter_agents flows through runtime_overrides for orchestrator."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: financial_model
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: financial
+
+  - name: legal_model
+    type: enum[str]
+    domain: ["claude-3"]
+    agent: legal
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+        overrides = artifact.runtime_overrides()
+
+        # tvl_parameter_agents should be in runtime_overrides
+        assert "tvl_parameter_agents" in overrides
+        assert overrides["tvl_parameter_agents"] == {
+            "financial_model": "financial",
+            "legal_model": "legal",
+        }
+
+    def test_invalid_agent_field_type_ignored(self, tmp_path: Path) -> None:
+        """Non-string agent field is ignored (not stored)."""
+        spec_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+    agent: 123  # Invalid - should be string
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_file = tmp_path / "test.tvl.yml"
+        spec_file.write_text(spec_content)
+
+        artifact = load_tvl_spec(spec_path=spec_file)
+
+        # Invalid agent type should be ignored
+        assert artifact.tvars is not None
+        model_tvar = artifact.tvars[0]
+        assert model_tvar.agent is None
+        assert artifact.parameter_agents is None
+
+
+class TestSpecLevelInheritance:
+    """Tests for TVL spec-level inheritance via 'extends' keyword."""
+
+    def test_basic_extends_inherits_tvars(self, tmp_path: Path) -> None:
+        """Child spec inherits tvars from base spec."""
+        # Create base spec
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: base_param
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        # Create child spec that extends base
+        child_content = """
+extends: ./base.tvl.yml
+
+tvars:
+  - name: child_param
+    type: int
+    domain:
+      range: [1, 10]
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both base and child tvars
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "base_param" in tvar_names
+        assert "child_param" in tvar_names
+
+    def test_extends_inherits_objectives(self, tmp_path: Path) -> None:
+        """Child spec inherits objectives from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: base_objective
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+objectives:
+  - name: child_objective
+    direction: minimize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both base and child objectives
+        assert artifact.objective_schema is not None
+        obj_names = [o.name for o in artifact.objective_schema.objectives]
+        assert "base_objective" in obj_names
+        assert "child_objective" in obj_names
+
+    def test_extends_inherits_constraints(self, tmp_path: Path) -> None:
+        """Child spec inherits constraints from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+
+constraints:
+  structural:
+    - expr: 'params.temperature <= 0.5'
+      id: base-constraint
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+constraints:
+  structural:
+    - expr: 'params.temperature >= 0.1'
+      id: child-constraint
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have both constraints
+        assert len(artifact.constraints) == 2
+        constraint_ids = [
+            getattr(c, "__tvl_constraint__", {}).get("id", "")
+            for c in artifact.constraints
+        ]
+        assert "base-constraint" in constraint_ids
+        assert "child-constraint" in constraint_ids
+
+    def test_extends_child_overrides_scalar_fields(self, tmp_path: Path) -> None:
+        """Child spec overrides scalar fields from base spec."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+metadata:
+  owner: "base-owner@example.com"
+  description: "Base description"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+metadata:
+  owner: "child-owner@example.com"
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Child should override owner but inherit description via deep merge
+        assert artifact.metadata["owner"] == "child-owner@example.com"
+
+    def test_extends_relative_path_resolution(self, tmp_path: Path) -> None:
+        """Extends path is resolved relative to child spec location."""
+        # Create subdirectory
+        subdir = tmp_path / "specs"
+        subdir.mkdir()
+
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: base_var
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ../base.tvl.yml
+
+tvars:
+  - name: child_var
+    type: int
+    domain:
+      range: [1, 10]
+"""
+        child_file = subdir / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "base_var" in tvar_names
+        assert "child_var" in tvar_names
+
+    def test_extends_circular_dependency_raises_error(self, tmp_path: Path) -> None:
+        """Circular extends chain raises TVLValidationError."""
+        # Create circular dependency: A -> B -> A
+        spec_a_content = """
+extends: ./spec_b.tvl.yml
+
+tvars:
+  - name: a_var
+    type: int
+    domain: [1, 2, 3]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        spec_b_content = """
+extends: ./spec_a.tvl.yml
+
+tvars:
+  - name: b_var
+    type: int
+    domain: [4, 5, 6]
+
+objectives:
+  - name: latency
+    direction: minimize
+"""
+        spec_a_file = tmp_path / "spec_a.tvl.yml"
+        spec_b_file = tmp_path / "spec_b.tvl.yml"
+        spec_a_file.write_text(spec_a_content)
+        spec_b_file.write_text(spec_b_content)
+
+        with pytest.raises(TVLValidationError, match="[Cc]ircular"):
+            load_tvl_spec(spec_path=spec_a_file)
+
+    def test_extends_base_not_found_raises_error(self, tmp_path: Path) -> None:
+        """Missing base spec raises TVLValidationError."""
+        child_content = """
+extends: ./nonexistent.tvl.yml
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        with pytest.raises(TVLValidationError, match="[Bb]ase spec not found"):
+            load_tvl_spec(spec_path=child_file)
+
+    def test_extends_invalid_type_raises_error(self, tmp_path: Path) -> None:
+        """Non-string extends value raises TVLValidationError."""
+        child_content = """
+extends: 123  # Invalid - should be string
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o"]
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        with pytest.raises(TVLValidationError, match="string"):
+            load_tvl_spec(spec_path=child_file)
+
+    def test_extends_chain_multiple_levels(self, tmp_path: Path) -> None:
+        """Supports multiple levels of inheritance: grandparent -> parent -> child."""
+        # Grandparent spec
+        grandparent_content = """
+tvl_version: "0.9"
+tvars:
+  - name: grandparent_var
+    type: float
+    domain:
+      range: [0.0, 1.0]
+
+objectives:
+  - name: base_accuracy
+    direction: maximize
+"""
+        grandparent_file = tmp_path / "grandparent.tvl.yml"
+        grandparent_file.write_text(grandparent_content)
+
+        # Parent spec extends grandparent
+        parent_content = """
+extends: ./grandparent.tvl.yml
+
+tvars:
+  - name: parent_var
+    type: int
+    domain:
+      range: [1, 10]
+
+objectives:
+  - name: parent_latency
+    direction: minimize
+"""
+        parent_file = tmp_path / "parent.tvl.yml"
+        parent_file.write_text(parent_content)
+
+        # Child spec extends parent
+        child_content = """
+extends: ./parent.tvl.yml
+
+tvars:
+  - name: child_var
+    type: bool
+    domain: [true, false]
+
+objectives:
+  - name: child_cost
+    direction: minimize
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Should have all three levels of tvars
+        assert artifact.tvars is not None
+        tvar_names = [t.name for t in artifact.tvars]
+        assert "grandparent_var" in tvar_names
+        assert "parent_var" in tvar_names
+        assert "child_var" in tvar_names
+
+        # Should have all three levels of objectives
+        assert artifact.objective_schema is not None
+        obj_names = [o.name for o in artifact.objective_schema.objectives]
+        assert "base_accuracy" in obj_names
+        assert "parent_latency" in obj_names
+        assert "child_cost" in obj_names
+
+    def test_extends_with_derived_constraints(self, tmp_path: Path) -> None:
+        """Derived constraints from base and child are combined."""
+        base_content = """
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+  - name: max_tokens
+    type: int
+    domain:
+      range: [100, 1000]
+
+constraints:
+  derived:
+    - require: "params.temperature <= 0.5"
+      description: "Base temperature limit"
+
+objectives:
+  - name: accuracy
+    direction: maximize
+"""
+        base_file = tmp_path / "base.tvl.yml"
+        base_file.write_text(base_content)
+
+        child_content = """
+extends: ./base.tvl.yml
+
+constraints:
+  derived:
+    - require: "params.max_tokens >= 200"
+      description: "Child token minimum"
+"""
+        child_file = tmp_path / "child.tvl.yml"
+        child_file.write_text(child_content)
+
+        artifact = load_tvl_spec(spec_path=child_file)
+
+        # Both derived constraints should be present
+        assert artifact.derived_constraints is not None
+        assert len(artifact.derived_constraints) == 2
+        descriptions = [dc.description for dc in artifact.derived_constraints]
+        assert "Base temperature limit" in descriptions
+        assert "Child token minimum" in descriptions

@@ -1154,31 +1154,20 @@ class TestUpdateConfigRunMeasuresSuccess:
 
     @pytest.mark.asyncio
     async def test_measures_update_handles_invalid_values(self):
-        """Test measures update converts invalid values to 0.0."""
-        mock_response = AsyncMock()
-        mock_response.status = 200
+        """Test measures update rejects invalid non-numeric values.
 
-        mock_session = AsyncMock()
-        mock_session.put = Mock(
-            return_value=AsyncMock(
-                __aenter__=AsyncMock(return_value=mock_response), __aexit__=AsyncMock()
-            )
+        The implementation correctly rejects metrics with non-numeric values
+        (like strings) rather than silently converting them. This ensures
+        data integrity - users are notified of invalid metrics in their code.
+        """
+        # No mock needed - validation happens before HTTP call
+        # Test with non-numeric value - should be rejected
+        result = await self.ops.update_config_run_measures(
+            "config_123", {"accuracy": 0.95, "custom": "invalid"}
         )
-
-        with patch("traigent.cloud.api_operations.aiohttp") as mock_aiohttp:
-            mock_aiohttp.ClientSession = Mock(
-                return_value=AsyncMock(
-                    __aenter__=AsyncMock(return_value=mock_session),
-                    __aexit__=AsyncMock(),
-                )
-            )
-            mock_aiohttp.ClientTimeout = Mock()
-
-            # Test with non-numeric value
-            result = await self.ops.update_config_run_measures(
-                "config_123", {"accuracy": 0.95, "custom": "invalid"}
-            )
-            assert result is True
+        # Invalid metrics are rejected (returns False) - this is correct behavior
+        # Silently converting "invalid" to 0.0 would mask bugs in user code
+        assert result is False
 
     @pytest.mark.asyncio
     async def test_measures_update_failure_returns_false(self):

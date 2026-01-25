@@ -1825,3 +1825,440 @@ class TestReOptimization:
             # Config should be cleared, state reset
             assert opt_func.best_config is None
             assert opt_func.state == OptimizationState.UNOPTIMIZED
+
+
+class TestConfigPersistence:
+    """Tests for config persistence features (export_config, auto_load, etc.)."""
+
+    @pytest.fixture
+    def sample_config_space(self):
+        """Sample configuration space."""
+        return {
+            "temperature": [0.0, 0.5, 1.0],
+            "model": ["gpt-4", "gpt-3.5"],
+        }
+
+    @pytest.fixture
+    def sample_objectives(self):
+        """Sample objectives."""
+        return ["accuracy"]
+
+    @pytest.fixture
+    def sample_dataset(self):
+        """Sample evaluation dataset."""
+        examples = [
+            EvaluationExample({"text": "hello"}, "HELLO"),
+            EvaluationExample({"text": "world"}, "WORLD"),
+        ]
+        return Dataset(examples, name="test_dataset")
+
+    @pytest.fixture
+    def mock_function(self):
+        """Mock function for testing."""
+
+        def func(text: str) -> str:
+            return text.upper()
+
+        func.__name__ = "test_func"
+        return func
+
+    def test_export_config_slim_format(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test export_config with slim format."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        # Set best config manually
+        opt_func._best_config = {"temperature": 0.5, "model": "gpt-4"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "config.json"
+            result_path = opt_func.export_config(output_path, format="slim")
+
+            assert result_path.exists()
+
+            import json
+
+            with open(result_path) as f:
+                data = json.load(f)
+
+            assert "config" in data
+            assert data["config"]["temperature"] == pytest.approx(0.5)
+            assert data["config"]["model"] == "gpt-4"
+            assert "function_name" in data
+            assert "traigent_version" in data
+
+    def test_export_config_full_format(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test export_config with full format including trials."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        # Set best config
+        opt_func._best_config = {"temperature": 0.5, "model": "gpt-4"}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "config_full.json"
+            result_path = opt_func.export_config(output_path, format="full")
+
+            assert result_path.exists()
+
+            import json
+
+            with open(result_path) as f:
+                data = json.load(f)
+
+            assert "config" in data
+            assert "configuration_space" in data
+
+    def test_export_config_raises_without_best_config(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that export_config raises error when no best config exists."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        # No best config set
+        with pytest.raises(ConfigurationError, match="No best configuration"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                opt_func.export_config(Path(tmpdir) / "config.json")
+
+    def test_export_config_invalid_format(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that export_config raises error for invalid format."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+        opt_func._best_config = {"temperature": 0.5}
+
+        with pytest.raises(ConfigurationError, match="Unknown export format"):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                opt_func.export_config(
+                    Path(tmpdir) / "config.json", format="invalid_format"
+                )
+
+    def test_load_config_from_path_slim_format(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test loading config from slim format file."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "config.json"
+            config_data = {
+                "config": {"temperature": 0.7, "model": "gpt-3.5"},
+                "function_name": "test_func",
+            }
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            loaded = opt_func._load_config_from_path(str(config_path))
+
+            assert loaded is not None
+            assert loaded["temperature"] == pytest.approx(0.7)
+            assert loaded["model"] == "gpt-3.5"
+
+    def test_load_config_from_path_best_config_format(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test loading config from best_config format file."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "best_config.json"
+            config_data = {
+                "best_config": {"temperature": 0.3, "model": "gpt-4"},
+                "best_score": 0.95,
+            }
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            loaded = opt_func._load_config_from_path(str(config_path))
+
+            assert loaded is not None
+            assert loaded["temperature"] == pytest.approx(0.3)
+
+    def test_load_config_from_path_direct_dict(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test loading config from direct dict format file."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "direct_config.json"
+            config_data = {"temperature": 1.0, "model": "gpt-4"}
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            loaded = opt_func._load_config_from_path(str(config_path))
+
+            assert loaded is not None
+            assert loaded["temperature"] == pytest.approx(1.0)
+
+    def test_load_config_from_path_file_not_found(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test loading config from non-existent file returns None."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        result = opt_func._load_config_from_path("/nonexistent/path/config.json")
+        assert result is None
+
+    def test_load_config_from_path_invalid_json(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test loading config from invalid JSON file returns None."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "invalid.json"
+            with open(config_path, "w") as f:
+                f.write("not valid json {{{")
+
+            result = opt_func._load_config_from_path(str(config_path))
+            assert result is None
+
+    def test_auto_load_with_load_from_parameter(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test auto-loading config via load_from parameter."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "auto_config.json"
+            config_data = {"config": {"temperature": 0.8, "model": "gpt-4"}}
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            opt_func = OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                eval_dataset=sample_dataset,
+                load_from=str(config_path),
+            )
+
+            # Config should be auto-loaded
+            assert opt_func._current_config is not None
+            assert opt_func._current_config.get("temperature") == pytest.approx(0.8)
+            assert opt_func._best_config is not None
+
+    def test_auto_load_with_env_variable(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test auto-loading config via TRAIGENT_CONFIG_PATH env var."""
+        import json
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            config_path = Path(tmpdir) / "env_config.json"
+            config_data = {"config": {"temperature": 0.2, "model": "gpt-3.5"}}
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            # Set env var temporarily
+            original = os.environ.get("TRAIGENT_CONFIG_PATH")
+            try:
+                os.environ["TRAIGENT_CONFIG_PATH"] = str(config_path)
+
+                opt_func = OptimizedFunction(
+                    func=mock_function,
+                    configuration_space=sample_config_space,
+                    objectives=sample_objectives,
+                    eval_dataset=sample_dataset,
+                )
+
+                # Config should be auto-loaded from env var
+                assert opt_func._current_config is not None
+                assert opt_func._current_config.get("temperature") == pytest.approx(0.2)
+            finally:
+                if original is None:
+                    os.environ.pop("TRAIGENT_CONFIG_PATH", None)
+                else:
+                    os.environ["TRAIGENT_CONFIG_PATH"] = original
+
+    def test_auto_load_priority_load_from_over_env(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that load_from parameter takes priority over env var."""
+        import json
+        import os
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Config from load_from param
+            load_from_path = Path(tmpdir) / "load_from.json"
+            load_from_data = {"config": {"temperature": 0.1}}
+            with open(load_from_path, "w") as f:
+                json.dump(load_from_data, f)
+
+            # Config from env var
+            env_path = Path(tmpdir) / "env.json"
+            env_data = {"config": {"temperature": 0.9}}
+            with open(env_path, "w") as f:
+                json.dump(env_data, f)
+
+            original = os.environ.get("TRAIGENT_CONFIG_PATH")
+            try:
+                os.environ["TRAIGENT_CONFIG_PATH"] = str(env_path)
+
+                opt_func = OptimizedFunction(
+                    func=mock_function,
+                    configuration_space=sample_config_space,
+                    objectives=sample_objectives,
+                    eval_dataset=sample_dataset,
+                    load_from=str(load_from_path),
+                )
+
+                # load_from should take priority
+                assert opt_func._current_config.get("temperature") == pytest.approx(0.1)
+            finally:
+                if original is None:
+                    os.environ.pop("TRAIGENT_CONFIG_PATH", None)
+                else:
+                    os.environ["TRAIGENT_CONFIG_PATH"] = original
+
+    def test_auto_load_best_finds_latest_config(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that auto_load_best=True finds latest config in logs."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Create optimization log directory structure
+            log_dir = (
+                Path(tmpdir)
+                / "optimization_logs"
+                / "experiments"
+                / "test_func"
+                / "runs"
+                / "run_001"
+                / "artifacts"
+            )
+            log_dir.mkdir(parents=True)
+
+            config_path = log_dir / "best_config.json"
+            config_data = {"temperature": 0.6, "model": "gpt-4"}
+            with open(config_path, "w") as f:
+                json.dump(config_data, f)
+
+            opt_func = OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                eval_dataset=sample_dataset,
+                auto_load_best=True,
+                local_storage_path=tmpdir,
+            )
+
+            # Should find and load the config
+            assert opt_func._current_config is not None
+            assert opt_func._current_config.get("temperature") == pytest.approx(0.6)
+
+    def test_find_latest_config_path_with_mock(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test _find_latest_config_path with mocked Path.cwd to isolate test."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            opt_func = OptimizedFunction(
+                func=mock_function,
+                configuration_space=sample_config_space,
+                objectives=sample_objectives,
+                eval_dataset=sample_dataset,
+                local_storage_path=tmpdir,
+            )
+
+            # Mock Path.cwd to return our temp dir so it won't find project logs
+            with patch("pathlib.Path.cwd", return_value=Path(tmpdir)):
+                result = opt_func._find_latest_config_path()
+                # With isolated cwd, should not find any configs
+                assert result is None
+
+    def test_export_config_without_metadata(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test export_config with include_metadata=False."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+        )
+        opt_func._best_config = {"temperature": 0.5}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "no_meta.json"
+            opt_func.export_config(output_path, include_metadata=False)
+
+            import json
+
+            with open(output_path) as f:
+                data = json.load(f)
+
+            assert "config" in data
+            assert "function_name" not in data
+            assert "traigent_version" not in data
+
+    def test_auto_load_silently_skips_on_error(
+        self, mock_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that auto-load silently skips when config can't be loaded."""
+        opt_func = OptimizedFunction(
+            func=mock_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            load_from="/nonexistent/path/config.json",
+        )
+
+        # Should not raise, just skip loading
+        # Config should remain unset (or default)
+        assert opt_func._best_config is None or opt_func._best_config == {}

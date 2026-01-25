@@ -39,6 +39,7 @@ dependencies = [
     "click>=8.0.0",
     "rich>=12.0.0",
     "aiohttp>=3.8.0",
+    "requests>=2.28.0",  # Required by Langfuse integration sync fallback
     "jsonschema>=4.0.0",
     "cryptography>=44.0.1",
     "typing-extensions>=4.0.0; python_version<'3.11'",
@@ -75,6 +76,7 @@ integrations = [
     "langchain-anthropic>=0.2.0",
     "langchain-openai>=0.3.30",
     "langchain-chroma>=0.2.5",
+    "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
     "openai>=1.0.0",
     "anthropic>=0.18.0",
     "rank_bm25>=0.2.2",
@@ -84,6 +86,11 @@ integrations = [
     "boto3>=1.28.0",
     "botocore>=1.31.0",
     "faiss-cpu>=1.7.0; sys_platform != 'win32'",  # RAG vector search (not available on Windows)
+]
+
+# DSPy prompt optimization integration
+dspy = [
+    "dspy-ai>=2.5.0",
 ]
 
 # Enterprise security features (Sprint 7)
@@ -98,6 +105,7 @@ security = [
     "uvicorn>=0.18.0",
     "redis>=4.0.0",
     "defusedxml>=0.7.1",  # Prevent XXE attacks in XML parsing
+    "pyotp>=2.9.0",  # TOTP authentication support
 ]
 
 # Visualization features
@@ -138,6 +146,7 @@ dev = [
     "pre-commit>=3.0.0",
     "ruff>=0.1.0",
     "bandit>=1.7.0",
+    "hypothesis>=6.100.0",  # Property-based testing for validation logic
 ]
 
 # Documentation
@@ -147,49 +156,31 @@ docs = [
     "mkdocstrings[python]>=0.22.0",
 ]
 
-# Playground UI dependencies
-playground = [
-    "streamlit>=1.28.0",
-    "plotly>=5.17.0",
-    "pandas>=1.5.0",
-    "langchain>=0.1.0",
-    "langchain-core>=1.2.5",  # CVE-2025-65106 fix
-    "langchain-openai>=0.0.5",
-    "openai>=1.0.0",
-    "python-dotenv>=1.0.0",
-    "aiofiles>=23.0.0",
-]
+# NOTE: playground and examples dependencies moved to TraigentDemo project
+# See: REDACTED_TRAIGENT_ROOT/TraigentDemo/
 
-# Examples and documentation dependencies
-examples = [
-    "openai>=1.0.0",
-    "anthropic>=0.18.0",
-    "langchain>=0.0.200",
-    "langchain-core>=1.2.5",  # CVE-2025-65106 fix
-    "langchain-anthropic>=0.2.0",
-    "langchain-openai>=0.3.30",
-    "langchain-community>=0.3.27",
-    "rank_bm25>=0.2.2",
-    "pandas>=1.5.0",
+# Machine Learning bundle (parallel execution, advanced algorithms, multi-objective)
+# This is the recommended bundle for production ML workloads
+ml = [
+    "traigent[bayesian,analytics]",
     "numpy>=1.21.0",
-    "matplotlib>=3.5.0",
-    "plotly>=5.17.0",
-    "python-dotenv>=1.0.0",
-    "aiofiles>=23.0.0",
-    "rich>=12.0.0",
-    "scikit-learn>=1.0.0",
     "scipy>=1.7.0",
-    "ragas[llm]>=0.3.6",
 ]
 
-# All optional features combined
+# Cloud bundle (cloud execution mode, advanced session management)
+cloud = [
+    "traigent[security]",
+    "boto3>=1.28.0",
+]
+
+# All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]"
+    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing]"
 ]
 
-# Enterprise bundle with all features
+# Enterprise bundle with all features (playground/examples moved to TraigentDemo)
 enterprise = [
-    "traigent[analytics,bayesian,integrations,security,visualization,playground,examples,test]",
+    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud]",
 ]
 
 [project.urls]
@@ -212,7 +203,7 @@ traigent = ["py.typed"]
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312", "py313", "py314"]
+target-version = ["py311", "py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
@@ -227,6 +218,11 @@ extend-exclude = '''
   | build
   | dist
   | demos
+  | docs/page-inline
+  | examples/templates
+  | examples/advanced/execution-modes
+  | examples/advanced/results-analysis
+  | examples/tvl/reusable_safety/run_demo\.py
 )/
 '''
 
@@ -235,7 +231,7 @@ profile = "black"
 line_length = 88
 known_first_party = ["traigent"]
 known_third_party = [
-    "click", "rich", "aiohttp", "jsonschema", "numpy", "pandas",
+    "click", "rich", "aiohttp", "requests", "jsonschema", "numpy", "pandas",
     "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
     "mlflow", "wandb", "pyjwt", "cryptography"
 ]
@@ -314,7 +310,7 @@ exclude_lines = [
 target-version = "py311"
 line-length = 100
 exclude = [
-    "examples/archive/**",
+    # NOTE: examples folder moved to TraigentDemo
     "docs/diagrams/**",
     "docs/generated/**",
     "**/__pycache__/**",
@@ -344,7 +340,7 @@ ignore = [
 [tool.ruff.lint.isort]
 known-first-party = ["traigent"]
 known-third-party = [
-    "click", "rich", "aiohttp", "jsonschema", "numpy", "pandas",
+    "click", "rich", "aiohttp", "requests", "jsonschema", "numpy", "pandas",
     "matplotlib", "plotly", "scikit-learn", "langchain", "openai",
     "mlflow", "wandb", "pyjwt", "cryptography"
 ]
@@ -352,4 +348,4 @@ known-third-party = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["B011"]
-"examples/**" = ["E402"]
+"examples/*" = ["E402"]  # Examples often set env vars before imports

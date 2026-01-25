@@ -17,6 +17,8 @@ import pytest
 from traigent.optimizers.pruners import (
     CeilingPruner,
     CeilingPrunerConfig,
+    StatisticalInferiorityPruner,
+    StatisticalInferiorityPrunerConfig,
     _completed_trials_with_values,
 )
 
@@ -731,6 +733,48 @@ class TestCeilingPruner:
         ]
         assert len(completed_trials) > 0
 
+    def test_prune_with_missing_intermediate_value_at_last_step(
+        self, study_maximize: optuna.Study
+    ) -> None:
+        """Test CeilingPruner when intermediate_values missing value at last_step.
+
+        Coverage: Line 72 - return False when latest is None.
+        This is a defensive edge case where last_step exists but the
+        intermediate_values dict doesn't have that key.
+        """
+        from unittest.mock import PropertyMock, patch
+
+        pruner = CeilingPruner()
+
+        # Create completed trials
+        for value in [0.5, 0.7, 0.6]:
+            trial_obj = study_maximize.ask()
+            study_maximize.tell(trial_obj, value)
+
+        # Create a running trial with intermediate values
+        trial = optuna.trial.FrozenTrial(
+            number=3,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={5: 0.8, 6: 0.85},  # Has values at steps 5 and 6
+            trial_id=3,
+        )
+
+        # Mock last_step to return a step that doesn't exist in intermediate_values
+        with patch.object(
+            type(trial), "last_step", new_callable=PropertyMock
+        ) as mock_last_step:
+            mock_last_step.return_value = 10  # Step 10 doesn't exist
+
+            # Should return False - defensive check for missing intermediate value
+            assert not pruner.prune(study_maximize, trial)
+
 
 class TestCeilingPrunerNewDefaults:
     """Tests specifically for the new default values (min_completed_trials=3, warmup_steps=5, epsilon=0.05).
@@ -1035,3 +1079,582 @@ class TestCompletedTrialsWithValues:
         assert len(result) == 5
         for i, trial in enumerate(result):
             assert trial.value == i * 0.1
+
+
+class TestStatisticalInferiorityPrunerConfig:
+    """Tests for StatisticalInferiorityPrunerConfig dataclass."""
+
+    def test_default_initialization(self) -> None:
+        """Test default values for config."""
+        config = StatisticalInferiorityPrunerConfig()
+        assert config.confidence == 0.95
+        assert config.min_samples_per_config == 3
+        assert config.warmup_trials == 5
+
+    def test_custom_initialization(self) -> None:
+        """Test custom values for config."""
+        config = StatisticalInferiorityPrunerConfig(
+            confidence=0.99,
+            min_samples_per_config=5,
+            warmup_trials=10,
+        )
+        assert config.confidence == 0.99
+        assert config.min_samples_per_config == 5
+        assert config.warmup_trials == 10
+
+    def test_slots_attribute(self) -> None:
+        """Test that config uses slots for memory efficiency."""
+        config = StatisticalInferiorityPrunerConfig()
+        assert not hasattr(config, "__dict__")
+
+
+class TestStatisticalInferiorityPruner:
+    """Tests for StatisticalInferiorityPruner."""
+
+    @pytest.fixture
+    def study_maximize(self) -> optuna.Study:
+        """Create a study with maximize direction."""
+        return optuna.create_study(direction="maximize")
+
+    @pytest.fixture
+    def study_minimize(self) -> optuna.Study:
+        """Create a study with minimize direction."""
+        return optuna.create_study(direction="minimize")
+
+    @pytest.fixture
+    def pruner(self) -> StatisticalInferiorityPruner:
+        """Create pruner with default settings."""
+        return StatisticalInferiorityPruner()
+
+    def test_initialization_default(self) -> None:
+        """Test default initialization."""
+        pruner = StatisticalInferiorityPruner()
+        assert pruner._confidence == 0.95
+        assert pruner._min_samples == 3
+        assert pruner._warmup_trials == 5
+
+    def test_initialization_custom(self) -> None:
+        """Test custom initialization."""
+        pruner = StatisticalInferiorityPruner(
+            confidence=0.99,
+            min_samples_per_config=5,
+            warmup_trials=10,
+        )
+        assert pruner._confidence == 0.99
+        assert pruner._min_samples == 5
+        assert pruner._warmup_trials == 10
+
+    def test_invalid_confidence_too_low(self) -> None:
+        """Test that confidence <= 0 raises ValueError."""
+        with pytest.raises(ValueError, match="confidence must be in"):
+            StatisticalInferiorityPruner(confidence=0.0)
+
+    def test_invalid_confidence_too_high(self) -> None:
+        """Test that confidence >= 1 raises ValueError."""
+        with pytest.raises(ValueError, match="confidence must be in"):
+            StatisticalInferiorityPruner(confidence=1.0)
+
+    def test_invalid_min_samples(self) -> None:
+        """Test that min_samples_per_config < 2 raises ValueError."""
+        with pytest.raises(ValueError, match="min_samples_per_config must be >= 2"):
+            StatisticalInferiorityPruner(min_samples_per_config=1)
+
+    def test_prune_returns_false_during_warmup(
+        self, study_maximize: optuna.Study, pruner: StatisticalInferiorityPruner
+    ) -> None:
+        """Test that pruning is disabled during warmup period."""
+        # Create only 3 completed trials (less than warmup_trials=5)
+        for i, value in enumerate([0.5, 0.6, 0.7]):
+            trial = study_maximize.ask()
+            study_maximize.tell(trial, value)
+
+        # Create a running trial
+        trial = optuna.trial.FrozenTrial(
+            number=3,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={"x": 0.5},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=3,
+        )
+
+        # Should not prune - still in warmup (only 3 completed < 5 warmup_trials)
+        assert not pruner.prune(study_maximize, trial)
+
+    def test_prune_returns_false_after_trial_started(
+        self, study_maximize: optuna.Study, pruner: StatisticalInferiorityPruner
+    ) -> None:
+        """Test that pruning only happens at step 0."""
+        # Create enough completed trials
+        for i in range(6):
+            trial = study_maximize.ask()
+            study_maximize.tell(trial, 0.5 + i * 0.05)
+
+        # Create a trial with step > 0
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={"x": 0.1},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={1: 0.3},  # Step 1 - already started
+            trial_id=6,
+        )
+
+        # Should not prune - trial already started
+        assert not pruner.prune(study_maximize, trial)
+
+    def test_prune_returns_false_for_multi_objective(self) -> None:
+        """Test that multi-objective studies don't use this pruner."""
+        pruner = StatisticalInferiorityPruner()
+        study = optuna.create_study(directions=["maximize", "minimize"])
+
+        # Create some trials
+        for i in range(6):
+            trial = study.ask()
+            study.tell(trial, [0.5 + i * 0.05, 10.0 - i])
+
+        # Create a running trial
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            values=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={"x": 0.1},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=6,
+        )
+
+        # Should not prune - multi-objective not supported
+        assert not pruner.prune(study, trial)
+
+    def test_prune_returns_false_when_config_has_insufficient_samples(
+        self, study_maximize: optuna.Study
+    ) -> None:
+        """Test that configs with < min_samples are not pruned."""
+        pruner = StatisticalInferiorityPruner(min_samples_per_config=3, warmup_trials=5)
+
+        # Create trials with same config (enough for warmup)
+        for i in range(5):
+            trial = study_maximize.ask()
+            # Override params to use same config
+            trial.params["x"] = 0.5
+            study_maximize.tell(trial, 0.7 + i * 0.02)
+
+        # Create a running trial with NEW config (no samples yet)
+        trial = optuna.trial.FrozenTrial(
+            number=5,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={"x": 0.9},  # Different config
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=5,
+        )
+
+        # Should not prune - new config has no samples
+        assert not pruner.prune(study_maximize, trial)
+
+    def test_prune_maximize_inferior_config(self) -> None:
+        """Test pruning of statistically inferior config in maximize direction."""
+        from datetime import datetime
+
+        study = optuna.create_study(direction="maximize")
+        pruner = StatisticalInferiorityPruner(
+            confidence=0.95,
+            min_samples_per_config=3,
+            warmup_trials=6,
+        )
+
+        # Define distribution for param
+        model_dist = optuna.distributions.CategoricalDistribution(["gpt-4o", "gpt-3.5"])
+
+        # Add completed trials for "good" config with high values (tight variance)
+        good_params = {"model": "gpt-4o"}
+        for i, value in enumerate([0.85, 0.87, 0.86]):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=good_params,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Add completed trials for "bad" config with low values (tight variance)
+        bad_params = {"model": "gpt-3.5"}
+        for i, value in enumerate([0.45, 0.47, 0.46], start=3):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=bad_params,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Create a running trial with bad config
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params=bad_params,
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=6,
+        )
+
+        # Should prune - bad config's UCB (≈0.50) < good config's LCB (≈0.83)
+        assert pruner.prune(study, trial)
+
+    def test_prune_maximize_competitive_config_not_pruned(self) -> None:
+        """Test that competitive configs are not pruned in maximize direction."""
+        from datetime import datetime
+
+        study = optuna.create_study(direction="maximize")
+        pruner = StatisticalInferiorityPruner(
+            confidence=0.95,
+            min_samples_per_config=3,
+            warmup_trials=6,
+        )
+
+        # Define distribution for param
+        model_dist = optuna.distributions.CategoricalDistribution(
+            ["gpt-4o", "gpt-4o-mini"]
+        )
+
+        # Add completed trials for config A
+        config_a = {"model": "gpt-4o"}
+        for i, value in enumerate([0.80, 0.82, 0.81]):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=config_a,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Add completed trials for config B (similar performance)
+        config_b = {"model": "gpt-4o-mini"}
+        for i, value in enumerate([0.78, 0.80, 0.79], start=3):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=config_b,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Create a running trial with config B
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params=config_b,
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=6,
+        )
+
+        # Should NOT prune - configs are competitive (overlapping bounds)
+        assert not pruner.prune(study, trial)
+
+    def test_prune_minimize_inferior_config(self) -> None:
+        """Test pruning of statistically inferior config in minimize direction."""
+        from datetime import datetime
+
+        study = optuna.create_study(direction="minimize")
+        pruner = StatisticalInferiorityPruner(
+            confidence=0.95,
+            min_samples_per_config=3,
+            warmup_trials=6,
+        )
+
+        # Define distribution for param
+        model_dist = optuna.distributions.CategoricalDistribution(
+            ["efficient", "expensive"]
+        )
+
+        # Add completed trials for "good" config with low values (for minimize)
+        good_params = {"model": "efficient"}
+        for i, value in enumerate([0.15, 0.17, 0.16]):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=good_params,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Add completed trials for "bad" config with high values
+        bad_params = {"model": "expensive"}
+        for i, value in enumerate([0.85, 0.87, 0.86], start=3):
+            trial = optuna.trial.FrozenTrial(
+                number=i,
+                state=optuna.trial.TrialState.COMPLETE,
+                value=value,
+                datetime_start=datetime.now(),
+                datetime_complete=datetime.now(),
+                params=bad_params,
+                distributions={"model": model_dist},
+                user_attrs={},
+                system_attrs={},
+                intermediate_values={},
+                trial_id=i,
+            )
+            study.add_trial(trial)
+
+        # Create a running trial with bad config
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params=bad_params,
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=6,
+        )
+
+        # Should prune - bad config's LCB (≈0.83) > good config's UCB (≈0.20)
+        assert pruner.prune(study, trial)
+
+    def test_config_hash_consistency(self) -> None:
+        """Test that config hashing is consistent for same params."""
+        pruner = StatisticalInferiorityPruner()
+
+        params1 = {"model": "gpt-4o", "temperature": 0.7}
+        params2 = {"temperature": 0.7, "model": "gpt-4o"}  # Different order
+
+        # Should produce same hash (sorted keys)
+        assert pruner._config_hash(params1) == pruner._config_hash(params2)
+
+    def test_config_hash_different_for_different_params(self) -> None:
+        """Test that different params produce different hashes."""
+        pruner = StatisticalInferiorityPruner()
+
+        params1 = {"model": "gpt-4o"}
+        params2 = {"model": "gpt-3.5"}
+
+        assert pruner._config_hash(params1) != pruner._config_hash(params2)
+
+    def test_compute_bounds_single_sample(self) -> None:
+        """Test bounds computation with single sample returns (mean, mean)."""
+        pruner = StatisticalInferiorityPruner()
+
+        lcb, ucb = pruner._compute_bounds([0.5])
+        assert lcb == 0.5
+        assert ucb == 0.5
+
+    def test_compute_bounds_multiple_samples(self) -> None:
+        """Test bounds computation with multiple samples."""
+        pruner = StatisticalInferiorityPruner(confidence=0.95)
+
+        values = [0.80, 0.82, 0.81, 0.79, 0.80]
+        lcb, ucb = pruner._compute_bounds(values)
+
+        # LCB should be less than mean, UCB should be greater
+        mean = sum(values) / len(values)
+        assert lcb < mean
+        assert ucb > mean
+
+        # Bounds should be symmetric around mean for symmetric data
+        assert abs((ucb - mean) - (mean - lcb)) < 0.01
+
+    def test_compute_bounds_higher_confidence_wider_bounds(self) -> None:
+        """Test that higher confidence produces wider bounds."""
+        pruner_95 = StatisticalInferiorityPruner(confidence=0.95)
+        pruner_99 = StatisticalInferiorityPruner(confidence=0.99)
+
+        values = [0.80, 0.82, 0.81, 0.79, 0.80]
+
+        lcb_95, ucb_95 = pruner_95._compute_bounds(values)
+        lcb_99, ucb_99 = pruner_99._compute_bounds(values)
+
+        # 99% confidence should have wider bounds than 95%
+        width_95 = ucb_95 - lcb_95
+        width_99 = ucb_99 - lcb_99
+        assert width_99 > width_95
+
+    def test_find_best_bound_with_multiple_configs_maximize(self) -> None:
+        """Test _find_best_bound updates best_bound when better LCB found.
+
+        Coverage: Lines 245, 251 - continue for insufficient samples,
+        update best_bound when lcb > best_bound in maximize direction.
+        """
+        from datetime import datetime
+
+        pruner = StatisticalInferiorityPruner(
+            min_samples_per_config=3, warmup_trials=10
+        )
+
+        # Create config_values with multiple configs
+        # Config A: insufficient samples (will hit line 245 - continue)
+        # Config B: first valid config (will hit line 249 - first assignment)
+        # Config C: better LCB (will hit line 251 - update best_bound)
+        config_values = {
+            "config_A": [0.5, 0.6],  # Only 2 samples - insufficient
+            "config_B": [0.70, 0.72, 0.71],  # 3 samples, LCB ~0.67
+            "config_C": [0.80, 0.82, 0.81],  # 3 samples, LCB ~0.77 (better)
+        }
+
+        # Find best bound in maximize direction
+        best_bound = pruner._find_best_bound(config_values, maximize=True)
+
+        # Should return LCB of config_C (highest LCB)
+        assert best_bound is not None
+        # Compute expected LCB for config_C
+        lcb_c, _ = pruner._compute_bounds(config_values["config_C"])
+        assert abs(best_bound - lcb_c) < 0.001, f"Expected {lcb_c}, got {best_bound}"
+
+        # Verify it's higher than config_B's LCB
+        lcb_b, _ = pruner._compute_bounds(config_values["config_B"])
+        assert best_bound > lcb_b, "Best LCB should be from config_C, not config_B"
+
+    def test_find_best_bound_with_multiple_configs_minimize(self) -> None:
+        """Test _find_best_bound updates best_bound when better UCB found.
+
+        Coverage: Line 253 - update best_bound when ucb < best_bound
+        in minimize direction.
+        """
+        pruner = StatisticalInferiorityPruner(
+            min_samples_per_config=3, warmup_trials=10
+        )
+
+        # Create config_values with multiple configs for minimize
+        config_values = {
+            "config_A": [0.5, 0.6],  # Insufficient samples - will continue
+            "config_B": [0.30, 0.32, 0.31],  # UCB ~0.35
+            "config_C": [0.20, 0.22, 0.21],  # UCB ~0.25 (better - lower)
+        }
+
+        # Find best bound in minimize direction
+        best_bound = pruner._find_best_bound(config_values, maximize=False)
+
+        # Should return UCB of config_C (lowest UCB)
+        assert best_bound is not None
+        _, ucb_c = pruner._compute_bounds(config_values["config_C"])
+        assert abs(best_bound - ucb_c) < 0.001, f"Expected {ucb_c}, got {best_bound}"
+
+        # Verify it's lower than config_B's UCB
+        _, ucb_b = pruner._compute_bounds(config_values["config_B"])
+        assert best_bound < ucb_b, "Best UCB should be from config_C, not config_B"
+
+    def test_prune_returns_false_when_all_configs_insufficient_samples(
+        self, study_maximize: optuna.Study
+    ) -> None:
+        """Test pruning returns False when all configs lack sufficient samples.
+
+        Coverage: Line 319 - return False when best_bound is None.
+        This happens when all configs have < min_samples_per_config.
+        """
+        from datetime import datetime
+
+        pruner = StatisticalInferiorityPruner(
+            min_samples_per_config=5, warmup_trials=3  # Require 5 samples
+        )
+
+        # Define distribution
+        model_dist = optuna.distributions.CategoricalDistribution(["a", "b", "c"])
+
+        # Add 6 completed trials but spread across 3 configs (2 per config)
+        # None will have >= 5 samples
+        configs = [{"model": "a"}, {"model": "b"}, {"model": "c"}]
+        trial_num = 0
+        for config in configs:
+            for i in range(2):  # Only 2 samples per config
+                trial = optuna.trial.FrozenTrial(
+                    number=trial_num,
+                    state=optuna.trial.TrialState.COMPLETE,
+                    value=0.5 + trial_num * 0.05,
+                    datetime_start=datetime.now(),
+                    datetime_complete=datetime.now(),
+                    params=config,
+                    distributions={"model": model_dist},
+                    user_attrs={},
+                    system_attrs={},
+                    intermediate_values={},
+                    trial_id=trial_num,
+                )
+                study_maximize.add_trial(trial)
+                trial_num += 1
+
+        # Create a running trial with config "a"
+        trial = optuna.trial.FrozenTrial(
+            number=6,
+            state=optuna.trial.TrialState.RUNNING,
+            value=None,
+            datetime_start=None,
+            datetime_complete=None,
+            params={"model": "a"},
+            distributions={},
+            user_attrs={},
+            system_attrs={},
+            intermediate_values={},
+            trial_id=6,
+        )
+
+        # Should not prune - all configs have < 5 samples, so best_bound is None
+        assert not pruner.prune(study_maximize, trial)

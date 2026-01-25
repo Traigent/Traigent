@@ -131,8 +131,8 @@ def configure_ragas_defaults(
         RagasConfigurationError: If ``column_map`` is not a mapping of strings to strings.
 
     Example:
-        >>> from ragas.llms import LangchainLLM
-        >>> configure_ragas_defaults(
+        >>> from ragas.llms import LangchainLLM  # doctest: +SKIP
+        >>> configure_ragas_defaults(  # doctest: +SKIP
         ...     column_map={"retrieved_contexts": "gold_contexts"},
         ...     llm=LangchainLLM(...),
         ... )

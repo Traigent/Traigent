@@ -171,7 +171,7 @@ class ErrorHandler:
         elif "anthropic" in error_str:
             raise APIKeyError("ANTHROPIC_API_KEY") from error
         elif "traigent" in error_str:
-            raise APIKeyError("TRAIGENT_API_KEY or legacy OPTIGEN_API_KEY") from error
+            raise APIKeyError("TRAIGENT_API_KEY") from error
         else:
             raise TraigentError(
                 message="API authentication failed",
