@@ -249,7 +249,7 @@ export TRAIGENT_STRICT_VALIDATION=false
 ```
 
 ## 🛠️ Development Workflow
-- **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
+- **Setup**: `make install-dev` (installs with `[all,dev,dspy,docs]` - all optional dependencies).
 - **Testing**: `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
   - **Markers**: `pytest -m "unit"`, `pytest -m "integration"`, `pytest -m "security"`.
 - **Linting**: `make lint` (runs Ruff, MyPy, Bandit). `make format` (Black, Isort).

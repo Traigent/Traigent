@@ -105,6 +105,7 @@ security = [
     "uvicorn>=0.18.0",
     "redis>=4.0.0",
     "defusedxml>=0.7.1",  # Prevent XXE attacks in XML parsing
+    "pyotp>=2.9.0",  # TOTP authentication support
 ]
 
 # Visualization features
@@ -202,7 +203,7 @@ traigent = ["py.typed"]
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py312", "py313", "py314"]
+target-version = ["py311", "py312"]
 include = '\.pyi?$'
 extend-exclude = '''
 /(
