@@ -15,7 +15,9 @@ def _load_jsonl(path: Path) -> list[dict]:
 def test_ragas_basics_dataset_has_required_fields() -> None:
     path = Path("examples/advanced/ragas/basics/evaluation_set.jsonl")
     if not path.exists():
-        pytest.skip("Example dataset not generated yet (run examples/advanced/ragas/basics/run.py)")
+        pytest.skip(
+            "Example dataset not generated yet (run examples/advanced/ragas/basics/run.py)"
+        )
     rows = _load_jsonl(path)
     assert len(rows) >= 2
     for row in rows:
@@ -28,7 +30,9 @@ def test_ragas_basics_dataset_has_required_fields() -> None:
 def test_ragas_with_llm_dataset_has_reference_field() -> None:
     path = Path("examples/advanced/ragas/with_llm/evaluation_set.jsonl")
     if not path.exists():
-        pytest.skip("Example dataset not generated yet (run examples/advanced/ragas/with_llm/run.py)")
+        pytest.skip(
+            "Example dataset not generated yet (run examples/advanced/ragas/with_llm/run.py)"
+        )
     rows = _load_jsonl(path)
     assert len(rows) >= 2
     for row in rows:
@@ -40,7 +44,9 @@ def test_ragas_with_llm_dataset_has_reference_field() -> None:
 def test_ragas_column_map_dataset_matches_custom_keys() -> None:
     path = Path("examples/advanced/ragas/column_map/evaluation_set.jsonl")
     if not path.exists():
-        pytest.skip("Example dataset not generated yet (run examples/advanced/ragas/column_map/run.py)")
+        pytest.skip(
+            "Example dataset not generated yet (run examples/advanced/ragas/column_map/run.py)"
+        )
     rows = _load_jsonl(path)
     assert len(rows) == 1
     row = rows[0]
