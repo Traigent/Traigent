@@ -15,7 +15,6 @@ from traigent.config.context import (
     set_config,
 )
 from traigent.config.providers import (
-    AttributeBasedProvider,
     ConfigurationProvider,
     ContextBasedProvider,
     ParameterBasedProvider,
@@ -35,7 +34,6 @@ __all__ = [
     "ConfigurationProvider",
     "ContextBasedProvider",
     "ParameterBasedProvider",
-    "AttributeBasedProvider",
     "SeamlessParameterProvider",
     "get_provider",
     # Types

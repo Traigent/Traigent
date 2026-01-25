@@ -222,8 +222,7 @@ class TestPluginRegistry:
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create a mock plugin file
             plugin_file = Path(temp_dir) / "test_plugin.py"
-            plugin_file.write_text(
-                """
+            plugin_file.write_text("""
 from traigent.plugins.registry import OptimizerPlugin
 
 class TestOptimizer(OptimizerPlugin):
@@ -244,8 +243,7 @@ class TestOptimizer(OptimizerPlugin):
 
     def create_optimizer(self, **kwargs):
         return None
-"""
-            )
+""")
 
             # Mock Path.exists() to return True for plugin directories
             mock_path = Mock()

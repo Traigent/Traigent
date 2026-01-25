@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Summary of Traigent SDK Backend Integration with DTOs."""
 
-
 from traigent.cloud.dtos import (
     create_local_configuration_run,
     create_local_experiment,
