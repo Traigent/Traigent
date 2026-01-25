@@ -328,7 +328,6 @@ class OptimizedFunction:
         config_param: str | None = None,
         auto_override_frameworks: bool = False,
         framework_targets: list[str] | None = None,
-        allow_parallel_attribute: bool = False,
         execution_mode: str = "cloud",
         local_storage_path: str | None = None,
         minimal_logging: bool = True,
@@ -363,8 +362,6 @@ class OptimizedFunction:
         # Config persistence parameters
         self._auto_load_best = kwargs.pop("auto_load_best", False)
         self._load_from = kwargs.pop("load_from", None)
-        # Store allow_parallel_attribute early for validation in _resolve_effective_parallel_config
-        self.allow_parallel_attribute = allow_parallel_attribute
         # Store core parameters
         self._store_core_parameters(
             func,
@@ -1359,36 +1356,6 @@ class OptimizedFunction:
 
         for warning in resolved_parallel.warnings:
             logger.warning(warning)
-
-        # Check for unsafe attribute mode + parallel trials combination
-        injection_mode_str = (
-            self.injection_mode.value
-            if hasattr(self.injection_mode, "value")
-            else self.injection_mode
-        )
-        if (
-            injection_mode_str == "attribute"
-            and resolved_parallel.trial_concurrency > 1
-        ):
-            if not getattr(self, "allow_parallel_attribute", False):
-                raise ValueError(
-                    "injection_mode='attribute' is unsafe with parallel trials "
-                    "(trial_concurrency > 1). The function attribute is shared across "
-                    "concurrent trials and can cause race conditions. "
-                    "Options:\n"
-                    "  1. Use injection_mode='context' or 'parameter' (recommended)\n"
-                    "  2. Use sequential trials: parallel_config={'trial_concurrency': 1}\n"
-                    "  3. Opt in explicitly: injection={'injection_mode': 'attribute', "
-                    "'allow_parallel_attribute': True} and access config via "
-                    "traigent.get_config() inside your function"
-                )
-            logger.warning(
-                "injection_mode='attribute' with parallel trials (trial_concurrency=%d) "
-                "is not safe. The function attribute is shared across concurrent trials "
-                "and may contain config from a different trial. Use traigent.get_config() "
-                "inside your function for correct per-trial config access.",
-                resolved_parallel.trial_concurrency,
-            )
 
         logger.info(
             "Resolved parallel configuration: mode=%s, trial_concurrency=%s, example_concurrency=%s, thread_workers=%s",
