@@ -93,9 +93,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         init_path = self.project_root / "traigent" / "__init__.py"
         if init_path.exists():
             content = init_path.read_text()
-            match = re.search(
-                r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)', content
-            )
+            match = re.search(r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)', content)
             if match:
                 versions["__init__.py"] = match.group(1)
 

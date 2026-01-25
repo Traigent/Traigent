@@ -405,3 +405,6 @@ walkthrough/myfiles.md
 
 # Presentations (internal/sensitive)
 presentations/
+
+# Design documentation (local only)
+docs/design/
