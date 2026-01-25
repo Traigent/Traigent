@@ -71,6 +71,11 @@ class RAGASMetricNotAvailableError(ImportError):
     """Raised when RAGAS metrics are used but ragas is not installed."""
 
     def __init__(self, metric_name: str) -> None:
+        """Initialize error with the missing metric name.
+
+        Args:
+            metric_name: Name of the RAGAS metric that was requested.
+        """
         super().__init__(
             f"RAGAS metric '{metric_name}' requires the 'ragas' package. "
             f"Install with: pip install 'traigent[ragas]' or pip install ragas"
@@ -183,7 +188,7 @@ class SafetyMetric(ABC):
 
     @property
     def name(self) -> str:
-        """Metric name."""
+        """Unique identifier name for this safety metric."""
         return self._name
 
     @property
@@ -440,7 +445,7 @@ class CompoundSafetyConstraint:
 
     @property
     def combinator(self) -> str:
-        """Combination logic."""
+        """Combination logic for compound constraints ('and' or 'or')."""
         return self._combinator
 
     def __call__(self, config: dict[str, Any], metrics: dict[str, Any]) -> bool:
@@ -572,13 +577,13 @@ class RAGASMetric(SafetyMetric):
         ragas_key = f"ragas_{self._ragas_metric_name}"
         if ragas_key in metrics:
             score = metrics[ragas_key]
-            if isinstance(score, (int, float)) and not math.isnan(score):
+            if isinstance(score, int | float) and not math.isnan(score):
                 return float(score)
 
         # Alternative: check for metric under standard name
         if self._ragas_metric_name in metrics:
             score = metrics[self._ragas_metric_name]
-            if isinstance(score, (int, float)) and not math.isnan(score):
+            if isinstance(score, int | float) and not math.isnan(score):
                 return float(score)
 
         # If no pre-computed score, return NaN
@@ -638,7 +643,7 @@ class MetricKeyMetric(SafetyMetric):
             Metric value, inverted if configured.
         """
         value = metrics.get(self._metric_key, self._default)
-        if isinstance(value, (int, float)) and not math.isnan(value):
+        if isinstance(value, int | float) and not math.isnan(value):
             result = float(value)
             return (1.0 - result) if self._invert else result
         return self._default

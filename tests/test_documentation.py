@@ -77,7 +77,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         pyproject_path = self.project_root / "pyproject.toml"
         if pyproject_path.exists():
             content = pyproject_path.read_text()
-            match = re.search(r'version\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)', content)
+            match = re.search(r'version\s*=\s*["\'](\d+\.\d+\.\d+)', content)
             if match:
                 versions["pyproject.toml"] = match.group(1)
 
@@ -85,7 +85,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         setup_path = self.project_root / "setup.py"
         if setup_path.exists():
             content = setup_path.read_text()
-            match = re.search(r'version\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)', content)
+            match = re.search(r'version\s*=\s*["\'](\d+\.\d+\.\d+)', content)
             if match:
                 versions["setup.py"] = match.group(1)
 
@@ -94,7 +94,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         if init_path.exists():
             content = init_path.read_text()
             match = re.search(
-                r'__version__\s*=\s*["\']([0-9]+\.[0-9]+\.[0-9]+)', content
+                r'__version__\s*=\s*["\'](\d+\.\d+\.\d+)', content
             )
             if match:
                 versions["__init__.py"] = match.group(1)
@@ -176,7 +176,7 @@ class TestDocumentationConsistency(unittest.TestCase):
         self.assertIn("### Added", content, "Missing 'Added' section")
 
         # Check version format
-        version_pattern = r"## \[[0-9]+\.[0-9]+\.[0-9]+\] - \d{4}-\d{2}-\d{2}"
+        version_pattern = r"## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}"
         versions = re.findall(version_pattern, content)
         self.assertGreater(
             len(versions), 0, "No properly formatted versions in CHANGELOG"

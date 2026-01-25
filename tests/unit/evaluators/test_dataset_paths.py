@@ -124,7 +124,10 @@ def test_dataset_registry_lookup(monkeypatch, tmp_path):
     assert len(dataset) == 1
     assert dataset.name == "Customer Support"
     assert dataset.description == "Support dataset"
-    assert dataset.metadata == {"owner": "qa"}
+    # Registry metadata is preserved along with auto-added source_path and dataset_hash
+    assert dataset.metadata["owner"] == "qa"
+    assert "source_path" in dataset.metadata
+    assert "dataset_hash" in dataset.metadata
 
 
 def test_dataset_registry_outside_root_rejected(monkeypatch, tmp_path):
