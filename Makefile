@@ -27,8 +27,8 @@ install:  ## Install package in production mode
 	$(PIP) install -e .
 
 install-dev:  ## Install package with all development dependencies
-	$(PIP) install -e ".[dev,integrations,bayesian,docs]"
-	pre-commit install
+	$(PIP) install -e ".[all,dev,dspy,docs]"
+	$(PYTHON) -m pre_commit install
 
 test:  ## Run all tests
 	$(PYTEST) $(TEST_DIR) -v
