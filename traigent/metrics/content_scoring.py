@@ -98,7 +98,8 @@ class ContentScorer:
 
         try:
             # Vectorize inputs using TF-IDF
-            assert self.tfidf_vectorizer is not None
+            if self.tfidf_vectorizer is None:
+                return dict.fromkeys(range(len(example_inputs)), 0.5)
             vectors = self.tfidf_vectorizer.fit_transform(example_inputs)
         except Exception:
             # If vectorization fails (e.g., empty strings), return neutral scores

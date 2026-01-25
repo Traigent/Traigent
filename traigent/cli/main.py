@@ -1188,9 +1188,13 @@ def export(
             if result.best_metrics:
                 export_data["metrics"] = result.best_metrics
 
-        # Write to file - path is user-provided CLI argument (expected for export command)
-        with open(output_path, "w", encoding="utf-8") as f:  # noqa: S311
-            json.dump(export_data, f, indent=2, default=str)
+        # Write to file with path validation
+        safe_write_text(
+            output_path,
+            json.dumps(export_data, indent=2, default=str),
+            WORKSPACE_ROOT,
+            encoding="utf-8",
+        )
 
         console.print(f"✅ [green]Exported to: {output_path}[/green]")
 
