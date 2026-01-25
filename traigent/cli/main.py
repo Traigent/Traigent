@@ -1771,7 +1771,9 @@ def check(
             )
             return
 
-        console.print("\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]")
+        console.print(
+            "\n[bold yellow]⚖️  Step 2: Optimization Validation[/bold yellow]"
+        )
         validator = OptimizationValidator(threshold_pct=threshold)
 
         async def run_validations() -> tuple[list[Any], int, int]:
