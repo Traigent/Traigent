@@ -120,7 +120,11 @@ def test_js_evaluator_tests_pass():
     evaluator_tests = [
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator.py",
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_budget.py",
-        PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_stop_conditions.py",
+        PROJECT_ROOT
+        / "tests"
+        / "unit"
+        / "evaluators"
+        / "test_js_evaluator_stop_conditions.py",
     ]
     _run_tests_safely(evaluator_tests, "JS Evaluator tests", timeout=300)
 
@@ -136,7 +140,11 @@ def test_all_js_tests_pass():
         PROJECT_ROOT / "tests" / "unit" / "bridges",
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator.py",
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_budget.py",
-        PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_stop_conditions.py",
+        PROJECT_ROOT
+        / "tests"
+        / "unit"
+        / "evaluators"
+        / "test_js_evaluator_stop_conditions.py",
     ]
     _run_tests_safely(all_js_tests, "All JS tests", timeout=600)
 
@@ -152,7 +160,11 @@ def test_js_tests_discoverable():
         PROJECT_ROOT / "tests" / "unit" / "bridges",
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator.py",
         PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_budget.py",
-        PROJECT_ROOT / "tests" / "unit" / "evaluators" / "test_js_evaluator_stop_conditions.py",
+        PROJECT_ROOT
+        / "tests"
+        / "unit"
+        / "evaluators"
+        / "test_js_evaluator_stop_conditions.py",
     ]
 
     existing_paths = [p for p in all_js_tests if p.exists()]
