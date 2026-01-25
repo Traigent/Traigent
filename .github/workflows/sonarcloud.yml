@@ -8,10 +8,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-# Cancel in-progress runs for the same branch/PR
+# Queue runs instead of canceling to prevent incomplete scans
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   sonarcloud:
