@@ -59,6 +59,43 @@ PY
 4. **Regenerate anytime**
    - Delete `.env.local` if compromised and re-run the pull script.
 
+## Ubuntu 24.04 Desktop (GNOME Keyring / Secret Service)
+
+If your team develops on Ubuntu (GNOME), you can avoid `.env` files entirely for
+*local* secrets by storing them in GNOME Keyring and only exporting them at
+runtime.
+
+### Prerequisites
+
+```bash
+sudo apt install libsecret-tools
+```
+
+### Import secrets from an existing `.env` file (one-time per machine)
+
+This repository includes helper tooling that stores secrets under:
+`project=<project>, name=<ENV_VAR_NAME>`.
+
+```bash
+python3 tools/keyring_import_env.py --env-file walkthrough/examples/real/.env --project traigent
+```
+
+This keeps non-secrets (URLs, flags) out of the keyring by default; pass `--all`
+to store everything, or use `--include VAR_NAME` for an explicit list.
+
+### Run commands with secrets loaded (without printing them)
+
+```bash
+python3 tools/keyring_run.py --project traigent --vars GROQ_API_KEY --require -- \
+  python3 examples/tvl/reusable_safety/run_demo.py --real-llm
+```
+
+Notes:
+- `keyring_run.py` only fills variables that are missing from `os.environ`, so it
+  works alongside existing `.env`/CI setups.
+- For shared rotation/auditing/revocation, prefer a real secrets manager (AWS
+  Secrets Manager / Vault / Azure Key Vault / GCP Secret Manager).
+
 ## CI / Automation Workflow
 
 Each GitHub Actions job (or other CI runner) should choose one of the following:

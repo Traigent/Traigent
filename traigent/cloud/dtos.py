@@ -1,11 +1,14 @@
-"""Data Transfer Objects for OptiGen Backend Integration.
+"""Data Transfer Objects for Traigent Backend Integration.
 
-This module provides DTOs that conform to optigen_schemas while supporting
+This module provides DTOs that conform to Traigent schemas while supporting
 privacy-preserving defaults for Edge Analytics mode execution.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
 
+import re
+from collections import UserDict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -22,6 +25,241 @@ try:
 except ImportError:
     VALIDATOR_AVAILABLE = False
     logger.debug("optigen_schemas not available, validation disabled")
+
+
+class ExampleMeasure:
+    """Type-safe per-example measure with nested format.
+
+    Expected structure:
+        {
+            "example_id": "ex_a3f4b2c8_0",
+            "metrics": {"score": 0.85, "cost": 0.05, ...}
+        }
+
+    Validates:
+    - example_id must be a string
+    - metrics must be a dict with Python identifier keys
+    - metrics values must be numeric (int, float) or None
+    - Maximum 50 keys in metrics
+
+    Use this class for per-example results. For trial-level measures,
+    use MeasuresDict instead.
+    """
+
+    MAX_METRICS = 50
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        """Initialize from a nested measure dict.
+
+        Args:
+            data: Dict with 'example_id' (str) and 'metrics' (dict) keys
+
+        Raises:
+            ValueError: If validation fails
+        """
+        self.example_id: str | None = data.get("example_id")
+        self.metrics: dict[str, float | int | None] = data.get("metrics", {})
+        self._validate()
+
+    def _validate(self) -> None:
+        """Validate the nested measure structure."""
+        # example_id must be string if present
+        if self.example_id is not None and not isinstance(self.example_id, str):
+            raise ValueError(
+                f"example_id must be a string, got {type(self.example_id).__name__}"
+            )
+
+        # metrics must be a dict
+        if not isinstance(self.metrics, dict):
+            raise ValueError(
+                f"metrics must be a dict, got {type(self.metrics).__name__}"
+            )
+
+        # Check max keys
+        if len(self.metrics) > self.MAX_METRICS:
+            raise ValueError(
+                f"metrics cannot exceed {self.MAX_METRICS} keys, got {len(self.metrics)}"
+            )
+
+        # Validate each metric
+        for key, value in self.metrics.items():
+            # Keys must be Python identifiers
+            if not isinstance(key, str):
+                raise ValueError(f"metric key must be string, got {type(key).__name__}")
+            if not self.KEY_PATTERN.match(key):
+                raise ValueError(
+                    f"metric key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$"
+                )
+            # Values must be numeric or None
+            if value is not None and not isinstance(value, (int, float)):
+                raise ValueError(
+                    f"metric '{key}' must be numeric, got {type(value).__name__}"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dict for serialization."""
+        return {
+            "example_id": self.example_id,
+            "metrics": self.metrics,
+        }
+
+    def __repr__(self) -> str:
+        return (
+            f"ExampleMeasure(example_id={self.example_id!r}, metrics={self.metrics!r})"
+        )
+
+
+class MeasuresDict(UserDict):
+    """Type-safe measures dict with validation for trial-level metrics.
+
+    Inherits from UserDict (not dict) to properly intercept all mutation
+    operations including update(), |=, and other bulk operations.
+
+    Note: This class is for TRIAL-LEVEL measures (aggregated metrics).
+    For per-example measures with nested format, use ExampleMeasure instead.
+
+    Enforces:
+    - Maximum 50 keys to prevent unbounded memory usage
+    - String keys matching Python identifier pattern (^[a-zA-Z_][a-zA-Z0-9_]*$)
+    - Numeric value types only (int, float, None) for optimization metrics
+    - Non-numeric values log warnings in Phase 0 (will be rejected in v2.0)
+
+    Raises:
+        ValueError: If key limit exceeded or key pattern invalid
+        TypeError: If key is not string or value is not primitive type
+    """
+
+    MAX_KEYS = 50
+    KEY_PATTERN = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+
+    def __init__(self, data: dict[str, Any] | None = None) -> None:
+        """Initialize with optional data dictionary.
+
+        Args:
+            data: Optional dict to initialize with (will be validated)
+
+        Raises:
+            ValueError: If data exceeds MAX_KEYS
+            TypeError: If data contains invalid key or value types
+        """
+        super().__init__()
+        if data:
+            # Validate first, then use parent's update to populate self.data
+            self._validate_dict(data)
+            self.data.update(data)
+
+    def _validate_dict(self, data: dict[str, Any]) -> None:
+        """Validate measures dictionary.
+
+        Args:
+            data: Dictionary to validate
+
+        Raises:
+            ValueError: If data exceeds MAX_KEYS or key pattern invalid
+            TypeError: If data contains invalid key or value types
+        """
+        if len(data) > self.MAX_KEYS:
+            raise ValueError(
+                f"Measures cannot exceed {self.MAX_KEYS} keys, got {len(data)}"
+            )
+
+        for key, value in data.items():
+            if not isinstance(key, str):
+                raise TypeError(f"Measure key must be string, got {type(key).__name__}")
+
+            # NEW: Validate key pattern (Python identifier syntax)
+            if not self.KEY_PATTERN.match(key):
+                raise ValueError(
+                    f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
+                    f"(Python identifier syntax). "
+                    f"Use underscores instead of hyphens or spaces. "
+                    f"Invalid: 'my-metric', '123abc'. Valid: 'my_metric', 'metric_123'."
+                )
+
+            # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+            if not isinstance(value, (int, float, type(None))):
+                logger.warning(
+                    f"Measure '{key}' has non-numeric value type {type(value).__name__}. "
+                    f"Non-numeric metrics will be rejected in Traigent v2.0. "
+                    f"Store non-numeric data in configuration run metadata instead.",
+                    extra={
+                        "key": key,
+                        "value_type": type(value).__name__,
+                        "hint": "Use run_metadata or workflow_metadata for non-numeric data",
+                    },
+                )
+                # Phase 0: Allow but warn (backward compatible)
+                # Phase 2: Uncomment to enforce
+                # raise TypeError(
+                #     f"Measure '{key}' must be numeric type (int, float, None), "
+                #     f"got {type(value).__name__}. "
+                #     f"Non-numeric data should be stored in configuration run metadata."
+                # )
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        """Validate on assignment.
+
+        Args:
+            key: Measure key (must be string matching Python identifier pattern)
+            value: Measure value (must be numeric type)
+
+        Raises:
+            ValueError: If adding would exceed MAX_KEYS or key pattern invalid
+            TypeError: If key is not string or value is not primitive type
+        """
+        if len(self.data) >= self.MAX_KEYS and key not in self.data:
+            raise ValueError(f"Measures cannot exceed {self.MAX_KEYS} keys")
+
+        if not isinstance(key, str):
+            raise TypeError(f"Key must be string, got {type(key).__name__}")
+
+        # NEW: Validate key pattern (Python identifier syntax)
+        if not self.KEY_PATTERN.match(key):
+            raise ValueError(
+                f"Measure key '{key}' must match pattern ^[a-zA-Z_][a-zA-Z0-9_]*$ "
+                f"(Python identifier syntax). "
+                f"Use underscores instead of hyphens or spaces."
+            )
+
+        # NEW: Phase 0 - Warn on non-numeric values (enforce in Phase 2/v2.0)
+        if not isinstance(value, (int, float, type(None))):
+            logger.warning(
+                f"Setting non-numeric measure '{key}': {type(value).__name__}. "
+                f"This will be rejected in Traigent v2.0. "
+                f"Use run_metadata or workflow_metadata for non-numeric data."
+            )
+            # Phase 0: Allow but warn (backward compatible)
+            # Phase 2: Uncomment to enforce
+            # raise TypeError(
+            #     f"Value must be numeric type (int, float, None), "
+            #     f"got {type(value).__name__}"
+            # )
+
+        self.data[key] = value
+
+    def __ior__(self, other: dict[str, Any] | Mapping[str, Any]) -> "MeasuresDict":  # type: ignore[override,misc]
+        """Support |= operator with validation.
+
+        Args:
+            other: Mapping to merge with this MeasuresDict
+
+        Returns:
+            Self for chaining
+
+        Raises:
+            ValueError: If validation fails
+            TypeError: If key or value types invalid
+        """
+        # Validate all items from other mapping before merging
+        if isinstance(other, Mapping):
+            for key, value in other.items():
+                self[key] = value  # Use __setitem__ for validation
+        else:
+            raise TypeError(
+                f"unsupported operand type(s) for |=: 'MeasuresDict' and '{type(other).__name__}'"
+            )
+        return self
 
 
 @dataclass
@@ -118,16 +356,61 @@ class ExperimentDTO:
         return result
 
     def validate(self) -> bool:
-        """Validate the DTO against optigen_schemas (optional)."""
+        """Validate the DTO against optigen_schemas.
+
+        By default, validation is strict - failures raise exceptions.
+        Set TRAIGENT_STRICT_VALIDATION=false to make validation non-blocking.
+
+        Returns:
+            True if validation passed
+
+        Raises:
+            DTOSerializationError: If strict mode enabled and validation fails
+        """
+        import os
+
+        from traigent.utils.exceptions import DTOSerializationError
+
+        # Check if strict validation is enabled (default: true)
+        strict_mode = os.getenv("TRAIGENT_STRICT_VALIDATION", "true").lower() == "true"
+
         if not VALIDATOR_AVAILABLE:
-            return True
+            error_msg = (
+                "Schema validator unavailable (optigen_schemas not installed). "
+                "Install with: pip install 'traigent[validation]'"
+            )
+            logger.error(error_msg)
+
+            if strict_mode:
+                raise DTOSerializationError(
+                    "Schema validation required but validator unavailable",
+                    dto_class="ExperimentDTO",
+                    dto_id=self.id,
+                )
+            return False
 
         try:
             validator = SchemaValidator()
             validator.validate_json_by_schema("experiment", self.to_dict())
             return True
         except Exception as e:
-            logger.warning(f"Validation failed (non-blocking): {e}")
+            logger.error(
+                "DTO validation failed",
+                extra={
+                    "dto_class": "ExperimentDTO",
+                    "dto_id": self.id,
+                    "error": str(e),
+                    "strict_mode": strict_mode,
+                },
+            )
+
+            if strict_mode:
+                raise DTOSerializationError(
+                    f"ExperimentDTO validation failed: {e}",
+                    dto_class="ExperimentDTO",
+                    dto_id=self.id,
+                ) from e
+
             return False
 
 
@@ -190,7 +473,7 @@ class ConfigurationRunDTO:
 
     # Configuration payload
     configuration: dict[str, Any] = field(default_factory=dict)
-    measures: dict[str, Any] = field(default_factory=dict)
+    measures: MeasuresDict = field(default_factory=MeasuresDict)
 
     # Optional fields
     status: str = "pending"
@@ -208,7 +491,7 @@ class ConfigurationRunDTO:
             "experiment_run_id": self.experiment_run_id,
             "trial_number": self.trial_number,
             "configuration": self.configuration,
-            "measures": self.measures,
+            "measures": dict(self.measures),  # Convert MeasuresDict to plain dict
             "metadata": self.metadata,
             "status": self.status,
             "created_at": self.created_at or datetime.now(UTC).isoformat(),

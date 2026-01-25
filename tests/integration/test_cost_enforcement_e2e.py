@@ -64,7 +64,7 @@ def patch_backend(monkeypatch):
     mock_backend.delete_session.return_value = True
 
     monkeypatch.setattr(
-        "traigent.core.orchestrator.BackendIntegratedClient",
+        "traigent.cloud.backend_client.BackendIntegratedClient",
         lambda *args, **kwargs: mock_backend,
     )
     return mock_backend

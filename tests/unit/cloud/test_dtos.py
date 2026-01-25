@@ -8,9 +8,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from traigent.cloud.dtos import (
     ConfigurationRunDTO,
     ConfigurationsDTO,
+    ExampleMeasure,
     ExperimentDTO,
     ExperimentRunDTO,
     InfrastructureDTO,
@@ -712,3 +715,148 @@ class TestEdgeCases:
         )
 
         assert exp.id == "exp-test_123-v2.0"
+
+
+class TestExampleMeasure:
+    """Test ExampleMeasure class for nested per-example measures."""
+
+    def test_validates_nested_structure(self):
+        """Should accept valid nested format."""
+        data = {
+            "example_id": "ex_a3f4b2c8d1_0",
+            "metrics": {"score": 0.85, "cost": 0.05},
+        }
+        measure = ExampleMeasure(data)
+
+        assert measure.example_id == "ex_a3f4b2c8d1_0"
+        assert measure.metrics["score"] == 0.85
+        assert measure.metrics["cost"] == 0.05
+
+    def test_to_dict_serialization(self):
+        """Should serialize to nested dict format."""
+        data = {
+            "example_id": "ex_test_1",
+            "metrics": {"accuracy": 0.9, "latency": 1.5},
+        }
+        measure = ExampleMeasure(data)
+        result = measure.to_dict()
+
+        assert result["example_id"] == "ex_test_1"
+        assert result["metrics"]["accuracy"] == 0.9
+        assert result["metrics"]["latency"] == 1.5
+
+    def test_accepts_none_example_id(self):
+        """Should accept None as example_id."""
+        data = {
+            "example_id": None,
+            "metrics": {"score": 0.5},
+        }
+        measure = ExampleMeasure(data)
+
+        assert measure.example_id is None
+        assert measure.metrics["score"] == 0.5
+
+    def test_accepts_missing_example_id(self):
+        """Should accept missing example_id (defaults to None)."""
+        data = {"metrics": {"score": 0.5}}
+        measure = ExampleMeasure(data)
+
+        assert measure.example_id is None
+
+    def test_accepts_empty_metrics(self):
+        """Should accept empty metrics dict."""
+        data = {
+            "example_id": "ex_test_2",
+            "metrics": {},
+        }
+        measure = ExampleMeasure(data)
+
+        assert measure.example_id == "ex_test_2"
+        assert measure.metrics == {}
+
+    def test_accepts_none_metric_values(self):
+        """Should accept None values in metrics."""
+        data = {
+            "example_id": "ex_test_3",
+            "metrics": {"score": 0.9, "cost": None},
+        }
+        measure = ExampleMeasure(data)
+
+        assert measure.metrics["score"] == 0.9
+        assert measure.metrics["cost"] is None
+
+    def test_rejects_non_string_example_id(self):
+        """Should reject non-string example_id."""
+        data = {
+            "example_id": 123,  # Not a string
+            "metrics": {"score": 0.85},
+        }
+        with pytest.raises(ValueError, match="must be a string"):
+            ExampleMeasure(data)
+
+    def test_rejects_non_dict_metrics(self):
+        """Should reject non-dict metrics."""
+        data = {
+            "example_id": "ex_test_4",
+            "metrics": [0.85, 0.05],  # List, not dict
+        }
+        with pytest.raises(ValueError, match="must be a dict"):
+            ExampleMeasure(data)
+
+    def test_rejects_non_numeric_metric(self):
+        """Should reject non-numeric metric values."""
+        data = {
+            "example_id": "ex_test_5",
+            "metrics": {"score": "not a number"},
+        }
+        with pytest.raises(ValueError, match="must be numeric"):
+            ExampleMeasure(data)
+
+    def test_rejects_invalid_metric_key_pattern(self):
+        """Should reject metric keys that aren't Python identifiers."""
+        data = {
+            "example_id": "ex_test_6",
+            "metrics": {"score-value": 0.85},  # Hyphen not allowed
+        }
+        with pytest.raises(ValueError, match="must match pattern"):
+            ExampleMeasure(data)
+
+    def test_rejects_metric_key_starting_with_number(self):
+        """Should reject metric keys starting with numbers."""
+        data = {
+            "example_id": "ex_test_7",
+            "metrics": {"123score": 0.85},  # Starts with number
+        }
+        with pytest.raises(ValueError, match="must match pattern"):
+            ExampleMeasure(data)
+
+    def test_rejects_too_many_metrics(self):
+        """Should reject more than 50 metrics."""
+        data = {
+            "example_id": "ex_test_8",
+            "metrics": {f"metric_{i}": float(i) for i in range(51)},
+        }
+        with pytest.raises(ValueError, match="cannot exceed 50 keys"):
+            ExampleMeasure(data)
+
+    def test_accepts_exactly_50_metrics(self):
+        """Should accept exactly 50 metrics."""
+        data = {
+            "example_id": "ex_test_9",
+            "metrics": {f"metric_{i}": float(i) for i in range(50)},
+        }
+        measure = ExampleMeasure(data)
+
+        assert len(measure.metrics) == 50
+
+    def test_repr(self):
+        """Should have a useful repr."""
+        data = {
+            "example_id": "ex_repr_test",
+            "metrics": {"score": 0.5},
+        }
+        measure = ExampleMeasure(data)
+        repr_str = repr(measure)
+
+        assert "ExampleMeasure" in repr_str
+        assert "ex_repr_test" in repr_str

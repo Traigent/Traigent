@@ -1,4 +1,4 @@
-"""Model bridges between Traigent SDK and OptiGen Backend.
+"""Model bridges between Traigent SDK and Traigent Backend.
 
 This module provides conversion utilities to bridge the gap between
 SDK cloud models and backend database entities, enabling seamless
@@ -212,7 +212,7 @@ class SDKBackendBridge:
         """
         config_run_id = trial.trial_id
 
-        # Enhanced experiment parameters with better OptiGen integration
+        # Enhanced experiment parameters with better Traigent integration
         experiment_parameters = {
             # Core trial information
             "trial_number": trial.trial_number,

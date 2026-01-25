@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "traigent-tuned-variables"
+version = "0.1.0"
+description = "Domain-aware tuned variables and variable analysis plugin for Traigent SDK"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Traigent Team", email = "support@traigent.ai" }
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+keywords = [
+    "traigent",
+    "tuned-variables",
+    "optimization",
+    "hyperparameter",
+    "llm",
+    "rag",
+    "prompt-engineering",
+]
+dependencies = [
+    "traigent>=0.9.0",
+]
+
+[project.optional-dependencies]
+# numpy enables more precise percentile calculations
+numpy = [
+    "numpy>=1.21.0",
+]
+dspy = [
+    "dspy-ai>=2.0.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "numpy>=1.21.0",  # For testing percentile calculations
+]
+all = [
+    "numpy>=1.21.0",
+    "dspy-ai>=2.0.0",
+]
+
+[project.entry-points."traigent.plugins"]
+tuned_variables = "traigent_tuned_variables:TunedVariablesPlugin"
+
+[project.urls]
+Homepage = "https://github.com/Traigent/Traigent"
+Documentation = "https://docs.traigent.ai/plugins/tuned-variables"
+Repository = "https://github.com/Traigent/Traigent"
+
+[tool.hatch.build.targets.wheel]
+packages = ["traigent_tuned_variables"]

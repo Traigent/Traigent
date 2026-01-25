@@ -8,7 +8,8 @@ import pytest
 
 from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.cloud.optimizer_client import OptimizerDirectClient
-from traigent.optigen_integration import ExecutionMode, OptiGenClient
+from traigent.config.types import ExecutionMode
+from traigent.traigent_client import TraigentClient as OptiGenClient
 
 
 class TestExecutionModes:
@@ -112,11 +113,9 @@ class TestExecutionModes:
     ):
         """Test standard mode execution."""
         # Mock backend and optimizer clients
-        with patch(
-            "traigent.optigen_integration.BackendIntegratedClient"
-        ) as MockBackend:
+        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
             with patch(
-                "traigent.optigen_integration.OptimizerDirectClient"
+                "traigent.traigent_client.OptimizerDirectClient"
             ) as MockOptimizer:
                 # Setup mock backend
                 mock_backend = AsyncMock()
@@ -192,9 +191,7 @@ class TestExecutionModes:
     @pytest.mark.asyncio
     async def test_cloud_mode_execution(self, test_dataset, configuration_space):
         """Test SaaS mode execution."""
-        with patch(
-            "traigent.optigen_integration.BackendIntegratedClient"
-        ) as MockBackend:
+        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
             # Setup mock backend for SaaS mode
             mock_backend = AsyncMock()
             mock_backend.upload_dataset = AsyncMock(
@@ -340,9 +337,7 @@ class TestExecutionModes:
         self, mock_agent_builder, test_dataset, configuration_space
     ):
         """Test error handling in standard mode."""
-        with patch(
-            "traigent.optigen_integration.BackendIntegratedClient"
-        ) as MockBackend:
+        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
             # Setup mock backend that fails on context manager entry
             mock_backend = AsyncMock()
             mock_backend.create_hybrid_session = AsyncMock(

@@ -10,19 +10,23 @@ which are then combined into Constraint objects.
 
 Supports three syntax styles for constraints:
 
-1. Functional (canonical, explicit):
-    >>> implies(model.equals("gpt-4"), temp.lte(0.7))
+1. Functional (canonical, explicit)::
 
-2. Operator-based (concise, formula-like):
-    >>> model.equals("gpt-4") >> temp.lte(0.7)
+    implies(model.equals("gpt-4"), temp.lte(0.7))
 
-3. Fluent (readable):
-    >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
+2. Operator-based (concise, formula-like)::
+
+    model.equals("gpt-4") >> temp.lte(0.7)
+
+3. Fluent (readable)::
+
+    when(model.equals("gpt-4")).then(temp.lte(0.7))
 
 OPERATOR PRECEDENCE WARNING:
     Python precedence: ~ > << >> > & > ^ > |
     This means: a & b >> c  evaluates as  a & (b >> c), NOT (a & b) >> c
-    Always use parentheses for clarity:
+    Always use parentheses for clarity::
+
         (model.equals("gpt-4") & temp.lte(0.7)) >> max_tokens.gte(1000)
 
 Example:
@@ -45,7 +49,7 @@ Example:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -121,8 +125,9 @@ class BoolExpr(ABC):
     def __rshift__(self, other: BoolExpr) -> Constraint:
         """Implication operator: self >> other means 'self implies other'.
 
-        Example:
-            >>> model.equals("gpt-4") >> temp.lte(0.7)
+        Example::
+
+            model.equals("gpt-4") >> temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -131,8 +136,9 @@ class BoolExpr(ABC):
     def __and__(self, other: BoolExpr) -> AndCondition:
         """Conjunction operator: self & other means 'self and other'.
 
-        Example:
-            >>> model.equals("gpt-4") & temp.lte(0.7)
+        Example::
+
+            model.equals("gpt-4") & temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -141,8 +147,9 @@ class BoolExpr(ABC):
     def __or__(self, other: BoolExpr) -> OrCondition:
         """Disjunction operator: self | other means 'self or other'.
 
-        Example:
-            >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+        Example::
+
+            model.equals("gpt-4") | model.equals("gpt-3.5")
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -151,8 +158,9 @@ class BoolExpr(ABC):
     def __invert__(self) -> NotCondition:
         """Negation operator: ~self means 'not self'.
 
-        Example:
-            >>> ~model.equals("gpt-4")
+        Example::
+
+            ~model.equals("gpt-4")
         """
         return NotCondition(self)
 
@@ -173,8 +181,9 @@ class BoolExpr(ABC):
     def implies(self, other: BoolExpr) -> Constraint:
         """Fluent method for implication: self.implies(other).
 
-        Example:
-            >>> model.equals("gpt-4").implies(temp.lte(0.7))
+        Example::
+
+            model.equals("gpt-4").implies(temp.lte(0.7))
         """
         return Constraint(when=self, then=other)
 
@@ -193,7 +202,7 @@ class BoolExpr(ABC):
             >>> temp = Range(0.0, 2.0, name="temperature")
             >>> cond = temp.lte(0.7)
             >>> cond.explain()
-            "temperature is at most 0.7"
+            'temperature is at most 0.7'
         """
         ...
 
@@ -353,8 +362,9 @@ class Condition(BoolExpr):
 class AndCondition(BoolExpr):
     """Conjunction of multiple conditions (all must be true).
 
-    Example:
-        >>> model.equals("gpt-4") & temp.lte(0.7)
+    Example::
+
+        model.equals("gpt-4") & temp.lte(0.7)
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -400,8 +410,9 @@ class AndCondition(BoolExpr):
 class OrCondition(BoolExpr):
     """Disjunction of multiple conditions (at least one must be true).
 
-    Example:
-        >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+    Example::
+
+        model.equals("gpt-4") | model.equals("gpt-3.5")
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -447,8 +458,9 @@ class OrCondition(BoolExpr):
 class NotCondition(BoolExpr):
     """Negation of a condition.
 
-    Example:
-        >>> ~model.equals("gpt-4")
+    Example::
+
+        ~model.equals("gpt-4")
     """
 
     condition: BoolExpr
@@ -510,6 +522,10 @@ class Constraint:
         id: Optional identifier for the constraint
 
     Example:
+        >>> from traigent import Range, Choices
+        >>> model = Choices(["gpt-4", "gpt-3.5-turbo"])
+        >>> temperature = Range(0.0, 2.0)
+        >>>
         >>> # Implication: if model is gpt-4, temperature must be <= 0.7
         >>> c = Constraint(
         ...     when=model.equals("gpt-4"),
@@ -604,10 +620,10 @@ class Constraint:
         Returns:
             Human-readable explanation of the constraint.
 
-        Example:
-            >>> c = implies(model.equals("gpt-4"), temp.lte(0.7))
-            >>> c.explain()
-            "IF model equals 'gpt-4' THEN temperature is at most 0.7"
+        Example::
+
+            c = implies(model.equals("gpt-4"), temp.lte(0.7))
+            c.explain()  # "IF model equals 'gpt-4' THEN temperature is at most 0.7"
         """
         if self.expr is not None:
             return f"REQUIRE: {self.expr.explain(var_names)}"
@@ -674,7 +690,8 @@ class Constraint:
             >>>
             >>> # Convert to callable for decorator
             >>> constraint_fn = constraint.to_callable()
-            >>> constraint_fn({"model": "gpt-4", "temperature": 0.5})  # True
+            >>> constraint_fn({"model": "gpt-4", "temperature": 0.5})
+            True
         """
         import warnings
 
@@ -821,8 +838,9 @@ def require(
 class WhenBuilder:
     """Builder for when(condition).then(consequence) fluent syntax.
 
-    Example:
-        >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
+    Example::
+
+        when(model.equals("gpt-4")).then(temp.lte(0.7))
     """
 
     def __init__(self, condition: BoolExpr) -> None:
@@ -922,7 +940,7 @@ def constraints_to_callables(
 
 
 def normalize_constraints(
-    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
+    constraints: Sequence[Constraint | BoolExpr | Callable[..., Any]] | None,
     var_names: dict[int, str] | None = None,
 ) -> list[Callable[[dict[str, Any]], bool]]:
     """Normalize mixed Constraint/BoolExpr/Callable list to pure callables.
@@ -1030,14 +1048,24 @@ def check_constraints_conflict(
     against the constraint set. For comprehensive SAT-based checking,
     consider using z3-solver (MIT license).
 
+    Warning:
+        This function can produce **false positives** when sample_configs is
+        sparse. A conflict is reported if no sample satisfies all constraints,
+        but valid configurations may exist outside the samples. Ensure samples
+        adequately cover the parameter space, or treat results as advisory.
+
     Args:
         constraints: List of Constraint objects to check.
         sample_configs: Optional list of configs to test. If not provided,
             the function returns None (no conflict detected by default).
+            For reliable conflict detection, provide samples that span
+            the full domain of each constrained variable.
         var_names: Optional mapping from ParameterRange id() to config key.
 
     Returns:
         ConstraintConflict if a conflict is detected, None otherwise.
+        Note: None means no conflict was found in the samples, not that
+        no conflict exists.
 
     Example:
         >>> temp = Range(0.0, 2.0, name="temperature")
@@ -1061,6 +1089,9 @@ def check_constraints_conflict(
             c._collect_tvars(var_names, [])
 
     # Test each sample config against all constraints
+    # Track all violations per config to report the best diagnostic
+    all_violations: list[tuple[dict[str, Any], list[tuple[Constraint, str]]]] = []
+
     for config in sample_configs:
         violations: list[tuple[Constraint, str]] = []
 
@@ -1070,13 +1101,33 @@ def check_constraints_conflict(
                 explanation = constraint.explain(var_names)
                 violations.append((constraint, explanation))
 
-        # If all constraints violated, we found a conflict scenario
-        if len(violations) == len(constraints) and len(violations) > 1:
-            return ConstraintConflict(
-                constraints=[v[0] for v in violations],
-                config=config,
-                messages=[v[1] for v in violations],
-            )
+        # If this config satisfies all constraints, no conflict
+        if not violations:
+            return None
+
+        all_violations.append((config, violations))
+
+    # No config satisfied all constraints - this indicates a conflict
+    # Report the config with the most violations for best diagnostics
+    # (for mutually exclusive constraints, each config violates different ones)
+    if all_violations and len(constraints) > 1:
+        # Find the config that violates the most constraints for best diagnostics
+        worst_config, worst_violations = max(all_violations, key=lambda x: len(x[1]))
+
+        # For mutually exclusive constraints, aggregate all violated constraints
+        # across configs to show the full conflict
+        all_violated_constraints: dict[int, tuple[Constraint, str]] = {}
+        for _config, violations in all_violations:
+            for constraint, msg in violations:
+                cid = id(constraint)
+                if cid not in all_violated_constraints:
+                    all_violated_constraints[cid] = (constraint, msg)
+
+        return ConstraintConflict(
+            constraints=[v[0] for v in all_violated_constraints.values()],
+            config=worst_config,
+            messages=[v[1] for v in all_violated_constraints.values()],
+        )
 
     return None
 
@@ -1100,9 +1151,8 @@ def explain_constraint_violation(
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>> c = require(temp.lte(0.5))
         >>> msg = explain_constraint_violation(c, {"temperature": 0.9})
-        >>> print(msg)
-        "Constraint violated: REQUIRE: temperature is at most 0.5
-         Config has temperature=0.9"
+        >>> msg is not None  # Returns explanation for violated constraint
+        True
     """
     if var_names is None:
         var_names = {}

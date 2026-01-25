@@ -2,6 +2,8 @@
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Reliability FUNC-ORCH-LIFECYCLE REQ-ORCH-003 SYNC-OptimizationFlow
 
+from __future__ import annotations
+
 import asyncio
 import copy
 import inspect
@@ -10,19 +12,31 @@ import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
+from traigent.api.agent_inference import (
+    build_agent_configuration,
+    extract_parameter_agents,
+)
 from traigent.api.types import (
+    AgentConfiguration,
+    AgentDefinition,
     OptimizationResult,
     OptimizationStatus,
     StopReason,
     TrialResult,
     TrialStatus,
 )
-from traigent.cloud.backend_client import (
-    BackendClientConfig,
-    BackendIntegratedClient,
-)
+
+# Type-only imports for optional dependencies
+if TYPE_CHECKING:
+    from traigent.cloud.backend_client import BackendIntegratedClient
+    from traigent.integrations.observability.workflow_traces import (
+        SpanPayload,
+        WorkflowGraphPayload,
+        WorkflowTracesTracker,
+    )
+
 from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
@@ -53,6 +67,7 @@ from traigent.core.progress_manager import (
     ProgressManager,
 )
 from traigent.core.result_selection import (
+    TieBreaker,
     _is_minimization_objective,
     select_best_configuration,
 )
@@ -106,6 +121,7 @@ class OptimizationOrchestrator:
         objectives: Sequence[str | None] | None = None,
         objective_schema: ObjectiveSchema | None = None,
         metric_registry: MetricRegistry | None = None,
+        workflow_traces_tracker: WorkflowTracesTracker | None = None,
         use_versioned_logger: bool = False,
         file_version: str = "2",
         **kwargs: Any,
@@ -115,6 +131,8 @@ class OptimizationOrchestrator:
         Keyword Args:
             default_config: Optional baseline configuration evaluated once before
                 optimizer-driven suggestions. Counts toward max_trials.
+            workflow_traces_tracker: Optional tracker for collecting and submitting
+                workflow spans to the backend for visualization.
         """
 
         self._initialized = False
@@ -161,6 +179,60 @@ class OptimizationOrchestrator:
             objectives, objective_schema
         )
 
+        # TVL 0.9 tie-breaker configuration
+        self._tie_breakers: dict[str, TieBreaker] = (
+            kwargs.pop("tie_breakers", None) or {}
+        )
+
+        # Multi-agent configuration
+        explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
+        agent_prefixes: list[str] | None = kwargs.pop("agent_prefixes", None)
+        agent_measures: dict[str, list[str]] | None = kwargs.pop("agent_measures", None)
+        global_measures: list[str] | None = kwargs.pop("global_measures", None)
+        # TVL parameter_agents are pre-extracted from TVL spec (since TVL uses raw
+        # values in configuration_space, not ParameterRange objects)
+        tvl_parameter_agents: dict[str, str] | None = kwargs.pop(
+            "tvl_parameter_agents", None
+        )
+
+        # Build agent configuration if any multi-agent params provided
+        self._agent_configuration: AgentConfiguration | None = None
+        has_multi_agent_config = (
+            explicit_agents
+            or agent_prefixes
+            or agent_measures
+            or global_measures
+            or tvl_parameter_agents
+        )
+        if has_multi_agent_config:
+            # Extract parameter agents from Range(..., agent="x") parameters
+            parameter_agents = extract_parameter_agents(self.optimizer.config_space)
+            # Merge with TVL parameter_agents (TVL takes lower priority - decorator
+            # Range(..., agent="x") can override TVL if needed)
+            if tvl_parameter_agents:
+                merged_agents = dict(tvl_parameter_agents)
+                merged_agents.update(parameter_agents)  # Decorator overrides TVL
+                parameter_agents = merged_agents
+            self._agent_configuration = build_agent_configuration(
+                configuration_space=self.optimizer.config_space,
+                explicit_agents=explicit_agents,
+                agent_prefixes=agent_prefixes,
+                agent_measures=agent_measures,
+                global_measures=global_measures,
+                parameter_agents=parameter_agents,
+            )
+
+        # Derive band_target from objective_schema if available
+        self._band_target: float | None = None
+        if self.objective_schema is not None and self.objective_schema.objectives:
+            primary_obj = self.objective_schema.objectives[0]
+            if hasattr(primary_obj, "band") and primary_obj.band is not None:
+                band = primary_obj.band
+                if band.center is not None:
+                    self._band_target = band.center
+                elif band.low is not None and band.high is not None:
+                    self._band_target = (band.low + band.high) / 2.0
+
         self._default_config: dict[str, Any] | None = None
         self._default_config_used = False
         if isinstance(default_config, dict) and default_config:
@@ -182,6 +254,12 @@ class OptimizationOrchestrator:
         self.metric_registry = (
             metric_registry.clone() if metric_registry is not None else clone_registry()
         )
+
+        # Workflow traces tracker for span collection and backend submission
+        self._workflow_traces_tracker: WorkflowTracesTracker | None = (
+            workflow_traces_tracker
+        )
+        self._collected_spans: list[SpanPayload] = []
 
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
@@ -250,6 +328,33 @@ class OptimizationOrchestrator:
             include_pruned=include_pruned,
         )
 
+        # TVL 0.9 convergence criteria (hypervolume-based early stopping)
+        convergence_metric = self.config.get("convergence_metric")
+        convergence_window = self.config.get("convergence_window")
+        convergence_threshold = self.config.get("convergence_threshold")
+        if (
+            convergence_metric == "hypervolume_improvement"
+            and convergence_window is not None
+            and convergence_threshold is not None
+            and self.objective_schema is not None
+        ):
+            # Skip hypervolume convergence if any objective has band orientation
+            # Hypervolume requires maximize/minimize directions only
+            directions = [obj.orientation for obj in self.objective_schema.objectives]
+            if "band" in directions:
+                logger.info(
+                    "Skipping hypervolume convergence: band objectives are not "
+                    "compatible with hypervolume computation"
+                )
+            else:
+                objective_names = [obj.name for obj in self.objective_schema.objectives]
+                self._stop_condition_manager.add_convergence_condition(
+                    window=int(convergence_window),
+                    threshold=float(convergence_threshold),
+                    objective_names=objective_names,
+                    directions=cast(list[str], directions),
+                )
+
         # Initialize cost enforcer for cost limit enforcement
         # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_LLM
         cost_limit = self.config.get("cost_limit")
@@ -301,12 +406,52 @@ class OptimizationOrchestrator:
         """Get the number of completed trials."""
         return len(self._trials)
 
+    @property
+    def agent_configuration(self) -> AgentConfiguration | None:
+        """Get the agent configuration for multi-agent experiments.
+
+        Returns None for single-agent experiments (no grouping needed).
+        """
+        return self._agent_configuration
+
     def _configure_evaluator_execution_mode(self) -> None:
         if hasattr(self.evaluator, "execution_mode"):
             self.evaluator.execution_mode = self.traigent_config.execution_mode
 
-    def _initialize_backend_client(self) -> BackendIntegratedClient:
-        from traigent.config.backend_config import BackendConfig
+    def _initialize_backend_client(self) -> BackendIntegratedClient | None:
+        """Initialize backend client if cloud features are available.
+
+        Returns None when cloud plugin is not installed (graceful degradation).
+        Raises FeatureNotAvailableError only when cloud mode is explicitly
+        requested but plugin is missing.
+        """
+        # Try to import cloud module - may not be available if cloud plugin not installed
+        try:
+            from traigent.cloud.backend_client import (
+                BackendClientConfig,
+                BackendIntegratedClient,
+            )
+            from traigent.config.backend_config import BackendConfig
+        except ModuleNotFoundError as err:
+            # Cloud module not installed - check if this was the cloud module itself
+            if err.name and err.name.startswith("traigent.cloud"):
+                if self.traigent_config.execution_mode == "cloud":
+                    # User explicitly requested cloud mode but plugin not installed
+                    from traigent.utils.exceptions import FeatureNotAvailableError
+
+                    raise FeatureNotAvailableError(
+                        "Cloud execution mode",
+                        plugin_name="traigent-cloud",
+                        install_hint="pip install traigent[cloud]",
+                    ) from err
+                # For edge_analytics or other modes, gracefully degrade to local-only
+                logger.info(
+                    f"Cloud module not available for {self.traigent_config.execution_mode} mode. "
+                    "Continuing with local storage only."
+                )
+                return None
+            # Re-raise if it's a different missing module (broken install)
+            raise
 
         backend_url = BackendConfig.get_backend_url()
         api_key = BackendConfig.get_api_key()
@@ -659,6 +804,8 @@ class OptimizationOrchestrator:
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
                 session_id=session_id,
+                dataset_name=getattr(self, "_dataset_name", "dataset"),
+                content_scores=getattr(self, "_content_scores", None),
             )
 
         if hasattr(self.optimizer, "tell"):
@@ -1201,6 +1348,221 @@ class OptimizationOrchestrator:
         except Exception as exc:
             logger.debug("Analytics submission failed: %s", exc)
 
+    def collect_workflow_span(
+        self,
+        span_data: SpanPayload,
+    ) -> None:
+        """Collect a workflow span for later submission to backend.
+
+        Args:
+            span_data: Span payload to collect
+        """
+        if self._workflow_traces_tracker is not None:
+            self._collected_spans.append(span_data)
+
+    async def _submit_workflow_traces(self, session_id: str | None = None) -> None:
+        """Submit collected workflow spans and graph to backend.
+
+        Called during optimization finalization to send all collected spans
+        and workflow graph to the backend for visualization in the workflow traces view.
+
+        Spans are grouped by configuration_run_id and submitted separately so each
+        trial's ConfigurationRun gets its run_metadata updated with trace_id.
+
+        Args:
+            session_id: Backend session ID (used to get experiment_id for graph)
+        """
+        if self._workflow_traces_tracker is None:
+            return
+
+        if not self._collected_spans:
+            logger.debug("No workflow spans to submit")
+            return
+
+        try:
+            # Get trace_id from first span (all spans share same trace)
+            trace_id = self._collected_spans[0].trace_id
+
+            # Try to create workflow graph for visualization (only submit once)
+            graph = self._create_optimization_workflow_graph(session_id)
+
+            # Group spans by configuration_run_id so each trial gets trace_id in its metadata
+            spans_by_config_run: dict[str, list] = {}
+            for span in self._collected_spans:
+                config_run_id = span.configuration_run_id
+                if config_run_id not in spans_by_config_run:
+                    spans_by_config_run[config_run_id] = []
+                spans_by_config_run[config_run_id].append(span)
+
+            # Submit each group separately
+            total_submitted = 0
+            graph_id = None
+            for idx, (config_run_id, spans) in enumerate(spans_by_config_run.items()):
+                # Only include graph in first request
+                include_graph = graph if idx == 0 else None
+
+                response = await self._workflow_traces_tracker.ingest_traces_async(
+                    graph=include_graph,
+                    spans=spans,
+                    trace_id=trace_id,
+                    configuration_run_id=config_run_id,
+                )
+
+                if response.success:
+                    total_submitted += len(spans)
+                    if response.graph_id:
+                        graph_id = response.graph_id
+                else:
+                    logger.warning(
+                        f"Failed to submit spans for config_run {config_run_id}: {response.error}"
+                    )
+
+            if total_submitted > 0:
+                graph_msg = f", graph_id={graph_id}" if graph_id else ""
+                logger.info(
+                    f"Submitted {total_submitted} workflow spans "
+                    f"for trace {trace_id[:8]}...{graph_msg}"
+                )
+
+        except Exception as exc:
+            logger.warning(f"Workflow trace submission failed: {exc}")
+        finally:
+            # Clear collected spans after submission attempt
+            self._collected_spans = []
+
+    def _create_optimization_workflow_graph(
+        self, session_id: str | None
+    ) -> WorkflowGraphPayload | None:
+        """Create a workflow graph representing the optimization flow.
+
+        Creates a simple graph with START -> optimization_run -> END nodes
+        to enable workflow trace visualization in the frontend.
+
+        Args:
+            session_id: Backend session ID for looking up experiment_id
+
+        Returns:
+            WorkflowGraphPayload if experiment_id found, None otherwise
+        """
+        # Import here to avoid circular dependency
+        from traigent.integrations.observability.workflow_traces import (
+            WorkflowEdge,
+            WorkflowGraphPayload,
+            WorkflowNode,
+        )
+
+        # Get experiment_id from session mapping
+        experiment_id = self._get_experiment_id_from_session(session_id)
+        if not experiment_id:
+            logger.debug("Cannot create workflow graph: no experiment_id available")
+            return None
+
+        # Get experiment_run_id for linking
+        experiment_run_id = self._get_experiment_run_id_from_session(session_id)
+
+        # Get function name for display
+        function_name = (
+            self._function_descriptor.identifier
+            if self._function_descriptor
+            else "optimization"
+        )
+
+        # Create nodes for the optimization workflow
+        nodes = [
+            WorkflowNode(
+                id="__start__",
+                type="entry",
+                display_name="Start",
+                metadata={"purpose": "Workflow entry point"},
+            ),
+            WorkflowNode(
+                id="optimization_run",
+                type="agent",
+                display_name=f"Optimize: {function_name}",
+                tunable_params=(
+                    list(self.optimizer.config_space.keys())
+                    if self.optimizer.config_space
+                    else []
+                ),
+                metadata={
+                    "purpose": "Execute optimization trials",
+                    "function": function_name,
+                    "max_trials": self.max_trials,
+                    "algorithm": self.optimizer.__class__.__name__,
+                },
+            ),
+            WorkflowNode(
+                id="__end__",
+                type="exit",
+                display_name="End",
+                metadata={"purpose": "Workflow exit point"},
+            ),
+        ]
+
+        # Create edges
+        edges = [
+            WorkflowEdge(from_node="__start__", to_node="optimization_run"),
+            WorkflowEdge(from_node="optimization_run", to_node="__end__"),
+        ]
+
+        return WorkflowGraphPayload(
+            experiment_id=experiment_id,
+            experiment_run_id=experiment_run_id,
+            nodes=nodes,
+            edges=edges,
+            metadata={
+                "workflow_type": "sdk_optimization",
+                "function_name": function_name,
+                "optimization_id": self._optimization_id,
+            },
+        )
+
+    def _get_experiment_id_from_session(self, session_id: str | None) -> str | None:
+        """Get experiment_id from backend session mapping.
+
+        Args:
+            session_id: Backend session ID
+
+        Returns:
+            experiment_id if found, None otherwise
+        """
+        if not session_id or not self.backend_client:
+            return None
+
+        try:
+            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
+            if callable(get_mapping):
+                mapping = get_mapping(session_id)
+                if mapping:
+                    return getattr(mapping, "experiment_id", None)
+        except Exception as exc:
+            logger.debug(f"Could not get experiment_id from session mapping: {exc}")
+
+        return None
+
+    def _get_experiment_run_id_from_session(self, session_id: str | None) -> str | None:
+        """Get experiment_run_id from backend session mapping.
+
+        Args:
+            session_id: Backend session ID
+
+        Returns:
+            experiment_run_id if found, None otherwise
+        """
+        if not session_id or not self.backend_client:
+            return None
+
+        try:
+            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
+            if callable(get_mapping):
+                mapping = get_mapping(session_id)
+                if mapping:
+                    return getattr(mapping, "experiment_run_id", None)
+        except Exception as exc:
+            logger.debug(f"Could not get experiment_run_id from session mapping: {exc}")
+
+        return None
+
     def _initialize_optimization_run(
         self,
         func: Callable[..., Any],
@@ -1234,6 +1596,10 @@ class OptimizationOrchestrator:
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
 
+        # Compute content scores once for the dataset (used for backend analytics)
+        self._dataset_name = getattr(dataset, "name", "dataset")
+        self._content_scores = self._compute_content_scores(dataset)
+
         if function_name and function_name != descriptor.identifier:
             logger.debug(
                 "Ignoring supplied function_name '%s' in favour of fully-qualified identifier '%s'",
@@ -1249,6 +1615,7 @@ class OptimizationOrchestrator:
             max_trials=self.max_trials,
             max_total_examples=self.max_total_examples,
             start_time=self._start_time or time.time(),
+            agent_configuration=self._agent_configuration,
         )
         session_id: str | None = session_context.session_id
 
@@ -1510,6 +1877,10 @@ class OptimizationOrchestrator:
         )
 
         self._submit_usage_analytics()
+
+        # Submit collected workflow traces and graph to backend
+        await self._submit_workflow_traces(session_id)
+
         self.callback_manager.on_optimization_complete(result)
 
         cost_status = self.cost_enforcer.get_status()
@@ -1612,89 +1983,108 @@ class OptimizationOrchestrator:
 
         self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
+    def _extract_prune_step(self, metadata: dict[str, Any] | None) -> int:
+        """Extract prune step from trial metadata."""
+        if not metadata:
+            return 0
+        for key in ("pruned_step", "pruned_at_step", "step"):
+            raw_value = metadata.get(key)
+            if raw_value is not None:
+                try:
+                    return int(raw_value)
+                except (TypeError, ValueError):
+                    continue
+        return 0
+
+    def _extract_objective_values(self, metrics: dict[str, Any]) -> list[float]:
+        """Extract objective values from trial metrics."""
+        values: list[float] = []
+        for objective in self.optimizer.objectives:
+            metric_value = metrics.get(objective)
+            # Fallback for common objective aliases
+            if metric_value is None and objective in {"accuracy", "success_rate"}:
+                metric_value = metrics.get("accuracy") or metrics.get("success_rate")
+            if metric_value is None and objective in {"cost", "latency", "error"}:
+                metric_value = metrics.get(objective, 0.0)
+            values.append(float(metric_value if metric_value is not None else 0.0))
+        return values
+
+    def _notify_pruned_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of pruned/cancelled trial. Returns True if handled."""
+        metadata = trial_result.metadata or {}
+        prune_step = self._extract_prune_step(metadata)
+        reason = (
+            trial_result.error_message or metadata.get("stop_reason") or "trial_pruned"
+        )
+
+        if hasattr(self.optimizer, "report_trial_pruned"):
+            self.optimizer.report_trial_pruned(optuna_trial_id, prune_step)  # type: ignore[attr-defined]
+            return True
+
+        if hasattr(self.optimizer, "report_trial_result"):
+            self.optimizer.report_trial_result(  # type: ignore[arg-type, attr-defined]
+                optuna_trial_id,
+                None,
+                metadata={
+                    "state": "pruned",
+                    "pruned_at_step": prune_step,
+                    "reason": reason,
+                },
+            )
+            return True
+
+        if hasattr(self.optimizer, "report_trial_failure"):
+            self.optimizer.report_trial_failure(optuna_trial_id, reason)  # type: ignore[attr-defined]
+            return True
+
+        return False
+
+    def _notify_completed_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of completed trial. Returns True if handled."""
+        if not hasattr(self.optimizer, "report_trial_result"):
+            return False
+
+        metrics = trial_result.metrics or {}
+        values = self._extract_objective_values(metrics)
+        payload: float | list[float] = values if len(values) > 1 else values[0]
+        self.optimizer.report_trial_result(optuna_trial_id, payload)
+        return True
+
+    def _notify_failed_trial(
+        self, trial_result: TrialResult, optuna_trial_id: int
+    ) -> bool:
+        """Notify optimizer of failed trial. Returns True if handled."""
+        if not hasattr(self.optimizer, "report_trial_failure"):
+            return False
+
+        self.optimizer.report_trial_failure(
+            optuna_trial_id, trial_result.error_message or "Unknown error"
+        )
+        return True
+
     def _notify_optimizer_of_result(
         self, trial_result: TrialResult, optuna_trial_id: int | None
     ) -> None:
         """Notify optimizers that support ask/tell about trial outcomes."""
-
-        if optuna_trial_id is None:
-            return
-        if not isinstance(optuna_trial_id, int):
-            logger.debug(
-                "Skipping optimizer notification for non-int optuna_trial_id=%r",
-                optuna_trial_id,
-            )
-            return
-
-        if trial_result.status in {TrialStatus.PRUNED, TrialStatus.CANCELLED}:
-            metadata = trial_result.metadata or {}
-            prune_step = 0
-            for key in ("pruned_step", "pruned_at_step", "step"):
-                raw_value = metadata.get(key)
-                if raw_value is None:
-                    continue
-                try:
-                    prune_step = int(raw_value)
-                    break
-                except (TypeError, ValueError):
-                    continue
-
-            if hasattr(self.optimizer, "report_trial_pruned"):
-                self.optimizer.report_trial_pruned(optuna_trial_id, prune_step)  # type: ignore[attr-defined]
-                return
-
-            if hasattr(self.optimizer, "report_trial_result"):
-                self.optimizer.report_trial_result(  # type: ignore[arg-type, attr-defined]
+        if optuna_trial_id is None or not isinstance(optuna_trial_id, int):
+            if optuna_trial_id is not None:
+                logger.debug(
+                    "Skipping optimizer notification for non-int optuna_trial_id=%r",
                     optuna_trial_id,
-                    None,
-                    metadata={
-                        "state": "pruned",
-                        "pruned_at_step": prune_step,
-                        "reason": trial_result.error_message
-                        or metadata.get("stop_reason")
-                        or "trial_pruned",
-                    },
                 )
-                return
-
-            if hasattr(self.optimizer, "report_trial_failure"):
-                self.optimizer.report_trial_failure(  # type: ignore[attr-defined]
-                    optuna_trial_id,
-                    trial_result.error_message
-                    or metadata.get("stop_reason")
-                    or "trial_pruned",
-                )
-                return
-
-        if (
-            hasattr(self.optimizer, "report_trial_result")
-            and trial_result.status == TrialStatus.COMPLETED
-        ):
-            metrics = trial_result.metrics or {}
-            values: list[float] = []
-            for objective in self.optimizer.objectives:
-                metric_value = metrics.get(objective)
-                if metric_value is None and objective in {"accuracy", "success_rate"}:
-                    metric_value = metrics.get("accuracy") or metrics.get(
-                        "success_rate"
-                    )
-                if metric_value is None and objective in {"cost", "latency", "error"}:
-                    metric_value = metrics.get(objective, 0.0)
-                if metric_value is None:
-                    metric_value = 0.0
-                values.append(float(metric_value))
-
-            payload: float | list[float] = values if len(values) > 1 else values[0]
-            self.optimizer.report_trial_result(optuna_trial_id, payload)
             return
 
-        if (
-            hasattr(self.optimizer, "report_trial_failure")
-            and trial_result.status == TrialStatus.FAILED
-        ):
-            self.optimizer.report_trial_failure(
-                optuna_trial_id, trial_result.error_message or "Unknown error"
-            )
+        status = trial_result.status
+        if status in {TrialStatus.PRUNED, TrialStatus.CANCELLED}:
+            self._notify_pruned_trial(trial_result, optuna_trial_id)
+        elif status == TrialStatus.COMPLETED:
+            self._notify_completed_trial(trial_result, optuna_trial_id)
+        elif status == TrialStatus.FAILED:
+            self._notify_failed_trial(trial_result, optuna_trial_id)
 
     def _should_stop(self, trial_count: int) -> bool:
         """Check if optimization should stop.
@@ -1924,6 +2314,8 @@ class OptimizationOrchestrator:
             primary_objective=self.optimizer.objectives[0],
             config_space_keys=set(getattr(self.optimizer, "config_space", {}).keys()),
             aggregate_configs=not self.traigent_config.is_edge_analytics_mode(),
+            tie_breakers=self._tie_breakers or None,
+            band_target=self._band_target,
         )
         best_config = selection.best_config
         best_score = selection.best_score
@@ -1990,3 +2382,60 @@ class OptimizationOrchestrator:
             )
 
         return optimization_result
+
+    def _compute_content_scores(
+        self, dataset: Dataset
+    ) -> dict[str, dict[int, float]] | None:
+        """Compute content-based scores for the dataset (once per optimization run).
+
+        Computes uniqueness and novelty scores using TF-IDF and cosine similarity.
+        These scores are computed once and reused across all trials since the
+        dataset doesn't change.
+
+        Args:
+            dataset: Evaluation dataset
+
+        Returns:
+            Dict with keys "uniqueness" and "novelty" mapping example_index -> score,
+            or None if content scoring is disabled or fails
+        """
+        try:
+            from traigent.metrics.content_scoring import ContentScorer
+
+            # Extract input texts from dataset
+            example_inputs = []
+            for example in dataset.examples:
+                input_data = str(example.input_data)
+                example_inputs.append(input_data)
+
+            # Instantiate scorer (per-trial pattern for thread safety)
+            scorer = ContentScorer()
+
+            # Compute scores
+            uniqueness_scores = scorer.compute_uniqueness_scores(example_inputs)
+            novelty_scores = scorer.compute_novelty_scores(example_inputs)
+
+            logger.debug(
+                "Computed content scores for %s examples: uniqueness range [%.2f, %.2f], "
+                "novelty range [%.2f, %.2f]",
+                len(example_inputs),
+                min(uniqueness_scores.values()) if uniqueness_scores else 0.0,
+                max(uniqueness_scores.values()) if uniqueness_scores else 0.0,
+                min(novelty_scores.values()) if novelty_scores else 0.0,
+                max(novelty_scores.values()) if novelty_scores else 0.0,
+            )
+
+            return {
+                "uniqueness": uniqueness_scores,
+                "novelty": novelty_scores,
+            }
+
+        except ImportError:
+            logger.debug(
+                "Content scoring disabled: scikit-learn not installed. "
+                "Install with: pip install traigent[analytics]"
+            )
+            return None
+        except Exception as e:
+            logger.warning("Failed to compute content scores: %s", e)
+            return None

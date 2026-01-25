@@ -29,7 +29,7 @@ class OptimizeParameters:
     constraints: list[Callable[..., Any]] | None = None
     injection_mode: str | InjectionMode = InjectionMode.CONTEXT
     config_param: str | None = None
-    auto_override_frameworks: bool = True
+    auto_override_frameworks: bool = False  # Requires traigent-integrations plugin
     framework_targets: list[str] | None = None
     execution_mode: str | ExecutionMode = ExecutionMode.EDGE_ANALYTICS
     local_storage_path: str | None = None

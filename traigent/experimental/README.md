@@ -6,7 +6,7 @@
 
 This module contains experimental implementations used for:
 
-1. **Local Development & Testing**: When OptiGen backend services are under development
+1. **Local Development & Testing**: When Traigent backend services are under development
 2. **Prototyping**: Testing new platform integrations before backend implementation
 3. **Educational Examples**: Demonstrating how platform integrations might work
 
@@ -24,7 +24,7 @@ A simplified, **non-production** implementation of platform executors that simul
 
 ## Production Implementation
 
-The **real** cloud execution happens in the **OptiGen Backend**, which is:
+The **real** cloud execution happens in the **Traigent Backend**, which is:
 - Proprietary Traigent IP
 - Not part of this open-source SDK
 - Optimized for scale, performance, and advanced features
@@ -51,4 +51,4 @@ result = await simulator.test_platform_integration()
 For production use, rely on:
 - `@traigent.optimize()` decorator with `auto_override_frameworks=True`
 - Traigent cloud services (when available)
-- OptiGen backend integration
+- Traigent backend integration

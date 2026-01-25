@@ -1,106 +1,49 @@
-# TVL 0.9 Example: Multi-Objective RAG Optimization
-#
-# This example demonstrates TVL 0.9 features for optimizing a RAG system:
-# - Typed TVARs with explicit domains
-# - Multi-objective optimization (maximize quality, minimize latency/cost)
-# - Structural constraints with when/then implications
-# - Promotion policy with epsilon-Pareto dominance
-#
-# Note: Banded objective TOST evaluation is available via the BandedObjectiveSpec
-# class in traigent.tvl.objectives for programmatic use.
-#
-# Use case: RAG system optimizing answer quality while controlling latency and cost.
+# TVL 0.9 Example: Banded Objectives
+# Demonstrates banded objectives with TOST testing
 
 spec:
-  id: rag-multi-objective
-  version: "1.0"
+  id: banded-objectives-example
+  version: 0.1.0
 
 metadata:
-  owner: traigent-team
-  description: RAG system with multi-objective optimization
+  owner: "mlops@traigent.ai"
+  description: "Example demonstrating banded objectives"
 
-# TVL 0.9 format: typed tvars with explicit domains
+# TVL 0.9 typed variables
 tvars:
   - name: model
     type: enum[str]
-    domain: ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
-    default: "gpt-4o-mini"
+    domain: ["gpt-4o-mini", "claude-3-haiku-20240307"]
 
   - name: temperature
     type: float
     domain:
       range: [0.0, 1.0]
-      resolution: 0.1
-    default: 0.7
 
-  - name: max_tokens
-    type: int
-    domain:
-      range: [256, 2048]
-    default: 512
-
-  - name: retrieval_k
-    type: int
-    domain:
-      range: [3, 10]
-    default: 5
-
-  - name: use_reranker
-    type: bool
-    default: true
-
-# Multi-objective optimization
+# Mix of standard and banded objectives
 objectives:
-  # Primary: maximize answer quality
-  - name: answer_quality
+  - name: task_quality
     direction: maximize
-    weight: 1.0
 
-  # Secondary: maximize consistency (higher is better)
   - name: response_consistency
-    direction: maximize
-    weight: 0.8
+    band:
+      target: [0.85, 0.95]
+      test: TOST
+      alpha: 0.05
 
-  # Tertiary: minimize latency
-  - name: latency_ms
-    direction: minimize
-    unit: ms
-    weight: 0.5
-
-  # Quaternary: minimize cost
   - name: cost_per_query
-    direction: minimize
-    unit: USD
-    weight: 0.3
+    band:
+      target:
+        center: 0.01
+        tol: 0.005
+      test: TOST
+      alpha: 0.05
 
-# Structural constraints
-constraints:
-  structural:
-    # Model-specific constraint: GPT-3.5 has lower token limit
-    - when: "params.model == 'gpt-3.5-turbo'"
-      then: "params.max_tokens <= 1024"
-    # General constraint: minimum retrieval depth
-    - expr: "params.retrieval_k >= 3"
-
-# Promotion policy for candidate evaluation
-# Uses epsilon-Pareto dominance with statistical testing
 promotion_policy:
-  dominance: epsilon_pareto
   alpha: 0.05
-  min_effect:
-    answer_quality: 0.02    # 2% improvement threshold
-    response_consistency: 0.01  # 1% improvement threshold
-    latency_ms: 10.0        # 10ms improvement threshold
-    cost_per_query: 0.0001  # $0.0001 improvement threshold
-  adjust: BH  # Benjamini-Hochberg correction
+  dominance: epsilon_pareto
 
-# Exploration settings
 exploration:
-  strategy:
-    type: nsga2
-    initial_sampling: latin_hypercube
-  parallelism:
-    max_parallel_trials: 4
+  strategy: pareto_optimal
   budgets:
-    max_trials: 100
-    max_wallclock_s: 3600
+    max_trials: 40

@@ -489,18 +489,19 @@ class ObjectiveSchema:
         Returns:
             Aggregated score (higher is better), or None if required metrics missing
 
-        Examples:
-            >>> schema = ObjectiveSchema.from_objectives([...])
-            >>> metrics = {"accuracy": 0.9, "cost": 0.05}
+        Examples::
+
+            schema = ObjectiveSchema.from_objectives([...])
+            metrics = {"accuracy": 0.9, "cost": 0.05}
 
             # Weighted sum (default, linear trade-offs)
-            >>> schema.compute_aggregated_score(metrics, AggregationMode.WEIGHTED_SUM)
+            schema.compute_aggregated_score(metrics, AggregationMode.WEIGHTED_SUM)
 
             # Harmonic mean (penalizes imbalanced solutions)
-            >>> schema.compute_aggregated_score(metrics, AggregationMode.HARMONIC)
+            schema.compute_aggregated_score(metrics, AggregationMode.HARMONIC)
 
             # Chebyshev/minimax (optimizes worst-case performance)
-            >>> schema.compute_aggregated_score(metrics, AggregationMode.CHEBYSHEV)
+            schema.compute_aggregated_score(metrics, AggregationMode.CHEBYSHEV)
         """
         if not metrics:
             return None

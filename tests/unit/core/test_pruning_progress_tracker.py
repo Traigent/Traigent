@@ -887,3 +887,250 @@ class TestPruningProgressTrackerLogProgress:
         mock_logger.info.assert_called_once()
         args = mock_logger.info.call_args[0]
         assert args[5] == [0.8, 0.05]
+
+
+class TestBandBasedPruning:
+    """Tests for band-based pruning functionality."""
+
+    @pytest.fixture
+    def dataset(self) -> Dataset:
+        """Create test dataset with 10 examples."""
+        return Dataset(
+            examples=[
+                EvaluationExample(input_data={"value": i}, expected_output=i)
+                for i in range(10)
+            ],
+            name="test-dataset",
+            description="Test dataset",
+        )
+
+    @pytest.fixture
+    def optimizer(self) -> MagicMock:
+        """Create mock optimizer that doesn't prune."""
+        optimizer = MagicMock()
+        optimizer.objectives = ["accuracy"]
+        optimizer.report_intermediate_value.return_value = False
+        return optimizer
+
+    @pytest.fixture
+    def band_target_low_high(self) -> MagicMock:
+        """Create band target with low/high bounds."""
+        band = MagicMock()
+        band.low = 0.7
+        band.high = 0.9
+        band.center = None
+        band.tol = None
+        return band
+
+    @pytest.fixture
+    def band_target_center_tol(self) -> MagicMock:
+        """Create band target with center/tol."""
+        band = MagicMock()
+        band.low = None
+        band.high = None
+        band.center = 0.8
+        band.tol = 0.1
+        return band
+
+    def test_init_with_band_target(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test initialization with band_target parameter."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        assert tracker.band_target is band_target_low_high
+
+    def test_no_band_pruning_without_band_target(
+        self, optimizer: MagicMock, dataset: Dataset
+    ) -> None:
+        """Test no band pruning when band_target is None."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+        )
+
+        # Value far from any band should not trigger pruning without band_target
+        assert tracker._should_prune_for_band(0.1) is False
+        assert tracker._should_prune_for_band(0.99) is False
+
+    def test_no_band_pruning_with_few_evaluations(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test no band pruning when evaluated count is low."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        # Even with value far outside band, don't prune with few evaluations
+        tracker.state["evaluated"] = 2
+        assert tracker._should_prune_for_band(0.1) is False
+
+    def test_band_pruning_value_far_outside_band(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test band pruning triggers for values far outside band."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        # Band is [0.7, 0.9], center is 0.8, width is 0.2
+        # Prune threshold is 2.0 * 0.2 = 0.4 from center
+        # Values outside [0.4, 1.2] should be pruned
+        tracker.state["evaluated"] = 5
+
+        # Value 0.1 is 0.7 from center (> 0.4) - should prune
+        assert tracker._should_prune_for_band(0.1) is True
+
+        # Value 1.5 is 0.7 from center (> 0.4) - should prune
+        assert tracker._should_prune_for_band(1.5) is True
+
+    def test_no_band_pruning_value_within_threshold(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test no band pruning for values within acceptable threshold."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        tracker.state["evaluated"] = 5
+
+        # Value 0.5 is 0.3 from center (< 0.4) - should not prune
+        assert tracker._should_prune_for_band(0.5) is False
+
+        # Value within band - should not prune
+        assert tracker._should_prune_for_band(0.8) is False
+
+        # Value just outside band but within threshold
+        assert tracker._should_prune_for_band(1.1) is False
+
+    def test_band_pruning_with_center_tol(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_center_tol: MagicMock
+    ) -> None:
+        """Test band pruning with center/tol band definition."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_center_tol,
+        )
+
+        # Band center=0.8, tol=0.1, width=0.2
+        # Prune threshold is 2.0 * 0.2 = 0.4 from center
+        tracker.state["evaluated"] = 5
+
+        # Value 0.3 is 0.5 from center (> 0.4) - should prune
+        assert tracker._should_prune_for_band(0.3) is True
+
+        # Value 0.6 is 0.2 from center (< 0.4) - should not prune
+        assert tracker._should_prune_for_band(0.6) is False
+
+    def test_band_pruning_with_list_value(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test band pruning uses first value from list."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        tracker.state["evaluated"] = 5
+
+        # First value is far from band - should prune
+        assert tracker._should_prune_for_band([0.1, 0.8, 0.9]) is True
+
+        # First value is within threshold - should not prune
+        assert tracker._should_prune_for_band([0.8, 0.1, 0.1]) is False
+
+    def test_band_pruning_empty_list_value(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test band pruning returns False for empty list."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        tracker.state["evaluated"] = 5
+        assert tracker._should_prune_for_band([]) is False
+
+    def test_callback_integrates_band_pruning(
+        self, optimizer: MagicMock, dataset: Dataset, band_target_low_high: MagicMock
+    ) -> None:
+        """Test callback raises TrialPrunedError when band prune triggers."""
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        # Simulate enough evaluations with values in band
+        for i in range(3):
+            payload = {"success": True, "metrics": {"accuracy": 0.8}, "output": i}
+            try:
+                tracker.callback(i, payload)
+            except TrialPrunedError:
+                pytest.fail("Should not prune values within band")
+
+        # Verify the band pruning method directly
+        # After 4 evaluations, a very low accuracy should trigger band pruning
+        tracker.state["evaluated"] = 5  # Ensure we're past the warm-up period
+
+        # Value 0.1 with band [0.7, 0.9] should definitely prune
+        # Distance from center (0.8) is 0.7, threshold is 0.4
+        assert tracker._should_prune_for_band(0.1) is True
+
+    @patch.object(PruningProgressTracker, "_should_prune_for_band")
+    def test_callback_calls_band_pruning_check(
+        self,
+        mock_band_check: MagicMock,
+        optimizer: MagicMock,
+        dataset: Dataset,
+        band_target_low_high: MagicMock,
+    ) -> None:
+        """Test that callback invokes band pruning check and raises on True."""
+        mock_band_check.return_value = True
+
+        tracker = PruningProgressTracker(
+            optimizer=optimizer,
+            dataset=dataset,
+            trial_id="trial-1",
+            optuna_trial_id=123,
+            band_target=band_target_low_high,
+        )
+
+        payload = {"success": True, "metrics": {"accuracy": 0.5}, "output": 0}
+
+        with pytest.raises(TrialPrunedError):
+            tracker.callback(0, payload)
+
+        # Verify band check was called
+        assert mock_band_check.called

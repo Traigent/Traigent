@@ -22,6 +22,12 @@ from traigent.optimizers.optuna_optimizer import (
     OptunaRandomOptimizer,
     OptunaTPEOptimizer,
 )
+from traigent.optimizers.pruners import (
+    CeilingPruner,
+    CeilingPrunerConfig,
+    StatisticalInferiorityPruner,
+    StatisticalInferiorityPrunerConfig,
+)
 from traigent.optimizers.random import RandomSearchOptimizer
 from traigent.optimizers.registry import (
     get_optimizer,
@@ -50,4 +56,9 @@ __all__ = [
     "list_optimizers",
     "RemoteOptimizer",
     "CloudOptimizer",
+    # Pruners for early stopping
+    "CeilingPruner",
+    "CeilingPrunerConfig",
+    "StatisticalInferiorityPruner",
+    "StatisticalInferiorityPrunerConfig",
 ]

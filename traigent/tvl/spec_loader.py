@@ -109,6 +109,8 @@ class TVLSpecArtifact:
     convergence: ConvergenceCriteria | None = None
     exploration_budgets: ExplorationBudgets | None = None
     exploration_parallelism: int | None = None
+    # Multi-agent support: parameter name -> agent ID mappings
+    parameter_agents: dict[str, str] | None = None
 
     def _apply_legacy_budget_overrides(self, overrides: dict[str, Any]) -> None:
         """Apply legacy budget fields to overrides."""
@@ -166,6 +168,20 @@ class TVLSpecArtifact:
         if self.exploration_parallelism is not None:
             overrides.setdefault("parallel_trials", self.exploration_parallelism)
 
+        # TVL 0.9 convergence criteria
+        if self.convergence is not None:
+            overrides["convergence_metric"] = self.convergence.metric
+            overrides["convergence_window"] = self.convergence.window
+            overrides["convergence_threshold"] = self.convergence.threshold
+
+        # TVL 0.9 promotion policy: tie_breakers
+        if self.promotion_policy is not None and self.promotion_policy.tie_breakers:
+            overrides["tie_breakers"] = self.promotion_policy.tie_breakers
+
+        # Multi-agent: pass TVL parameter_agents for agent configuration
+        if self.parameter_agents:
+            overrides["tvl_parameter_agents"] = self.parameter_agents
+
         # Convert parallel_trials to unified parallel_config structure
         self._convert_parallel_trials_to_config(overrides)
 
@@ -185,6 +201,335 @@ def _load_and_parse_yaml(path: Path) -> dict:
     if not isinstance(raw_data, dict):
         raise TVLValidationError("TVL specification must be a mapping")
     return raw_data
+
+
+# ===== T-5: Early Schema Validation =====
+
+# Known TVL 0.9 section names
+_KNOWN_TVL_SECTIONS = frozenset(
+    {
+        "tvl",
+        "tvl_version",
+        "tvars",
+        "exploration",
+        "objectives",
+        "constraints",
+        "defaults",
+        "metadata",
+        "environment",  # Environment snapshot (single env)
+        "environments",  # Multi-environment definitions
+        "env_snapshot",
+        "evaluation_set",
+        "promotion_policy",
+        "extends",  # Spec-level inheritance
+        "safety_constraints",  # Safety constraint definitions
+        "datasets",  # Dataset references for evaluation
+        "evaluators",  # Evaluator definitions
+        # Legacy sections (deprecated but still valid)
+        "configuration_space",
+        "optimization",
+    }
+)
+
+# Required types for top-level sections
+_SECTION_TYPES: dict[str, type | tuple[type, ...]] = {
+    "tvl": dict,
+    "tvl_version": (str, int, float),
+    "tvars": (list, dict),  # TVL 0.9 array or legacy dict format
+    "exploration": dict,
+    "objectives": (list, dict),
+    "constraints": (list, dict),
+    "defaults": dict,
+    "metadata": dict,
+    "environment": dict,  # Environment snapshot
+    "environments": dict,  # Multi-environment definitions
+    "env_snapshot": dict,
+    "evaluation_set": dict,
+    "promotion_policy": dict,
+    "extends": str,  # Path to base spec (spec-level inheritance)
+    "safety_constraints": list,  # Safety constraint definitions
+    "datasets": dict,  # Dataset references for evaluation
+    "evaluators": dict,  # Evaluator definitions
+    "configuration_space": dict,
+    "optimization": dict,
+}
+
+
+def validate_tvl_schema(
+    data: dict[str, Any],
+    *,
+    strict: bool = False,
+) -> list[str]:
+    """Validate TVL spec structure before detailed parsing (T-5).
+
+    Performs early validation to catch obvious errors like invalid section
+    names, missing required fields, incorrect types, etc. This provides
+    clearer error messages than later parsing failures.
+
+    Args:
+        data: Parsed YAML data (raw dictionary).
+        strict: If True, raise TVLValidationError on any issue.
+                If False, return list of warnings but don't raise.
+
+    Returns:
+        List of validation warnings/errors found.
+
+    Raises:
+        TVLValidationError: If strict=True and validation fails.
+
+    Example::
+
+        data = yaml.safe_load(path.read_text())
+        issues = validate_tvl_schema(data)
+        if issues:
+            print("Warnings:", issues)
+    """
+    issues: list[str] = []
+
+    # Check for unknown top-level sections
+    unknown_sections = set(data.keys()) - _KNOWN_TVL_SECTIONS
+    if unknown_sections:
+        issues.append(
+            f"Unknown top-level sections: {sorted(unknown_sections)}. "
+            f"Valid sections: {sorted(_KNOWN_TVL_SECTIONS)}"
+        )
+
+    # Check types of known sections
+    for section, expected_type in _SECTION_TYPES.items():
+        if section in data:
+            value = data[section]
+            if not isinstance(value, expected_type):
+                type_names = (
+                    expected_type.__name__
+                    if isinstance(expected_type, type)
+                    else " or ".join(t.__name__ for t in expected_type)
+                )
+                issues.append(
+                    f"Section '{section}' should be {type_names}, "
+                    f"got {type(value).__name__}"
+                )
+
+    # Validate tvars structure if present
+    if "tvars" in data:
+        tvars = data["tvars"]
+        if isinstance(tvars, dict):
+            issues.extend(_validate_tvars_structure(tvars))
+        elif isinstance(tvars, list):
+            issues.extend(_validate_tvars_list_structure(tvars))
+
+    # Validate objectives structure if present
+    if "objectives" in data:
+        objectives = data["objectives"]
+        issues.extend(_validate_objectives_structure(objectives))
+
+    # Validate constraints structure if present
+    if "constraints" in data:
+        constraints = data["constraints"]
+        issues.extend(_validate_constraints_structure(constraints))
+
+    # Validate exploration section if present
+    if "exploration" in data:
+        exploration = data["exploration"]
+        if isinstance(exploration, dict):
+            issues.extend(_validate_exploration_structure(exploration))
+
+    if strict and issues:
+        raise TVLValidationError(
+            "TVL schema validation failed:\n  - " + "\n  - ".join(issues)
+        )
+
+    return issues
+
+
+def _validate_tvars_structure(tvars: dict[str, Any]) -> list[str]:
+    """Validate structure of tvars section (legacy dict format)."""
+    issues: list[str] = []
+
+    for name, tvar_def in tvars.items():
+        if not isinstance(name, str):
+            issues.append(f"TVAR name must be string, got {type(name).__name__}")
+            continue
+
+        if not isinstance(tvar_def, dict):
+            issues.append(f"TVAR '{name}' definition must be a dict")
+            continue
+
+        # Check for required fields
+        if "domain" not in tvar_def:
+            issues.append(f"TVAR '{name}' missing required 'domain' field")
+
+        # Validate domain structure
+        domain = tvar_def.get("domain")
+        if domain is not None:
+            if isinstance(domain, dict):
+                if "type" in domain:
+                    valid_types = {"range", "choices", "registry"}
+                    if domain["type"] not in valid_types:
+                        issues.append(
+                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
+                            f"Valid: {valid_types}"
+                        )
+            elif not isinstance(domain, (list, tuple)):
+                issues.append(
+                    f"TVAR '{name}' domain should be dict, list, or tuple, "
+                    f"got {type(domain).__name__}"
+                )
+
+    return issues
+
+
+def _validate_tvars_list_structure(tvars: list[Any]) -> list[str]:
+    """Validate structure of tvars section (TVL 0.9 array format)."""
+    issues: list[str] = []
+
+    for idx, tvar_def in enumerate(tvars):
+        if not isinstance(tvar_def, dict):
+            issues.append(
+                f"TVAR at index {idx} must be a dict, got {type(tvar_def).__name__}"
+            )
+            continue
+
+        # Check for required 'name' field
+        name = tvar_def.get("name")
+        if not isinstance(name, str) or not name:
+            issues.append(f"TVAR at index {idx} missing required 'name' string")
+            name = f"<index {idx}>"  # Use placeholder for further validation
+
+        # Check for required 'type' field
+        tvar_type = tvar_def.get("type")
+        if not isinstance(tvar_type, str):
+            issues.append(f"TVAR '{name}' missing required 'type' string")
+        else:
+            valid_types = {"float", "int", "str", "bool", "categorical", "registry"}
+            if tvar_type.lower() not in valid_types:
+                issues.append(
+                    f"TVAR '{name}' has invalid type '{tvar_type}'. "
+                    f"Valid: {valid_types}"
+                )
+
+        # Validate domain structure if present
+        domain = tvar_def.get("domain")
+        if domain is not None:
+            if isinstance(domain, dict):
+                if "type" in domain:
+                    valid_domain_types = {"range", "choices", "registry"}
+                    if domain["type"] not in valid_domain_types:
+                        issues.append(
+                            f"TVAR '{name}' has invalid domain type '{domain['type']}'. "
+                            f"Valid: {valid_domain_types}"
+                        )
+            elif not isinstance(domain, (list, tuple)):
+                issues.append(
+                    f"TVAR '{name}' domain should be dict, list, or tuple, "
+                    f"got {type(domain).__name__}"
+                )
+
+    return issues
+
+
+def _validate_objectives_structure(objectives: Any) -> list[str]:
+    """Validate structure of objectives section."""
+    issues: list[str] = []
+
+    if isinstance(objectives, list):
+        for i, obj in enumerate(objectives):
+            if isinstance(obj, dict):
+                if "name" not in obj:
+                    issues.append(f"Objective {i} missing 'name' field")
+                if "direction" in obj and obj["direction"] not in {
+                    "maximize",
+                    "minimize",
+                }:
+                    issues.append(
+                        f"Objective {i} has invalid direction '{obj['direction']}'"
+                    )
+            elif not isinstance(obj, str):
+                issues.append(
+                    f"Objective {i} should be string or dict, got {type(obj).__name__}"
+                )
+    elif isinstance(objectives, dict):
+        for name, obj_def in objectives.items():
+            if isinstance(obj_def, dict) and "direction" in obj_def:
+                if obj_def["direction"] not in {"maximize", "minimize"}:
+                    issues.append(
+                        f"Objective '{name}' has invalid direction '{obj_def['direction']}'"
+                    )
+
+    return issues
+
+
+def _validate_constraints_structure(constraints: Any) -> list[str]:
+    """Validate structure of constraints section."""
+    issues: list[str] = []
+
+    if isinstance(constraints, list):
+        for i, constraint in enumerate(constraints):
+            if isinstance(constraint, dict):
+                if "type" in constraint:
+                    valid_types = {"structural", "derived"}
+                    if constraint["type"] not in valid_types:
+                        issues.append(
+                            f"Constraint {i} has invalid type '{constraint['type']}'"
+                        )
+                if (
+                    constraint.get("type") == "structural"
+                    and "require" not in constraint
+                ):
+                    issues.append(f"Structural constraint {i} missing 'require' field")
+                if constraint.get("type") == "derived" and "require" not in constraint:
+                    issues.append(f"Derived constraint {i} missing 'require' field")
+            elif not isinstance(constraint, str):
+                issues.append(
+                    f"Constraint {i} should be string or dict, got {type(constraint).__name__}"
+                )
+    elif isinstance(constraints, dict):
+        if "structural" in constraints and not isinstance(
+            constraints["structural"], list
+        ):
+            issues.append("constraints.structural should be a list")
+        if "derived" in constraints and not isinstance(constraints["derived"], list):
+            issues.append("constraints.derived should be a list")
+
+    return issues
+
+
+def _validate_exploration_structure(exploration: dict[str, Any]) -> list[str]:
+    """Validate structure of exploration section."""
+    issues: list[str] = []
+
+    # Known exploration fields
+    known_fields = {
+        "budget",
+        "algorithm",
+        "convergence",
+        "budgets",
+        "parallelism",
+        "max_trials",
+        "timeout",
+        "parallel_trials",
+    }
+    unknown = set(exploration.keys()) - known_fields
+    if unknown:
+        # Just a warning, not critical
+        pass  # Allow unknown fields for extensibility
+
+    # Validate budget if present
+    if "budget" in exploration:
+        budget = exploration["budget"]
+        if isinstance(budget, dict):
+            if "max_trials" in budget and not isinstance(budget["max_trials"], int):
+                issues.append("exploration.budget.max_trials should be integer")
+
+    # Validate convergence if present
+    if "convergence" in exploration:
+        convergence = exploration["convergence"]
+        if isinstance(convergence, dict):
+            if "threshold" in convergence and not isinstance(
+                convergence["threshold"], (int, float)
+            ):
+                issues.append("exploration.convergence.threshold should be numeric")
+
+    return issues
 
 
 def _parse_config_space_format(
@@ -262,6 +607,7 @@ def load_tvl_spec(
     spec_path: str | Path,
     environment: str | None = None,
     validate_constraints: bool = True,
+    validate_schema: bool = True,
     registry_resolver: RegistryResolver | None = None,
 ) -> TVLSpecArtifact:
     """Load and normalize a TVL specification from disk.
@@ -273,12 +619,25 @@ def load_tvl_spec(
         spec_path: Path to the TVL spec file.
         environment: Optional environment overlay key to apply.
         validate_constraints: Whether to compile and validate structural constraints.
+        validate_schema: Whether to perform early schema validation (T-5).
+            When True, validates the TVL spec structure before detailed parsing
+            to catch errors early with clearer error messages.
         registry_resolver: Optional resolver used to materialize registry domains
             into concrete configuration values. If a spec contains a registry
             domain and no resolver is provided, spec loading fails fast.
     """
     path = Path(spec_path).expanduser()
     raw_data = _load_and_parse_yaml(path)
+
+    # Resolve spec-level inheritance (extends) before any other processing
+    raw_data = _resolve_spec_extends(raw_data, path)
+
+    # T-5: Early schema validation before detailed parsing
+    if validate_schema:
+        schema_issues = validate_tvl_schema(raw_data, strict=False)
+        for issue in schema_issues:
+            logger.warning("TVL schema issue in %s: %s", path.name, issue)
+
     resolved = _apply_environment(raw_data, environment)
 
     # Parse TVL 0.9 header (tvl section)
@@ -295,6 +654,9 @@ def load_tvl_spec(
     tvars, config_space, defaults, units = _parse_config_space_format(
         resolved, registry_resolver
     )
+
+    # Extract multi-agent parameter mappings from tvars
+    parameter_agents = _extract_parameter_agents_from_tvars(tvars)
 
     objective_schema = _parse_objectives(resolved)
 
@@ -315,6 +677,22 @@ def load_tvl_spec(
     constraint_wrappers = [
         constraint.to_callable() for constraint in compiled_constraints
     ]
+
+    # Compile derived constraints and add to constraint_wrappers for runtime evaluation
+    if derived_constraints:
+        for dc in derived_constraints:
+            label = f"derived_constraint_{dc.index}"
+            try:
+                compiled_derived = compile_constraint_expression(
+                    dc.require, label=label
+                )
+                constraint_wrappers.append(compiled_derived)
+            except TVLValidationError as exc:
+                # Re-raise with more context about derived constraint
+                raise TVLValidationError(
+                    f"Invalid derived constraint at index {dc.index}: "
+                    f"expression '{dc.require}' is not valid"
+                ) from exc
 
     # Parse exploration section
     budget, algorithm, convergence, exploration_budgets, exploration_parallelism = (
@@ -352,6 +730,7 @@ def load_tvl_spec(
         convergence=convergence,
         exploration_budgets=exploration_budgets,
         exploration_parallelism=exploration_parallelism,
+        parameter_agents=parameter_agents,
     )
 
 
@@ -526,8 +905,12 @@ def _resolve_registry_domain(
 
 def _parse_single_tvar(
     idx: int, decl: dict[str, Any]
-) -> tuple[str, TVarType, str, DomainSpec, Any, str | None]:
-    """Parse a single TVAR declaration and validate its fields."""
+) -> tuple[str, TVarType, str, DomainSpec, Any, str | None, str | None]:
+    """Parse a single TVAR declaration and validate its fields.
+
+    Returns:
+        Tuple of (name, tvar_type, raw_type, domain, default, unit, agent).
+    """
     if not isinstance(decl, dict):
         raise TVLValidationError(f"TVAR declaration at index {idx} must be a mapping")
 
@@ -551,8 +934,9 @@ def _parse_single_tvar(
 
     unit = decl.get("unit") if isinstance(decl.get("unit"), str) else None
     default = decl.get("default")
+    agent = decl.get("agent") if isinstance(decl.get("agent"), str) else None
 
-    return name, tvar_type, raw_type, domain, default, unit
+    return name, tvar_type, raw_type, domain, default, unit, agent
 
 
 def _parse_tvars(
@@ -579,7 +963,9 @@ def _parse_tvars(
     units: dict[str, str] = {}
 
     for idx, decl in enumerate(tvars_section):
-        name, tvar_type, raw_type, domain, default, unit = _parse_single_tvar(idx, decl)
+        name, tvar_type, raw_type, domain, default, unit, agent = _parse_single_tvar(
+            idx, decl
+        )
 
         if unit:
             units[name] = unit
@@ -591,6 +977,7 @@ def _parse_tvars(
             domain=domain,
             default=default,
             unit=unit,
+            agent=agent,
         )
         tvars.append(tvar)
 
@@ -606,6 +993,29 @@ def _parse_tvars(
             defaults[name] = default
 
     return tvars, configuration_space, defaults, units
+
+
+def _extract_parameter_agents_from_tvars(
+    tvars: list[TVarDecl] | None,
+) -> dict[str, str] | None:
+    """Extract parameter-to-agent mappings from TVarDecl objects.
+
+    Args:
+        tvars: List of parsed TVarDecl objects from TVL spec.
+
+    Returns:
+        Dictionary mapping parameter names to agent IDs for parameters
+        that have explicit agent assignments, or None if no agents specified.
+    """
+    if not tvars:
+        return None
+
+    result: dict[str, str] = {}
+    for tvar in tvars:
+        if tvar.agent:
+            result[tvar.name] = tvar.agent
+
+    return result if result else None
 
 
 def _parse_promotion_policy(policy_data: Any) -> PromotionPolicy | None:
@@ -1239,6 +1649,147 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
         else:
             result[key] = copy.deepcopy(value)
     return result
+
+
+def _deep_merge_lists(
+    base: dict[str, Any], overlay: dict[str, Any], list_keys: set[str]
+) -> dict[str, Any]:
+    """Deep merge with list concatenation for specified keys.
+
+    Unlike _deep_merge which replaces lists, this function concatenates lists
+    for specified keys (e.g., safety_constraints, objectives).
+
+    Args:
+        base: Base dictionary to merge into.
+        overlay: Overlay dictionary with values to merge.
+        list_keys: Set of keys where lists should be concatenated rather than replaced.
+
+    Returns:
+        Merged dictionary with lists concatenated for specified keys.
+    """
+    result = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if key in list_keys and isinstance(value, list):
+            # Concatenate lists for inheritance
+            base_list = result.get(key, [])
+            if isinstance(base_list, list):
+                result[key] = base_list + copy.deepcopy(value)
+            else:
+                result[key] = copy.deepcopy(value)
+        elif isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge_lists(result[key], value, list_keys)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
+def _resolve_spec_extends(
+    raw_data: dict[str, Any],
+    spec_path: Path,
+    seen_paths: set[Path] | None = None,
+) -> dict[str, Any]:
+    """Resolve spec-level inheritance via 'extends' key.
+
+    Supports inheriting from another TVL spec file. The base spec is loaded
+    and deep-merged with the current spec. Lists for safety_constraints,
+    objectives, tvars, and constraints are concatenated (not replaced).
+
+    Args:
+        raw_data: Parsed YAML data (raw dictionary).
+        spec_path: Path to the current spec file (for relative path resolution).
+        seen_paths: Set of already-visited paths for cycle detection.
+
+    Returns:
+        Resolved spec with inheritance applied.
+
+    Raises:
+        TVLValidationError: If there's a cycle in the extends chain or
+            the base spec cannot be loaded.
+
+    Example:
+        # child.tvl.yml
+        extends: ./base_safety.tvl.yml
+        tvars:
+          - name: model
+            domain: ["gpt-4o"]
+
+        # The child spec inherits all sections from base_safety.tvl.yml
+        # and can override or extend them.
+    """
+    if seen_paths is None:
+        seen_paths = set()
+
+    extends = raw_data.get("extends")
+    if not extends:
+        return raw_data
+
+    if not isinstance(extends, str):
+        raise TVLValidationError(
+            f"'extends' must be a string path, got {type(extends).__name__}"
+        )
+
+    # Resolve path relative to current spec
+    base_path = (spec_path.parent / extends).resolve()
+
+    # Cycle detection
+    if base_path in seen_paths:
+        cycle_list = " -> ".join(str(p) for p in seen_paths) + f" -> {base_path}"
+        raise TVLValidationError(f"Circular extends detected: {cycle_list}")
+
+    seen_paths.add(spec_path.resolve())
+
+    # Load base spec
+    if not base_path.is_file():
+        raise TVLValidationError(
+            f"Base spec not found: {extends} (resolved to {base_path})"
+        )
+
+    try:
+        base_data = yaml.safe_load(base_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise TVLValidationError(f"Failed to parse base spec {extends}: {exc}") from exc
+
+    if not isinstance(base_data, dict):
+        raise TVLValidationError(f"Base spec {extends} must be a mapping")
+
+    # Recursively resolve base spec's extends
+    resolved_base = _resolve_spec_extends(base_data, base_path, seen_paths)
+
+    # Remove 'extends' from current spec before merging
+    current_data = {k: v for k, v in raw_data.items() if k != "extends"}
+
+    # Keys where lists should be concatenated (inherited + child)
+    list_concat_keys = {
+        "safety_constraints",
+        "objectives",
+        "tvars",
+        # Note: constraints can be list or dict, handle dict case separately
+    }
+
+    # Deep merge with list concatenation for specified keys
+    merged = _deep_merge_lists(resolved_base, current_data, list_concat_keys)
+
+    # Special handling for constraints: if both are lists, concatenate
+    base_constraints = resolved_base.get("constraints")
+    current_constraints = current_data.get("constraints")
+    if isinstance(base_constraints, list) and isinstance(current_constraints, list):
+        merged["constraints"] = base_constraints + current_constraints
+    elif isinstance(base_constraints, dict) and isinstance(current_constraints, dict):
+        # Merge structural and derived separately
+        merged_constraints: dict[str, Any] = {}
+        for section in ("structural", "derived"):
+            base_list = base_constraints.get(section, [])
+            current_list = current_constraints.get(section, [])
+            if isinstance(base_list, list) and isinstance(current_list, list):
+                merged_constraints[section] = base_list + current_list
+            elif current_list:
+                merged_constraints[section] = current_list
+            elif base_list:
+                merged_constraints[section] = base_list
+        merged["constraints"] = merged_constraints
+
+    logger.debug("Resolved spec extends: %s -> %s", spec_path.name, base_path.name)
+    return merged
 
 
 def _translate_expression(expression: str) -> str:

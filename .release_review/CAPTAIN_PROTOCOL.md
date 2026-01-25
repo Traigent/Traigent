@@ -182,6 +182,133 @@ Suggested setup:
 - Create a dedicated branch: `release-review/v0.8.0` (or `release-review/<version>`), based on the target base branch.
 - Configure commit identity: `git config user.name`, `git config user.email`.
 
+## Fresh Tracking File Generation (MANDATORY)
+
+**Problem solved**: Stale tracking files with outdated component lists and legacy evidence from previous releases.
+
+### Rule: Generate Fresh Tracking File Before Every Review
+
+Before starting ANY pre-release review, the captain MUST:
+
+1. **Archive the old tracking file**:
+   ```bash
+   mv .release_review/PRE_RELEASE_REVIEW_TRACKING.md \
+      .release_review/archive/PRE_RELEASE_REVIEW_TRACKING_<previous-version>.md
+   ```
+
+2. **Generate a new timestamped tracking file**:
+   ```bash
+   .venv/bin/python .release_review/automation/generate_tracking.py \
+       --version <VERSION> \
+       --output .release_review/PRE_RELEASE_REVIEW_TRACKING_<VERSION>_<YYYYMMDD>.md
+   ```
+
+3. **Create symlink for canonical path**:
+   ```bash
+   ln -sf PRE_RELEASE_REVIEW_TRACKING_<VERSION>_<YYYYMMDD>.md \
+      .release_review/PRE_RELEASE_REVIEW_TRACKING.md
+   ```
+
+### Tracking File Naming Convention
+
+| File | Purpose |
+|------|---------|
+| `PRE_RELEASE_REVIEW_TRACKING_v0.10.0_20260110.md` | Fresh tracking file with timestamp |
+| `PRE_RELEASE_REVIEW_TRACKING.md` | Symlink to current active file |
+| `archive/PRE_RELEASE_REVIEW_TRACKING_v0.9.0.md` | Archived previous version |
+
+### What the Generator Script Does
+
+The `generate_tracking.py` script:
+
+1. **Scans `traigent/` directory** - Lists all Python modules and files
+2. **Scans `tests/` directory** - Maps test files to components
+3. **Calculates priority scores** - Based on file count, complexity, recent changes
+4. **Creates component matrix** - With fresh `"format":"standard"` evidence placeholders
+5. **Includes file manifest** - SHA256 hashes of all files for audit trail
+
+### Generated File Structure
+
+```markdown
+# Pre-Release Review Tracking (Traigent SDK <VERSION>)
+
+**Generated**: <ISO-8601 timestamp>
+**Generator**: generate_tracking.py v1.0
+**Baseline commit**: <SHA>
+
+## File Manifest (traigent/)
+
+| Module | Files | Lines | Last Modified | SHA256 |
+|--------|-------|-------|---------------|--------|
+| traigent/core/ | 12 | 4,521 | 2026-01-10 | abc123... |
+| traigent/integrations/ | 45 | 12,345 | 2026-01-09 | def456... |
+| ... | ... | ... | ... | ... |
+
+## Test Coverage Mapping
+
+| Component | Test Files | Test Count |
+|-----------|------------|------------|
+| traigent/core/ | tests/unit/core/*.py | 520 |
+| traigent/integrations/ | tests/unit/integrations/*.py | 1,197 |
+| ... | ... | ... |
+
+## SDK Runtime Components
+
+| Component | Priority | Files | Scope | Status | Evidence |
+|-----------|----------|-------|-------|--------|----------|
+| ... (fresh entries with empty evidence) |
+```
+
+### Evidence Format (Standard)
+
+All new entries MUST use `"format":"standard"`:
+
+```json
+{
+  "format": "standard",
+  "generated": "2026-01-10T09:45:00Z",
+  "commits": [],
+  "tests": {
+    "command": null,
+    "status": "NOT_RUN",
+    "passed": null,
+    "total": null
+  },
+  "models": null,
+  "reviewer": null,
+  "timestamp": null,
+  "followups": null,
+  "accepted_risks": null,
+  "file_hashes": ["abc123...", "def456..."]
+}
+```
+
+### Validation Before Proceeding
+
+Captain MUST verify the generated file:
+
+1. **File count matches reality**:
+   ```bash
+   find traigent/ -name "*.py" | wc -l  # Should match manifest
+   ```
+
+2. **No missing modules**:
+   ```bash
+   diff <(ls -d traigent/*/) <(grep "traigent/" tracking.md | cut -d'|' -f2)
+   ```
+
+3. **Timestamp is current** (within last hour):
+   ```bash
+   head -5 .release_review/PRE_RELEASE_REVIEW_TRACKING.md | grep "Generated:"
+   ```
+
+### Why This Matters
+
+- **Prevents stale reviews**: No more reviewing against outdated component lists
+- **Audit trail**: Timestamp in filename proves when review started
+- **File-level tracking**: SHA256 hashes prove exactly which code was reviewed
+- **Reproducibility**: Anyone can verify what was reviewed by checking file hashes
+
 ## Orchestration Constraints (Hard Rules)
 
 1. **Max 3 concurrent threads**. No more.
