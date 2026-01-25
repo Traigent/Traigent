@@ -64,16 +64,40 @@ class InjectionMode(str, Enum):
 
     Each mode provides a different way to inject configuration into optimized functions:
 
-    - CONTEXT: Uses Python's contextvars for thread-safe configuration
+    - CONTEXT: Uses Python's contextvars for thread-safe configuration (default)
     - PARAMETER: Adds explicit configuration parameter to function signature
-    - ATTRIBUTE: Stores configuration as function attribute
-    - SEAMLESS: Modifies variable assignments in function source code
+    - SEAMLESS: Modifies variable assignments in function source code (zero code change)
+
+    Note:
+        ATTRIBUTE mode was removed in v2.x due to thread-safety issues with parallel
+        trials. Use CONTEXT (recommended) or SEAMLESS instead.
     """
 
     CONTEXT = "context"
     PARAMETER = "parameter"
-    ATTRIBUTE = "attribute"
     SEAMLESS = "seamless"
+
+
+def is_traigent_disabled() -> bool:
+    """Check if Traigent is disabled via environment variable.
+
+    When TRAIGENT_DISABLED=1 (or 'true'/'yes'), the @traigent.optimize decorator
+    becomes a pass-through that returns the original function unchanged.
+
+    This allows production deployments to disable Traigent without code changes.
+
+    Returns:
+        True if Traigent is disabled, False otherwise.
+
+    Example:
+        # In production, set TRAIGENT_DISABLED=1 to disable all optimization
+        >>> import os
+        >>> os.environ["TRAIGENT_DISABLED"] = "1"
+        >>> is_traigent_disabled()
+        True
+    """
+    val = os.getenv("TRAIGENT_DISABLED", "").lower()
+    return val in ("1", "true", "yes")
 
 
 @dataclass
