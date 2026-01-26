@@ -1272,6 +1272,34 @@ def optimize(
         Cost estimates are approximations; actual billing is determined by your LLM provider.
         See DISCLAIMER.md for full liability terms.
 
+    Important - Configuration Access:
+        Traigent does NOT automatically override function parameters. The default
+        injection_mode="context" stores trial configuration in context variables.
+        You MUST explicitly fetch the config inside your function using
+        ``traigent.get_trial_config()``.
+
+        WRONG - relying on parameter defaults to be overridden::
+
+            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            def my_func(model: str = "gpt-4"):  # model will ALWAYS be "gpt-4"!
+                return call_llm(model=model)
+
+        CORRECT - explicitly fetch trial config::
+
+            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            def my_func():
+                cfg = traigent.get_trial_config()  # Gets trial-specific config
+                return call_llm(model=cfg["model"])
+
+        The ``get_trial_config()`` function raises ``OptimizationStateError`` if called
+        outside an active optimization trial. For code that runs both during and after
+        optimization, use a try/except pattern::
+
+            try:
+                cfg = traigent.get_trial_config()
+            except traigent.OptimizationStateError:
+                cfg = traigent.get_config()  # Post-optimization: uses best_config
+
     Returns:
         OptimizedFunction: Wrapper that adds optimization methods to your function:
             - optimize(): Run optimization and return results
