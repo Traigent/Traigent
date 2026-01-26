@@ -1,85 +1,67 @@
-"""Test backward compatibility for injection mode renaming from 'decorator' to 'attribute'."""
+"""Test backward compatibility for removed injection modes.
 
-import warnings
+Both 'decorator' and 'attribute' injection modes have been removed in v2.x.
+This module verifies that using these modes raises ConfigurationError with
+migration guidance directing users to 'context' or 'seamless' modes.
+"""
 
 import pytest
 
 from traigent.api.decorators import optimize
 from traigent.config.types import InjectionMode
-from traigent.core.optimized_function import OptimizedFunction
+from traigent.utils.exceptions import ConfigurationError
 
 
-class TestInjectionModeBackwardCompatibility:
-    """Test that 'decorator' injection mode still works but shows deprecation warning."""
+class TestRemovedInjectionModes:
+    """Test that removed injection modes raise ConfigurationError with migration guide."""
 
-    def test_decorator_mode_shows_deprecation_warning(self):
-        """Test that using 'decorator' injection mode shows deprecation warning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-
-            @optimize(
-                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
-                injection_mode="decorator",  # Old name
-            )
-            def test_func(text: str) -> str:
-                # Access config via function attribute
-                config = getattr(test_func, "current_config", {})
-                return f"{config.get('model', 'default')} response: {text}"
-
-            # Should have gotten a deprecation warning
-            assert len(w) == 1
-            assert "deprecated" in str(w[0].message).lower()
-            assert "attribute" in str(w[0].message)
-
-            # Function should still work
-            assert isinstance(test_func, OptimizedFunction)
-
-    def test_decorator_mode_still_functions(self):
-        """Test that 'decorator' mode still works correctly."""
-
-        @optimize(
-            configuration_space={"temperature": [0.1, 0.5, 0.9]},
-            injection_mode="decorator",  # Old name
-        )
-        def test_func(query: str) -> str:
-            config = getattr(test_func, "current_config", {})
-            temp = config.get("temperature", 0.7)
-            return f"Temperature: {temp}"
-
-        # Set a config
-        test_func.set_config({"temperature": 0.3})
-
-        # Should work correctly
-        result = test_func("test")
-        assert "Temperature: 0.3" in result
-
-    def test_attribute_mode_works_without_warning(self):
-        """Test that using 'attribute' injection mode works without warning."""
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+    def test_decorator_mode_raises_configuration_error(self):
+        """Test that using 'decorator' injection mode raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
 
             @optimize(
                 configuration_space={"model": ["gpt-3.5", "gpt-4"]},
-                injection_mode="attribute",  # New name
+                injection_mode="decorator",
             )
             def test_func(text: str) -> str:
-                config = getattr(test_func, "current_config", {})
-                return f"{config.get('model', 'default')} response: {text}"
+                return text
 
-            # Should have no warnings
-            assert len(w) == 0
+        error_message = str(exc_info.value)
+        assert "decorator" in error_message
+        assert "removed" in error_message.lower()
+        assert "context" in error_message  # Migration suggestion
+        assert "seamless" in error_message  # Alternative suggestion
 
-            # Function should work
-            assert isinstance(test_func, OptimizedFunction)
+    def test_attribute_mode_raises_configuration_error(self):
+        """Test that using 'attribute' injection mode raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
 
-    def test_injection_mode_enum(self):
-        """Test that InjectionMode enum has correct values."""
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                injection_mode="attribute",
+            )
+            def test_func(text: str) -> str:
+                return text
+
+        error_message = str(exc_info.value)
+        assert "attribute" in error_message
+        assert "removed" in error_message.lower()
+        assert "context" in error_message  # Migration suggestion
+        assert "seamless" in error_message  # Alternative suggestion
+
+
+class TestInjectionModeEnum:
+    """Test that InjectionMode enum has correct values (without removed modes)."""
+
+    def test_injection_mode_enum_values(self):
+        """Test that InjectionMode enum has only supported values."""
         assert InjectionMode.CONTEXT.value == "context"
         assert InjectionMode.PARAMETER.value == "parameter"
-        assert InjectionMode.ATTRIBUTE.value == "attribute"
         assert InjectionMode.SEAMLESS.value == "seamless"
 
-        # Ensure 'decorator' is not in the enum
+        # Removed modes should not be in the enum
+        with pytest.raises(ValueError):
+            InjectionMode("attribute")
         with pytest.raises(ValueError):
             InjectionMode("decorator")
 
@@ -88,18 +70,58 @@ class TestInjectionModeBackwardCompatibility:
 
         @optimize(
             configuration_space={"model": ["gpt-3.5", "gpt-4"]},
-            injection_mode=InjectionMode.ATTRIBUTE,
+            injection_mode=InjectionMode.CONTEXT,
         )
         def test_func(text: str) -> str:
-            config = getattr(test_func, "current_config", {})
-            return f"{config.get('model', 'default')} response: {text}"
+            return text
 
-        assert isinstance(test_func, OptimizedFunction)
-        # Check that the internal injection mode was properly set
+        assert hasattr(test_func, "optimize")
         assert hasattr(test_func, "injection_mode")
 
-    def test_all_injection_modes_via_enum(self):
-        """Test that all injection modes can be specified via enum."""
+
+class TestSupportedInjectionModes:
+    """Test that supported injection modes still work correctly."""
+
+    def test_context_mode_works(self):
+        """Test that context injection mode works correctly."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            injection_mode="context",
+        )
+        def test_func(text: str) -> str:
+            return text
+
+        assert hasattr(test_func, "optimize")
+
+    def test_seamless_mode_works(self):
+        """Test that seamless injection mode works correctly."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            injection_mode="seamless",
+        )
+        def test_func(text: str) -> str:
+            model = "default"
+            return f"{model}: {text}"
+
+        assert hasattr(test_func, "optimize")
+
+    def test_parameter_mode_works(self):
+        """Test that parameter injection mode works correctly."""
+
+        @optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+            injection_mode="parameter",
+            config_param="config",
+        )
+        def test_func(text: str, config) -> str:
+            return text
+
+        assert hasattr(test_func, "optimize")
+
+    def test_all_supported_injection_modes_via_enum(self):
+        """Test that all supported injection modes can be specified via enum."""
 
         # Context mode
         @optimize(
@@ -118,14 +140,6 @@ class TestInjectionModeBackwardCompatibility:
         def param_func(x: str, config) -> str:
             return x
 
-        # Attribute mode
-        @optimize(
-            configuration_space={"temp": [0.1, 0.5]},
-            injection_mode=InjectionMode.ATTRIBUTE,
-        )
-        def attr_func(x: str) -> str:
-            return x
-
         # Seamless mode
         @optimize(
             configuration_space={"temp": [0.1, 0.5]},
@@ -134,8 +148,7 @@ class TestInjectionModeBackwardCompatibility:
         def seamless_func(x: str) -> str:
             return x
 
-        # All should be OptimizedFunction instances
+        # All should have optimize method
         assert all(
-            isinstance(f, OptimizedFunction)
-            for f in [context_func, param_func, attr_func, seamless_func]
+            hasattr(f, "optimize") for f in [context_func, param_func, seamless_func]
         )

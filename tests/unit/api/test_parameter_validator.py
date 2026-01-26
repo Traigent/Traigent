@@ -57,10 +57,10 @@ class TestParameterValidator:
 
     def test_validate_injection_mode_enum(self):
         """Test validation of injection mode enum values."""
+        # Note: ATTRIBUTE mode was removed in v2.x
         valid_modes = [
             InjectionMode.CONTEXT,
             InjectionMode.PARAMETER,
-            InjectionMode.ATTRIBUTE,
             InjectionMode.SEAMLESS,
         ]
 
@@ -71,7 +71,8 @@ class TestParameterValidator:
 
     def test_validate_injection_mode_string(self):
         """Test validation of injection mode string values."""
-        valid_strings = ["context", "parameter", "attribute", "seamless"]
+        # Note: "attribute" mode was removed in v2.x
+        valid_strings = ["context", "parameter", "seamless"]
 
         for mode_str in valid_strings:
             # Should not raise exception - validate returns None on success
@@ -242,11 +243,11 @@ class TestParameterValidator:
 
     def test_normalize_injection_mode_string(self):
         """Test normalization of string injection modes."""
-        string_modes = ["context", "parameter", "attribute", "seamless"]
+        # Note: "attribute" mode was removed in v2.x
+        string_modes = ["context", "parameter", "seamless"]
         expected_enums = [
             InjectionMode.CONTEXT,
             InjectionMode.PARAMETER,
-            InjectionMode.ATTRIBUTE,
             InjectionMode.SEAMLESS,
         ]
 

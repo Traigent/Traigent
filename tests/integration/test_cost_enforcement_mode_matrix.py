@@ -227,10 +227,10 @@ def patch_backend(monkeypatch):
 
 
 # All injection modes to test
+# Note: ATTRIBUTE mode was removed in v2.x due to thread-safety issues
 INJECTION_MODES = [
     InjectionMode.CONTEXT,
     InjectionMode.PARAMETER,
-    InjectionMode.ATTRIBUTE,
     # SEAMLESS requires source code rewriting, skip for unit test
 ]
 
@@ -340,10 +340,10 @@ class TestCostEnforcerModeMatrix:
         [
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.CONTEXT),
             (ExecutionMode.CLOUD, InjectionMode.PARAMETER),
-            (ExecutionMode.HYBRID, InjectionMode.ATTRIBUTE),
+            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),
             (ExecutionMode.STANDARD, InjectionMode.CONTEXT),
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
-            (ExecutionMode.CLOUD, InjectionMode.ATTRIBUTE),
+            (ExecutionMode.CLOUD, InjectionMode.CONTEXT),
         ],
     )
     @pytest.mark.asyncio

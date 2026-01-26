@@ -1,9 +1,11 @@
 """Decorator-level injection mode coverage for CostEnforcer binding.
 
 These tests prove that @traigent.optimize actually injects configuration via
-each supported mode (context, parameter, attribute) and keeps CostEnforcer
+each supported mode (context, parameter) and keeps CostEnforcer
 invariants clean while doing so. This addresses the evidence gap for
 decorator-level injection coverage.
+
+Note: Attribute injection mode was removed in v2.x due to thread-safety issues.
 """
 
 from __future__ import annotations
@@ -47,20 +49,6 @@ def _parameter_injected_function(cfg=None) -> str:
     return cfg.get("mode_tag", "missing")
 
 
-@optimize(
-    configuration_space={"mode_tag": ["attribute-mode"]},
-    objectives=["accuracy"],
-    injection={"injection_mode": "attribute"},
-    mock={"enabled": True},
-)
-def _attribute_injected_function() -> str:
-    """Return the injected config marker via function attribute."""
-    # Access via wrapper attribute populated by AttributeBasedProvider
-    return getattr(_attribute_injected_function, "current_config", {}).get(
-        "mode_tag", "missing"
-    )
-
-
 class TestInjectionModes:
     """Decorator-level injection mode coverage."""
 
@@ -76,11 +64,4 @@ class TestInjectionModes:
         _parameter_injected_function.set_config({"mode_tag": "parameter-mode"})
         result = _parameter_injected_function()
         assert result == "parameter-mode"
-        _assert_invariants_hold()
-
-    def test_attribute_injection(self) -> None:
-        """Attribute mode exposes config via function attribute."""
-        _attribute_injected_function.set_config({"mode_tag": "attribute-mode"})
-        result = _attribute_injected_function()
-        assert result == "attribute-mode"
         _assert_invariants_hold()

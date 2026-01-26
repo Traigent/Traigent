@@ -342,12 +342,12 @@ class TestOptimizedFunctionIntegration:
 
         assert isinstance(func_param, OptimizedFunction)
 
-        # Decorator injection
-        @optimize(injection_mode="attribute", configuration_space={"x": [1, 2, 3]})
-        def func_decorator(x):
+        # Seamless injection
+        @optimize(injection_mode="seamless", configuration_space={"x": [1, 2, 3]})
+        def func_seamless(x):
             return x
 
-        assert isinstance(func_decorator, OptimizedFunction)
+        assert isinstance(func_seamless, OptimizedFunction)
 
     def test_framework_override_configuration(self):
         """Test framework override configuration."""
@@ -598,11 +598,14 @@ class TestJSRuntimeInjectionModeValidation:
             def js_func(x: int) -> int:
                 return x
 
-    def test_js_runtime_rejects_attribute_injection_mode(self):
-        """Test that runtime='node' rejects injection_mode='attribute'."""
+    def test_js_runtime_with_removed_attribute_mode(self):
+        """Test that injection_mode='attribute' raises ConfigurationError (removed mode)."""
         from traigent.api.decorators import ExecutionOptions, InjectionOptions
+        from traigent.utils.exceptions import ConfigurationError
 
-        with pytest.raises(ValueError, match="not compatible with runtime='node'"):
+        # Attribute mode was removed in v2.x - should raise ConfigurationError
+        # before JS runtime validation even kicks in
+        with pytest.raises(ConfigurationError, match="removed"):
 
             @optimize(
                 configuration_space={"x": [1, 2, 3]},
@@ -668,11 +671,12 @@ class TestJSRuntimeInjectionModeValidation:
                 return x
 
     def test_python_runtime_allows_all_injection_modes(self):
-        """Test that runtime='python' allows all injection modes."""
+        """Test that runtime='python' allows all supported injection modes."""
         from traigent.api.decorators import ExecutionOptions, InjectionOptions
 
         # Test non-parameter modes (don't require special function signature)
-        for mode in ["context", "attribute", "seamless"]:
+        # Note: "attribute" mode was removed in v2.x
+        for mode in ["context", "seamless"]:
             # Should not raise for Python runtime
             @optimize(
                 configuration_space={"x": [1, 2, 3]},
