@@ -1275,30 +1275,25 @@ def optimize(
     Important - Configuration Access:
         Traigent does NOT automatically override function parameters. The default
         injection_mode="context" stores trial configuration in context variables.
-        You MUST explicitly fetch the config inside your function using
-        ``traigent.get_trial_config()``.
+        To access trial config, use ``traigent.get_trial_config()`` or the simpler
+        ``traigent.get_config()`` which works both during and after optimization.
 
         WRONG - relying on parameter defaults to be overridden::
 
             @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
-            def my_func(model: str = "gpt-4"):  # model will ALWAYS be "gpt-4"!
+            def my_func(model: str = "gpt-4"):  # model will stay "gpt-4"!
                 return call_llm(model=model)
 
         CORRECT - explicitly fetch trial config::
 
             @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
             def my_func():
-                cfg = traigent.get_trial_config()  # Gets trial-specific config
+                cfg = traigent.get_config()  # Works during trials and after apply_best_config
                 return call_llm(model=cfg["model"])
 
-        The ``get_trial_config()`` function raises ``OptimizationStateError`` if called
-        outside an active optimization trial. For code that runs both during and after
-        optimization, use a try/except pattern::
-
-            try:
-                cfg = traigent.get_trial_config()
-            except traigent.OptimizationStateError:
-                cfg = traigent.get_config()  # Post-optimization: uses best_config
+        Note: ``get_trial_config()`` raises ``OptimizationStateError`` if called
+        outside an active trial - use it when you want strict validation.
+        ``get_config()`` is the recommended approach for most use cases.
 
     Returns:
         OptimizedFunction: Wrapper that adds optimization methods to your function:
