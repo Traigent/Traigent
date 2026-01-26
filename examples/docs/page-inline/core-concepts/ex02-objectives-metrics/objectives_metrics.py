@@ -35,7 +35,10 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Custom metric function
 # Create dataset file

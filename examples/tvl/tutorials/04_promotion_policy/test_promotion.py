@@ -11,7 +11,7 @@ Key concepts:
 - Chance constraints: Probabilistic safety guarantees
 - BH correction: Controls false discovery rate
 
-Run with: python test_promotion.py
+Run with (from repo root): .venv/bin/python examples/tvl/tutorials/04_promotion_policy/test_promotion.py
 """
 
 import random

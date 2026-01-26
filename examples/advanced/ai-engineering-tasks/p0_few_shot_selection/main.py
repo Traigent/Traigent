@@ -15,7 +15,7 @@ Key Goals Demonstrated:
 - Maintain <100ms selection latency with caching
 - Discover task-adaptive selection strategies
 
-Run with: python main.py
+Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tasks/p0_few_shot_selection/main.py
 """
 
 import asyncio
@@ -58,6 +58,9 @@ from selection_config import (
     EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE,
     create_selection_config,
 )
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 console = Console()
 

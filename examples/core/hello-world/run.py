@@ -81,8 +81,11 @@ except ImportError:  # pragma: no cover - support IDE execution paths
         except IndexError:
             continue
     traigent = importlib.import_module("traigent")
-from traigent.api.types import OptimizationResult
-from traigent.utils.error_handler import APIKeyError
+from traigent.api.types import OptimizationResult  # noqa: E402
+from traigent.utils.error_handler import APIKeyError  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Uncomment to enable verbose logging
 # traigent.configure(logging_level="DEBUG")

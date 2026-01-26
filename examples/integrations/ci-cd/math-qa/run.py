@@ -15,8 +15,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
 from math_qa import solve_arithmetic
 
-from traigent.evaluators.base import Dataset
-from traigent.evaluators.local import LocalEvaluator
+from traigent.evaluators.base import Dataset  # noqa: E402
+from traigent.evaluators.local import LocalEvaluator  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 
 def load_saved_config():

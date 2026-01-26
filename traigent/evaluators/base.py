@@ -11,6 +11,7 @@ import math
 import os
 import time
 from abc import ABC, abstractmethod
+from concurrent.futures import Executor
 from collections.abc import Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
@@ -27,6 +28,7 @@ from traigent.evaluators.dataset_registry import (
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
@@ -647,16 +649,20 @@ class BaseEvaluator(ABC):
         self._metric_registry[name] = func
         logger.debug(f"Registered custom metric: {name}")
 
-    def _get_ragas_config(self) -> RagasConfig:
+    def _get_ragas_config(self) -> RagasConfig | None:
         column_map = None
         if self.config.get("ragas_column_map"):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
+        llm = self.config.get("ragas_llm")
+        embeddings = self.config.get("ragas_embeddings")
+        if column_map is None and llm is None and embeddings is None:
+            return None
         return RagasConfig(
             column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+            llm=llm,
+            embeddings=embeddings,
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
@@ -1034,36 +1040,48 @@ class BaseEvaluator(ABC):
                             if trial_token is not None:
                                 trial_context.reset(trial_token)
 
-                    loop = asyncio.get_event_loop()
-                    temporary_executor = None
-                    submit_executor = executor
-                    if submit_executor is None:
-                        from concurrent.futures import ThreadPoolExecutor
+                    if (
+                        executor is None
+                        and is_mock_llm()
+                        and getattr(self, "max_workers", 1) == 1
+                    ):
+                        # Avoid executor overhead in mock + sequential runs.
+                        output = call_with_config()
+                    else:
+                        loop = asyncio.get_event_loop()
+                        temporary_executor = None
+                        submit_executor = executor
+                        if submit_executor is None:
+                            from concurrent.futures import ThreadPoolExecutor
 
-                        temporary_executor = ThreadPoolExecutor(max_workers=1)
-                        submit_executor = temporary_executor
+                            temporary_executor = ThreadPoolExecutor(max_workers=1)
+                            submit_executor = temporary_executor
 
-                    try:
-                        future = loop.run_in_executor(submit_executor, call_with_config)
-                        if self.timeout:
-                            done, _ = await asyncio.wait(
-                                {future},
-                                timeout=self.timeout,
-                                return_when=asyncio.FIRST_COMPLETED,
+                        try:
+                            future = loop.run_in_executor(
+                                submit_executor, call_with_config
                             )
-                            if not done:
-                                future.cancel()
-                                error_msg = (
-                                    f"Function call timed out after {self.timeout}s"
+                            if self.timeout:
+                                done, _ = await asyncio.wait(
+                                    {future},
+                                    timeout=self.timeout,
+                                    return_when=asyncio.FIRST_COMPLETED,
                                 )
-                                logger.warning(error_msg)
-                                return None, error_msg
-                            output = next(iter(done)).result()
-                        else:
-                            output = await future
-                    finally:
-                        if temporary_executor is not None:
-                            temporary_executor.shutdown(wait=False, cancel_futures=True)
+                                if not done:
+                                    future.cancel()
+                                    error_msg = (
+                                        f"Function call timed out after {self.timeout}s"
+                                    )
+                                    logger.warning(error_msg)
+                                    return None, error_msg
+                                output = next(iter(done)).result()
+                            else:
+                                output = await future
+                        finally:
+                            if temporary_executor is not None:
+                                temporary_executor.shutdown(
+                                    wait=False, cancel_futures=True
+                                )
 
             # Apply mock delay if enabled (simulates LLM latency for trace visibility)
             await self._apply_mock_delay_if_enabled()
@@ -1107,6 +1125,7 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         example: EvaluationExample,
         index: int,
+        executor: Executor | None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
     ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
@@ -1119,7 +1138,7 @@ class BaseEvaluator(ABC):
 
         with self._example_trace_context(example_id, index, example) as span:
             output, error = await self._execute_function(
-                func, config, example.input_data, executor=None
+                func, config, example.input_data, executor=executor
             )
             execution_time = time.time() - start_time
 
@@ -1156,32 +1175,49 @@ class BaseEvaluator(ABC):
         example_results: list[ExampleResult | None] = []
         consumed = 0
         exhausted = False
+        executor = None
+        temporary_executor = None
 
-        for i, example in enumerate(dataset.examples):
-            if sample_lease and not sample_lease.try_take(1):
-                exhausted = True
-                break
+        if not is_mock_llm():
+            from concurrent.futures import ThreadPoolExecutor
 
-            if detailed:
-                result = await self._evaluate_single_detailed(
-                    func,
-                    config,
-                    example,
-                    i,
-                    executor=None,
-                    progress_callback=progress_callback,
-                )
-                example_results.append(result)
-                outputs.append(result.actual_output)
-                errors.append(result.error_message)
-            else:
-                output, error = await self._evaluate_single_non_detailed(
-                    func, config, example, i, progress_callback
-                )
-                outputs.append(output)
-                errors.append(error)
+            temporary_executor = ThreadPoolExecutor(max_workers=1)
+            executor = temporary_executor
 
-            consumed += 1
+        try:
+            for i, example in enumerate(dataset.examples):
+                if sample_lease and not sample_lease.try_take(1):
+                    exhausted = True
+                    break
+
+                if detailed:
+                    result = await self._evaluate_single_detailed(
+                        func,
+                        config,
+                        example,
+                        i,
+                        executor=executor,
+                        progress_callback=progress_callback,
+                    )
+                    example_results.append(result)
+                    outputs.append(result.actual_output)
+                    errors.append(result.error_message)
+                else:
+                    output, error = await self._evaluate_single_non_detailed(
+                        func,
+                        config,
+                        example,
+                        i,
+                        executor,
+                        progress_callback,
+                    )
+                    outputs.append(output)
+                    errors.append(error)
+
+                consumed += 1
+        finally:
+            if temporary_executor is not None:
+                temporary_executor.shutdown(wait=True, cancel_futures=True)
 
         return outputs, errors, example_results, consumed, exhausted
 

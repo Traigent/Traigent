@@ -79,7 +79,6 @@ def apply_saved_config(path: Path) -> Callable[[F], F]:
     },
     eval_dataset="customer_support.jsonl",
     objectives=["cost", "accuracy"],
-    save_config=str(CONFIG_PATH),
 )
 def customer_support_agent(query: str) -> str:
     """Handle a support query using parameters injected by Traigent."""
@@ -120,5 +119,15 @@ def production_support_agent(query: str) -> str:
 
 
 if __name__ == "__main__":
-    print(customer_support_agent("How do I reset my password?"))
-    print(production_support_agent("How quickly can I upgrade my plan?"))
+    import asyncio
+
+    async def optimize_and_save() -> None:
+        results = await customer_support_agent.optimize(
+            algorithm="random",
+            max_trials=10,
+            random_seed=42,
+        )
+        CONFIG_PATH.write_text(json.dumps(results.best_config, indent=2))
+
+    asyncio.run(optimize_and_save())
+    print(production_support_agent("How do I reset my password?"))

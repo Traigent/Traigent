@@ -566,6 +566,16 @@ class SessionOperations:
             Final session results
         """
         self._validate_non_empty_string(session_id, "session_id")
+        if is_backend_offline():
+            logger.debug("Backend offline: skipping hybrid session finalization")
+            with self.client._active_sessions_lock:
+                self.client._active_sessions.pop(session_id, None)
+            self.client._revoke_security_session(session_id)
+            return {
+                "session_id": session_id,
+                "finalized_via_api": False,
+                "offline": True,
+            }
         if not AIOHTTP_AVAILABLE:
             raise CloudServiceError("aiohttp not available")
 
@@ -630,7 +640,7 @@ class SessionOperations:
 
         # Try to finalize via backend API endpoint (POST /sessions/{id}/finalize)
         finalized_via_api = False
-        if mapping:
+        if not is_backend_offline() and mapping:
             try:
                 finalized_via_api = await self._finalize_session_via_api(
                     session_id, mapping.experiment_run_id
@@ -694,6 +704,9 @@ class SessionOperations:
         Returns:
             True if successfully finalized via API, False otherwise
         """
+        if is_backend_offline():
+            logger.debug("Backend offline: skipping API finalization")
+            return False
         if not AIOHTTP_AVAILABLE:
             logger.debug("aiohttp not available, skipping API finalization")
             return False

@@ -33,7 +33,10 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.api.types import OptimizationResult
+from traigent.api.types import OptimizationResult  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "structured-output-json"
 if MOCK:
