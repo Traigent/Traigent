@@ -1,556 +1,280 @@
-# 🚀 Welcome to Traigent SDK - Your AI Optimization Journey Starts Here!
+# Traigent Walkthrough Examples
 
-I'll walk you through Traigent SDK step-by-step, as if you're completely new to it. Traigent is a **zero-code-change optimization platform** that automatically finds the best AI configuration for your specific use case. Think of it as an intelligent tuner that tests different AI models and settings to maximize performance while minimizing costs.
+Simple, clean examples showing how to use Traigent for LLM optimization.
 
----
+## Requirements
 
-## 📖 Chapter 1: Understanding What Traigent Does
-
-### The Core Problem Traigent Solves
-
-When building AI applications, you face countless decisions:
-
-- Which model? (GPT-4, GPT-3.5, Claude, etc.)
-- What temperature? (0.0 for factual, 0.9 for creative)
-- How many retrieval results? (k=3 for speed, k=10 for thoroughness)
-- What prompt style works best?
-
-**Traigent automatically tests all these combinations** to find what works best for YOUR specific task, without you changing your existing code!
-
-### The Magic: Tuned Variables
-
-Traigent identifies **Tuned Variables** - parameters that affect your AI's behavior and can be optimized:
-
-- ✅ **Model selection** (`gpt-4` vs `gpt-3.5-turbo`)
-- ✅ **Temperature** (creativity level)
-- ✅ **Token limits** (response length)
-- ✅ **Retrieval depth** (RAG k parameter)
-
-### 🧪 Try Example 1: See Traigent in Action
-
-Run the simple optimization example to see how Traigent tests different configurations.
-
----
-
-## 📖 Chapter 2: Installation & Setup
-
-### Step 1: Install Traigent
+Install Traigent with integrations to run all examples:
 
 ```bash
-# Clone the repository (recommended for examples)
-git clone https://github.com/Traigent/Traigent.git
-cd Traigent
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install Traigent with all integrations
-pip install -r requirements/requirements.txt
-pip install -r requirements/requirements-integrations.txt
-pip install -e .
+pip install traigent[integrations]
 ```
 
-### Step 2: Verify Installation
+This includes:
+
+- `langchain`, `langchain-openai`, `langchain-community` - LLM framework
+- `faiss-cpu` - Vector search for RAG examples
+- `openai`, `anthropic` - LLM providers
+
+## Quick Start
 
 ```bash
-# Quick test with mock mode (no API keys needed!)
-TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
+# Mock examples - no API keys needed
+python walkthrough/examples/mock/01_tuning_qa.py
+
+# Real examples - requires OpenAI API key
+export OPENAI_API_KEY="your-key"
+python walkthrough/examples/real/01_tuning_qa.py
 ```
 
-You should see optimization results showing different configurations being tested!
-Note: mock mode uses canned responses, so accuracy metrics are illustrative and may not match expected outputs.
+Check your environment with `python walkthrough/examples/utils/check_environment.py`.
 
----
-
-## 📖 Chapter 3: Your First Traigent Optimization
-
-### The Simplest Example - Zero Code Changes!
-
-Here's your existing code:
-
-```python
-# your_existing_code.py
-from langchain_openai import ChatOpenAI
-
-def answer_question(question: str) -> str:
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-    response = llm.invoke(f"Answer this question concisely: {question}")
-    return str(response.content)
-```
-
-Now add Traigent optimization - **your code stays exactly the same**:
-
-```python
-import json
-import traigent
-
-@traigent.optimize(
-    eval_dataset="questions.jsonl",  # Your test questions
-    objectives=["accuracy", "cost"],  # What to optimize
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.1, 0.5, 0.9]
-    }
-)
-def answer_question(question: str) -> str:
-    # EXACT SAME CODE - NO CHANGES!
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-    response = llm.invoke(f"Answer this question concisely: {question}")
-    return str(response.content)
-```
-
-### Create Your Evaluation Dataset
-
-Create `questions.jsonl`:
-
-```json
-{"input": {"question": "What is 2+2?"}, "expected_output": "4"}
-{"input": {"question": "Capital of France?"}, "expected_output": "Paris"}
-{"input": {"question": "What is machine learning?"}, "expected_output": "A method where computers learn from data"}
-```
-
-### Run Optimization
-
-```python
-import asyncio
-
-async def main():
-    # Traigent tests different models and temperatures
-    results = await answer_question.optimize(max_trials=10)
-
-    print(f"✨ Best configuration found:")
-    print(f"   Model: {results.best_config['model']}")
-    print(f"   Temperature: {results.best_config['temperature']}")
-    print(f"   Accuracy: {results.best_metrics['accuracy']:.2%}")
-    print(f"   Cost per call: ${results.best_metrics['cost']:.6f}")
-
-asyncio.run(main())
-```
-
-### 🧪 Try Example 2: Zero Code Changes Demo
-
-Experience how Traigent optimizes your existing code without any modifications!
-
----
-
-## 📖 Chapter 4: Understanding Traigent's Two Modes
-
-### Mode 1: Seamless Mode (Default) - Zero Code Changes
-
-Traigent **automatically intercepts** your LLM calls and overrides parameters:
-
-```python
-@traigent.optimize(
-    # injection_mode="seamless" is default!
-    configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]}
-)
-def my_agent(text):
-    # Traigent magically overrides these values during optimization
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
-    return llm.invoke(text)
-```
-
-### Mode 2: Parameter Mode - Explicit Control
-
-For new code or when you want full control:
-
-```python
-@traigent.optimize(
-    injection_mode="parameter",
-    configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.1, 0.9]}
-)
-def my_agent(text, config):  # Note: config parameter added
-    # You explicitly use the configuration
-    llm = ChatOpenAI(
-        model=config.get("model"),
-        temperature=config.get("temperature")
-    )
-    return llm.invoke(text)
-```
-
-### 🧪 Try Example 3: Parameter Mode
-
-See how to use explicit configuration control for maximum flexibility.
-
----
-
-## 📖 Chapter 5: Multi-Objective Optimization
-
-Traigent can optimize for multiple goals simultaneously:
-
-```python
-@traigent.optimize(
-    objectives=["accuracy", "cost", "latency"],  # Optimize all three!
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.5, 1.0],
-        "max_tokens": [100, 500, 1000]
-    }
-)
-def smart_agent(query):
-    # Traigent finds the best balance of accuracy, cost, and speed
-    pass
-```
-
-### Understanding Trade-offs
-
-- **Accuracy vs Cost**: Better models cost more
-- **Speed vs Quality**: Faster responses may be less accurate
-- **Complexity vs Maintainability**: Simpler configs are easier to manage
-
-### 🧪 Try Example 4: Multi-Objective Optimization
-
-Learn how Traigent balances multiple competing objectives.
-
----
-
-## 📖 Chapter 6: Privacy & Execution Modes
-
-### Local Mode - Complete Privacy
-
-Your data never leaves your machine:
-
-```python
-@traigent.optimize(
-    execution_mode="edge_analytics",  # Everything stays on your computer
-    local_storage_path="./my_results"
-)
-```
-
-### Cloud Mode - Advanced Algorithms
-
-Use Traigent's cloud for smarter optimization:
-
-```python
-@traigent.optimize(
-    execution_mode="cloud"  # Leverages Bayesian optimization
-)
-```
-
-### Hybrid Mode - Best of Both
-
-Local execution with cloud intelligence:
-
-```python
-@traigent.optimize(
-    execution_mode="hybrid",
-    privacy_enabled=True  # Data stays local, only metadata goes to cloud
-)
-```
-
-### 🧪 Try Example 7: Privacy Modes
-
-Experiment with privacy-first local execution. This walkthrough example currently focuses on the local-only path; cloud and hybrid modes require backend support and are described in the advanced `execution-modes/` examples (roadmap-only stubs).
-
----
-
-## 📖 Chapter 7: Real-World Example with RAG
-
-Here's a complete example with Retrieval-Augmented Generation:
-
-```python
-import traigent
-from langchain_openai import ChatOpenAI
-from langchain_chroma import Chroma
-
-@traigent.optimize(
-    eval_dataset="customer_queries.jsonl",
-    objectives=["accuracy", "cost"],
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.1, 0.5, 0.9],
-        "k": [3, 5, 10]  # Number of documents to retrieve
-    }
-)
-def customer_support(query: str, knowledge_base: list) -> str:
-    # Get optimized configuration
-    config = traigent.get_config()
-
-    # Use optimized parameters
-    llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
-        temperature=config.get("temperature", 0.5)
-    )
-
-    # RAG retrieval with optimized k
-    vectorstore = Chroma.from_texts(knowledge_base)
-    docs = vectorstore.similarity_search(query, k=config.get("k", 5))
-
-    context = "\n".join([doc.page_content for doc in docs])
-    prompt = f"Context: {context}\n\nQuestion: {query}\n\nAnswer:"
-
-    return str(llm.invoke(prompt).content)
-```
-
-### 🧪 Try Example 5: RAG Optimization
-
-See how Traigent optimizes both LLM and retrieval parameters together.
-
----
-
-## 📖 Chapter 8: Custom Evaluation
-
-### Define Your Own Success Metrics
-
-```python
-def custom_evaluator(output: str, expected: str) -> float:
-    """Return score between 0.0 and 1.0"""
-    # Your custom logic here
-    if "error" in output.lower():
-        return 0.0
-    similarity = calculate_similarity(output, expected)
-    return similarity
-
-@traigent.optimize(
-    scoring_function=custom_evaluator,
-    eval_dataset="custom_data.jsonl"
-)
-def my_function(input_text):
-    return process(input_text)
-```
-
-### Common Custom Metrics
-
-- **Semantic Similarity**: Meaning-based comparison
-- **Exact Match**: Precise string matching
-- **Regex Patterns**: Pattern-based validation
-- **Business Logic**: Domain-specific rules
-
-### 🧪 Try Example 6: Custom Evaluator
-
-Create your own evaluation logic for specialized use cases.
-
----
-
-## 📖 Chapter 9: Performance & Cost Control
-
-### Parallel Execution
-
-Speed up optimization with parallelization:
-
-```python
-await my_agent.optimize(
-    parallel_config={"trial_concurrency": 4}  # Test 4 configurations simultaneously
-)
-```
-
-### Cost Budgets
-
-Control your spending:
-
-```python
-@traigent.optimize(
-    optimization_strategy={
-        "max_cost_budget": 10.0,  # Stop after spending $10
-        "adaptive_sample_size": True,  # Smart subset selection
-        "early_stopping": True  # Stop if no improvement
-    }
-)
-```
-
-### Performance Tips
-
-- Start with small datasets (10-20 examples)
-- Use mock mode for initial testing
-- Enable parallel execution for speed
-- Set cost budgets to control spending
-
-### 🧪 Try Example 8: Performance Optimization
-
-Learn to optimize faster while controlling costs.
-
----
-
-## 📖 Chapter 10: Complete Real-World Application
-
-### Building a Production-Ready Agent
-
-Let's combine everything into a real application:
-
-```python
-import traigent
-from langchain_openai import ChatOpenAI
-from langchain_chroma import Chroma
-import logging
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-@traigent.optimize(
-    eval_dataset="production_data.jsonl",
-    objectives=["accuracy", "cost", "latency"],
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.3, 0.7],
-        "max_tokens": [150, 300, 500],
-        "k": [3, 5, 7],
-        "use_cache": [True, False]
-    },
-    execution_mode="hybrid",
-    privacy_enabled=True,
-    optimization_strategy={
-        "max_cost_budget": 50.0,
-        "early_stopping": True,
-        "adaptive_sample_size": True
-    }
-)
-def production_agent(
-    query: str,
-    context: dict,
-    knowledge_base: list
-) -> dict:
-    """Production-ready agent with full optimization."""
-
-    # Get optimized configuration
-    config = traigent.get_config()
-
-    # Log configuration for monitoring
-    logger.info(f"Using config: {config}")
-
-    # Initialize LLM with optimized parameters
-    llm = ChatOpenAI(
-        model=config.get("model", "gpt-3.5-turbo"),
-        temperature=config.get("temperature", 0.3),
-        max_tokens=config.get("max_tokens", 300)
-    )
-
-    # RAG retrieval if knowledge base provided
-    retrieved_context = ""
-    if knowledge_base and len(knowledge_base) > 0:
-        vectorstore = Chroma.from_texts(knowledge_base)
-        docs = vectorstore.similarity_search(
-            query,
-            k=config.get("k", 5)
-        )
-        retrieved_context = "\n".join([d.page_content for d in docs])
-
-    # Build prompt with context
-    prompt = f"""
-    User Context: {context}
-    Retrieved Information: {retrieved_context}
-
-    Question: {query}
-
-    Provide a helpful, accurate answer:
-    """
-
-    # Get response
-    response = str(llm.invoke(prompt).content)
-
-    # Return structured output
-    return {
-        "answer": response,
-        "config_used": config,
-        "model": config.get("model"),
-        "confidence": calculate_confidence(response)
-    }
-
-def calculate_confidence(response: str) -> float:
-    """Calculate confidence score for the response."""
-    # Simple heuristic - replace with your logic
-    if len(response) < 10:
-        return 0.3
-    elif "I don't know" in response:
-        return 0.4
-    elif "I think" in response or "possibly" in response:
-        return 0.7
-    else:
-        return 0.9
-
-# Production deployment
-async def deploy_optimized_agent():
-    """Deploy the agent with optimal configuration."""
-
-    # Run optimization
-    results = await production_agent.optimize(
-        algorithm="bayesian",
-        max_trials=100,
-        parallel_config={"trial_concurrency": 4},
-    )
-
-    # Apply best configuration
-    production_agent.apply_config(results.best_config)
-
-    # Log results
-    logger.info(f"Optimization complete!")
-    logger.info(f"Best config: {results.best_config}")
-    logger.info(f"Performance: {results.best_metrics}")
-
-    # Save configuration for production
-    with open("optimal_config.json", "w", encoding="utf-8") as f:
-        json.dump(results.best_config, f, indent=2)
-
-    return production_agent
-```
-
-### 🧪 Try Example 10: Complete Application
-
-Run a full production-ready example with all Traigent features combined.
-
----
-
-## 🎯 Quick Reference
-
-### Essential Commands
+## Run All Walkthrough Examples
 
 ```bash
-# Install Traigent
-pip install -e .
+# Run all mock examples (no API keys needed)
+bash walkthrough/examples/test_all_examples.sh --mock
 
-# Run with mock mode
-TRAIGENT_MOCK_LLM=true python my_script.py
-
-# Check installation
-python scripts/verify_installation.py
-
-# Launch interactive UI
-python scripts/launch_control_center.py
+# Run all real examples (requires OpenAI API key)
+export OPENAI_API_KEY="your-key"
+bash walkthrough/examples/test_all_examples.sh --real
 ```
 
-### Common Patterns
+## Further Reading
+
+- Mock mode: See `../examples/README.md` ("Run any example in mock mode" section)
+- Example guide: `../examples/docs/EXAMPLES_GUIDE.md`
+- Getting started: `../examples/docs/START_HERE.md`
+
+## Structure
+
+```text
+walkthrough/
+├── README.md              # This file
+├── examples/
+│   ├── mock/              # No API keys needed, instant results
+│   ├── real/              # Requires API keys, real LLM calls
+│   ├── datasets/          # Pre-built evaluation datasets (20 examples each)
+│   ├── utils/             # Shared utilities (scoring, helpers, mock answers)
+│   └── test_all_examples.sh
+├── hotpotQA/              # HotpotQA benchmark demo
+└── walkthrough.sh         # Interactive walkthrough script
+```
+
+## Examples Overview
+
+| #  | Example          | Description                                | Injection Mode | Dataset          | Evaluation Method          |
+|----|------------------|--------------------------------------------|----------------|------------------|----------------------------|
+| 01 | Simple           | Basic model and temperature tuning         | Context        | simple_questions | Exact Match                |
+| 02 | Zero Code Change | Seamless mode intercepts hardcoded values  | Seamless       | simple_questions | Exact Match                |
+| 03 | Parameter Mode   | Explicit configuration control             | Parameter      | simple_questions | Exact Match                |
+| 04 | Multi-Objective  | Balance accuracy, cost, and latency        | Context        | classification   | Exact Match                |
+| 05 | RAG              | Optimize retrieval + parallel eval         | Context        | rag_questions    | Semantic Similarity        |
+| 06 | Custom Evaluator | LLM-as-Judge for code generation           | Context        | code_gen         | LLM-as-Judge (GPT-4o-mini) |
+| 07 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions | Exact Match                |
+
+Injection modes are explained in depth here: [Injection Modes Guide](../docs/user-guide/injection_modes.md).
+
+Quick notes for new users:
+
+- **01 Simple**: Context mode (default) with basic controls (model + temperature).
+- **02 Zero Code Change**: Shows seamless interception without changing your code.
+- **03 Parameter Mode**: Explicit config parameters passed into your function.
+- **04 Multi-Objective**: Trade off accuracy, cost, and latency.
+- **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
+- **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
+- **07 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
+
+## Datasets
+
+Each dataset contains **20 examples** with varying difficulty levels to ensure different model configurations show measurable differences.
+
+### simple_questions.jsonl
+
+General knowledge Q&A with three difficulty tiers:
+
+- **Easy (10)**: Factual questions with single-word answers (e.g., "What is 2+2?", "Capital of France?")
+- **Medium (5)**: Questions requiring brief explanations (e.g., "What causes tides?")
+- **Hard (5)**: Complex questions needing nuanced reasoning (e.g., "Explain opportunity cost with an example")
+
+**Evaluation**: Exact match against expected output (case-insensitive word containment; stopwords ignored; numeric tokens must match exactly; >=80% of expected tokens required; simple prefix matching for word variants)
+
+### classification.jsonl
+
+Sentiment analysis with ambiguous cases:
+
+- **Clear (10)**: Obvious positive/negative sentiment (e.g., "Best purchase ever!", "Complete waste of money")
+- **Ambiguous (10)**: Subtle or mixed sentiment requiring careful analysis (e.g., "Not bad, not great", "Frustrating setup but eventually worked")
+
+**Evaluation**: Exact match (positive/negative/neutral)
+
+### rag_questions.jsonl
+
+Traigent documentation Q&A for RAG testing:
+
+- **Simple (10)**: Direct questions with factual answers from docs
+- **Complex (10)**: Questions requiring synthesis of multiple document sections
+
+**Evaluation**: Semantic similarity - checks if key concepts from expected answer appear in response
+
+### code_gen.jsonl
+
+Python code generation tasks with difficulty progression:
+
+- **Easy (5)**: Basic functions (add numbers, check even, reverse string)
+- **Medium (6)**: Intermediate algorithms (palindrome check, binary search, word frequency)
+- **Hard (9)**: Advanced algorithms (LRU cache, Dijkstra's algorithm, serialize binary tree)
+
+**Note**: This dataset has no `expected_output` field. That is intentional: the custom evaluator (LLM-as-Judge or heuristic fallback) scores code directly against the task description, so reference answers are not required.
+
+**Evaluation**: LLM-as-Judge using GPT-4o-mini with detailed rubric:
+
+- Correctness (40%): Does the code solve the task correctly?
+- Code Quality (30%): Is it well-structured and Pythonic?
+- Documentation (30%): Does it have proper docstrings/comments?
+
+## Evaluation Methods
+
+### Exact Match (Default)
+
+Implemented locally with a lightweight token match (case-insensitive, stopwords ignored, numeric tokens must match). By default it requires ~80% of expected tokens to appear. If you want stricter behavior, you can swap this for a simple exact string match. Good for:
+
+- Factual Q&A
+- Classification tasks
+- Multiple choice
+
+### Semantic Similarity
+
+Checks if key concepts appear in the response. Good for:
+
+- RAG applications
+- Open-ended questions
+- Paraphrased answers
+
+## Mock Output Controls
+
+Optional environment variables for adjusting mock output verbosity:
+
+- `TRAIGENT_SHOW_DETAIL_LOGS=1` re-enables per-call logs in mock examples (used in 03/05).
+- `TRAIGENT_GEN_LOG_EVERY=10` logs every 10th generation in mock Example 6.
+
+Set these in your terminal before running an example:
+
+```bash
+export TRAIGENT_SHOW_DETAIL_LOGS=1
+export TRAIGENT_GEN_LOG_EVERY=10
+python walkthrough/examples/mock/06_custom_evaluator.py
+```
+
+Or set them in code before imports:
 
 ```python
-# Basic optimization
-@traigent.optimize(
-    eval_dataset="data.jsonl",
-    objectives=["accuracy"]
-)
-
-# Multi-objective
-objectives=["accuracy", "cost", "latency"]
-
-# Privacy mode
-execution_mode="edge_analytics"
-
-# Cost control
-optimization_strategy={"max_cost_budget": 10.0}
-
-# Custom evaluation
-scoring_function=my_evaluator_function
+import os
+os.environ["TRAIGENT_SHOW_DETAIL_LOGS"] = "1"
 ```
 
----
+## Progress Output (Optional)
 
-## 💡 Key Takeaways
+Long-running walkthrough examples pass `show_progress=True` into `.optimize(...)` to show
+lightweight progress updates (trial number, best score, cost) on stderr. This is off by
+default in the SDK and opt-in per run.
 
-1. **Start Simple**: Use the decorator on existing code - zero changes needed!
-2. **Mock Mode First**: Test without API keys using `TRAIGENT_MOCK_LLM=true`
-3. **Small Datasets**: Start with 10-20 examples in your evaluation dataset
-4. **Multiple Objectives**: Optimize for accuracy AND cost together
-5. **Local Privacy**: Use `execution_mode="edge_analytics"` to keep everything on your machine
-6. **Interactive UI**: Use the playground for visual experimentation
+Enable globally (overrides code):
 
----
+```bash
+export TRAIGENT_SHOW_PROGRESS=1
+```
 
-## 🚀 Next Steps
+Disable even if an example enables it:
 
-1. Complete all the examples in this walkthrough
-2. Explore the `/examples` directory for more use cases
-3. Read the architecture guide for deep understanding
-4. Join the community to share your experiences
+```bash
+export TRAIGENT_SHOW_PROGRESS=0
+```
 
-**Congratulations!** You've completed the Traigent walkthrough. You're now ready to optimize your AI applications with data-driven decisions instead of guesswork!
+Or enable per run in code:
 
-Remember: Traigent transforms the way you build AI applications - from guessing parameters to data-driven optimization. Start with your existing code, add the decorator, and watch Traigent find the perfect configuration for YOUR specific needs! 🎯
+```python
+results = await optimized_fn.optimize(
+    algorithm="random",
+    max_trials=10,
+    show_progress=True,
+)
+```
+
+### LLM-as-Judge (Example 06)
+
+Uses a separate LLM to evaluate response quality with a detailed rubric.
+In mock mode, Example 06 uses a lightweight heuristic scorer (function signature, error-free code, docs) to avoid LLM calls.
+
+**Judge Prompt Features**:
+
+- Clear evaluation criteria with scoring guidelines
+- Structured JSON output for reliable parsing
+- Weighted scoring across multiple dimensions
+- Fallback to heuristics if the judge call fails (real mode)
+
+```python
+# Example from 06_custom_evaluator.py
+def llm_code_evaluator(output: str, expected: str, **kwargs) -> float:
+    """Uses GPT-4o-mini to evaluate code quality."""
+    judge = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    # ... detailed scoring rubric prompt ...
+    result = judge.invoke(prompt)
+    return weighted_score
+```
+
+## Mock vs Real
+
+| Mock (`mock/`)     | Real (`real/`)           |
+|--------------------|--------------------------|
+| No API keys        | Requires OPENAI_API_KEY  |
+| Instant results    | Real LLM calls           |
+| Simulated accuracy | Actual model performance |
+| Simulated best config | Real best config per run |
+| Great for learning | Production-ready         |
+| ~50 lines each     | ~60-150 lines each       |
+
+## Execution Modes & Privacy
+
+These walkthrough examples use **local execution mode** (`edge_analytics`), which keeps all data on your machine. This is the recommended starting point for learning Traigent.
+
+- **Local / Edge Analytics**: LLM calls and optimization run locally. Results stay on your machine. Optionally send anonymized analytics without sharing prompts/responses.
+
+Example 07 demonstrates privacy-first local execution with local result storage.
+
+### Local Results Folder (Example 07)
+
+By default, walkthrough examples store results under:
+
+```
+walkthrough/examples/.traigent_local/
+```
+
+Inside you'll see:
+
+- `experiments/`: per-function runs and trial results
+  - Example: `experiments/answer_question/runs/<run_id>/`
+- `sessions/`: lightweight session metadata (one file per optimization session)
+- `cache/` and `joblib/`: local caches used by the optimizer
+
+If you want a different location, set `TRAIGENT_RESULTS_FOLDER` before running.
+
+## Why Varying Difficulty?
+
+The datasets include varying difficulty levels so that:
+
+1. **Different models can show different results** - in real runs, stronger models often do better on harder questions (mock results are simulated and won't necessarily reflect this)
+2. **Temperature effects are visible** - lower temperature tends to help on factual tasks; higher temperature may help on open-ended generation (limited in this walkthrough)
+3. **Optimization is meaningful** - There's room for improvement across configurations
+4. **Edge cases are covered** - Ambiguous examples test model robustness
+
+### Why results can change between runs
+
+Even with the same code, results can vary slightly because:
+
+- LLMs are nondeterministic (even at low temperature)
+- The dataset is small (20 items), so a few misses can swing accuracy by ~5-10%
+- Cost/accuracy trade-offs can shift the best config
+- Model behavior can drift over time
+
+If you want more stability, increase dataset size, increase trials, or optimize for accuracy only.
