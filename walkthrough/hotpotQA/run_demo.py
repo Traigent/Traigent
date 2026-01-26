@@ -29,6 +29,9 @@ from paper_experiments.case_study_rag.dataset import (
 from paper_experiments.case_study_rag.metrics import build_hotpot_metric_functions
 from paper_experiments.case_study_rag.simulator import generate_case_study_answer
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 DATASET = str(dataset_path())
 USE_MOCK = os.getenv("TRAIGENT_MOCK_LLM", "true").lower() == "true"
 

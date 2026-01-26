@@ -16,7 +16,10 @@ except ImportError:  # pragma: no cover
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     import traigent
 
-from traigent.metrics import configure_ragas_defaults
+from traigent.metrics import configure_ragas_defaults  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 BASE = Path(__file__).parent
 DATASET = str(BASE / "evaluation_set.jsonl")

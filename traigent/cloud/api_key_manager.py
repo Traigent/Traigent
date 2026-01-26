@@ -163,7 +163,7 @@ class APIKeyManager:
             if warn_key not in _warned_api_key_sources and not is_backend_offline():
                 logger.warning(
                     "Ignoring invalid API key (length=%d, source=%s): %s. "
-                    "Continuing without cloud authentication in local/dev mode.",
+                    "Continuing without cloud authentication in local mode.",
                     len(api_key),
                     source,
                     e,

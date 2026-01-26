@@ -10,6 +10,9 @@ import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths

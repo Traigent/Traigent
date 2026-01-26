@@ -65,7 +65,7 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.env_config import is_mock_llm, is_production
+from traigent.utils.env_config import is_backend_offline, is_mock_llm, is_production
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
@@ -106,6 +106,8 @@ def _emit_cost_warning_once() -> None:
         return
     if is_mock_llm():
         return
+    if os.getenv("TRAIGENT_COST_APPROVED", "").lower() in ("true", "1", "yes"):
+        return
 
     _COST_WARNING_EMITTED = True
 
@@ -126,7 +128,7 @@ def _emit_cost_warning_once() -> None:
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
-            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
+            f"  - To skip real API calls in tests: {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
@@ -137,21 +139,14 @@ def _emit_cost_warning_once() -> None:
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
-            "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
+            "  - To skip real API calls in tests: TRAIGENT_MOCK_LLM=true\n"
             "  - Full details:          DISCLAIMER.md\n"
         )
 
-    # Use warnings module for filterability; fallback to stderr on encoding errors
-    import warnings
-
     try:
-        warnings.warn(msg, UserWarning, stacklevel=2)
+        print(msg, file=sys.stderr)
     except UnicodeEncodeError:
-        # Fallback for ASCII-only locales
-        try:
-            print(msg, file=sys.stderr)
-        except UnicodeEncodeError:
-            print(msg.encode("ascii", errors="replace").decode(), file=sys.stderr)
+        print(msg.encode("ascii", errors="replace").decode(), file=sys.stderr)
     sys.stderr.flush()
 
 
@@ -1460,6 +1455,7 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
+        show_progress: bool | None = None,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         cache_policy = algorithm_kwargs.get("cache_policy", "allow_repeats")
@@ -1495,6 +1491,8 @@ class OptimizedFunction:
             orchestrator_kwargs["cost_limit"] = algorithm_kwargs["cost_limit"]
         if "cost_approved" in algorithm_kwargs:
             orchestrator_kwargs["cost_approved"] = algorithm_kwargs["cost_approved"]
+        if show_progress is not None:
+            orchestrator_kwargs["show_progress"] = bool(show_progress)
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -1594,6 +1592,11 @@ class OptimizedFunction:
         )
         if not use_cloud:
             return None
+        if is_backend_offline():
+            logger.info(
+                "Backend offline: skipping cloud optimization and using local execution."
+            )
+            return None
 
         try:
             return await self._optimize_with_cloud_service(
@@ -1686,6 +1689,7 @@ class OptimizedFunction:
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
             self._resolve_effective_parallel_config(algorithm_kwargs)
         )
+        show_progress = algorithm_kwargs.pop("show_progress", None)
 
         # Phase 6: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
@@ -1724,6 +1728,7 @@ class OptimizedFunction:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
+            show_progress=show_progress,
         )
 
         # Phase 9: Run optimization and finalize

@@ -35,7 +35,7 @@ The gallery provides:
 
 ## ⚡ Quickstart Examples (Start Here!)
 
-These are the exact examples from the main README, ready to run immediately:
+Run these quickstart examples to get started:
 
 ```bash
 pip install -e ".[examples]"          # Ensure example deps

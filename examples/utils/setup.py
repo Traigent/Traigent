@@ -10,6 +10,9 @@ import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 
 def is_mock_mode() -> bool:
     """Check if running in mock mode."""

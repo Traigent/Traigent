@@ -5,9 +5,8 @@ Traigent Quickstart Example 3: Custom Objectives
 This example shows how to define custom objective weights and orientations.
 Based on the README.md custom objectives example.
 
-Run with:
-    export TRAIGENT_MOCK_LLM=true
-    python examples/quickstart/03_custom_objectives.py
+Run with (from repo root):
+    TRAIGENT_MOCK_LLM=true .venv/bin/python examples/quickstart/03_custom_objectives.py
 """
 
 import asyncio
@@ -25,9 +24,12 @@ os.environ.setdefault(
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+import traigent  # noqa: E402
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Path to dataset (shared quickstart dataset)
 DATASET_PATH = (

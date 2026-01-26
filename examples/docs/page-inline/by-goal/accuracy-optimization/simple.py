@@ -21,6 +21,9 @@ for _depth in range(1, 7):
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths

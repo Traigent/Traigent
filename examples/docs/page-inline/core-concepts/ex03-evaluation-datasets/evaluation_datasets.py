@@ -35,7 +35,10 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.evaluators.base import Dataset, EvaluationExample
+from traigent.evaluators.base import Dataset, EvaluationExample  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Create JSONL dataset file
 DATASET_FILE = os.path.join(os.path.dirname(__file__), "classification_tasks.jsonl")

@@ -59,6 +59,7 @@ TRAIGENT_MOCK_LLM=true python examples/core/hello-world/run.py
 ```
 
 You should see optimization results showing different configurations being tested!
+Note: mock mode uses canned responses, so accuracy metrics are illustrative and may not match expected outputs.
 
 ---
 
@@ -81,6 +82,7 @@ def answer_question(question: str) -> str:
 Now add Traigent optimization - **your code stays exactly the same**:
 
 ```python
+import json
 import traigent
 
 @traigent.optimize(
@@ -237,9 +239,9 @@ Local execution with cloud intelligence:
 )
 ```
 
-### 🧪 Try Example 5: Privacy Modes
+### 🧪 Try Example 7: Privacy Modes
 
-Experiment with different execution modes to understand privacy options.
+Experiment with privacy-first local execution. This walkthrough example currently focuses on the local-only path; cloud and hybrid modes require backend support and are described in the advanced `execution-modes/` examples (roadmap-only stubs).
 
 ---
 
@@ -281,7 +283,7 @@ def customer_support(query: str, knowledge_base: list) -> str:
     return str(llm.invoke(prompt).content)
 ```
 
-### 🧪 Try Example 6: RAG Optimization
+### 🧪 Try Example 5: RAG Optimization
 
 See how Traigent optimizes both LLM and retrieval parameters together.
 
@@ -301,7 +303,7 @@ def custom_evaluator(output: str, expected: str) -> float:
     return similarity
 
 @traigent.optimize(
-    custom_evaluator=custom_evaluator,
+    scoring_function=custom_evaluator,
     eval_dataset="custom_data.jsonl"
 )
 def my_function(input_text):
@@ -315,7 +317,7 @@ def my_function(input_text):
 - **Regex Patterns**: Pattern-based validation
 - **Business Logic**: Domain-specific rules
 
-### 🧪 Try Example 7: Custom Evaluator
+### 🧪 Try Example 6: Custom Evaluator
 
 Create your own evaluation logic for specialized use cases.
 
@@ -477,7 +479,8 @@ async def deploy_optimized_agent():
     logger.info(f"Performance: {results.best_metrics}")
 
     # Save configuration for production
-    results.save_config("optimal_config.json")
+    with open("optimal_config.json", "w", encoding="utf-8") as f:
+        json.dump(results.best_config, f, indent=2)
 
     return production_agent
 ```
@@ -525,7 +528,7 @@ execution_mode="edge_analytics"
 optimization_strategy={"max_cost_budget": 10.0}
 
 # Custom evaluation
-custom_evaluator=my_evaluator_function
+scoring_function=my_evaluator_function
 ```
 
 ---

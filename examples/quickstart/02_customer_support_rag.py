@@ -5,9 +5,8 @@ Traigent Quickstart Example 2: Customer Support with RAG
 This example demonstrates RAG (Retrieval Augmented Generation) optimization.
 Based on the README.md customer support example.
 
-Run with:
-    export TRAIGENT_MOCK_LLM=true
-    python examples/quickstart/02_customer_support_rag.py
+Run with (from repo root):
+    TRAIGENT_MOCK_LLM=true .venv/bin/python examples/quickstart/02_customer_support_rag.py
 """
 
 import asyncio
@@ -25,8 +24,11 @@ os.environ.setdefault(
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
+import traigent  # noqa: E402
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Create a simple RAG dataset for customer support
 RAG_DATASET_PATH = Path(__file__).parent / "rag_feedback.jsonl"

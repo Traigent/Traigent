@@ -20,6 +20,9 @@ if MOCK:
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
