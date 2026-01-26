@@ -215,7 +215,7 @@ See [DISCLAIMER.md](DISCLAIMER.md) for details.
 | ----------------------------------------- | ------------------------------------------------------------------------------------------ |
 | [SDK Documentation](docs/README.md)       | Full API reference and guides                                                              |
 | [Examples Navigator](examples/index.html) | Serve locally: `python -m http.server -d examples 8000`                                    |
-| [Walkthrough](walkthrough/README.md)      | Simple end-to-end tutorial                                                                 |
+| [Walkthrough](walkthrough/README.md)      | Step-by-step examples (mock & real modes)                                                  |
 | [Playground](playground/)                 | Create agents and run optimization (`streamlit run playground/traigent_control_center.py`) |
 | [Use Cases](use-cases/)                   | Richer datasets and real-world scenarios                                                   |
 
