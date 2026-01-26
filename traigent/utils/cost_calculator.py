@@ -99,6 +99,12 @@ class CostCalculator:
         "gpt4": "gpt-4o",
         "gpt3.5": "gpt-3.5-turbo",
         "gpt-4o-mini": "gpt-4o-mini",  # GPT-4o mini model for cost-effective usage
+        # OpenAI models with custom pricing (use as-is for CUSTOM_TOKEN_COSTS lookup)
+        "gpt-4.1-nano": "gpt-4.1-nano",
+        "gpt-5-nano": "gpt-5-nano",
+        "gpt-5.1": "gpt-5.1",
+        "gpt-5.2": "gpt-5.2",
+        "gpt-5.2-pro": "gpt-5.2-pro",
         # Common alternative spellings
         "claude3-haiku": "claude-3-haiku-20240307",
         "claude3-sonnet": "claude-3-sonnet-20240229",
@@ -112,6 +118,19 @@ class CostCalculator:
         "gpt-4": "gpt-4o",  # Latest GPT-4 variant
         "gpt": "gpt-4o",  # Default to latest
         "gpt-3.5": "gpt-3.5-turbo",  # Standard 3.5 model
+    }
+
+    # Custom token costs for models not in tokencost library
+    # Rates are per 1K tokens (prompt/completion)
+    CUSTOM_TOKEN_COSTS = {
+        "gpt-4o-mini": {"prompt": 0.00015, "completion": 0.0006},
+        "gpt-4o": {"prompt": 0.0025, "completion": 0.01},
+        "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
+        "gpt-5-nano": {"prompt": 0.00005, "completion": 0.0004},
+        "gpt-4.1-nano": {"prompt": 0.0001, "completion": 0.0004},
+        "gpt-5.1": {"prompt": 0.00125, "completion": 0.01},
+        "gpt-5.2": {"prompt": 0.00175, "completion": 0.014},
+        "gpt-5.2-pro": {"prompt": 0.00175, "completion": 0.014},
     }
 
     def __init__(self, logger=None, enable_caching: bool = True) -> None:
@@ -413,7 +432,22 @@ class CostCalculator:
     ) -> tuple[float, float]:
         """Calculate costs from token counts using direct pricing information."""
         try:
-            # First, try to get pricing directly from tokencost
+            # First, check custom token costs (for models not in tokencost)
+            if model in self.CUSTOM_TOKEN_COSTS:
+                rates = self.CUSTOM_TOKEN_COSTS[model]
+                input_cost = (input_tokens / 1000) * rates["prompt"]
+                output_cost = (output_tokens / 1000) * rates["completion"]
+
+                if self.logger:
+                    self.logger.debug(
+                        f"Custom token cost calculation for {model}: "
+                        f"input={input_tokens}*{rates['prompt']}/1K=${input_cost:.8f}, "
+                        f"output={output_tokens}*{rates['completion']}/1K=${output_cost:.8f}"
+                    )
+
+                return input_cost, output_cost
+
+            # Then, try to get pricing directly from tokencost
             if TOKENCOST_AVAILABLE and model in tokencost.TOKEN_COSTS:
                 cost_info = tokencost.TOKEN_COSTS[model]
 

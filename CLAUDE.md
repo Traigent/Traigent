@@ -308,3 +308,13 @@ When reporting experimental results:
 - NOT explicit: completing a task, user saying "do it", user approving changes
 - After making code changes, WAIT for the user to request a commit
 - This applies even if the changes are complete and tested
+
+### 12. Never substitute approximate data for real data
+- If a value is unknown (pricing, metrics, etc.), display "N/A" or "Unknown"
+- NEVER map an unknown value to a "similar" known value and present it as real
+- BAD: `"gpt-5.1": "gpt-4o"` then showing gpt-4o's price as gpt-5.1's price
+- BAD: Estimating latency based on "similar" models
+- GOOD: Display "N/A" and inform the user the data is unavailable
+- GOOD: Ask the user to provide the actual values
+- The user must always know when data is real vs estimated
+- If estimation is truly needed, it must be **explicitly labeled** as an estimate
