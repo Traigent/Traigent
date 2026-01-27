@@ -4,6 +4,7 @@
 Adapted from docs: demonstrates hybrid-style configuration.
 Runs locally (mock-friendly) for this example extraction.
 """
+
 from __future__ import annotations
 
 import json

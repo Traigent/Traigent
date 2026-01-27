@@ -3,6 +3,7 @@
 
 Adapted from docs: runs fully locally with a small configuration space.
 """
+
 from __future__ import annotations
 
 import json

@@ -2,6 +2,7 @@
 """By Goal - Speed & Latency (LLM Calculator)
 Target response_time; same calculator, different decorator.
 """
+
 import json
 import os
 import sys

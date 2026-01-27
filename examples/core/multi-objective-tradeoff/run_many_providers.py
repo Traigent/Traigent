@@ -82,7 +82,9 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 from traigent.api.types import OptimizationResult  # noqa: E402
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
-from traigent.utils.langchain_interceptor import capture_langchain_response  # noqa: E402
+from traigent.utils.langchain_interceptor import (  # noqa: E402
+    capture_langchain_response,
+)
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 

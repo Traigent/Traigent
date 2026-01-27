@@ -3,6 +3,7 @@
 
 Adds chunk_size to handle longer docs with minimal logic.
 """
+
 import os
 import sys
 from pathlib import Path

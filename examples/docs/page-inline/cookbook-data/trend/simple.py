@@ -3,6 +3,7 @@
 
 Classify trend from a small series: up|down|flat. Exact-match.
 """
+
 import os
 import sys
 from pathlib import Path

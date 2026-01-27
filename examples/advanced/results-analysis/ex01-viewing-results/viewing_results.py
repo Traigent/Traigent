@@ -3,6 +3,7 @@
 
 Simple classifier optimized with Traigent; demonstrates results table.
 """
+
 import json
 import os
 import sys

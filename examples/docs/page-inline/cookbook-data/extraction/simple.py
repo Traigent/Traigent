@@ -4,6 +4,7 @@
 Extract company and amount from invoice-like text. Temperature-only.
 Custom accuracy metric checks key equality in JSON output.
 """
+
 import json
 import os
 import sys

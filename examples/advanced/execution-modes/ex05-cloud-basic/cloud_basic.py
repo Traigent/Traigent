@@ -3,6 +3,7 @@
 
 Adapted from docs: in OSS extraction we run locally for speed/offline.
 """
+
 from __future__ import annotations
 
 import json

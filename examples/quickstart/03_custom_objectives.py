@@ -33,10 +33,7 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 # Path to dataset (shared quickstart dataset)
 DATASET_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "datasets"
-    / "quickstart"
-    / "qa_samples.jsonl"
+    Path(__file__).resolve().parents[1] / "datasets" / "quickstart" / "qa_samples.jsonl"
 )
 
 # Define custom objectives with explicit weights and orientations

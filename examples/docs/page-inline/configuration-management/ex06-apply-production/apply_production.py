@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Production Configuration Management with Traigent."""
+
 from __future__ import annotations
 
 import json

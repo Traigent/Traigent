@@ -78,7 +78,9 @@ class TestOptimizedFunctionInitialization:
         )
 
         # Verify values are stored in _decorator_runtime_overrides
-        assert opt_func._decorator_runtime_overrides.get("cost_limit") == pytest.approx(2.5)
+        assert opt_func._decorator_runtime_overrides.get("cost_limit") == pytest.approx(
+            2.5
+        )
         assert opt_func._decorator_runtime_overrides.get("cost_approved") is True
 
     def test_initialization_with_custom_evaluator(

@@ -3,6 +3,7 @@
 
 Adds a simple token-overlap F1 as 'quality'.
 """
+
 import os
 import re
 import sys

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Objectives & Metrics - Defining What to Optimize For."""
+
 from __future__ import annotations
 
 import json

@@ -228,8 +228,7 @@ def single_query(query: str, model: str = "claude-sonnet-4-20250514") -> None:
 
 def print_help() -> None:
     """Print usage help."""
-    print(
-        """
+    print("""
 Traigent Test Suite Chatbot - Help
 ==================================
 
@@ -252,8 +251,7 @@ Tips:
   - Be specific about what you're looking for
   - Use dimension names (InjectionMode, Algorithm, etc.) for precise queries
   - Ask about coverage gaps to find missing test scenarios
-"""
-    )
+""")
 
 
 def main() -> None:

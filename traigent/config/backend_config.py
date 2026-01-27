@@ -11,9 +11,9 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 from traigent.cloud.auth import MIN_TOKEN_LENGTH
-from urllib.parse import urlparse, urlunparse
 
 logger = logging.getLogger(__name__)
 _API_KEY_LOGGED = False

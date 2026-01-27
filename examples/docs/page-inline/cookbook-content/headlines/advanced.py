@@ -3,6 +3,7 @@
 
 Adds style control and strict format. Minimal configuration knobs.
 """
+
 import os
 import sys
 from pathlib import Path

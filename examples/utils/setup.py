@@ -13,7 +13,6 @@ from pathlib import Path
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
-
 def is_mock_mode() -> bool:
     """Check if running in mock mode."""
     return os.getenv("TRAIGENT_MOCK_LLM", "").lower() in {"1", "true", "yes", "y"}

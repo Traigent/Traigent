@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Tests for enhanced framework override system with streaming and tool support."""
 
-
 import pytest
 
 from traigent.config.context import set_config

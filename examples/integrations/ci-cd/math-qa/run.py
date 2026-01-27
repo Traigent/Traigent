@@ -21,7 +21,6 @@ from traigent.evaluators.local import LocalEvaluator  # noqa: E402
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
-
 def load_saved_config():
     """Load the saved production configuration."""
     config_path = Path(__file__).parent / "saved_config.json"

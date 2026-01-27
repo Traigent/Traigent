@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Runner for objectives and metrics example."""
+
 from __future__ import annotations
 
 import asyncio
