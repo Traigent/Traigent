@@ -3,6 +3,7 @@
 
 Demonstrates a compact configuration and mock-friendly evaluation.
 """
+
 import json
 import os
 import sys
@@ -107,9 +108,7 @@ def _exact_match(output: str | None, expected: str | None, llm_metrics=None) -> 
     max_trials=10,
 )
 def classify_text(text: str) -> str:
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.0, max_tokens=80
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0, max_tokens=80)
     prompt = f"Label this text as one of [animal, vehicle, other]: {text}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return getattr(resp, "content", str(resp))

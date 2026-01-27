@@ -3,6 +3,7 @@
 
 Generate a short blog intro for a topic. Optimize cost/latency.
 """
+
 import os
 import sys
 from pathlib import Path

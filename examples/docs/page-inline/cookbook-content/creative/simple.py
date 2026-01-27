@@ -3,6 +3,7 @@
 
 Generate a short poem for a prompt. Optimize cost/latency.
 """
+
 import os
 import sys
 from pathlib import Path

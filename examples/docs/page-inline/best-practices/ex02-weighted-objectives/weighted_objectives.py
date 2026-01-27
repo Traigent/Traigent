@@ -3,6 +3,7 @@
 
 Demonstrates setting objective weights to reflect priorities.
 """
+
 from __future__ import annotations
 
 import json

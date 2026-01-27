@@ -3,6 +3,7 @@
 
 Seamless optimization over temperature only. Optimizes cost/latency.
 """
+
 import os
 import sys
 from pathlib import Path

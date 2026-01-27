@@ -361,7 +361,9 @@ def _define_target(
         if api_key.startswith("sk-proj-") or api_key.startswith("sk-"):
             if not api_key.startswith("sk-ant-"):
                 print("\n" + "=" * 70)
-                print("⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!")
+                print(
+                    "⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!"
+                )
                 print("=" * 70)
                 print(f"Your API key starts with: {api_key[:10]}...")
                 print("This appears to be an OpenAI key, not an Anthropic key!")

@@ -19,6 +19,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
+from traigent.core.exception_handler import VendorPauseError, is_vendor_exception
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -33,7 +34,6 @@ from traigent.core.trial_result_factory import (
     build_success_result,
 )
 from traigent.core.types import TrialResult, TrialStatus
-from traigent.core.exception_handler import VendorPauseError, is_vendor_exception
 from traigent.evaluators.base import Dataset
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.exceptions import (
@@ -352,7 +352,7 @@ class TrialLifecycle:
                     lease=lease,
                     span=span,
                 )
-            except VendorPauseError as exc:
+            except VendorPauseError:
                 raise
 
     async def _execute_trial_with_tracing(

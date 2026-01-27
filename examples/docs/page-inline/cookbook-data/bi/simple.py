@@ -3,6 +3,7 @@
 
 Summarize KPIs into 2-3 insights. Optimize cost/latency.
 """
+
 import os
 import sys
 from pathlib import Path

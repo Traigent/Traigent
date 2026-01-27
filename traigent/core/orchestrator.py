@@ -8,8 +8,8 @@ import inspect
 import math
 import os
 import sys
-import time
 import threading
+import time
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
@@ -67,6 +67,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import should_show_cloud_notice
 from traigent.utils.exceptions import (
     OptimizationError,
 )
@@ -74,7 +75,6 @@ from traigent.utils.function_identity import (
     FunctionDescriptor,
     resolve_function_descriptor,
 )
-from traigent.utils.env_config import should_show_cloud_notice
 from traigent.utils.local_analytics import collect_and_submit_analytics
 from traigent.utils.logging import get_logger
 from traigent.utils.optimization_logger import OptimizationLogger
@@ -144,9 +144,7 @@ class OptimizationOrchestrator:
         self.traigent_config = config or TraigentConfig()
         self.config = kwargs
         self._interactive = sys.stdin.isatty()
-        pause_requested = (
-            os.getenv("TRAIGENT_PAUSE_ON_ERROR", "true").lower() == "true"
-        )
+        pause_requested = os.getenv("TRAIGENT_PAUSE_ON_ERROR", "true").lower() == "true"
         self._pause_on_error = pause_requested and self._interactive
         self._show_progress = self._resolve_show_progress_setting()
         self._progress_lock = threading.Lock()
@@ -1530,7 +1528,10 @@ class OptimizationOrchestrator:
                 break
 
             if self._should_stop(trial_count):
-                if self._stop_reason == "cost_limit" and self._handle_budget_limit_pause():
+                if (
+                    self._stop_reason == "cost_limit"
+                    and self._handle_budget_limit_pause()
+                ):
                     continue
                 break
 
@@ -1554,7 +1555,10 @@ class OptimizationOrchestrator:
                 )
 
             if action == "break":
-                if self._stop_reason == "cost_limit" and self._handle_budget_limit_pause():
+                if (
+                    self._stop_reason == "cost_limit"
+                    and self._handle_budget_limit_pause()
+                ):
                     continue
                 break
 

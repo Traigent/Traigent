@@ -4,6 +4,7 @@
 Same calculator function across goals; here we target cost only.
 Returns structured JSON: {"formula", "result", "explanation"}.
 """
+
 import json
 import os
 import sys

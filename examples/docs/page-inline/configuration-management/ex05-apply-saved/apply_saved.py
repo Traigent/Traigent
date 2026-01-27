@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Applying Saved Configurations - Save and Load Optimal Configs."""
+
 from __future__ import annotations
 
 import json
@@ -57,9 +58,7 @@ def customer_support_agent(question: str, choices: list[str]) -> int:
 
     Returns a 0-based index corresponding to the best choice.
     """
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.3, max_tokens=120
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, max_tokens=120)
 
     labeled_choices = "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(choices))
     prompt = f"""You are a helpful customer support assistant.

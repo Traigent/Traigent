@@ -161,8 +161,7 @@ class TestOptimizeDecorator:
     def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
         """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
         spec_path = tmp_path / "evalset.tvl.yml"
-        spec_path.write_text(
-            """tvl:
+        spec_path.write_text("""tvl:
   module: test.evalset
 tvl_version: "0.9"
 evaluation_set:
@@ -174,8 +173,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-"""
-        )
+""")
 
         @optimize(tvl_spec=spec_path)
         def tvl_wrapped(question: str) -> str:
@@ -187,8 +185,7 @@ objectives:
     def test_decorator_does_not_override_explicit_eval_dataset(self, tmp_path):
         """Explicit eval_dataset beats evaluation_set in a TVL spec."""
         spec_path = tmp_path / "evalset_override.tvl.yml"
-        spec_path.write_text(
-            """tvl:
+        spec_path.write_text("""tvl:
   module: test.evalset.override
 tvl_version: "0.9"
 evaluation_set:
@@ -200,8 +197,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-"""
-        )
+""")
 
         @optimize(tvl_spec=spec_path, eval_dataset="user.jsonl")
         def tvl_wrapped(question: str) -> str:

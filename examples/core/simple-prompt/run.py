@@ -16,7 +16,6 @@ from pathlib import Path
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
 
-
 def _prepare_mock_paths(base: Path) -> None:
     """
     Use a writable local directory for mock runs to avoid permission issues.

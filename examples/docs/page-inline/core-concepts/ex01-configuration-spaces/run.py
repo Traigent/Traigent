@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Runner for configuration spaces example."""
+
 from __future__ import annotations
 
 import asyncio

@@ -3,6 +3,7 @@
 
 Adds few-shots, prompt style, and output format. Minimal configuration surface.
 """
+
 import json
 import os
 import sys

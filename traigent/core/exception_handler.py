@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+
 from traigent.utils.exceptions import (
     QuotaExceededError,
     RateLimitError,
@@ -23,13 +24,11 @@ VENDOR_ERROR_EXPLANATIONS = {
     ),
     "quota_exhausted": (
         "Quota exhausted",
-        "Quota exhausted.\n"
-        "Check your provider dashboard or billing limits.",
+        "Quota exhausted.\n" "Check your provider dashboard or billing limits.",
     ),
     "service_unavailable": (
         "Service unavailable",
-        "Service unavailable.\n"
-        "Try resuming in a few moments.",
+        "Service unavailable.\n" "Try resuming in a few moments.",
     ),
     "api_error": (
         "API error",
@@ -135,13 +134,13 @@ def handle_budget_limit_reached(
                 new_limit = current_limit + add_amount
                 if not math.isfinite(new_limit):
                     print(
-                        "  Invalid amount. Please enter a finite number, or type \"stop\" to cancel."
+                        '  Invalid amount. Please enter a finite number, or type "stop" to cancel.'
                     )
                     continue
                 if new_limit <= spent:
                     print(
                         f"  Please enter a higher amount (over ${spent - current_limit:.2f}), "
-                        "or type \"stop\" to cancel."
+                        'or type "stop" to cancel.'
                     )
                     continue
                 print(f"New budget limit: ${new_limit:.2f}")
@@ -169,17 +168,17 @@ def _get_raise_amount() -> float | None:
             add_amount = float(add_input)
             if not math.isfinite(add_amount):
                 print(
-                    "  Invalid input. Please enter a finite number, or type \"stop\" to cancel."
+                    '  Invalid input. Please enter a finite number, or type "stop" to cancel.'
                 )
                 continue
             if add_amount <= 0:
                 print(
-                    "  Amount must be positive. Please try again, or type \"stop\" to cancel."
+                    '  Amount must be positive. Please try again, or type "stop" to cancel.'
                 )
                 continue
             return add_amount
         except ValueError:
-            print("  Invalid input. Please enter a number, or type \"stop\" to cancel.")
+            print('  Invalid input. Please enter a number, or type "stop" to cancel.')
 
 
 def handle_vendor_exception(error: Exception) -> bool:

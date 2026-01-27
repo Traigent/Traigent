@@ -2,6 +2,7 @@
 """By Goal - Accuracy Optimization (LLM Calculator)
 Target accuracy; same calculator, different decorator.
 """
+
 import json
 import os
 import sys

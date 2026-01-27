@@ -42,9 +42,7 @@ except ImportError:  # pragma: no cover - support IDE execution paths
 
 def generate_summary(text: str) -> str:
     """Generate a short summary for the given text."""
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.7, max_tokens=150
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7, max_tokens=150)
     prompt = f"Summarize this text in 2-3 sentences: {text}"
     response = llm.invoke(prompt)
     return getattr(response, "content", str(response))
@@ -97,9 +95,7 @@ def _summary_f1(output: str | None, expected: str | None, llm_metrics=None) -> f
 )
 def optimized_summary(text: str) -> str:
     """Same implementation; Traigent injects optimal parameters at runtime."""
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.7, max_tokens=150
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7, max_tokens=150)
     prompt = f"Summarize this text in 2-3 sentences: {text}"
     response = llm.invoke(prompt)
     return getattr(response, "content", str(response))
