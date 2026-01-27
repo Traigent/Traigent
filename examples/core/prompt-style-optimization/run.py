@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Email drafting style/tone optimization (style, tone, temperature)."""
+"""
+Email drafting style/tone optimization.
+
+Demonstrates how to use Traigent to find the optimal style (bulleted vs paragraph)
+and tone (formal vs friendly) for email drafts. Uses a custom metric to evaluate
+whether outputs match the expected format.
+
+Run with: TRAIGENT_MOCK_LLM=true python examples/core/prompt-style-optimization/run.py
+"""
 
 from __future__ import annotations
 
@@ -41,10 +49,8 @@ DATA_ROOT = (
     Path(__file__).resolve().parents[2] / "datasets" / "prompt-style-optimization"
 )
 if MOCK:
-    try:
-        traigent.initialize(execution_mode="edge_analytics")
-    except Exception:
-        pass
+    # Initialize with local-only mode for mock runs
+    traigent.initialize(execution_mode="edge_analytics")
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -159,9 +165,7 @@ def _print_results(result: OptimizationResult) -> None:
         print(df_raw.to_string(index=False))
 
 
-def style_accuracy_metric(
-    output: str, expected: str, _llm_metrics: dict | None
-) -> float:
+def style_accuracy_metric(output: str, expected: str, **_: object) -> float:
     exp_style, exp_tone = expected.split(",")
     ok_style = ("- " in output) if exp_style == "bulleted" else ("- " not in output)
     ok_tone = (
@@ -219,12 +223,33 @@ def draft_email(brief: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Battling tone and style? Bullet points or narrative—let the data decide.")
+    import time
+
+    print("=" * 60)
+    print("Prompt Style Optimization Example")
+    print("=" * 60)
+    print("\nObjective: style_accuracy (maximize)")
+    print("Configuration space:")
+    print("  - style: bulleted, paragraph")
+    print("  - tone: formal, friendly")
+    print("  - temperature: 0.0, 0.2")
+    print("Total configurations: 8 (2 x 2 x 2)")
+    print(f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}")
+    print("-" * 60)
 
     async def main() -> None:
-        trials = 9 if not MOCK else 4
-        r = await draft_email.optimize(algorithm="bayesian", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
+        start_time = time.time()
+        trials = 9 if not MOCK else 8  # 8 covers all config combinations
+        result = await draft_email.optimize(algorithm="grid", max_trials=trials)
+        elapsed = time.time() - start_time
+
+        print("\n" + "=" * 60)
+        print("OPTIMIZATION COMPLETE")
+        print("=" * 60)
+        print(f"Best config: {result.best_config}")
+        print(f"Best score: {result.best_score:.2f}")
+        print(f"Total trials: {len(result.trials)}")
+        print(f"Runtime: {elapsed:.2f}s")
+        _print_results(result)
 
     asyncio.run(main())
