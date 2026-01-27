@@ -11,10 +11,10 @@ import math
 import os
 import time
 from abc import ABC, abstractmethod
-from concurrent.futures import Executor
 from collections.abc import Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
+from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,9 +26,9 @@ from traigent.evaluators.dataset_registry import (
     resolve_dataset_reference,
 )
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
-from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import (
     ConfigurationError,
     EvaluationError,
@@ -2304,7 +2304,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
         return example_metrics
 
     def _call_scoring_function(
-        self, output: Any, example: Any, llm_metrics: dict[str, Any] | None
+        self,
+        output: Any,
+        example: Any,
+        llm_metrics: dict[str, Any] | None,
+        config: dict[str, Any] | None = None,
     ) -> dict[str, float]:
         """Call single scoring function and return metrics.
 
@@ -2312,6 +2316,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             output: Function output
             example: Current example being evaluated
             llm_metrics: Captured LLM metrics (if any)
+            config: Configuration dictionary (optional, for mock mode)
 
         Returns:
             Dictionary of metric name to score
@@ -2331,6 +2336,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 kwargs["expected"] = example.expected_output
             if "llm_metrics" in params and llm_metrics:
                 kwargs["llm_metrics"] = llm_metrics
+            if "config" in params and config:
+                kwargs["config"] = config
 
             result = self.scoring_function(**kwargs)
             if isinstance(result, dict):
@@ -2756,7 +2763,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 output, example, config, dataset, example_index, llm_metrics
             )
         elif self.scoring_function:
-            return self._call_scoring_function(output, example, llm_metrics)
+            return self._call_scoring_function(output, example, llm_metrics, config)
         return {}
 
     def _create_failed_example_result(

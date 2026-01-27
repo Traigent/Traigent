@@ -20,7 +20,10 @@ from traigent import TraigentConfig
 
 from utils.helpers import (
     configure_logging,
+    print_cost_estimate,
     print_estimated_time,
+    print_optimization_config,
+    print_results_table,
     require_openai_key,
     sanitize_traigent_api_key,
     setup_example_logger,
@@ -58,6 +61,11 @@ traigent.initialize(
 DATASETS = Path(__file__).parent.parent / "datasets"
 DEBUG_EVAL = os.getenv("TRAIGENT_DEBUG_EVAL", "").lower() in ("1", "true", "yes")
 DEBUG_EVAL_PATH = os.getenv("TRAIGENT_DEBUG_EVAL_PATH")
+OBJECTIVES = ["accuracy", "cost"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],
+    "temperature": [0.1, 0.7],
+}
 
 # Required fraction of expected tokens that must match (used for debug logging)
 _REQUIRED_FRACTION = 0.8
@@ -99,9 +107,7 @@ def results_match_score(output: str, expected: str, **kwargs) -> float:
             debug_path.parent.mkdir(parents=True, exist_ok=True)
             with debug_path.open("a", encoding="utf-8") as handle:
                 handle.write(
-                    "[eval-miss] expected={!r} output={!r} missing={!r} match_ratio={:.2f}\n".format(
-                        expected_text, output_text, missing, match_ratio
-                    )
+                    f"[eval-miss] expected={expected_text!r} output={output_text!r} missing={missing!r} match_ratio={match_ratio:.2f}\n"
                 )
         logger.info(
             "eval-miss expected=%r output=%r missing=%r match_ratio=%.2f",
@@ -115,12 +121,9 @@ def results_match_score(output: str, expected: str, **kwargs) -> float:
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "simple_questions.jsonl"),
-    objectives=["accuracy", "cost"],
+    objectives=OBJECTIVES,
     scoring_function=results_match_score,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],
-        "temperature": [0.1, 0.7],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
@@ -133,13 +136,13 @@ def answer_question(question: str) -> str:
     )
     try:
         response = llm.invoke(
-            (
+
                 "Answer with the final answer only. Do not ask questions. "
                 "Keep it concise and use the question's terminology. "
                 "If the answer is numeric, use digits only (no commas), no units, "
                 "and follow the units implied by the question. Do not round. "
                 f"{question}"
-            )
+
         )
         return str(response.content)
     except Exception as exc:
@@ -150,6 +153,13 @@ def answer_question(question: str) -> str:
 async def main() -> None:
     logger.info("Traigent Example 1: Simple Optimization")
     logger.info("=" * 50)
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="simple_qa",
+        num_trials=8,
+    )
 
     if REQUIRE_CONFIRM and sys.stdin.isatty():
         response = input("Run this example? [y/N] ").strip().lower()
@@ -171,6 +181,8 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     logger.info("Best Configuration Found:")
     logger.info("  Model: %s", results.best_config.get("model"))

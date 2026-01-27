@@ -53,10 +53,6 @@ cd walkthrough/hotpotQA
 ./run_demo.sh   # Run optimization (mock mode by default)
 ```
 
-## Legacy Script
-
-`walkthrough.sh` - An interactive tutorial script designed for an older walkthrough format. Currently not maintained; use the examples above instead.
-
 ## Next Steps
 
 After completing the walkthrough:
