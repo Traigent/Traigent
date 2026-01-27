@@ -19,6 +19,7 @@ from utils.mock_answers import (
     configure_mock_notice,
     get_mock_accuracy,
     get_mock_cost,
+    get_mock_latency,
     normalize_text,
     set_mock_model,
 )
@@ -58,10 +59,12 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 
 
 def mock_accuracy_score(output: str, expected: str, config: dict | None = None, **_) -> float:
-    """Scoring function with model-dependent mock accuracy."""
+    """Scoring function with config-dependent mock accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
         model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
-        return get_mock_accuracy(model, "classification")
+        temperature = config.get("temperature") if config else None
+        use_cot = config.get("use_cot") if config else None
+        return get_mock_accuracy(model, "classification", temperature, use_cot)
     if output is None or expected is None:
         return 0.0
     return 1.0 if str(output).strip().lower() == str(expected).strip().lower() else 0.0
@@ -116,8 +119,9 @@ async def main() -> None:
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
     best_model = results.best_config.get("model", DEFAULT_MOCK_MODEL)
     est_cost = get_mock_cost(best_model, "classification", dataset_size=20)
+    est_latency = get_mock_latency(best_model, "classification")
     print(f"  Est. Cost: ${est_cost:.4f} (for 20 examples)")
-    print(f"  Latency: {results.best_metrics.get('latency', 0):.3f}s")
+    print(f"  Est. Latency: {est_latency:.3f}s (per call)")
 
 
 if __name__ == "__main__":
