@@ -76,13 +76,36 @@ MOCK_TASK_TOKENS = {
     "privacy_test": {"input": 100, "output": 50},
 }
 
+# Latency estimates per LLM API call in seconds (based on typical response times)
+MOCK_MODEL_LATENCY = {
+    # OpenAI Models
+    "gpt-4o": 0.45,           # Fast, newer architecture (~0.4-0.5s avg)
+    "gpt-4o-mini": 0.25,      # Extremely fast, comparable to Haiku
+    "gpt-3.5-turbo": 0.35,    # Fast, but 4o-mini is often faster now
+    "gpt-4-turbo": 0.8,       # Slower than 4o ("Turbo" is older tech now)
+    "gpt-4": 1.5,             # Legacy GPT-4 is notoriously slow
+    "gpt-4.1-nano": 0.15,     # Fictional ultra-low latency model
+    # Anthropic Models
+    "claude-3-5-sonnet-20241022": 0.9,  # Slower TTFT than GPT-4o (~1.0s avg)
+    "claude-3-sonnet-20240229": 0.8,
+    "claude-3-opus-20240229": 1.8,      # Heavy thinker, very slow start
+    "claude-3-haiku-20240307": 0.3,     # Very fast
+}
 
-def get_mock_accuracy(model: str, task_type: str = "simple_qa") -> float:
-    """Get model-dependent mock accuracy.
+
+def get_mock_accuracy(
+    model: str,
+    task_type: str = "simple_qa",
+    temperature: float | None = None,
+    use_cot: bool | None = None,
+) -> float:
+    """Get model-dependent mock accuracy with config-based variation.
 
     Args:
         model: Model name
-        task_type: Type of task (may affect accuracy in future)
+        task_type: Type of task (affects base accuracy)
+        temperature: Optional temperature setting (lower = more accurate for factual)
+        use_cot: Optional chain-of-thought flag (CoT typically improves accuracy)
 
     Returns:
         Mock accuracy score between 0 and 1
@@ -98,6 +121,18 @@ def get_mock_accuracy(model: str, task_type: str = "simple_qa") -> float:
         "privacy_test": 1.0,
     }
     modifier = task_modifiers.get(task_type, 1.0)
+
+    # Temperature effect: lower temperature improves accuracy for factual tasks
+    # Effect is smaller for creative tasks
+    if temperature is not None:
+        # temp 0.0 -> +3% accuracy, temp 1.0 -> -2% accuracy
+        temp_effect = 0.03 - (temperature * 0.05)
+        modifier += temp_effect
+
+    # Chain-of-thought typically improves accuracy by 2-5%
+    if use_cot is True:
+        modifier += 0.03
+
     return min(base_accuracy * modifier, 1.0)
 
 
@@ -124,6 +159,30 @@ def get_mock_cost(
 
     # Total cost for dataset
     return example_cost * dataset_size
+
+
+def get_mock_latency(model: str, task_type: str = "simple_qa") -> float:
+    """Get estimated latency for a model in mock mode.
+
+    Args:
+        model: Model name
+        task_type: Type of task (affects latency estimate)
+
+    Returns:
+        Estimated latency in seconds per call
+    """
+    base_latency = MOCK_MODEL_LATENCY.get(model, 0.5)
+
+    # Task-specific latency multipliers (more tokens = more time)
+    task_multipliers = {
+        "simple_qa": 1.0,
+        "classification": 0.8,   # Short outputs
+        "rag_qa": 2.5,           # Long context
+        "code_generation": 3.0,  # Long outputs
+        "privacy_test": 1.0,
+    }
+    multiplier = task_multipliers.get(task_type, 1.0)
+    return base_latency * multiplier
 
 
 def normalize_text(text: str) -> str:

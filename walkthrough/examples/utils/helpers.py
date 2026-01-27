@@ -362,6 +362,15 @@ def _get_mock_cost_for_trial(
     return get_mock_cost(model, task_type, dataset_size)
 
 
+def _get_mock_latency_for_trial(trial: Any, task_type: str) -> float:
+    """Calculate mock latency for a trial based on model."""
+    from utils.mock_answers import get_mock_latency
+
+    config = getattr(trial, "config", {})
+    model = config.get("model", "gpt-3.5-turbo")
+    return get_mock_latency(model, task_type)
+
+
 def print_results_table(
     results: OptimizationResult,
     config_space: dict[str, list[Any]],
@@ -397,17 +406,20 @@ def print_results_table(
     metric_names = [n for n, _ in metric_info]
     param_names = list(config_space.keys())
 
-    # Calculate mock costs for each trial (for mock mode)
+    # Calculate mock costs and latencies for each trial (for mock mode)
     mock_costs: list[float] = []
+    mock_latencies: list[float] = []
     if is_mock and "cost" in metric_names:
         mock_costs = [_get_mock_cost_for_trial(t, task_type, dataset_size) for t in trials]
+    if is_mock and "latency" in metric_names:
+        mock_latencies = [_get_mock_latency_for_trial(t, task_type) for t in trials]
 
-    # Find best trials (using mock costs if in mock mode)
-    if mock_costs:
-        # Create modified metric_info for best calculation with mock costs
+    # Find best trials (using mock values if in mock mode)
+    if mock_costs or mock_latencies:
+        # Create modified metric_info for best calculation with mock values
         best_per_objective = {}
         for metric_name, orientation in metric_info:
-            if metric_name == "cost":
+            if metric_name == "cost" and mock_costs:
                 # Use mock costs for finding best cost
                 is_minimize = orientation == "minimize"
                 best_idx = 0
@@ -416,6 +428,17 @@ def print_results_table(
                     is_better = cost < best_val if is_minimize else cost > best_val
                     if is_better:
                         best_val = cost
+                        best_idx = i
+                best_per_objective[metric_name] = best_idx
+            elif metric_name == "latency" and mock_latencies:
+                # Use mock latencies for finding best latency
+                is_minimize = orientation == "minimize"
+                best_idx = 0
+                best_val = mock_latencies[0]
+                for i, latency in enumerate(mock_latencies[1:], 1):
+                    is_better = latency < best_val if is_minimize else latency > best_val
+                    if is_better:
+                        best_val = latency
                         best_idx = i
                 best_per_objective[metric_name] = best_idx
             else:
@@ -447,6 +470,8 @@ def print_results_table(
     for idx, metric in enumerate(metric_names):
         if metric == "cost" and mock_costs:
             max_len = max(len(_format_metric_value(metric, c)) for c in mock_costs)
+        elif metric == "latency" and mock_latencies:
+            max_len = max(len(_format_metric_value(metric, lat)) for lat in mock_latencies)
         else:
             max_len = max(
                 len(_format_metric_value(metric, getattr(t, "metrics", {}).get(metric, 0)))
@@ -487,13 +512,15 @@ def print_results_table(
         is_overall_best = config == best_config
 
         # Build mock_metrics override for this trial
-        mock_metrics = None
+        mock_metrics = {}
         if mock_costs:
-            mock_metrics = {"cost": mock_costs[i]}
+            mock_metrics["cost"] = mock_costs[i]
+        if mock_latencies:
+            mock_metrics["latency"] = mock_latencies[i]
 
         row_parts = _build_table_row(
             trial, i, param_names, metric_names, col_widths, best_per_objective,
-            is_overall_best, mock_metrics
+            is_overall_best, mock_metrics if mock_metrics else None
         )
         print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 
@@ -506,7 +533,7 @@ def print_results_table(
     print(f"{C.DIM}Legend: {', '.join(legend)}{C.RESET}")
 
     if is_mock:
-        print(f"{C.DIM}Note: Mock mode - costs are estimated based on model pricing.{C.RESET}")
+        print(f"{C.DIM}Note: Mock mode - costs and latencies are estimated based on model characteristics.{C.RESET}")
 
 
 def print_cost_estimate(
