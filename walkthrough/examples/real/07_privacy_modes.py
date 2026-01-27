@@ -17,7 +17,14 @@ from langchain_openai import ChatOpenAI
 
 import traigent
 
-from utils.helpers import configure_logging, print_estimated_time, require_openai_key
+from utils.helpers import (
+    configure_logging,
+    print_cost_estimate,
+    print_estimated_time,
+    print_optimization_config,
+    print_results_table,
+    require_openai_key,
+)
 from utils.scoring import token_match_score
 
 require_openai_key("07_privacy_modes.py")
@@ -28,16 +35,18 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
 RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
+OBJECTIVES = ["accuracy"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.1, 0.5],
+}
 
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "simple_questions.jsonl"),
-    objectives=["accuracy"],
+    objectives=OBJECTIVES,
     scoring_function=token_match_score,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.1, 0.5],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
     local_storage_path=RESULTS_DIR,
@@ -60,6 +69,13 @@ def local_mode(question: str) -> str:
 async def main() -> None:
     print("Traigent Example 7: Privacy Modes (local-only for now)")
     print("=" * 50)
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="simple_qa",
+        num_trials=4,
+    )
 
     print("\nLOCAL - All data stays on your machine")
     print_estimated_time("07_privacy_modes.py")
@@ -69,6 +85,8 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

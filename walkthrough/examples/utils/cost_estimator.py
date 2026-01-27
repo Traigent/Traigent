@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 """Cost estimator for Traigent optimization runs."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 # Approximate costs per 1K tokens (as of 2024)
 MODEL_COSTS = {
     # OpenAI models
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gpt-4o": {"input": 0.0025, "output": 0.01},  # Updated from 0.005/0.015
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+
     # Anthropic models
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
@@ -18,23 +19,24 @@ MODEL_COSTS = {
     "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
 }
 
-# Average token estimates per interaction
+# Updated Average token estimates
 AVERAGE_TOKENS = {
     "simple_qa": {"input": 50, "output": 30},
     "classification": {"input": 80, "output": 10},
     "generation": {"input": 100, "output": 200},
-    "rag_qa": {"input": 500, "output": 100},
+    # INCREASED: 500 -> 2000 to account for retrieved context chunks
+    "rag_qa": {"input": 2000, "output": 100},
     "code_generation": {"input": 150, "output": 300},
     "summarization": {"input": 1000, "output": 200},
 }
 
 
 def estimate_cost(
-    models: List[str],
+    models: list[str],
     dataset_size: int,
     task_type: str = "simple_qa",
     num_trials: int = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Estimate the cost of running Traigent optimization.
 
@@ -103,7 +105,7 @@ def estimate_cost(
     }
 
 
-def format_cost_estimate(estimate: Dict[str, Any]) -> str:
+def format_cost_estimate(estimate: dict[str, Any]) -> str:
     """Format cost estimate for display."""
 
     output = []

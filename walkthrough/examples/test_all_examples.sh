@@ -147,7 +147,7 @@ case "$MODE" in
     --mock)
         print_header "MOCK"
         echo -e "${GREEN}Mock mode: No API keys needed, instant results${NC}"
-        echo -e "${YELLOW}Info: For real API calls, run the examples under walkthrough/examples/real/${NC}"
+        echo -e "${YELLOW}Info: For real LLM API calls, run the examples under walkthrough/examples/real/${NC}"
         echo ""
 
         export TRAIGENT_MOCK_LLM=true

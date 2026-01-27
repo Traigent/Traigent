@@ -24,7 +24,10 @@ import traigent
 
 from utils.helpers import (
     configure_logging,
+    print_cost_estimate,
     print_estimated_time,
+    print_optimization_config,
+    print_results_table,
     require_openai_key,
     sanitize_traigent_api_key,
 )
@@ -39,6 +42,12 @@ traigent.initialize(execution_mode="edge_analytics")
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
+OBJECTIVES = ["accuracy", "cost"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.0, 0.2, 0.5],
+    "style": ["verbose", "concise", "documented"],
+}
 
 # LLM Judge for code evaluation - uses a smaller, cheaper model
 _judge_llm = None
@@ -146,13 +155,9 @@ def llm_code_evaluator(output: str, expected: str, **kwargs) -> float:
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "code_gen.jsonl"),
-    objectives=["accuracy", "cost"],
+    objectives=OBJECTIVES,
     scoring_function=llm_code_evaluator,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.0, 0.2, 0.5],
-        "style": ["verbose", "concise", "documented"],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
@@ -193,7 +198,14 @@ async def main() -> None:
     print("Traigent Example 6: LLM-as-Judge Custom Evaluator")
     print("=" * 55)
     print("Using GPT-4o-mini as a judge to evaluate code quality.")
-    print("Scoring: Correctness (40%), Quality (30%), Documentation (30%).\n")
+    print("Scoring: Correctness (40%), Quality (30%), Documentation (30%).")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="code_generation",
+        num_trials=10,
+    )
 
     _suppress_code_gen_warning()
 
@@ -204,6 +216,8 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")

@@ -29,7 +29,10 @@ from traigent.config.parallel import ParallelConfig
 
 from utils.helpers import (
     configure_logging,
+    print_cost_estimate,
     print_estimated_time,
+    print_optimization_config,
+    print_results_table,
     require_openai_key,
     sanitize_traigent_api_key,
 )
@@ -46,6 +49,13 @@ traigent.initialize(execution_mode="edge_analytics")
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
+OBJECTIVES = ["accuracy", "cost"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.0, 0.3, 0.7],
+    "k": [1, 3, 5],
+    "retrieval_method": ["similarity", "keyword"],
+}
 
 KNOWLEDGE_BASE = [
     "Traigent optimizes AI applications without code changes",
@@ -84,14 +94,9 @@ def get_vectorstore() -> FAISS:
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "rag_questions.jsonl"),
-    objectives=["accuracy", "cost"],
+    objectives=OBJECTIVES,
     scoring_function=semantic_overlap_score,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.0, 0.3, 0.7],
-        "k": [1, 3, 5],
-        "retrieval_method": ["similarity", "keyword"],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
@@ -140,7 +145,14 @@ def rag_qa(question: str) -> str:
 async def main() -> None:
     print("Traigent Example 5: RAG Optimization (parallel eval on by default)")
     print("=" * 50)
-    print("Optimizing retrieval (k/method) and generation (model/temp) against rag_questions.jsonl.\n")
+    print("Optimizing retrieval (k/method) and generation (model/temp).")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="rag_qa",
+        num_trials=10,
+    )
 
     parallel_enabled = os.getenv("TRAIGENT_PARALLEL", "1").lower() not in (
         "0",
@@ -163,6 +175,8 @@ async def main() -> None:
         random_seed=42,
         parallel_config=parallel_config,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Retrieval k: {results.best_config.get('k')}")

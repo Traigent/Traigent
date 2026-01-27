@@ -12,7 +12,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import traigent
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
-from utils.mock_answers import CLASSIFICATION_LABELS, normalize_text, configure_mock_notice
+from utils.helpers import print_optimization_config, print_results_table
+from utils.mock_answers import (
+    CLASSIFICATION_LABELS,
+    DEFAULT_MOCK_MODEL,
+    configure_mock_notice,
+    get_mock_accuracy,
+    get_mock_cost,
+    normalize_text,
+    set_mock_model,
+)
 from traigent import TraigentConfig
 
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
@@ -30,7 +39,16 @@ SIMULATED_BEST = {
     "cost": 0.000150,  # Simulated cost per evaluation (realistic for gpt-4o)
     "latency": 0.065,  # Simulated latency in seconds
 }
-MOCK_MODE_CONFIG = {"base_accuracy": SIMULATED_BEST["accuracy"], "variance": 0.0, "random_seed": 42}
+MOCK_MODE_CONFIG = {
+    "base_accuracy": SIMULATED_BEST["accuracy"],
+    "variance": 0.0,
+    "random_seed": 42,
+}
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "temperature": [0.0, 0.3],
+    "use_cot": [True, False],
+}
 
 OBJECTIVES = ObjectiveSchema.from_objectives([
     ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
@@ -39,13 +57,11 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
 ])
 
 
-def _mock_accuracy() -> float:
-    return MOCK_MODE_CONFIG["base_accuracy"]
-
-
-def mock_accuracy_score(output: str, expected: str, **_) -> float:
+def mock_accuracy_score(output: str, expected: str, config: dict | None = None, **_) -> float:
+    """Scoring function with model-dependent mock accuracy."""
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
-        return _mock_accuracy()
+        model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
+        return get_mock_accuracy(model, "classification")
     if output is None or expected is None:
         return 0.0
     return 1.0 if str(output).strip().lower() == str(expected).strip().lower() else 0.0
@@ -55,11 +71,7 @@ def mock_accuracy_score(output: str, expected: str, **_) -> float:
     eval_dataset=str(DATASETS / "classification.jsonl"),
     objectives=OBJECTIVES,
     scoring_function=mock_accuracy_score,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.3],
-        "use_cot": [True, False],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
     execution_mode="edge_analytics",
     mock_mode_config=MOCK_MODE_CONFIG,
@@ -67,8 +79,10 @@ def mock_accuracy_score(output: str, expected: str, **_) -> float:
 def classify_text(text: str) -> str:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
-    model = config.get("model", "gpt-3.5-turbo")
+    model = config.get("model", DEFAULT_MOCK_MODEL)
     use_cot = config.get("use_cot", False)
+
+    set_mock_model(model)
 
     # Simulate latency differences
     if "gpt-4o" in model:
@@ -85,22 +99,25 @@ async def main() -> None:
     print("=" * 50)
     configure_mock_notice("04_multi_objective.py")
     print("Balancing accuracy (50%), cost (30%), latency (20%).")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
-    # In real mode, use results.best_config and results.best_metrics
-    # Example: results.best_config.get("model"), results.best_metrics.get("accuracy")
-    _results = await classify_text.optimize(
+    results = await classify_text.optimize(
         algorithm="random", max_trials=8, random_seed=42
     )
 
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=True, task_type="classification")
+
     print("\nBest Configuration Found:")
-    print(f"  Model: {SIMULATED_BEST['model']}")
-    print(f"  Temperature: {SIMULATED_BEST['temperature']}")
-    print(f"  Chain-of-Thought: {SIMULATED_BEST['use_cot']}")
+    print(f"  Model: {results.best_config.get('model')}")
+    print(f"  Temperature: {results.best_config.get('temperature')}")
+    print(f"  Chain-of-Thought: {results.best_config.get('use_cot')}")
 
     print("\nPerformance:")
-    print(f"  Accuracy: {SIMULATED_BEST['accuracy']:.2%}")
-    print(f"  Cost: ${SIMULATED_BEST['cost']:.6f}")
-    print(f"  Latency: {SIMULATED_BEST['latency']:.3f}s")
+    print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
+    best_model = results.best_config.get("model", DEFAULT_MOCK_MODEL)
+    est_cost = get_mock_cost(best_model, "classification", dataset_size=20)
+    print(f"  Est. Cost: ${est_cost:.4f} (for 20 examples)")
+    print(f"  Latency: {results.best_metrics.get('latency', 0):.3f}s")
 
 
 if __name__ == "__main__":

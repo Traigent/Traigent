@@ -20,7 +20,10 @@ from traigent import TraigentConfig
 
 from utils.helpers import (
     configure_logging,
+    print_cost_estimate,
     print_estimated_time,
+    print_optimization_config,
+    print_results_table,
     require_openai_key,
     sanitize_traigent_api_key,
 )
@@ -36,19 +39,21 @@ traigent.initialize(execution_mode="edge_analytics")
 
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
+OBJECTIVES = ["accuracy", "cost"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.0, 0.5, 1.0],
+    "max_tokens": [50, 150, 300],
+    "use_system_prompt": [True, False],
+}
 
 
 @traigent.optimize(
     eval_dataset=str(DATASETS / "simple_questions.jsonl"),
-    objectives=["accuracy", "cost"],
+    objectives=OBJECTIVES,
     injection_mode="parameter",
     scoring_function=token_match_score,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.0, 0.5, 1.0],
-        "max_tokens": [50, 150, 300],
-        "use_system_prompt": [True, False],
-    },
+    configuration_space=CONFIG_SPACE,
     execution_mode="edge_analytics",
 )
 def answer_with_control(question: str, config: TraigentConfig) -> str:
@@ -83,7 +88,14 @@ def answer_with_control(question: str, config: TraigentConfig) -> str:
 async def main() -> None:
     print("Traigent Example 3: Parameter Mode")
     print("=" * 50)
-    print("Full control with explicit configuration parameter.\n")
+    print("Full control with explicit configuration parameter.")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="simple_qa",
+        num_trials=10,
+    )
 
     print_estimated_time("03_parameter_mode.py")
     results = await answer_with_control.optimize(
@@ -92,6 +104,8 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     for key, value in results.best_config.items():

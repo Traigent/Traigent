@@ -8,6 +8,123 @@ Maps to datasets in walkthrough/examples/datasets/:
 
 from __future__ import annotations
 
+from contextvars import ContextVar
+
+# Default model for mock trials
+DEFAULT_MOCK_MODEL = "gpt-3.5-turbo"
+
+# Context variable for current mock trial model (works with async/parallel execution)
+_current_mock_model: ContextVar[str] = ContextVar("current_mock_model", default=DEFAULT_MOCK_MODEL)
+
+
+def set_mock_model(model: str) -> None:
+    """Set the current model for mock trial context.
+
+    Call this from the decorated function to track which model is being tested.
+    The scoring function can then use get_current_mock_model() to get the model.
+
+    Note: Uses contextvars.ContextVar which properly isolates values across
+    concurrent/parallel execution (unlike threading.local).
+    """
+    _current_mock_model.set(model)
+
+
+def get_current_mock_model() -> str:
+    """Get the current model from mock trial context.
+
+    Returns:
+        The model set by set_mock_model(), or DEFAULT_MOCK_MODEL as default.
+    """
+    return _current_mock_model.get()
+
+
+# Model-dependent accuracy for mock mode (more capable models score higher)
+MOCK_MODEL_ACCURACY = {
+    "gpt-4o": 0.90,
+    "gpt-4o-mini": 0.82,
+    "gpt-3.5-turbo": 0.75,
+    "gpt-4.1-nano": 0.70,  # Fictional cheaper model
+    "gpt-4": 0.88,
+    "gpt-4-turbo": 0.87,
+    # Anthropic models
+    "claude-3-opus-20240229": 0.92,
+    "claude-3-5-sonnet-20241022": 0.88,
+    "claude-3-sonnet-20240229": 0.85,
+    "claude-3-haiku-20240307": 0.78,
+}
+
+# Costs per 1K tokens (from cost_estimator.py)
+MOCK_MODEL_COSTS = {
+    "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
+    "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+    "gpt-4o": {"input": 0.0025, "output": 0.01},
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0003},  # Fictional cheaper model
+    "gpt-4": {"input": 0.03, "output": 0.06},
+    "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+    "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
+    "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
+    "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
+    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+}
+
+# Average tokens by task type
+MOCK_TASK_TOKENS = {
+    "simple_qa": {"input": 50, "output": 30},
+    "classification": {"input": 80, "output": 10},
+    "rag_qa": {"input": 2000, "output": 100},
+    "code_generation": {"input": 150, "output": 300},
+    "privacy_test": {"input": 100, "output": 50},
+}
+
+
+def get_mock_accuracy(model: str, task_type: str = "simple_qa") -> float:
+    """Get model-dependent mock accuracy.
+
+    Args:
+        model: Model name
+        task_type: Type of task (may affect accuracy in future)
+
+    Returns:
+        Mock accuracy score between 0 and 1
+    """
+    base_accuracy = MOCK_MODEL_ACCURACY.get(model, 0.75)
+
+    # Task-specific adjustments (harder tasks reduce accuracy slightly)
+    task_modifiers = {
+        "simple_qa": 1.0,
+        "classification": 0.98,
+        "rag_qa": 0.95,
+        "code_generation": 0.90,
+        "privacy_test": 1.0,
+    }
+    modifier = task_modifiers.get(task_type, 1.0)
+    return min(base_accuracy * modifier, 1.0)
+
+
+def get_mock_cost(
+    model: str, task_type: str = "simple_qa", dataset_size: int = 20
+) -> float:
+    """Calculate realistic mock cost based on model pricing.
+
+    Args:
+        model: Model name
+        task_type: Type of task (affects token estimates)
+        dataset_size: Number of examples in dataset
+
+    Returns:
+        Estimated cost in dollars
+    """
+    costs = MOCK_MODEL_COSTS.get(model, {"input": 0.001, "output": 0.002})
+    tokens = MOCK_TASK_TOKENS.get(task_type, {"input": 50, "output": 30})
+
+    # Cost per example
+    input_cost = (tokens["input"] / 1000) * costs["input"]
+    output_cost = (tokens["output"] / 1000) * costs["output"]
+    example_cost = input_cost + output_cost
+
+    # Total cost for dataset
+    return example_cost * dataset_size
+
 
 def normalize_text(text: str) -> str:
     return text.strip().lower()
@@ -28,10 +145,9 @@ def configure_mock_notice(example_file: str) -> None:
 
     logger.addFilter(_Filter())
     print(
-        "MOCK MODE: Metrics are simulated for "
-        f"{example_file}. Best configuration and accuracy are based on "
-        "reference runs from walkthrough/examples/real/. "
-        f"To run real evaluations, use walkthrough/examples/real/{example_file}."
+        f"MOCK MODE: Running {example_file} with simulated LLM responses. "
+        "Results demonstrate the optimization workflow but are not real metrics. "
+        f"For real evaluations, use walkthrough/examples/real/{example_file}."
     )
 
 

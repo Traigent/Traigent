@@ -21,7 +21,10 @@ from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
 
 from utils.helpers import (
     configure_logging,
+    print_cost_estimate,
     print_estimated_time,
+    print_optimization_config,
+    print_results_table,
     require_openai_key,
     sanitize_traigent_api_key,
 )
@@ -42,6 +45,11 @@ OBJECTIVES = ObjectiveSchema.from_objectives([
     ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
     ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
 ])
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "temperature": [0.0, 0.3],
+    "use_cot": [True, False],
+}
 
 _LABEL_PATTERN = re.compile(r"\b(positive|negative|neutral)\b", re.IGNORECASE)
 
@@ -59,11 +67,7 @@ def extract_label(response: str) -> str:
 @traigent.optimize(
     eval_dataset=str(DATASETS / "classification.jsonl"),
     objectives=OBJECTIVES,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.0, 0.3],
-        "use_cot": [True, False],
-    },
+    configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
@@ -96,7 +100,14 @@ Answer with ONLY one word: positive, negative, or neutral."""
 async def main() -> None:
     print("Traigent Example 4: Multi-Objective Optimization")
     print("=" * 50)
-    print("Balancing accuracy (50%), cost (30%), latency (20%).\n")
+    print("Balancing accuracy (50%), cost (30%), latency (20%).")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="classification",
+        num_trials=10,
+    )
 
     print_estimated_time("04_multi_objective.py")
     results = await classify_text.optimize(
@@ -105,6 +116,8 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
