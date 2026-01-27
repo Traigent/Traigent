@@ -6,11 +6,12 @@ This example shows how to define custom objective weights and orientations.
 Based on the README.md custom objectives example.
 
 Run with (from repo root):
-    TRAIGENT_MOCK_LLM=true .venv/bin/python examples/quickstart/03_custom_objectives.py
+    TRAIGENT_MOCK_LLM=true python examples/quickstart/03_custom_objectives.py
 """
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 # Ensure mock mode for testing without API keys
@@ -24,7 +25,13 @@ os.environ.setdefault(
 ROOT_DIR = Path(__file__).resolve().parents[2]
 os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
-import traigent  # noqa: E402
+# Allow running from repo root without installation
+try:
+    import traigent
+except ImportError:
+    sys.path.insert(0, str(ROOT_DIR))
+    import traigent
+
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
 from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
 

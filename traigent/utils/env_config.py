@@ -7,6 +7,7 @@ This module provides secure access to environment variables and configuration.
 
 import os
 import secrets
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, overload
 
