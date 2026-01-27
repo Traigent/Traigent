@@ -91,16 +91,13 @@ os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 # traigent.configure(logging_level="DEBUG")
 
 # Set to True to enable verbose invocation output in the console
-__VERBOSE__ = True
+__VERBOSE__ = os.getenv("TRAIGENT_VERBOSE", "").lower() in {"1", "true", "yes"}
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "hello-world"
 if MOCK:
     # Redirect home to repo-local to avoid sandbox home write
     os.environ.setdefault("HOME", str(BASE))
-    try:
-        traigent.initialize(execution_mode="edge_analytics")
-    except Exception:
-        pass
+    traigent.initialize(execution_mode="edge_analytics")
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 CONTEXT_PATH = DATA_ROOT / "context_documents.jsonl"
@@ -284,9 +281,8 @@ def _invoke_llm(prompt: str, model: str, temperature: float) -> str:
     execution_mode="edge_analytics",
 )
 def answer_question(question: str) -> str:
-    print(f"DEBUG: MOCK={MOCK}, TRAIGENT_MOCK_LLM={os.getenv('TRAIGENT_MOCK_LLM')}")
+    """Answer a question using either mock mode or real LLM API."""
     if MOCK:
-        print("DEBUG: Returning mock answer with realistic telemetry")
         cfg = traigent.get_config()
         model = cfg.get("model", "claude-3-5-sonnet-20241022")
         use_rag = bool(cfg.get("use_rag", True))
@@ -298,18 +294,11 @@ def answer_question(question: str) -> str:
         time.sleep(telemetry["latency"])
 
         # Store telemetry for Traigent to capture
-        # This simulates what would be captured in real mode
         if hasattr(answer_question, "_mock_telemetry"):
             answer_question._mock_telemetry = telemetry
 
-        print(
-            f"DEBUG: Mock telemetry - cost: ${telemetry['cost']:.6f}, "
-            f"latency: {telemetry['latency']:.3f}s, tokens: {telemetry['total_tokens']}"
-        )
-
         return _mock_answer(question)
 
-    print("DEBUG: Making real API call")
     if os.getenv("ANTHROPIC_API_KEY") is None:
         raise APIKeyError("ANTHROPIC_API_KEY")
 
