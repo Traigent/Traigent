@@ -3,14 +3,16 @@
 
 from typing import Any
 
-# Approximate costs per 1K tokens (as of 2024)
+# Approximate costs per 1K tokens (as of 2025)
+# Synced with mock_answers.py MOCK_MODEL_COSTS
 MODEL_COSTS = {
     # OpenAI models
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "gpt-4o": {"input": 0.0025, "output": 0.01},  # Updated from 0.005/0.015
+    "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0003},  # Fictional cheap model
 
     # Anthropic models
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
@@ -74,8 +76,11 @@ def estimate_cost(
             model_costs[model] = dataset_cost
             total_cost += dataset_cost
         else:
-            # Unknown model - use average
-            model_costs[model] = 0.01 * dataset_size
+            # Unknown model - use conservative estimate (similar to gpt-3.5-turbo)
+            example_cost = (input_tokens / 1000) * 0.0005 + (
+                output_tokens / 1000
+            ) * 0.0015
+            model_costs[model] = example_cost * dataset_size
             total_cost += model_costs[model]
 
     # Scale by number of trials if different from number of models
@@ -100,7 +105,7 @@ def estimate_cost(
         "notes": [
             "Costs are estimates based on average token usage",
             "Actual costs may vary based on prompt complexity",
-            "Prices as of 2024 - check latest pricing",
+            "Prices as of 2025 - check latest pricing",
         ],
     }
 
