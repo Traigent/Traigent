@@ -18,11 +18,12 @@ HotpotQA requires combining evidence from multiple passages to answer a single q
 
 We use the HotpotQA “distractor” format (each question ships with 10 paragraphs: 2 relevant + 8 distractors). Traigent tests variations such as:
 
-- Retrieval depth `k` (how many paragraphs to include).
+- Retrieval depth `k` (how many chunks to retrive from the sources and include in the context).
+- Reranking of retrived chunks: on/off.
 - Prompt style (direct answer vs. step‑by‑step reasoning).
 - Model family and size (e.g., gpt‑4o‑mini, gpt‑4o, gpt‑3.5‑turbo).
 - Temperature and max tokens.
-- Optional reranking on/off.
+
 
 Objectives and reports include:
 
