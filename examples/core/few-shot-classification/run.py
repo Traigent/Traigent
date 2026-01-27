@@ -106,11 +106,47 @@ def _build_prompt(text: str, fewshots: list[dict]) -> str:
     execution_mode="edge_analytics",
 )
 def classify_sentiment(text: str, config: dict | None = None) -> str:
-    # Mock mode: simple keyword-based classifier
+    # Mock mode: keyword-based classifier tuned for realistic accuracy (75%+)
     if MOCK:
         t = (text or "").lower()
-        pos_kw = ["love", "loved", "great", "amazing", "good", "delightful"]
-        neg_kw = ["hate", "hated", "terrible", "bad", "worst", "awful"]
+        # Positive keywords - expanded for better coverage
+        pos_kw = [
+            "love",
+            "loved",
+            "great",
+            "amazing",
+            "good",
+            "fantastic",
+            "excellent",
+            "best",
+            "recommend",
+            "exceeded",
+            "perfect",
+            "delightful",
+            "wonderful",
+        ]
+        # Negative keywords - expanded for better coverage
+        neg_kw = [
+            "hate",
+            "hated",
+            "terrible",
+            "bad",
+            "worst",
+            "awful",
+            "horrible",
+            "waste",
+            "broke",
+            "disappointed",
+            "never",
+            "scam",
+        ]
+        # Neutral patterns - check before positive (handles "not bad" case)
+        neutral_kw = ["okay", "average", "mixed", "nothing special", "adequate"]
+        # "Not bad" is actually positive in common usage
+        if "not bad" in t:
+            return "positive"
+        if any(k in t for k in neutral_kw):
+            return "neutral"
         if any(k in t for k in pos_kw):
             return "positive"
         if any(k in t for k in neg_kw):
