@@ -63,7 +63,7 @@ DEBUG_EVAL = os.getenv("TRAIGENT_DEBUG_EVAL", "").lower() in ("1", "true", "yes"
 DEBUG_EVAL_PATH = os.getenv("TRAIGENT_DEBUG_EVAL_PATH")
 OBJECTIVES = ["accuracy", "cost"]
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
     "temperature": [0.1, 0.7],
 }
 

@@ -3,7 +3,7 @@
 
 from typing import Any
 
-# Approximate costs per 1K tokens (as of 2025)
+# Approximate costs per 1K tokens (as of 2026)
 # Synced with mock_answers.py MOCK_MODEL_COSTS
 MODEL_COSTS = {
     # OpenAI models
@@ -105,7 +105,7 @@ def estimate_cost(
         "notes": [
             "Costs are estimates based on average token usage",
             "Actual costs may vary based on prompt complexity",
-            "Prices as of 2025 - check latest pricing",
+            "Prices as of 2026 - check latest pricing",
         ],
     }
 
