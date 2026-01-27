@@ -1,3 +1,20 @@
-{"input": {"brief": "Thank team and confirm next steps."}, "output": "bulleted,formal"}
-{"input": {"brief": "Invite the group to Friday's demo."}, "output": "paragraph,friendly"}
-{"input": {"brief": "Share project update highlights."}, "output": "bulleted,formal"}
+{"input": {"brief": "Thank the team and confirm next steps for Q3 planning."}, "output": "bulleted,formal"}
+{"input": {"brief": "Share project milestone achievements with stakeholders."}, "output": "bulleted,formal"}
+{"input": {"brief": "Outline action items from today's strategy meeting."}, "output": "bulleted,formal"}
+{"input": {"brief": "Summarize quarterly sales performance for the board."}, "output": "bulleted,formal"}
+{"input": {"brief": "Document key decisions from the product review."}, "output": "bulleted,formal"}
+{"input": {"brief": "List priorities for the upcoming sprint cycle."}, "output": "bulleted,formal"}
+{"input": {"brief": "Recap customer feedback themes from last month."}, "output": "bulleted,formal"}
+{"input": {"brief": "Present budget allocation recommendations to leadership."}, "output": "bulleted,formal"}
+{"input": {"brief": "Highlight compliance updates requiring team attention."}, "output": "bulleted,formal"}
+{"input": {"brief": "Share training schedule and session topics."}, "output": "bulleted,formal"}
+{"input": {"brief": "Report infrastructure upgrade status to IT committee."}, "output": "bulleted,formal"}
+{"input": {"brief": "Outline vendor evaluation criteria and timeline."}, "output": "bulleted,formal"}
+{"input": {"brief": "Summarize risk assessment findings for project review."}, "output": "bulleted,formal"}
+{"input": {"brief": "List hiring priorities for next quarter."}, "output": "bulleted,formal"}
+{"input": {"brief": "Document security audit recommendations."}, "output": "bulleted,formal"}
+{"input": {"brief": "Recap team building activities and participation."}, "output": "bulleted,formal"}
+{"input": {"brief": "Invite the group to Friday's casual team demo."}, "output": "paragraph,friendly"}
+{"input": {"brief": "Welcome new team members and introduce yourself."}, "output": "paragraph,friendly"}
+{"input": {"brief": "Celebrate a colleague's work anniversary."}, "output": "paragraph,friendly"}
+{"input": {"brief": "Announce the office holiday party details."}, "output": "paragraph,friendly"}
