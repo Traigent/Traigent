@@ -218,7 +218,9 @@ if __name__ == "__main__":
     print("  - refusal_style: brief, policy_cite")
     print("  - temperature: 0.0 (fixed)")
     print("Total configurations: 6 (3 x 2 x 1)")
-    print(f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}")
+    print(
+        f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+    )
     print("-" * 60)
 
     async def main() -> None:
