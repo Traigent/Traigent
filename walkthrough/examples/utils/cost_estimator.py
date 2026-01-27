@@ -3,7 +3,7 @@
 
 from typing import Any
 
-# Approximate costs per 1K tokens (as of 2026)
+# Approximate costs per 1K tokens (as of Jan 2026)
 # Synced with mock_answers.py MOCK_MODEL_COSTS
 MODEL_COSTS = {
     # OpenAI models
@@ -12,8 +12,10 @@ MODEL_COSTS = {
     "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0003},  # Fictional cheap model
-
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},   # Released Apr 2025
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},    # Released Aug 2025
+    "gpt-5.1": {"input": 0.002, "output": 0.008},          # Released Nov 2025
+    "gpt-5.2": {"input": 0.003, "output": 0.012},          # Released Dec 2025
     # Anthropic models
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},

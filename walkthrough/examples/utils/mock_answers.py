@@ -40,12 +40,16 @@ def get_current_mock_model() -> str:
 
 # Model-dependent accuracy for mock mode (more capable models score higher)
 MOCK_MODEL_ACCURACY = {
+    # OpenAI Models (as of Jan 2026)
     "gpt-4o": 0.90,
     "gpt-4o-mini": 0.82,
     "gpt-3.5-turbo": 0.75,
-    "gpt-4.1-nano": 0.70,  # Fictional cheaper model
     "gpt-4": 0.88,
     "gpt-4-turbo": 0.87,
+    "gpt-4.1-nano": 0.70,       # Released Apr 2025, optimized for speed
+    "gpt-5-nano": 0.73,         # Released Aug 2025, improved over 4.1-nano
+    "gpt-5.1": 0.91,            # Released Nov 2025, strong reasoning
+    "gpt-5.2": 0.93,            # Released Dec 2025, best accuracy
     # Anthropic models
     "claude-3-opus-20240229": 0.92,
     "claude-3-5-sonnet-20241022": 0.88,
@@ -53,12 +57,15 @@ MOCK_MODEL_ACCURACY = {
     "claude-3-haiku-20240307": 0.78,
 }
 
-# Costs per 1K tokens (from cost_estimator.py)
+# Costs per 1K tokens (synced with cost_estimator.py, as of Jan 2026)
 MOCK_MODEL_COSTS = {
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "gpt-4o": {"input": 0.0025, "output": 0.01},
-    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0003},  # Fictional cheaper model
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},   # Released Aug 2025
+    "gpt-5.1": {"input": 0.002, "output": 0.008},         # Released Nov 2025
+    "gpt-5.2": {"input": 0.003, "output": 0.012},         # Released Dec 2025
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
@@ -78,13 +85,16 @@ MOCK_TASK_TOKENS = {
 
 # Latency estimates per LLM API call in seconds (based on typical response times)
 MOCK_MODEL_LATENCY = {
-    # OpenAI Models
+    # OpenAI Models (as of Jan 2026)
     "gpt-4o": 0.45,           # Fast, newer architecture (~0.4-0.5s avg)
     "gpt-4o-mini": 0.25,      # Extremely fast, comparable to Haiku
     "gpt-3.5-turbo": 0.35,    # Fast, but 4o-mini is often faster now
     "gpt-4-turbo": 0.8,       # Slower than 4o ("Turbo" is older tech now)
     "gpt-4": 1.5,             # Legacy GPT-4 is notoriously slow
-    "gpt-4.1-nano": 0.15,     # Fictional ultra-low latency model
+    "gpt-4.1-nano": 0.15,     # Ultra-low latency, released Apr 2025
+    "gpt-5-nano": 0.12,       # Released Aug 2025, faster than 4.1-nano
+    "gpt-5.1": 0.5,           # Released Nov 2025, improved reasoning
+    "gpt-5.2": 0.6,           # Released Dec 2025, complex reasoning model
     # Anthropic Models
     "claude-3-5-sonnet-20241022": 0.9,  # Slower TTFT than GPT-4o (~1.0s avg)
     "claude-3-sonnet-20240229": 0.8,
