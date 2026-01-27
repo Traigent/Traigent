@@ -251,7 +251,9 @@ if __name__ == "__main__":
     print("  - format_hint: strict_json, relaxed_json")
     print("  - schema_rigidity: strict, lenient")
     print("Total configurations: 8 (2 x 2 x 2)")
-    print(f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}")
+    print(
+        f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+    )
     print("-" * 60)
 
     async def main() -> None:

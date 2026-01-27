@@ -66,13 +66,21 @@ def initialize_traigent(execution_mode: str = "edge_analytics") -> None:
     Args:
         execution_mode: The execution mode to use (default: edge_analytics)
     """
+    import logging
+
     import traigent
+
+    logger = logging.getLogger(__name__)
 
     if is_mock_mode():
         try:
             traigent.initialize(execution_mode=execution_mode)
-        except Exception:
-            pass  # Ignore initialization errors in mock mode
+        except Exception as e:
+            # Log the error but continue - mock mode may work without full initialization
+            logger.warning(
+                f"Traigent initialization failed in mock mode: {e}. "
+                "Continuing anyway - some features may be unavailable."
+            )
 
 
 def get_datasets_path() -> Path:

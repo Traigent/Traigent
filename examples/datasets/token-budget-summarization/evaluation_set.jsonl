@@ -1,3 +1,20 @@
 {"input": {"text": "We discussed expenses, cost caps, and revising the quarterly budget."}, "output": "budget"}
 {"input": {"text": "Decision pending next week, after we compare two proposals."}, "output": "decision"}
 {"input": {"text": "Timeline slipped by two weeks due to integration testing."}, "output": "timeline"}
+{"input": {"text": "The team agreed to prioritize the security audit before launch."}, "output": "security"}
+{"input": {"text": "Stakeholders requested weekly progress reports going forward."}, "output": "reporting"}
+{"input": {"text": "We need to hire two additional developers by next quarter."}, "output": "hiring"}
+{"input": {"text": "Customer feedback highlighted issues with the onboarding flow."}, "output": "feedback"}
+{"input": {"text": "The deployment will happen after we complete load testing."}, "output": "deployment"}
+{"input": {"text": "Documentation needs to be updated before the release."}, "output": "documentation"}
+{"input": {"text": "We discussed strategies for improving team collaboration."}, "output": "collaboration"}
+{"input": {"text": "The API performance degraded after the recent changes."}, "output": "performance"}
+{"input": {"text": "Training sessions will be scheduled for the new tools."}, "output": "training"}
+{"input": {"text": "We reviewed the compliance requirements for the new market."}, "output": "compliance"}
+{"input": {"text": "Infrastructure costs have increased significantly this month."}, "output": "infrastructure"}
+{"input": {"text": "The design team presented mockups for the new dashboard."}, "output": "design"}
+{"input": {"text": "We need to address the technical debt in the core module."}, "output": "technical debt"}
+{"input": {"text": "Marketing wants to launch the campaign next month."}, "output": "marketing"}
+{"input": {"text": "The vendor contract expires at the end of the quarter."}, "output": "contract"}
+{"input": {"text": "Quality assurance found several critical bugs in testing."}, "output": "quality"}
+{"input": {"text": "We are planning to migrate to the new cloud provider."}, "output": "migration"}
