@@ -20,13 +20,14 @@ if TYPE_CHECKING:
 
 # Estimated times for real examples (in seconds) - from test_all_examples.sh
 EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
-    "01_tuning_qa.py": 94,       # ~1m 34s
-    "02_zero_code_change.py": 78,  # ~1m 18s
-    "03_parameter_mode.py": 76,    # ~1m 16s
-    "04_multi_objective.py": 63,   # ~1m 3s
-    "05_rag_parallel.py": 55,      # ~0m 55s
-    "06_custom_evaluator.py": 73,  # ~1m 13s
-    "07_privacy_modes.py": 104,    # ~1m 44s
+    "01_tuning_qa.py": 94,           # ~1m 34s
+    "02_zero_code_change.py": 78,    # ~1m 18s
+    "03_parameter_mode.py": 76,      # ~1m 16s
+    "04_multi_objective.py": 63,     # ~1m 3s
+    "05_rag_parallel.py": 55,        # ~0m 55s
+    "06_custom_evaluator.py": 73,    # ~1m 13s
+    "07_multi_provider.py": 120,     # ~2m 0s (tests multiple providers)
+    "08_privacy_modes.py": 104,      # ~1m 44s
 }
 
 

@@ -40,7 +40,8 @@ declare -A EXAMPLES=(
     ["04_multi_objective.py"]="Multi-Objective|random|10 trials x 20 examples|~0m 11s|~1m 3s"
     ["05_rag_parallel.py"]="RAG Optimization (parallel eval)|random|10 trials x 20 examples|~0m 5s|~0m 55s"
     ["06_custom_evaluator.py"]="LLM-as-Judge|random|10 trials x 20 examples|~0m 4s|~1m 13s"
-    ["07_privacy_modes.py"]="Privacy Modes (local-only)|mixed|20 trials x 20 examples|~0m 5s|~1m 44s"
+    ["07_multi_provider.py"]="Multi-Provider (OpenAI/Claude/Gemini)|grid|12 trials x 20 examples|~0m 6s|~2m 0s"
+    ["08_privacy_modes.py"]="Privacy Modes (local-only)|mixed|20 trials x 20 examples|~0m 5s|~1m 44s"
 )
 
 EXAMPLE_ORDER=(
@@ -50,7 +51,8 @@ EXAMPLE_ORDER=(
     "04_multi_objective.py"
     "05_rag_parallel.py"
     "06_custom_evaluator.py"
-    "07_privacy_modes.py"
+    "07_multi_provider.py"
+    "08_privacy_modes.py"
 )
 
 print_header() {

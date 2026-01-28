@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Example 7: Privacy Modes - Local-only privacy-first execution (current)."""
+"""Example 8: Privacy Modes - Local-only privacy-first execution (current)."""
 
 import asyncio
 import os
@@ -68,9 +68,9 @@ def local_mode(question: str) -> str:
 
 
 async def main() -> None:
-    print("Traigent Example 7: Privacy Modes (local-only for now)")
+    print("Traigent Example 8: Privacy Modes (local-only for now)")
     print("=" * 50)
-    configure_mock_notice("07_privacy_modes.py")
+    configure_mock_notice("08_privacy_modes.py")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     print("\nLOCAL - All data stays on your machine")
