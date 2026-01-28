@@ -1061,6 +1061,17 @@ class BaseEvaluator(ABC):
                             future = loop.run_in_executor(
                                 submit_executor, call_with_config
                             )
+
+                            def _consume_future_exception(
+                                fut: asyncio.Future[Any],
+                            ) -> None:
+                                try:
+                                    _ = fut.exception()
+                                except asyncio.CancelledError:
+                                    pass
+                                except Exception:
+                                    pass
+
                             if self.timeout:
                                 done, _ = await asyncio.wait(
                                     {future},
@@ -1069,6 +1080,16 @@ class BaseEvaluator(ABC):
                                 )
                                 if not done:
                                     future.cancel()
+                                    future.add_done_callback(_consume_future_exception)
+                                    from traigent.core.exception_handler import (
+                                        is_network_available,
+                                    )
+                                    from traigent.utils.exceptions import NetworkError
+
+                                    if not is_network_available():
+                                        raise NetworkError(
+                                            "Network appears unavailable during function timeout."
+                                        )
                                     error_msg = (
                                         f"Function call timed out after {self.timeout}s"
                                     )
@@ -1114,6 +1135,19 @@ class BaseEvaluator(ABC):
                     f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
                     f"Original error: {e}"
                 ) from e
+
+            # Check if this is a network/vendor error - re-raise to trigger
+            # pause-on-error behavior at the orchestrator level.
+            # NOTE: Re-raising here bypasses storing an error result for this sample.
+            # This is intentional - network/vendor errors should pause the entire run
+            # rather than continue with potentially incomplete/stale results.
+            from traigent.core.exception_handler import (
+                is_network_exception,
+                is_vendor_exception,
+            )
+
+            if is_network_exception(e) or is_vendor_exception(e):
+                raise
 
             error_msg = f"Function call failed: {e}"
             logger.warning(error_msg)
@@ -1184,6 +1218,7 @@ class BaseEvaluator(ABC):
             temporary_executor = ThreadPoolExecutor(max_workers=1)
             executor = temporary_executor
 
+        shutdown_wait = True
         try:
             for i, example in enumerate(dataset.examples):
                 if sample_lease and not sample_lease.try_take(1):
@@ -1215,9 +1250,18 @@ class BaseEvaluator(ABC):
                     errors.append(error)
 
                 consumed += 1
+        except BaseException:
+            shutdown_wait = False
+            logger.debug(
+                "Skipping blocking executor shutdown to avoid hang on error path"
+            )
+            raise
         finally:
             if temporary_executor is not None:
-                temporary_executor.shutdown(wait=True, cancel_futures=True)
+                temporary_executor.shutdown(
+                    wait=shutdown_wait,
+                    cancel_futures=True,
+                )
 
         return outputs, errors, example_results, consumed, exhausted
 
@@ -1263,6 +1307,17 @@ class BaseEvaluator(ABC):
             return True  # Skip this result
 
         if isinstance(result, (APIKeyError, FriendlyTraigentError, CoreTraigentError)):
+            raise result
+
+        # Check for network/vendor errors - re-raise to trigger pause-on-error.
+        # NOTE: Re-raising here bypasses storing an error result for this sample.
+        # This is intentional for pause-on-error behavior (see _execute_function).
+        from traigent.core.exception_handler import (
+            is_network_exception,
+            is_vendor_exception,
+        )
+
+        if is_network_exception(result) or is_vendor_exception(result):
             raise result
 
         if detailed:
@@ -1335,6 +1390,19 @@ class BaseEvaluator(ABC):
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             raise
         except Exception as exc:
+            # Check for network/vendor errors - these should propagate up to trigger
+            # pause-on-error behavior instead of continuing with more examples.
+            # NOTE: Re-raising here cancels pending tasks and bypasses storing
+            # an error result. This is intentional for pause-on-error behavior.
+            from traigent.core.exception_handler import (
+                is_network_exception,
+                is_vendor_exception,
+            )
+
+            if is_network_exception(exc) or is_vendor_exception(exc):
+                await self._cancel_pending_tasks(pending_tasks, sample_lease)
+                raise
+
             self._store_error_result(
                 index,
                 exc,

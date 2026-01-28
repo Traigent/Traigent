@@ -120,7 +120,8 @@ async def main() -> None:
     if parallel_enabled:
         parallel_config = ParallelConfig(mode="parallel", example_concurrency=2)
         print("Parallel eval enabled (example_concurrency=2).")
-        print("To disable: set TRAIGENT_PARALLEL=0")
+        print("Pause-on-error prompts require sequential trials (parallel eval off).")
+        print("To disable parallel eval: set TRAIGENT_PARALLEL=0")
     else:
         print("Parallel eval disabled. To enable: set TRAIGENT_PARALLEL=1")
 

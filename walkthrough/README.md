@@ -29,6 +29,9 @@ Seven hands-on examples that build on each other:
 
 Each example has **mock** (no API keys) and **real** (actual LLM calls) variants.
 
+Note: Example 05 runs parallel evaluation by default. Pause-on-error prompts only
+appear in sequential mode (set `TRAIGENT_PARALLEL=0`).
+
 ```bash
 # Quick start - no API keys needed
 python walkthrough/examples/mock/01_tuning_qa.py
