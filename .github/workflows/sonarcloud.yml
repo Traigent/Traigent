@@ -8,15 +8,17 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
 
-# Queue runs instead of canceling to prevent incomplete scans
+# Cancel in-progress runs for the same ref to prevent resource exhaustion
+# This is safer than queuing which can cause jobs to wait indefinitely
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   sonarcloud:
     name: SonarCloud
     runs-on: ubuntu-latest
+    timeout-minutes: 30  # Job-level timeout
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -31,12 +33,13 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pytest-cov
+          pip install pytest pytest-cov pytest-timeout
           pip install -e ".[dev,analytics,test]"
 
       - name: Run tests with coverage
         run: |
-          pytest tests/unit/ --cov=traigent --cov-report=xml --cov-report=term -q
+          pytest tests/unit/ --cov=traigent --cov-report=xml --cov-report=term -q --timeout=60
+        timeout-minutes: 15  # Step-level timeout for tests
         env:
           TRAIGENT_MOCK_LLM: "true"
           TRAIGENT_OFFLINE_MODE: "true"
