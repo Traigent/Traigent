@@ -553,7 +553,9 @@ def handle_network_exception(
                 return True
 
             # Network didn't come back within timeout - show prompt again
-            print("\n  Network not restored within timeout. Please check your connection.")
+            print(
+                "\n  Network not restored within timeout. Please check your connection."
+            )
             print("  Showing options again...\n")
     except KeyboardInterrupt:
         print(_PROMPT_ABORTED)
