@@ -339,6 +339,17 @@ def get_config() -> dict[str, Any]:
     This unified accessor works both during optimization trials and after
     applying the best configuration to your function.
 
+    Important - When to use get_config() vs get_trial_config():
+        - **get_config()** (recommended): Works in all contexts - during optimization
+          trials and after calling ``apply_best_config()``. Use this for most cases.
+        - **get_trial_config()**: Strict validation - raises ``OptimizationStateError``
+          if called outside an active trial. Use when you need explicit trial context.
+
+    .. warning::
+        Traigent does NOT automatically inject config into function parameters.
+        Function parameters like ``model: str = "gpt-4"`` will NOT be overridden
+        by Traigent during optimization. Use ``get_config()`` to access trial values.
+
     Returns:
         Dictionary with the currently active configuration.
 
@@ -348,9 +359,9 @@ def get_config() -> dict[str, Any]:
 
     Example::
 
-        @traigent.optimize(...)
+        @traigent.optimize(configuration_space={"model": ["gpt-3.5", "gpt-4"]})
         def my_func(query: str):
-            cfg = traigent.get_config()  # Works during and after optimization
+            cfg = traigent.get_config()  # Works during trials and after apply_best_config
             return call_llm(model=cfg["model"])
     """
     trial_ctx = get_trial_context()
