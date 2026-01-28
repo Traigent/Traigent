@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Example 7: Privacy Modes - Local-only privacy-first execution (current).
+"""Example 8: Privacy Modes - Local-only privacy-first execution (current).
 
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"
-    .venv/bin/python walkthrough/examples/real/07_privacy_modes.py
+    .venv/bin/python walkthrough/examples/real/08_privacy_modes.py
 """
 
 import asyncio
@@ -27,7 +27,7 @@ from utils.helpers import (
 )
 from utils.scoring import token_match_score
 
-require_openai_key("07_privacy_modes.py")
+require_openai_key("08_privacy_modes.py")
 configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
@@ -67,7 +67,7 @@ def local_mode(question: str) -> str:
 
 
 async def main() -> None:
-    print("Traigent Example 7: Privacy Modes (local-only for now)")
+    print("Traigent Example 8: Privacy Modes (local-only for now)")
     print("=" * 50)
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
@@ -78,7 +78,7 @@ async def main() -> None:
     )
 
     print("\nLOCAL - All data stays on your machine")
-    print_estimated_time("07_privacy_modes.py")
+    print_estimated_time("08_privacy_modes.py")
     results = await local_mode.optimize(
         algorithm="grid",
         max_trials=4,

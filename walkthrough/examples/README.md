@@ -12,9 +12,9 @@ pip install traigent[integrations]
 
 This includes:
 
-- `langchain`, `langchain-openai`, `langchain-community` - LLM framework
+- `langchain`, `langchain-openai`, `langchain-anthropic`, `langchain-google-genai`, `langchain-community` - LLM framework
 - `faiss-cpu` - Vector search for RAG examples
-- `openai`, `anthropic` - LLM providers
+- `openai`, `anthropic`, `google-generativeai` - LLM providers
 
 ## Quick Start
 
@@ -22,9 +22,13 @@ This includes:
 # Mock examples - no API keys needed
 python walkthrough/examples/mock/01_tuning_qa.py
 
-# Real examples - requires OpenAI API key
+# Real examples - requires an LLM API key for LLM API calls
 export OPENAI_API_KEY="your-key"
 python walkthrough/examples/real/01_tuning_qa.py
+
+# Multi-provider example (any one key works)
+export OPENAI_API_KEY="your-key"  # Or ANTHROPIC_API_KEY / GOOGLE_API_KEY
+python walkthrough/examples/real/07_multi_provider.py
 ```
 
 Check your environment with `python walkthrough/examples/utils/check_environment.py`.
@@ -35,7 +39,7 @@ Check your environment with `python walkthrough/examples/utils/check_environment
 # Run all mock examples (no API keys needed)
 bash walkthrough/examples/test_all_examples.sh --mock
 
-# Run all real examples (requires OpenAI API key)
+# Run all real examples (requires OpenAI API key; Example 07 can also use Anthropic/Gemini keys)
 export OPENAI_API_KEY="your-key"
 bash walkthrough/examples/test_all_examples.sh --real
 ```
@@ -68,7 +72,8 @@ examples/
 | 04 | Multi-Objective  | Balance accuracy, cost, and latency        | Context        | classification   | Exact Match                |
 | 05 | RAG              | Optimize retrieval + parallel eval         | Context        | rag_questions    | Semantic Similarity        |
 | 06 | Custom Evaluator | LLM-as-Judge for code generation           | Context        | code_gen         | LLM-as-Judge (GPT-4o-mini) |
-| 07 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions | Exact Match                |
+| 07 | Multi-Provider   | Use any LLM vendor (OpenAI, Claude, Gemini)| Context        | simple_questions | Exact Match                |
+| 08 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions | Exact Match                |
 
 Injection modes are explained in depth here: [Injection Modes Guide](../../docs/user-guide/injection_modes.md).
 
@@ -80,7 +85,8 @@ Quick notes for new users:
 - **04 Multi-Objective**: Trade off accuracy, cost, and latency.
 - **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
 - **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
-- **07 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
+- **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Gemini offers a free tier - great for testing!
+- **08 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
 
 ## Datasets
 
@@ -237,9 +243,9 @@ These walkthrough examples use **local execution mode** (`edge_analytics`), whic
 
 - **Local / Edge Analytics**: LLM calls and optimization run locally. Results stay on your machine. Optionally send anonymized analytics without sharing prompts/responses.
 
-Example 07 demonstrates privacy-first local execution with local result storage.
+Example 08 demonstrates privacy-first local execution with local result storage.
 
-### Local Results Folder (Example 07)
+### Local Results Folder (Example 08)
 
 By default, walkthrough examples store results under:
 

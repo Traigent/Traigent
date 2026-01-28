@@ -55,6 +55,10 @@ MOCK_MODEL_ACCURACY = {
     "claude-3-5-sonnet-20241022": 0.88,
     "claude-3-sonnet-20240229": 0.85,
     "claude-3-haiku-20240307": 0.78,
+    # Google Gemini models
+    "gemini-1.5-flash": 0.80,         # Fast and capable
+    "gemini-1.5-pro": 0.89,           # High accuracy model
+    "gemini-2.0-flash-exp": 0.85,     # Experimental next-gen flash
 }
 
 # Costs per 1K tokens (synced with cost_estimator.py, as of Jan 2026)
@@ -72,6 +76,11 @@ MOCK_MODEL_COSTS = {
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
     "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    # Google Gemini models (Standard tier <= 128k context)
+    # Note: Prices double if context length > 128k tokens
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
+    "gemini-2.0-flash-exp": {"input": 0.000075, "output": 0.0003},  # Often free in AI Studio
 }
 
 # Average tokens by task type
@@ -100,6 +109,10 @@ MOCK_MODEL_LATENCY = {
     "claude-3-sonnet-20240229": 0.8,
     "claude-3-opus-20240229": 1.8,      # Heavy thinker, very slow start
     "claude-3-haiku-20240307": 0.3,     # Very fast
+    # Google Gemini Models
+    "gemini-1.5-flash": 0.2,            # Very fast, optimized for speed
+    "gemini-1.5-pro": 0.5,              # Balanced speed and quality
+    "gemini-2.0-flash-exp": 0.15,       # Next-gen fast model
 }
 
 
