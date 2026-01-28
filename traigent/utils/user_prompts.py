@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 PROMPT_WIDTH = 63
+_OPTION_STOP = "  [2] STOP optimization"
 
 
 def _print_box(lines: Iterable[str]) -> None:
@@ -36,7 +37,7 @@ def print_budget_prompt(current_limit: float, spent: float) -> None:
         [
             "",
             "  [1] Raise limit and CONTINUE optimization",
-            "  [2] STOP optimization",
+            _OPTION_STOP,
         ]
     )
     _print_box(lines)
@@ -56,7 +57,27 @@ def print_vendor_error_prompt(title: str, explanation: str) -> None:
         [
             "",
             "  [1] RESUME optimization",
-            "  [2] STOP optimization",
+            _OPTION_STOP,
+        ]
+    )
+    _print_box(lines)
+    print()
+
+
+def print_network_error_prompt(title: str, explanation: str) -> None:
+    """Print the network error prompt with a concise explanation."""
+    lines: list[str] = [
+        "  NETWORK ERROR DETECTED",
+        "",
+        f"  Error: {title}",
+        "",
+    ]
+    lines.extend([f"  {line}" for line in explanation.splitlines()])
+    lines.extend(
+        [
+            "",
+            "  [1] RESUME (will wait for network to restore)",
+            _OPTION_STOP,
         ]
     )
     _print_box(lines)

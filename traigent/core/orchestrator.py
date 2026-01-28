@@ -160,6 +160,11 @@ class OptimizationOrchestrator:
         self.parallel_execution_manager = ParallelExecutionManager(
             parallel_trials=self.parallel_trials,
         )
+        if self._pause_on_error and self.parallel_trials > 1:
+            logger.info(
+                "Pause-on-error disabled when parallel_trials > 1; "
+                "use sequential mode (e.g., TRAIGENT_PARALLEL=0) to enable pausing."
+            )
         self.progress_manager = ProgressManager(
             total_trials=max_trials,
             algorithm_name=optimizer.__class__.__name__,
@@ -1458,6 +1463,17 @@ class OptimizationOrchestrator:
         from traigent.core.exception_handler import handle_vendor_exception
 
         return handle_vendor_exception(error)
+
+    def _handle_network_exception(self, error: Exception) -> bool:
+        """Handle network errors with optional pause/resume."""
+        if not self._pause_on_error:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on network error.")
+            return False
+        from traigent.core.exception_handler import handle_network_exception
+
+        return handle_network_exception(error)
 
     def _handle_budget_limit_pause(self) -> bool:
         """Handle cost limit pause/raise flow. Returns True to continue."""

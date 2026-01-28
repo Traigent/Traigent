@@ -19,7 +19,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from traigent.config.context import TrialContext
-from traigent.core.exception_handler import VendorPauseError, is_vendor_exception
+from traigent.core.exception_handler import (
+    NetworkPauseError,
+    VendorPauseError,
+    is_network_exception,
+    is_vendor_exception,
+)
 from traigent.core.orchestrator_helpers import (
     enforce_constraints,
     extract_cost_from_results,
@@ -270,6 +275,55 @@ class TrialLifecycle:
                         return trial_count, "break"
                 logger.info("Retrying trial %s after vendor error", trial_count)
                 continue
+
+            except NetworkPauseError as exc:
+                # Handle network errors similarly to vendor errors
+                if permit is not None and orchestrator.cost_enforcer is not None:
+                    partial_cost = exc.partial_cost
+                    if partial_cost is None and permit.amount > 0:
+                        partial_cost = permit.amount
+                        logger.info(
+                            "Partial cost unavailable for trial %s; "
+                            "using permit estimate $%.4f",
+                            trial_count,
+                            partial_cost,
+                        )
+                    if partial_cost is not None:
+                        await orchestrator.cost_enforcer.track_cost_async(
+                            cost=partial_cost,
+                            permit=permit,
+                            trial_failed=True,
+                            trial_id=f"trial_{trial_count}_partial",
+                        )
+                        logger.info(
+                            "Tracked partial cost for trial %s: $%.4f",
+                            trial_count,
+                            partial_cost,
+                        )
+                    else:
+                        await orchestrator.cost_enforcer.release_permit_async(permit)
+                    permit = None
+
+                should_continue = orchestrator._handle_network_exception(exc.error)
+                if not should_continue:
+                    orchestrator._stop_reason = "network_error"
+                    return trial_count, "break"
+                if orchestrator.cost_enforcer is not None:
+                    permit = await orchestrator.cost_enforcer.acquire_permit_async()
+                    if not permit.is_granted:
+                        orchestrator._stop_reason = "cost_limit"
+                        if hasattr(orchestrator, "_abandon_optuna_trial"):
+                            orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
+                                optuna_trial_id,
+                                reason="trial_cancelled_by_cost_limit",
+                                config=config_for_run,
+                                status=TrialStatus.CANCELLED,
+                                pruned_step=0,
+                            )
+                        return trial_count, "break"
+                logger.info("Retrying trial %s after network error", trial_count)
+                continue
+
             except Exception:
                 # Release permit on exception to prevent stranding
                 if (
@@ -352,7 +406,7 @@ class TrialLifecycle:
                     lease=lease,
                     span=span,
                 )
-            except VendorPauseError:
+            except (VendorPauseError, NetworkPauseError):
                 raise
 
     async def _execute_trial_with_tracing(
@@ -468,10 +522,14 @@ class TrialLifecycle:
             raise
 
         except Exception as exc:
+            # Check if this is a pausable error (vendor or network)
+            is_vendor = is_vendor_exception(exc)
+            is_network = is_network_exception(exc)
+
             if (
                 orchestrator._pause_on_error
                 and orchestrator.parallel_trials <= 1
-                and is_vendor_exception(exc)
+                and (is_vendor or is_network)
             ):
                 partial_cost = None
                 if progress_state is not None:
@@ -500,13 +558,26 @@ class TrialLifecycle:
                                 "Unable to parse partial cost from %r",
                                 cost_value,
                             )
-                logger.warning(
-                    "Vendor error during trial %s: %s",
-                    trial_id,
-                    exc,
-                )
+
                 record_trial_result(span, status="paused", error=str(exc))
-                raise VendorPauseError(exc, partial_cost=partial_cost) from exc
+
+                # Vendor errors take precedence over network errors
+                # (rate limits/quota errors have more specific guidance)
+                if is_vendor:
+                    logger.warning(
+                        "Vendor error during trial %s: %s",
+                        trial_id,
+                        exc,
+                    )
+                    raise VendorPauseError(exc, partial_cost=partial_cost) from exc
+                else:
+                    logger.warning(
+                        "Network error during trial %s: %s",
+                        trial_id,
+                        exc,
+                    )
+                    raise NetworkPauseError(exc, partial_cost=partial_cost) from exc
+
             logger.exception("Trial %s execution failed unexpectedly", trial_id)
             result = self._build_trial_error_result(
                 trial_id,
