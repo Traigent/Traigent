@@ -63,11 +63,10 @@ repos:
     hooks:
       - id: validate-tvl-specs
         name: Validate TVL specs
-        entry: python -m traigent.tvl --strict
-        language: python
+        entry: .venv/bin/python -m traigent.tvl --strict
+        language: system
         files: '\.tvl\.ya?ml$'
         types: [file]
-        additional_dependencies: ['pyyaml>=6.0']
 
 # Configuration for detect-secrets
 # Run: detect-secrets scan > .secrets.baseline
