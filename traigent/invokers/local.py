@@ -178,15 +178,19 @@ class LocalInvoker(BaseInvoker):
         self, func: Callable[..., Any], input_data: dict[str, Any], start_time: float
     ) -> Any:
         """Invoke sync function in thread pool with timeout."""
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
+        future = loop.run_in_executor(None, lambda: func(**input_data))
 
-        if self.timeout:
-            return await asyncio.wait_for(
-                loop.run_in_executor(None, lambda: func(**input_data)),
-                timeout=self.timeout,
-            )
-        else:
-            return await loop.run_in_executor(None, lambda: func(**input_data))
+        if not self.timeout:
+            return await future
+
+        done, pending = await asyncio.wait({future}, timeout=self.timeout)
+        if not done:
+            for pending_future in pending:
+                pending_future.cancel()
+            raise TimeoutError
+
+        return next(iter(done)).result()
 
     async def invoke_batch(
         self,

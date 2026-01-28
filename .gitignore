@@ -204,6 +204,7 @@ resampling_configs.md
 !qa_samples.jsonl
 !tests/mcp/fixtures/sample_datasets.jsonl
 optimization_results/
+local_results/
 data/
 temp/
 .traigent/
