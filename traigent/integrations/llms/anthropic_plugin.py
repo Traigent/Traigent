@@ -48,7 +48,7 @@ class AnthropicPlugin(LLMPlugin):
             # Anthropic-specific
             "metadata": "metadata",
             # API configuration
-            "anthropic_api_key": "api_key",
+            "anthropic_api_key": "api_key",  # pragma: allowlist secret
             "anthropic_api_url": "base_url",
             "anthropic_version": "anthropic_version",
         }
@@ -146,12 +146,15 @@ class AnthropicPlugin(LLMPlugin):
         """Apply Anthropic-specific overrides.
 
         This method extends the base implementation to handle Anthropic-specific
-        logic like message formatting and system prompts.
+        logic like message formatting, system prompts, and extended thinking.
         """
         config_obj = self._normalize_config(config)
 
         # Apply base overrides
         overridden = super().apply_overrides(kwargs, config_obj)
+
+        # Apply reasoning/extended thinking parameter translation
+        overridden = self._apply_reasoning_overrides(overridden, config_obj)
 
         custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
         if isinstance(custom_params_raw, Mapping):
@@ -224,3 +227,78 @@ class AnthropicPlugin(LLMPlugin):
                     overridden["tools"] = anthropic_tools
 
         return overridden
+
+    def _apply_reasoning_overrides(
+        self, params: dict[str, Any], config
+    ) -> dict[str, Any]:
+        """Apply extended thinking parameter translation for Anthropic models.
+
+        Builds the nested `thinking` object from:
+        - extended_thinking (bool) -> thinking.type ("enabled"/"disabled")
+        - thinking_budget_tokens (int) -> thinking.budget_tokens
+
+        Provider-specific params override generic reasoning_mode/reasoning_budget.
+        """
+        from traigent.integrations.utils.model_capabilities import supports_reasoning
+
+        # Get model from params or config
+        model = params.get("model") or getattr(config, "model", None)
+        if not model:
+            # No model specified, can't determine reasoning support
+            self._clean_reasoning_params(params)
+            return params
+
+        # Check if model supports native reasoning (extended thinking)
+        if not supports_reasoning(model, "anthropic"):
+            # Non-reasoning model: remove all reasoning params
+            self._clean_reasoning_params(params)
+            return params
+
+        # Build nested thinking object
+        thinking: dict[str, Any] = {}
+
+        # Handle extended_thinking toggle (provider-specific wins)
+        if "extended_thinking" in params:
+            extended = params.pop("extended_thinking")
+            thinking["type"] = "enabled" if extended else "disabled"
+        elif "reasoning_mode" in params:
+            mode = params.pop("reasoning_mode")
+            thinking["type"] = "disabled" if mode == "none" else "enabled"
+
+        # Handle budget (provider-specific wins)
+        if "thinking_budget_tokens" in params:
+            budget = params.pop("thinking_budget_tokens")
+            # Enforce minimum of 1024 tokens per Anthropic API
+            thinking["budget_tokens"] = max(1024, budget)
+        elif "reasoning_budget" in params:
+            budget = params.pop("reasoning_budget")
+            # Enforce minimum of 1024 tokens per Anthropic API
+            thinking["budget_tokens"] = max(1024, budget) if budget > 0 else 1024
+
+        # If budget is set but type isn't, default to enabled
+        # This allows IntRange.reasoning_budget() to work without also setting mode
+        if "budget_tokens" in thinking and "type" not in thinking:
+            thinking["type"] = "enabled"
+
+        # Default budget if enabled but not specified
+        if thinking.get("type") == "enabled" and "budget_tokens" not in thinking:
+            thinking["budget_tokens"] = 8000
+
+        # Only add thinking object if we have settings and it's enabled
+        if thinking and thinking.get("type") == "enabled":
+            params["thinking"] = thinking
+        elif thinking.get("type") == "disabled":
+            # Explicitly disabled, don't add thinking object
+            pass
+
+        # Clean up remaining generic params
+        self._clean_reasoning_params(params)
+
+        return params
+
+    def _clean_reasoning_params(self, params: dict[str, Any]) -> None:
+        """Remove generic reasoning params that shouldn't be sent to the API."""
+        params.pop("reasoning_mode", None)
+        params.pop("reasoning_budget", None)
+        params.pop("extended_thinking", None)
+        params.pop("thinking_budget_tokens", None)

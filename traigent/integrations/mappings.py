@@ -168,9 +168,11 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "model",
             "temperature",
             "max_tokens",
+            "max_completion_tokens",  # For reasoning models (o1/o3/GPT-5+)
             "top_p",
             "stream",
             "tools",
+            "reasoning_effort",  # For reasoning models (o1/o3/GPT-5+)
         ],
     },
     "openai.AsyncOpenAI": {
@@ -186,9 +188,11 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "model",
             "temperature",
             "max_tokens",
+            "max_completion_tokens",  # For reasoning models (o1/o3/GPT-5+)
             "top_p",
             "stream",
             "tools",
+            "reasoning_effort",  # For reasoning models (o1/o3/GPT-5+)
         ],
     },
     # Anthropic methods
@@ -202,6 +206,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
             "tools",
             "system",
+            "thinking",  # Extended thinking (Claude 4+)
         ],
         "messages.stream": [
             "model",
@@ -211,6 +216,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "top_k",
             "tools",
             "system",
+            "thinking",  # Extended thinking (Claude 4+)
         ],
     },
     "anthropic.AsyncAnthropic": {
@@ -223,6 +229,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
             "tools",
             "system",
+            "thinking",  # Extended thinking (Claude 4+)
         ],
         "messages.stream": [
             "model",
@@ -232,6 +239,7 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "top_k",
             "tools",
             "system",
+            "thinking",  # Extended thinking (Claude 4+)
         ],
     },
     # LangChain methods
