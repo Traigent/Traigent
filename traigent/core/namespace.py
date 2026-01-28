@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from traigent.utils.logging import get_logger
@@ -287,7 +288,7 @@ def sanitize_metric_name(name: str) -> str:
 
 
 def extract_agent_metrics(
-    measures: dict[str, float | int],
+    measures: Mapping[str, float | int],
     agent: str,
     metric_suffix: str | None = None,
 ) -> dict[str, float | int]:
