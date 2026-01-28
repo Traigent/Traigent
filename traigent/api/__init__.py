@@ -12,6 +12,7 @@ from traigent.api.functions import (
     override_config,
     set_strategy,
 )
+from traigent.api.parameter_ranges import Choices, IntRange, Range
 from traigent.api.safety import (  # RAGAS metric presets (require ragas package); Non-RAGAS metric factories; Core classes; Utilities
     CompoundSafetyConstraint,
     SafetyConstraint,
@@ -58,6 +59,10 @@ __all__ = [
     "OptimizationStatus",
     "StopReason",
     "StrategyConfig",
+    # Parameter ranges for tuned variables
+    "Range",
+    "IntRange",
+    "Choices",
     # Safety constraint presets (RAGAS)
     "faithfulness",
     "answer_relevancy",

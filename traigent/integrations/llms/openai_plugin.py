@@ -169,7 +169,7 @@ class OpenAIPlugin(LLMPlugin):
         """Apply OpenAI-specific overrides.
 
         This method extends the base implementation to handle OpenAI-specific
-        logic like message formatting and function calling.
+        logic like message formatting, function calling, and reasoning parameters.
         """
         if config is None:
             # Nothing to override without configuration; return a shallow copy for safety.
@@ -179,6 +179,9 @@ class OpenAIPlugin(LLMPlugin):
 
         # Apply base overrides
         overridden = super().apply_overrides(kwargs, config_obj)
+
+        # Apply reasoning parameter translation
+        overridden = self._apply_reasoning_overrides(overridden, config_obj)
 
         # Handle OpenAI-specific message formatting if needed
         custom_params_raw = getattr(config_obj, "custom_params", {}) or {}
@@ -216,3 +219,88 @@ class OpenAIPlugin(LLMPlugin):
                     }
 
         return overridden
+
+    def _apply_reasoning_overrides(
+        self, params: dict[str, Any], config
+    ) -> dict[str, Any]:
+        """Apply reasoning parameter translation for OpenAI models.
+
+        Handles:
+        - Generic reasoning_mode -> reasoning_effort translation
+        - reasoning_budget -> max_completion_tokens translation
+        - Model-specific reasoning_effort validation
+        - max_tokens vs max_completion_tokens conflict resolution
+        """
+        from traigent.integrations.utils.model_capabilities import (
+            get_reasoning_effort_levels,
+            supports_reasoning,
+        )
+
+        # Get model from params or config
+        model = params.get("model") or getattr(config, "model", None)
+        if not model:
+            # No model specified, can't determine reasoning support
+            self._clean_reasoning_params(params)
+            return params
+
+        # Check if model supports native reasoning
+        if not supports_reasoning(model, "openai"):
+            # Non-reasoning model: remove all reasoning params (generic + provider-specific)
+            self._clean_all_reasoning_params(params)
+            return params
+
+        # Translate generic reasoning_mode -> reasoning_effort (if not already set)
+        if "reasoning_mode" in params and "reasoning_effort" not in params:
+            mode_mapping = {"none": "minimal", "standard": "medium", "deep": "high"}
+            mode = params.pop("reasoning_mode")
+            params["reasoning_effort"] = mode_mapping.get(mode, "medium")
+
+        # Translate reasoning_budget -> max_completion_tokens (if not already set)
+        if "reasoning_budget" in params and "max_completion_tokens" not in params:
+            params["max_completion_tokens"] = params.pop("reasoning_budget")
+
+        # Validate reasoning_effort level is available for this model
+        if "reasoning_effort" in params:
+            available = get_reasoning_effort_levels(model)
+            if params["reasoning_effort"] not in available:
+                original = params["reasoning_effort"]
+                # Fall back to closest available level
+                if original == "xhigh" and "high" in available:
+                    params["reasoning_effort"] = "high"
+                elif original == "minimal" and "low" in available:
+                    params["reasoning_effort"] = "low"
+                else:
+                    params["reasoning_effort"] = "medium"
+                logger.debug(
+                    f"Reasoning effort '{original}' not available for {model}, "
+                    f"using '{params['reasoning_effort']}'"
+                )
+
+        # Handle max_tokens vs max_completion_tokens conflict
+        # For reasoning models, max_completion_tokens takes precedence
+        if "max_completion_tokens" in params and "max_tokens" in params:
+            params.pop("max_tokens")
+            logger.debug(
+                f"Removed max_tokens in favor of max_completion_tokens for reasoning model {model}"
+            )
+
+        # Clean up remaining generic params
+        self._clean_reasoning_params(params)
+
+        return params
+
+    def _clean_reasoning_params(self, params: dict[str, Any]) -> None:
+        """Remove generic reasoning params that shouldn't be sent to the API."""
+        params.pop("reasoning_mode", None)
+        params.pop("reasoning_budget", None)
+
+    def _clean_all_reasoning_params(self, params: dict[str, Any]) -> None:
+        """Remove all reasoning params for non-reasoning models.
+
+        This removes both generic params and provider-specific params since
+        non-reasoning models don't support any of them.
+        """
+        params.pop("reasoning_mode", None)
+        params.pop("reasoning_budget", None)
+        params.pop("reasoning_effort", None)
+        params.pop("max_completion_tokens", None)

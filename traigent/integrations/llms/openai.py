@@ -41,6 +41,7 @@ class OpenAIIntegration:
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
+                "max_completion_tokens": "max_completion_tokens",  # Reasoning models
                 "top_p": "top_p",
                 "frequency_penalty": "frequency_penalty",
                 "presence_penalty": "presence_penalty",
@@ -48,11 +49,13 @@ class OpenAIIntegration:
                 "stream": "stream",
                 "tools": "tools",
                 "tool_choice": "tool_choice",
+                "reasoning_effort": "reasoning_effort",  # Reasoning models (o1/o3/GPT-5+)
             },
             "openai.AsyncOpenAI": {
                 "model": "model",
                 "temperature": "temperature",
                 "max_tokens": "max_tokens",
+                "max_completion_tokens": "max_completion_tokens",  # Reasoning models
                 "top_p": "top_p",
                 "frequency_penalty": "frequency_penalty",
                 "presence_penalty": "presence_penalty",
@@ -60,6 +63,7 @@ class OpenAIIntegration:
                 "stream": "stream",
                 "tools": "tools",
                 "tool_choice": "tool_choice",
+                "reasoning_effort": "reasoning_effort",  # Reasoning models (o1/o3/GPT-5+)
             },
         }
         self._register_mappings()

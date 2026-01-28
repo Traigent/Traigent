@@ -500,6 +500,251 @@ print(f"Refined space has {len(refined)} variables (down from original)")
 
 ---
 
+## Part 5: Reasoning & Chain-of-Thought TVARs
+
+Modern LLMs support native reasoning capabilities (extended thinking, chain-of-thought). Traigent provides tuned variables for optimizing these parameters across providers.
+
+### Overview
+
+| Provider | Feature | TVARs |
+|----------|---------|-------|
+| **OpenAI** (o1/o3/GPT-5+) | Reasoning Effort | `Choices.reasoning_effort()`, `IntRange.reasoning_tokens()` |
+| **Anthropic** (Claude 4+) | Extended Thinking | `Choices.extended_thinking()`, `IntRange.thinking_budget()` |
+| **Gemini 3** | Thinking Level | `Choices.thinking_level()` |
+| **Gemini 2.5** | Thinking Budget | `IntRange.gemini_thinking_budget()` |
+| **All Providers** | Generic | `Choices.reasoning_mode()`, `IntRange.reasoning_budget()` |
+
+### Generic Provider-Agnostic TVARs
+
+Use these when optimizing across multiple providers:
+
+```python
+from traigent.api import Choices, IntRange
+import traigent
+
+@traigent.optimize(
+    model=Choices(["o3", "claude-sonnet-4-5", "gemini-3-pro"]),
+    reasoning_mode=Choices.reasoning_mode(),       # "none", "standard", "deep"
+    reasoning_budget=IntRange.reasoning_budget(),  # 0-128000 tokens
+    objectives=["accuracy", "cost"],
+)
+def multi_provider_reasoning(query: str) -> str:
+    # reasoning_mode auto-translates to:
+    # - OpenAI: reasoning_effort (none→minimal, standard→medium, deep→high)
+    # - Anthropic: thinking.type + budget_tokens
+    # - Gemini 3: thinking_level (none→MINIMAL, standard→low, deep→high)
+    # - Gemini 2.5: thinking_budget (none→0, standard→8192, deep→32768)
+    ...
+```
+
+**Generic TVARs:**
+
+| Factory | Parameter | Range | Default |
+|---------|-----------|-------|---------|
+| `Choices.reasoning_mode(default="standard")` | `reasoning_mode` | `"none"`, `"standard"`, `"deep"` | `"standard"` |
+| `IntRange.reasoning_budget()` | `reasoning_budget` | 0-128,000 tokens | 8,000 |
+
+### OpenAI-Specific TVARs (o1/o3/GPT-5+)
+
+```python
+from traigent.api import Choices, IntRange
+import traigent
+
+@traigent.optimize(
+    model=Choices(["o3", "o3-mini", "gpt-5"]),
+    reasoning_effort=Choices.reasoning_effort(),   # "minimal" to "xhigh"
+    max_completion_tokens=IntRange.reasoning_tokens(),  # 1024-128000
+    objectives=["accuracy", "latency"],
+)
+def openai_reasoning(query: str) -> str:
+    ...
+```
+
+**OpenAI TVARs:**
+
+| Factory | Parameter | Range | Default | Notes |
+|---------|-----------|-------|---------|-------|
+| `Choices.reasoning_effort(default="medium")` | `reasoning_effort` | `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` | `"medium"` | `"minimal"`: GPT-5+ only; `"xhigh"`: GPT-5.1-codex-max only |
+| `IntRange.reasoning_tokens()` | `max_completion_tokens` | 1,024-128,000 | 32,000 | Replaces `max_tokens` for reasoning models |
+
+### Anthropic-Specific TVARs (Claude 4+)
+
+```python
+from traigent.api import Choices, IntRange
+import traigent
+
+@traigent.optimize(
+    model=Choices(["claude-sonnet-4-5", "claude-opus-4-5"]),
+    extended_thinking=Choices.extended_thinking(),  # True/False
+    thinking_budget_tokens=IntRange.thinking_budget(),  # 1024-128000
+    objectives=["accuracy", "cost"],
+)
+def anthropic_reasoning(query: str) -> str:
+    ...
+```
+
+**Anthropic TVARs:**
+
+| Factory | Parameter | Range | Default | Notes |
+|---------|-----------|-------|---------|-------|
+| `Choices.extended_thinking(default=False)` | `extended_thinking` | `True`, `False` | `False` | Toggle extended thinking |
+| `IntRange.thinking_budget()` | `thinking_budget_tokens` | 1,024-128,000 | 8,000 | Min 1,024 enforced by API |
+
+**Note:** Providing only `thinking_budget_tokens` (without `extended_thinking`) auto-enables thinking.
+
+### Gemini-Specific TVARs
+
+Gemini 3 and 2.5 use different parameters:
+
+```python
+from traigent.api import Choices, IntRange
+import traigent
+
+# Gemini 3: uses thinking_level
+@traigent.optimize(
+    model=Choices(["gemini-3-pro", "gemini-3-flash"]),
+    thinking_level=Choices.thinking_level(),  # "MINIMAL", "low", "high"
+    objectives=["accuracy"],
+)
+def gemini_3_reasoning(query: str) -> str:
+    ...
+
+# Gemini 2.5: uses thinking_budget
+@traigent.optimize(
+    model=Choices(["gemini-2.5-pro", "gemini-2.5-flash"]),
+    thinking_budget=IntRange.gemini_thinking_budget(),  # 0-32768
+    objectives=["accuracy"],
+)
+def gemini_2_5_reasoning(query: str) -> str:
+    ...
+```
+
+**Gemini TVARs:**
+
+| Factory | Parameter | Range | Default | Models |
+|---------|-----------|-------|---------|--------|
+| `Choices.thinking_level(default="high")` | `thinking_level` | `"MINIMAL"`, `"low"`, `"high"` | `"high"` | Gemini 3 |
+| `IntRange.gemini_thinking_budget()` | `thinking_budget` | 0-32,768 | 8,192 | Gemini 2.5 |
+
+### Model Capability Detection
+
+Use these utilities to check reasoning support:
+
+```python
+from traigent.integrations.utils.model_capabilities import (
+    supports_reasoning,
+    get_reasoning_effort_levels,
+    is_gemini_3,
+    get_provider_from_model,
+)
+
+# Check if model supports reasoning
+supports_reasoning("o3", "openai")           # True
+supports_reasoning("gpt-4o", "openai")       # False
+supports_reasoning("claude-sonnet-4-5", "anthropic")  # True
+supports_reasoning("claude-3-opus", "anthropic")      # False
+supports_reasoning("gemini-3-pro", "gemini")  # True
+supports_reasoning("gemini-1.5-pro", "gemini")  # False
+
+# Get available effort levels for OpenAI models
+get_reasoning_effort_levels("o3")      # ["low", "medium", "high"]
+get_reasoning_effort_levels("gpt-5")   # ["minimal", "low", "medium", "high"]
+get_reasoning_effort_levels("gpt-5.1-codex-max")  # [..., "xhigh"]
+
+# Check Gemini version
+is_gemini_3("gemini-3-pro")    # True (uses thinking_level)
+is_gemini_3("gemini-2.5-pro")  # False (uses thinking_budget)
+
+# Detect provider from model name
+get_provider_from_model("o3")          # "openai"
+get_provider_from_model("claude-3")    # "anthropic"
+get_provider_from_model("gemini-pro")  # "gemini"
+```
+
+### Translation Rules
+
+| Generic Param | OpenAI | Anthropic | Gemini 3 | Gemini 2.5 |
+|---------------|--------|-----------|----------|------------|
+| `reasoning_mode="none"` | `reasoning_effort="minimal"` | *(omit thinking)* | `thinking_level="MINIMAL"` | `thinking_budget=0` |
+| `reasoning_mode="standard"` | `reasoning_effort="medium"` | `thinking.type="enabled"` + default budget | `thinking_level="low"` | `thinking_budget=8192` |
+| `reasoning_mode="deep"` | `reasoning_effort="high"` | `thinking.type="enabled"` + budget | `thinking_level="high"` | `thinking_budget=32768` |
+| `reasoning_budget=N` | `max_completion_tokens=N` | `thinking.budget_tokens=N` | *(ignored)* | `thinking_budget=min(N,32768)` |
+
+### Precedence Rules
+
+1. **Provider-specific params win over generic params**
+   ```python
+   # reasoning_effort takes precedence over reasoning_mode
+   @traigent.optimize(
+       reasoning_mode=Choices.reasoning_mode(),
+       reasoning_effort=Choices.reasoning_effort(),  # This wins
+   )
+   ```
+
+2. **Non-reasoning models strip all reasoning params**
+   - `gpt-4o`, `claude-3-opus`, `gemini-1.5-pro` will have reasoning params removed
+
+3. **Effort level fallback**
+   - If `reasoning_effort="minimal"` but model doesn't support it (e.g., o3), falls back to `"low"`
+   - If `reasoning_effort="xhigh"` but model doesn't support it, falls back to `"high"`
+
+### Complete Example
+
+```python
+import traigent
+from traigent.api import Choices, IntRange
+
+# Cross-provider optimization with automatic translation
+@traigent.optimize(
+    model=Choices([
+        "o3",              # OpenAI reasoning
+        "claude-sonnet-4-5",  # Anthropic extended thinking
+        "gemini-3-pro",    # Gemini 3 thinking
+    ]),
+    reasoning_mode=Choices.reasoning_mode(),
+    reasoning_budget=IntRange.reasoning_budget(),
+    objectives=["accuracy", "cost", "latency"],
+)
+def optimized_reasoning_agent(query: str) -> str:
+    config = traigent.get_config()
+    model = config["model"]
+
+    # The framework automatically translates reasoning_mode/reasoning_budget
+    # to the correct provider-specific parameters
+    return call_llm(model=model, query=query)
+```
+
+### API Reference - Reasoning TVARs
+
+**Choices Factory Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `Choices.reasoning_mode(default="standard")` | `Choices[str]` | Generic reasoning mode across all providers |
+| `Choices.reasoning_effort(default="medium")` | `Choices[str]` | OpenAI-specific reasoning effort level |
+| `Choices.extended_thinking(default=False)` | `Choices[bool]` | Anthropic extended thinking toggle |
+| `Choices.thinking_level(default="high")` | `Choices[str]` | Gemini 3 thinking level |
+
+**IntRange Factory Methods:**
+
+| Method | Returns | Range | Description |
+|--------|---------|-------|-------------|
+| `IntRange.reasoning_budget()` | `IntRange` | 0-128,000 | Generic reasoning token budget |
+| `IntRange.reasoning_tokens()` | `IntRange` | 1,024-128,000 | OpenAI max_completion_tokens |
+| `IntRange.thinking_budget()` | `IntRange` | 1,024-128,000 | Anthropic thinking budget |
+| `IntRange.gemini_thinking_budget()` | `IntRange` | 0-32,768 | Gemini 2.5 thinking budget |
+
+**Model Capabilities Module (`traigent.integrations.utils.model_capabilities`):**
+
+| Function | Returns | Description |
+|----------|---------|-------------|
+| `supports_reasoning(model, provider)` | `bool` | Check if model supports native reasoning |
+| `get_reasoning_effort_levels(model)` | `list[str]` | Get available reasoning effort levels |
+| `is_gemini_3(model)` | `bool` | Check if Gemini 3 (vs 2.5) |
+| `get_provider_from_model(model)` | `str \| None` | Detect provider from model name |
+
+---
+
 ## See Also
 
 - [DSPy Integration Guide](../../examples/docs/DSPY_INTEGRATION.md) - Prompt optimization with DSPy

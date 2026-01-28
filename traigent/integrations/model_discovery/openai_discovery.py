@@ -14,9 +14,9 @@ from traigent.integrations.utils import Framework
 logger = logging.getLogger(__name__)
 
 # Pattern that validates OpenAI model names
-# Matches: gpt-4, gpt-4o, gpt-4-turbo, o1-preview, text-davinci-003, etc.
+# Matches: gpt-4, gpt-4o, gpt-5, gpt-5.1-codex-max, o1-preview, o3, o4-mini, etc.
 OPENAI_MODEL_PATTERN = (
-    r"^(gpt-[0-9]|o[0-9]|text-|code-|davinci|curie|babbage|ada|"
+    r"^(gpt-[0-9]|o[1-4]|text-|code-|davinci|curie|babbage|ada|"
     r"chatgpt-|ft:|whisper|tts|dall-e)"
 )
 
@@ -52,10 +52,23 @@ class OpenAIDiscovery(ModelDiscovery):
             model_ids = []
             for model in models.data:
                 model_id = model.id
-                # Include GPT, O1, text/code completion models
+                # Include GPT, O-series reasoning, text/code completion models
                 if any(
                     model_id.startswith(prefix)
-                    for prefix in ["gpt-", "o1-", "text-", "code-", "chatgpt-"]
+                    for prefix in [
+                        "gpt-",
+                        "o1-",
+                        "o2-",
+                        "o3-",
+                        "o4-",
+                        "o1",
+                        "o2",
+                        "o3",
+                        "o4",
+                        "text-",
+                        "code-",
+                        "chatgpt-",
+                    ]
                 ) or model_id in ["davinci", "curie", "babbage", "ada"]:
                     model_ids.append(model_id)
 
@@ -73,8 +86,8 @@ class OpenAIDiscovery(ModelDiscovery):
         """Get pattern for OpenAI models.
 
         Pattern matches common OpenAI model prefixes:
-        - gpt-* (GPT models)
-        - o1-* (O1 reasoning models)
+        - gpt-* (GPT models including gpt-5, gpt-5.1-codex-max)
+        - o1-*, o2-*, o3-*, o4-* (O-series reasoning models)
         - text-* (legacy completion models)
         - code-* (Codex models)
         - davinci/curie/babbage/ada (base models)

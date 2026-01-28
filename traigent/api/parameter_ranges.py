@@ -506,6 +506,78 @@ class IntRange(NumericConstraintBuilderMixin, ParameterRange):
         """
         return cls(min_size, max_size, default=default, name="batch_size")
 
+    # =========================================================================
+    # Reasoning/Extended Thinking Factory Methods
+    # =========================================================================
+
+    @classmethod
+    def reasoning_budget(cls) -> IntRange:
+        """Provider-agnostic reasoning token budget.
+
+        Unified range covering all providers:
+        - OpenAI: maps to max_completion_tokens
+        - Anthropic: maps to thinking.budget_tokens [1024, 128000]
+        - Gemini 2.5: maps to thinking_budget [0, 32768]
+
+        For non-reasoning models, this parameter is ignored.
+
+        Returns:
+            IntRange [0, 128000] with default 8000
+
+        Example:
+            >>> budget = IntRange.reasoning_budget()
+        """
+        return cls(0, 128000, default=8000, name="reasoning_budget", unit="tokens")
+
+    @classmethod
+    def reasoning_tokens(cls) -> IntRange:
+        """OpenAI max_completion_tokens for reasoning models (o1/o3/GPT-5+).
+
+        This replaces max_tokens for reasoning models, as it includes
+        both reasoning tokens and output tokens.
+
+        Returns:
+            IntRange [1024, 128000] with default 32000
+
+        Example:
+            >>> tokens = IntRange.reasoning_tokens()
+        """
+        return cls(
+            1024, 128000, default=32000, name="max_completion_tokens", unit="tokens"
+        )
+
+    @classmethod
+    def thinking_budget(cls) -> IntRange:
+        """Anthropic extended thinking budget_tokens.
+
+        Controls the maximum tokens for Claude's internal reasoning process.
+        Minimum is 1024 tokens per Anthropic API requirements.
+
+        Returns:
+            IntRange [1024, 128000] with default 8000
+
+        Example:
+            >>> budget = IntRange.thinking_budget()
+        """
+        return cls(
+            1024, 128000, default=8000, name="thinking_budget_tokens", unit="tokens"
+        )
+
+    @classmethod
+    def gemini_thinking_budget(cls) -> IntRange:
+        """Google Gemini 2.5 thinking_budget (0-32768 tokens).
+
+        Controls the thinking budget for Gemini 2.5 series models.
+        Note: Gemini 3 uses thinking_level instead.
+
+        Returns:
+            IntRange [0, 32768] with default 8192
+
+        Example:
+            >>> budget = IntRange.gemini_thinking_budget()
+        """
+        return cls(0, 32768, default=8192, name="thinking_budget", unit="tokens")
+
 
 @dataclass(frozen=True, slots=True)
 class LogRange(NumericConstraintBuilderMixin, ParameterRange):
@@ -864,6 +936,114 @@ class Choices(CategoricalConstraintBuilderMixin, ParameterRange, Generic[T]):
             ],
             default="none",
             name="reranker",
+        )
+
+    # =========================================================================
+    # Reasoning/Extended Thinking Factory Methods
+    # =========================================================================
+
+    @classmethod
+    def reasoning_mode(cls, default: str = "standard") -> Choices[str]:
+        """Provider-agnostic reasoning mode.
+
+        Maps to provider-specific params in plugin.apply_overrides():
+        - OpenAI o1/o3/GPT-5: reasoning_effort (none->minimal, standard->medium, deep->high)
+        - Anthropic: thinking.type + thinking.budget_tokens (none->disabled, else enabled)
+        - Gemini 3: thinking_level (none->MINIMAL, standard->low, deep->high)
+        - Gemini 2.5: thinking_budget (none->0, standard->8192, deep->32768)
+
+        For non-reasoning models: Parameter is ignored (model skipped from reasoning trials).
+
+        Args:
+            default: Default reasoning mode ("none", "standard", or "deep")
+
+        Returns:
+            Choices with reasoning mode options
+
+        Example:
+            >>> mode = Choices.reasoning_mode()
+            >>> mode_deep = Choices.reasoning_mode(default="deep")
+        """
+        return Choices(
+            ["none", "standard", "deep"],
+            default=default,
+            name="reasoning_mode",
+        )
+
+    @classmethod
+    def reasoning_effort(cls, default: str = "medium") -> Choices[str]:
+        """OpenAI o1/o3/GPT-5+ reasoning effort level.
+
+        Controls the depth of reasoning before generating a response.
+        Model-dependent availability:
+        - minimal: GPT-5+ only
+        - low, medium, high: All reasoning models (o1, o3, GPT-5+)
+        - xhigh: GPT-5.1-codex-max only
+
+        Args:
+            default: Default reasoning effort level
+
+        Returns:
+            Choices with reasoning effort options
+
+        Example:
+            >>> effort = Choices.reasoning_effort()
+            >>> effort_high = Choices.reasoning_effort(default="high")
+        """
+        return Choices(
+            ["minimal", "low", "medium", "high", "xhigh"],
+            default=default,
+            name="reasoning_effort",
+        )
+
+    @classmethod
+    def extended_thinking(cls, default: bool = False) -> Choices[bool]:
+        """Anthropic extended thinking toggle.
+
+        Enables Claude's extended thinking mode for complex reasoning tasks.
+        When enabled, use thinking_budget() to control the token budget.
+
+        Args:
+            default: Whether extended thinking is enabled by default
+
+        Returns:
+            Choices with boolean options
+
+        Example:
+            >>> thinking = Choices.extended_thinking()
+            >>> thinking_on = Choices.extended_thinking(default=True)
+        """
+        return Choices(
+            [True, False],
+            default=default,
+            name="extended_thinking",
+        )
+
+    @classmethod
+    def thinking_level(cls, default: str = "high") -> Choices[str]:
+        """Google Gemini 3 thinking_level.
+
+        Controls the depth of Gemini 3's internal reasoning process.
+        Note: Gemini 2.5 uses thinking_budget (IntRange) instead.
+
+        - MINIMAL: Gemini 3 Flash only, near-zero thinking
+        - low: Minimize latency and cost
+        - high: Default, maximize reasoning depth
+
+        Args:
+            default: Default thinking level
+
+        Returns:
+            Choices with thinking level options
+
+        Example:
+            >>> level = Choices.thinking_level()
+            >>> level_low = Choices.thinking_level(default="low")
+        """
+        return Choices(
+            ["MINIMAL", "low", "high"],
+            default=default,
+            name="thinking_level",
         )
 
 

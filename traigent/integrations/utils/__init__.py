@@ -15,6 +15,14 @@ from traigent.integrations.utils.mock_adapter import (
     MockResponse,
     with_mock_support,
 )
+from traigent.integrations.utils.model_capabilities import (
+    REASONING_EFFORT_AVAILABILITY,
+    REASONING_MODELS,
+    get_provider_from_model,
+    get_reasoning_effort_levels,
+    is_gemini_3,
+    supports_reasoning,
+)
 from traigent.integrations.utils.parameter_normalizer import (
     Framework,
     ParameterAlias,
@@ -46,4 +54,11 @@ __all__ = [
     "MockAdapter",
     "MockResponse",
     "with_mock_support",
+    # Model capabilities
+    "REASONING_MODELS",
+    "REASONING_EFFORT_AVAILABILITY",
+    "supports_reasoning",
+    "get_reasoning_effort_levels",
+    "is_gemini_3",
+    "get_provider_from_model",
 ]
