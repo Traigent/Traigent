@@ -78,6 +78,7 @@ from traigent.core.utils import extract_examples_attempted
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
+from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
 from traigent.utils.exceptions import (
     OptimizationError,
@@ -166,82 +167,29 @@ class OptimizationOrchestrator:
 
         raw_constraints = kwargs.pop("constraints", None)
         default_config = kwargs.pop("default_config", None)
-        self._constraints_pre_eval: list[Callable[..., bool]] = []
-        self._constraints_post_eval: list[Callable[..., bool]] = []
-        if raw_constraints:
-            for constraint in raw_constraints:
-                if constraint_requires_metrics(constraint):
-                    self._constraints_post_eval.append(constraint)
-                else:
-                    self._constraints_pre_eval.append(constraint)
+        self._init_constraints(raw_constraints)
 
         self.objectives, self.objective_schema = prepare_objectives(
             objectives, objective_schema
         )
 
-        # TVL 0.9 tie-breaker configuration
+        # TVL 0.9 tie-breaker and promotion gate configuration
         self._tie_breakers: dict[str, TieBreaker] = (
             kwargs.pop("tie_breakers", None) or {}
         )
+        self._promotion_gate: PromotionGate | None = kwargs.pop("promotion_gate", None)
+        self._config_metrics_history: dict[str, dict[str, list[float]]] = {}
+        self._incumbent_config_hash: str | None = None
 
         # Multi-agent configuration
-        explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
-        agent_prefixes: list[str] | None = kwargs.pop("agent_prefixes", None)
-        agent_measures: dict[str, list[str]] | None = kwargs.pop("agent_measures", None)
-        global_measures: list[str] | None = kwargs.pop("global_measures", None)
-        # TVL parameter_agents are pre-extracted from TVL spec (since TVL uses raw
-        # values in configuration_space, not ParameterRange objects)
-        tvl_parameter_agents: dict[str, str] | None = kwargs.pop(
-            "tvl_parameter_agents", None
-        )
-
-        # Build agent configuration if any multi-agent params provided
-        self._agent_configuration: AgentConfiguration | None = None
-        has_multi_agent_config = (
-            explicit_agents
-            or agent_prefixes
-            or agent_measures
-            or global_measures
-            or tvl_parameter_agents
-        )
-        if has_multi_agent_config:
-            # Extract parameter agents from Range(..., agent="x") parameters
-            parameter_agents = extract_parameter_agents(self.optimizer.config_space)
-            # Merge with TVL parameter_agents (TVL takes lower priority - decorator
-            # Range(..., agent="x") can override TVL if needed)
-            if tvl_parameter_agents:
-                merged_agents = dict(tvl_parameter_agents)
-                merged_agents.update(parameter_agents)  # Decorator overrides TVL
-                parameter_agents = merged_agents
-            self._agent_configuration = build_agent_configuration(
-                configuration_space=self.optimizer.config_space,
-                explicit_agents=explicit_agents,
-                agent_prefixes=agent_prefixes,
-                agent_measures=agent_measures,
-                global_measures=global_measures,
-                parameter_agents=parameter_agents,
-            )
+        self._agent_configuration = self._init_agent_configuration(kwargs)
 
         # Derive band_target from objective_schema if available
-        self._band_target: float | None = None
-        if self.objective_schema is not None and self.objective_schema.objectives:
-            primary_obj = self.objective_schema.objectives[0]
-            if hasattr(primary_obj, "band") and primary_obj.band is not None:
-                band = primary_obj.band
-                if band.center is not None:
-                    self._band_target = band.center
-                elif band.low is not None and band.high is not None:
-                    self._band_target = (band.low + band.high) / 2.0
+        self._band_target = self._compute_band_target()
 
         self._default_config: dict[str, Any] | None = None
         self._default_config_used = False
-        if isinstance(default_config, dict) and default_config:
-            self._default_config = copy.deepcopy(default_config)
-        elif default_config is not None:
-            logger.debug(
-                "Ignoring default_config with unexpected type: %s",
-                type(default_config).__name__,
-            )
+        self._init_default_config(default_config)
 
         self.use_versioned_logger = use_versioned_logger
         self.file_version = file_version
@@ -290,73 +238,122 @@ class OptimizationOrchestrator:
         self._trial_lifecycle = TrialLifecycle(self)
         self._initialized = True
 
-    def _configure_stop_conditions(self) -> None:
-        """Configure stop conditions and sample budget management.
+    def _init_constraints(
+        self, raw_constraints: list[Callable[..., bool]] | None
+    ) -> None:
+        """Initialize pre and post evaluation constraints."""
+        self._constraints_pre_eval: list[Callable[..., bool]] = []
+        self._constraints_post_eval: list[Callable[..., bool]] = []
+        if not raw_constraints:
+            return
+        for constraint in raw_constraints:
+            if constraint_requires_metrics(constraint):
+                self._constraints_post_eval.append(constraint)
+            else:
+                self._constraints_pre_eval.append(constraint)
 
-        Extracts configuration from self.config and initializes:
-        - StopConditionManager for trial/sample/budget limits
-        - SampleBudgetManager for sample budget tracking
-        - CostEnforcer for cost limit enforcement (default: $2 USD per run)
-        """
-        plateau_window = int(self.config.get("plateau_window", 0) or 0)
-        plateau_epsilon = (
-            float(self.config.get("plateau_epsilon", 1e-6) or 1e-6)
-            if plateau_window > 0
-            else None
+    def _init_agent_configuration(
+        self, kwargs: dict[str, Any]
+    ) -> AgentConfiguration | None:
+        """Initialize multi-agent configuration from kwargs."""
+        explicit_agents: dict[str, AgentDefinition] | None = kwargs.pop("agents", None)
+        agent_prefixes: list[str] | None = kwargs.pop("agent_prefixes", None)
+        agent_measures: dict[str, list[str]] | None = kwargs.pop("agent_measures", None)
+        global_measures: list[str] | None = kwargs.pop("global_measures", None)
+        tvl_parameter_agents: dict[str, str] | None = kwargs.pop(
+            "tvl_parameter_agents", None
         )
 
+        has_multi_agent_config = any(
+            [
+                explicit_agents,
+                agent_prefixes,
+                agent_measures,
+                global_measures,
+                tvl_parameter_agents,
+            ]
+        )
+        if not has_multi_agent_config:
+            return None
+
+        parameter_agents = extract_parameter_agents(self.optimizer.config_space)
+        if tvl_parameter_agents:
+            merged_agents = dict(tvl_parameter_agents)
+            merged_agents.update(parameter_agents)
+            parameter_agents = merged_agents
+
+        return build_agent_configuration(
+            configuration_space=self.optimizer.config_space,
+            explicit_agents=explicit_agents,
+            agent_prefixes=agent_prefixes,
+            agent_measures=agent_measures,
+            global_measures=global_measures,
+            parameter_agents=parameter_agents,
+        )
+
+    def _compute_band_target(self) -> float | None:
+        """Derive band_target from objective_schema if available."""
+        if self.objective_schema is None or not self.objective_schema.objectives:
+            return None
+        primary_obj = self.objective_schema.objectives[0]
+        if not hasattr(primary_obj, "band") or primary_obj.band is None:
+            return None
+        band = primary_obj.band
+        if band.center is not None:
+            return float(band.center)
+        if band.low is not None and band.high is not None:
+            return float((band.low + band.high) / 2.0)
+        return None
+
+    def _init_default_config(self, default_config: Any) -> None:
+        """Initialize default config from provided value."""
+        if isinstance(default_config, dict) and default_config:
+            self._default_config = copy.deepcopy(default_config)
+        elif default_config is not None:
+            logger.debug(
+                "Ignoring default_config with unexpected type: %s",
+                type(default_config).__name__,
+            )
+
+    def _get_budget_limit(self) -> float | None:
+        """Extract and validate budget limit from config."""
         raw_budget_limit = self.config.get("budget_limit")
-        budget_limit = None
-        if raw_budget_limit is not None:
-            budget_limit = float(raw_budget_limit)
-            if budget_limit <= 0:
-                budget_limit = None
+        if raw_budget_limit is None:
+            return None
+        budget_limit = float(raw_budget_limit)
+        return budget_limit if budget_limit > 0 else None
 
-        budget_metric = str(self.config.get("budget_metric", "total_cost"))
-        include_pruned = bool(self.config.get("budget_include_pruned", True))
-        samples_include_pruned = bool(self.config.get("samples_include_pruned", True))
-
-        self._stop_condition_manager = StopConditionManager(
-            max_trials=self._max_trials,
-            max_samples=self._max_total_examples,
-            samples_include_pruned=samples_include_pruned,
-            plateau_window=plateau_window or None,
-            plateau_epsilon=plateau_epsilon,
-            objective_schema=self.objective_schema,
-            budget_limit=budget_limit,
-            budget_metric=budget_metric,
-            include_pruned=include_pruned,
-        )
-
-        # TVL 0.9 convergence criteria (hypervolume-based early stopping)
+    def _setup_convergence_condition(self) -> None:
+        """Configure hypervolume-based convergence if specified in config."""
         convergence_metric = self.config.get("convergence_metric")
         convergence_window = self.config.get("convergence_window")
         convergence_threshold = self.config.get("convergence_threshold")
-        if (
-            convergence_metric == "hypervolume_improvement"
-            and convergence_window is not None
-            and convergence_threshold is not None
-            and self.objective_schema is not None
-        ):
-            # Skip hypervolume convergence if any objective has band orientation
-            # Hypervolume requires maximize/minimize directions only
-            directions = [obj.orientation for obj in self.objective_schema.objectives]
-            if "band" in directions:
-                logger.info(
-                    "Skipping hypervolume convergence: band objectives are not "
-                    "compatible with hypervolume computation"
-                )
-            else:
-                objective_names = [obj.name for obj in self.objective_schema.objectives]
-                self._stop_condition_manager.add_convergence_condition(
-                    window=int(convergence_window),
-                    threshold=float(convergence_threshold),
-                    objective_names=objective_names,
-                    directions=cast(list[str], directions),
-                )
 
-        # Initialize cost enforcer for cost limit enforcement
-        # Respects TRAIGENT_RUN_COST_LIMIT, TRAIGENT_COST_APPROVED, TRAIGENT_MOCK_LLM
+        if convergence_metric != "hypervolume_improvement":
+            return
+        if convergence_window is None or convergence_threshold is None:
+            return
+        if self.objective_schema is None:
+            return
+
+        directions = [obj.orientation for obj in self.objective_schema.objectives]
+        if "band" in directions:
+            logger.info(
+                "Skipping hypervolume convergence: band objectives are not "
+                "compatible with hypervolume computation"
+            )
+            return
+
+        objective_names = [obj.name for obj in self.objective_schema.objectives]
+        self._stop_condition_manager.add_convergence_condition(
+            window=int(convergence_window),
+            threshold=float(convergence_threshold),
+            objective_names=objective_names,
+            directions=cast(list[str], directions),
+        )
+
+    def _setup_cost_enforcer(self) -> None:
+        """Initialize cost enforcer for cost limit enforcement."""
         cost_limit = self.config.get("cost_limit")
         cost_approved = self.config.get("cost_approved", False)
         cost_config = None
@@ -366,12 +363,33 @@ class OptimizationOrchestrator:
                 approved=bool(cost_approved),
             )
         self.cost_enforcer = CostEnforcer(config=cost_config)
-
-        # Share cost enforcer with parallel execution manager for permit-based control
         self.parallel_execution_manager.set_cost_enforcer(self.cost_enforcer)
-
-        # Register cost limit stop condition using the shared enforcer
         self._stop_condition_manager.register_cost_limit_condition(self.cost_enforcer)
+
+    def _configure_stop_conditions(self) -> None:
+        """Configure stop conditions and sample budget management."""
+        plateau_window = int(self.config.get("plateau_window", 0) or 0)
+        plateau_epsilon = (
+            float(self.config.get("plateau_epsilon", 1e-6) or 1e-6)
+            if plateau_window > 0
+            else None
+        )
+        samples_include_pruned = bool(self.config.get("samples_include_pruned", True))
+
+        self._stop_condition_manager = StopConditionManager(
+            max_trials=self._max_trials,
+            max_samples=self._max_total_examples,
+            samples_include_pruned=samples_include_pruned,
+            plateau_window=plateau_window or None,
+            plateau_epsilon=plateau_epsilon,
+            objective_schema=self.objective_schema,
+            budget_limit=self._get_budget_limit(),
+            budget_metric=str(self.config.get("budget_metric", "total_cost")),
+            include_pruned=bool(self.config.get("budget_include_pruned", True)),
+        )
+
+        self._setup_convergence_condition()
+        self._setup_cost_enforcer()
 
         self._samples_include_pruned = samples_include_pruned
         self._sample_budget_manager: SampleBudgetManager | None = (
@@ -434,7 +452,8 @@ class OptimizationOrchestrator:
             from traigent.config.backend_config import BackendConfig
         except ModuleNotFoundError as err:
             # Cloud module not installed - check if this was the cloud module itself
-            if err.name and err.name.startswith("traigent.cloud"):
+            missing_module = getattr(err, "name", "") or ""
+            if missing_module.startswith("traigent.cloud"):
                 if self.traigent_config.execution_mode == "cloud":
                     # User explicitly requested cloud mode but plugin not installed
                     from traigent.utils.exceptions import FeatureNotAvailableError
@@ -583,10 +602,134 @@ class OptimizationOrchestrator:
         # If no objectives defined, return last trial
         return self._trials[-1] if self._trials else None
 
-    def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
+    def _get_config_hash(self, config: dict[str, Any] | None) -> str:
+        """Generate a hash for a configuration to track metrics across trials."""
+        from traigent.utils.hashing import generate_config_hash
+
+        result: str = generate_config_hash(config or {})
+        return result
+
+    def _track_trial_metrics(self, trial_result: TrialResult) -> str:
+        """Track metrics for a trial result, grouped by config hash.
+
+        Returns:
+            The config hash for this trial.
+        """
+        config_hash = self._get_config_hash(trial_result.config)
+
+        if config_hash not in self._config_metrics_history:
+            self._config_metrics_history[config_hash] = {}
+
+        # Add this trial's metrics to the history
+        for metric_name, metric_value in (trial_result.metrics or {}).items():
+            if isinstance(metric_value, (int, float)):
+                if metric_name not in self._config_metrics_history[config_hash]:
+                    self._config_metrics_history[config_hash][metric_name] = []
+                self._config_metrics_history[config_hash][metric_name].append(
+                    float(metric_value)
+                )
+
+        return config_hash
+
+    def _has_sufficient_samples(
+        self,
+        candidate_metrics: dict[str, list[float]],
+        incumbent_metrics: dict[str, list[float]],
+        min_samples: int = 2,
+    ) -> bool:
+        """Check if both configs have enough samples for statistical comparison.
+
+        Requires ALL objectives to have sufficient samples. This is intentional:
+        epsilon-Pareto dominance testing requires complete metric data for all
+        objectives to produce valid multi-objective comparisons. Partial data
+        would lead to incorrect dominance conclusions.
+        """
+        objectives = self.optimizer.objectives or []
+        return all(
+            len(candidate_metrics.get(obj, [])) >= min_samples
+            and len(incumbent_metrics.get(obj, [])) >= min_samples
+            for obj in objectives
+        )
+
+    def _handle_promotion_decision(
+        self,
+        decision: Any,
+        candidate_trial: TrialResult,
+    ) -> bool:
+        """Handle the promotion decision from PromotionGate."""
+        if decision.decision == "promote":
+            logger.info(
+                "PromotionGate: promoting candidate config (reason: %s)",
+                decision.reason,
+            )
+            return True
+        if decision.decision == "reject":
+            logger.debug(
+                "PromotionGate: rejecting candidate config (reason: %s)",
+                decision.reason,
+            )
+            return False
+        # "no_decision" - fall back to simple comparison
+        logger.debug(
+            "PromotionGate: no decision, using simple comparison (reason: %s)",
+            decision.reason,
+        )
+        return self._simple_is_better(candidate_trial)
+
+    def _evaluate_promotion(
+        self,
+        candidate_hash: str,
+        candidate_trial: TrialResult,
+    ) -> bool:
+        """Evaluate whether candidate should be promoted over incumbent.
+
+        Uses PromotionGate for statistical evaluation when available and
+        sufficient samples exist. Falls back to simple score comparison.
+
+        Returns:
+            True if candidate should become the new incumbent.
+        """
+        # If no promotion gate or no incumbent, use simple logic
+        if self._promotion_gate is None:
+            return self._simple_is_better(candidate_trial)
+        if self._incumbent_config_hash is None:
+            return True
+
+        # Get metrics for both configs
+        candidate_metrics = self._config_metrics_history.get(candidate_hash, {})
+        incumbent_metrics = self._config_metrics_history.get(
+            self._incumbent_config_hash, {}
+        )
+
+        # Check if we have sufficient samples for statistical comparison
+        has_data = bool(candidate_metrics and incumbent_metrics)
+        if not has_data or not self._has_sufficient_samples(
+            candidate_metrics, incumbent_metrics
+        ):
+            return self._simple_is_better(candidate_trial)
+
+        # Use PromotionGate for statistical evaluation
+        inc_metrics_seq = cast(dict[str, Sequence[float]], incumbent_metrics)
+        cand_metrics_seq = cast(dict[str, Sequence[float]], candidate_metrics)
+        try:
+            decision = self._promotion_gate.evaluate(
+                incumbent_metrics=inc_metrics_seq,
+                candidate_metrics=cand_metrics_seq,
+            )
+            return self._handle_promotion_decision(decision, candidate_trial)
+        except Exception as e:
+            logger.warning(
+                "PromotionGate evaluation failed, using simple comparison: %s", e
+            )
+            return self._simple_is_better(candidate_trial)
+
+    def _simple_is_better(self, trial_result: TrialResult) -> bool:
+        """Check if trial_result is better than current best using simple comparison."""
+        if self._best_trial_cached is None:
+            return True
+
         if not self.optimizer.objectives:
-            self._best_trial_cached = trial_result
-            return
+            return True
 
         primary_objective = self.optimizer.objectives[0]
         new_score = (
@@ -595,10 +738,6 @@ class OptimizationOrchestrator:
             else ((trial_result.metrics or {}).get(primary_objective, 0.0))
         )
         new_score = new_score or 0.0
-
-        if self._best_trial_cached is None:
-            self._best_trial_cached = trial_result
-            return
 
         current_score = (
             self._best_trial_cached.get_metric(primary_objective, 0.0)
@@ -609,11 +748,27 @@ class OptimizationOrchestrator:
 
         minimization = _is_minimization_objective(primary_objective)
         if minimization:
-            if new_score < current_score:
-                self._best_trial_cached = trial_result
-        else:
-            if new_score > current_score:
-                self._best_trial_cached = trial_result
+            return new_score < current_score
+        return new_score > current_score
+
+    def _update_best_trial_cache(self, trial_result: TrialResult) -> None:
+        if not self.optimizer.objectives:
+            self._best_trial_cached = trial_result
+            return
+
+        # Track metrics for this trial
+        config_hash = self._track_trial_metrics(trial_result)
+
+        # First trial becomes incumbent
+        if self._best_trial_cached is None:
+            self._best_trial_cached = trial_result
+            self._incumbent_config_hash = config_hash
+            return
+
+        # Evaluate if this trial should become the new best
+        if self._evaluate_promotion(config_hash, trial_result):
+            self._best_trial_cached = trial_result
+            self._incumbent_config_hash = config_hash
 
     def _remaining_sample_budget(self) -> float:
         if self._sample_budget_manager is not None:
@@ -1387,12 +1542,7 @@ class OptimizationOrchestrator:
             graph = self._create_optimization_workflow_graph(session_id)
 
             # Group spans by configuration_run_id so each trial gets trace_id in its metadata
-            spans_by_config_run: dict[str, list] = {}
-            for span in self._collected_spans:
-                config_run_id = span.configuration_run_id
-                if config_run_id not in spans_by_config_run:
-                    spans_by_config_run[config_run_id] = []
-                spans_by_config_run[config_run_id].append(span)
+            spans_by_config_run = self._group_spans_by_config_run()
 
             # Submit each group separately
             total_submitted = 0
@@ -1429,6 +1579,15 @@ class OptimizationOrchestrator:
         finally:
             # Clear collected spans after submission attempt
             self._collected_spans = []
+
+    def _group_spans_by_config_run(self) -> dict[str, list]:
+        """Group collected spans by configuration_run_id."""
+        from collections import defaultdict
+
+        spans_by_config_run: dict[str, list] = defaultdict(list)
+        for span in self._collected_spans:
+            spans_by_config_run[span.configuration_run_id].append(span)
+        return dict(spans_by_config_run)
 
     def _create_optimization_workflow_graph(
         self, session_id: str | None
@@ -1671,7 +1830,7 @@ class OptimizationOrchestrator:
         if not dataset or len(dataset) == 0:
             raise ValueError("Dataset cannot be empty")
 
-    async def create_session(
+    async def create_session(  # NOSONAR - async for API consistency with other orchestrator methods
         self, function_name: str | None = None, dataset_name: str | None = None
     ) -> str:
         """Create a session for optimization tracking.

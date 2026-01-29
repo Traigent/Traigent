@@ -80,6 +80,7 @@ from traigent.core.objectives import (
 from traigent.core.optimized_function import OptimizedFunction
 from traigent.evaluators.base import Dataset
 from traigent.tvl.options import TVLOptions
+from traigent.tvl.promotion_gate import PromotionGate
 from traigent.tvl.spec_loader import TVLSpecArtifact, load_tvl_spec
 from traigent.utils.exceptions import TVLValidationError, ValidationError
 from traigent.utils.logging import get_logger
@@ -875,15 +876,12 @@ def _validate_js_runtime_injection_mode(
         return
 
     # Normalize to enum for comparison
-    mode_enum = (
-        injection_mode
-        if isinstance(injection_mode, InjectionMode)
-        else (
-            InjectionMode(injection_mode)
-            if injection_mode in [m.value for m in InjectionMode]
-            else None
-        )
-    )
+    if isinstance(injection_mode, InjectionMode):
+        mode_enum = injection_mode
+    elif injection_mode in [m.value for m in InjectionMode]:
+        mode_enum = InjectionMode(injection_mode)
+    else:
+        mode_enum = None
 
     if mode_enum in _JS_INCOMPATIBLE_INJECTION_MODES:
         raise ValueError(
@@ -1024,8 +1022,14 @@ def _apply_tvl_options_if_present(
     list[Any] | None,
     dict[str, Any] | None,
     Any,
+    PromotionGate | None,
 ]:
-    """Apply TVL options if present, returning updated values."""
+    """Apply TVL options if present, returning updated values.
+
+    Returns:
+        Tuple of (configuration_space, objectives, constraints, default_config,
+        eval_dataset, promotion_gate).
+    """
     if tvl_options is None:
         return (
             configuration_space,
@@ -1033,6 +1037,7 @@ def _apply_tvl_options_if_present(
             constraints,
             default_config,
             eval_dataset,
+            None,  # promotion_gate
         )
 
     try:
@@ -1057,10 +1062,22 @@ def _apply_tvl_options_if_present(
     ):
         eval_dataset = tvl_artifact.evaluation_set.dataset
 
+    # Create PromotionGate from TVL spec if promotion_policy is defined
+    promotion_gate = PromotionGate.from_spec_artifact(tvl_artifact)
+    if promotion_gate is not None:
+        logger.debug("PromotionGate created from TVL spec promotion_policy")
+
     env_suffix = f" (env={tvl_options.environment})" if tvl_options.environment else ""
     logger.info("TVL spec %s applied%s", tvl_artifact.path, env_suffix)
 
-    return configuration_space, objectives, constraints, default_config, eval_dataset
+    return (
+        configuration_space,
+        objectives,
+        constraints,
+        default_config,
+        eval_dataset,
+        promotion_gate,
+    )
 
 
 def _process_runtime_overrides(
@@ -1273,6 +1290,29 @@ def optimize(
         Optimization runs multiple LLM calls. Use TRAIGENT_MOCK_LLM=true for testing.
         Cost estimates are approximations; actual billing is determined by your LLM provider.
         See DISCLAIMER.md for full liability terms.
+
+    Important - Configuration Access:
+        Traigent does NOT automatically override function parameters. The default
+        injection_mode="context" stores trial configuration in context variables.
+        To access trial config, use ``traigent.get_trial_config()`` or the simpler
+        ``traigent.get_config()`` which works both during and after optimization.
+
+        WRONG - relying on parameter defaults to be overridden::
+
+            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            def my_func(model: str = "gpt-4"):  # model will stay "gpt-4"!
+                return call_llm(model=model)
+
+        CORRECT - explicitly fetch trial config::
+
+            @traigent.optimize(configuration_space={"model": ["gpt-4", "gpt-3.5"]})
+            def my_func():
+                cfg = traigent.get_config()  # Works during trials and after apply_best_config
+                return call_llm(model=cfg["model"])
+
+        Note: ``get_trial_config()`` raises ``OptimizationStateError`` if called
+        outside an active trial - use it when you want strict validation.
+        ``get_config()`` is the recommended approach for most use cases.
 
     Returns:
         OptimizedFunction: Wrapper that adds optimization methods to your function:
@@ -1517,16 +1557,21 @@ def optimize(
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
     )
-    configuration_space, objectives, constraints, default_config, eval_dataset = (
-        _apply_tvl_options_if_present(
-            tvl_options,
-            configuration_space,
-            objectives,
-            constraints,
-            default_config,
-            eval_dataset,
-            combined_runtime_overrides,
-        )
+    (
+        configuration_space,
+        objectives,
+        constraints,
+        default_config,
+        eval_dataset,
+        promotion_gate,
+    ) = _apply_tvl_options_if_present(
+        tvl_options,
+        configuration_space,
+        objectives,
+        constraints,
+        default_config,
+        eval_dataset,
+        combined_runtime_overrides,
     )
 
     if samples_include_pruned is None:
@@ -1630,6 +1675,8 @@ def optimize(
             load_from=load_from_config,
             # JS runtime configuration
             js_runtime_config=js_runtime_config,
+            # TVL promotion gate for statistical best-config selection
+            promotion_gate=promotion_gate,
             **combined_runtime_overrides,
         )
 

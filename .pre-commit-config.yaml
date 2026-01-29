@@ -20,7 +20,7 @@ repos:
 
   # Secret detection
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
+    rev: v1.5.0
     hooks:
       - id: detect-secrets
         args: ['--baseline', '.secrets.baseline']
@@ -49,14 +49,13 @@ repos:
         pass_filenames: false
         exclude: ^tests/
 
-  # Type checking
+  # Type checking - uses pyproject.toml [tool.mypy] configuration
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.8.0
     hooks:
       - id: mypy
         args:
-          - --ignore-missing-imports
-          - traigent/
+          - --config-file=pyproject.toml
         pass_filenames: false
 
   # TVL specification validation (G-2)

@@ -1195,6 +1195,53 @@ class TestCheckConstraintsConflict:
         result = check_constraints_conflict([c1], sample_configs=None)
         assert result is None
 
+    def test_conflict_with_exhaustive_samples(self) -> None:
+        """Test that exhaustive samples report conflict for mutually exclusive constraints."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.lte(0.5))
+        c2 = require(temp.gte(0.8))
+
+        # These constraints are mutually exclusive
+        result = check_constraints_conflict(
+            [c1, c2],
+            sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}],
+            samples_exhaustive=True,
+        )
+        assert result is not None
+        assert isinstance(result, ConstraintConflict)
+        assert len(result.constraints) == 2
+
+    def test_no_conflict_with_sparse_samples_default(self) -> None:
+        """Test that sparse samples don't report conflict by default (issue #38)."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.lte(0.5))
+        c2 = require(temp.gte(0.8))
+
+        # Same mutually exclusive constraints, but samples_exhaustive=False (default)
+        # should return None to avoid false positives
+        result = check_constraints_conflict(
+            [c1, c2],
+            sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}],
+            # samples_exhaustive defaults to False
+        )
+        assert result is None
+
+    def test_no_conflict_sparse_samples_explicit(self) -> None:
+        """Test explicit samples_exhaustive=False returns None even with all failures."""
+        temp = Range(0.0, 2.0, name="temperature")
+        c1 = require(temp.gte(0.3))
+        c2 = require(temp.lte(0.7))
+
+        # Samples outside valid range [0.3, 0.7]
+        result = check_constraints_conflict(
+            [c1, c2],
+            sample_configs=[{"temperature": 0.2}, {"temperature": 0.8}],
+            samples_exhaustive=False,
+        )
+        # Should return None since samples are not exhaustive
+        # (valid configs like 0.5 exist but weren't sampled)
+        assert result is None
+
 
 class TestExplainConstraintViolation:
     """Tests for explain_constraint_violation() function."""

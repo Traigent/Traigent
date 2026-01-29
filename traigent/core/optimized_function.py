@@ -127,7 +127,7 @@ def _emit_cost_warning_once() -> None:
         msg = (
             f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
             f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
-            f"Cost estimates are approximations based on {CYAN}tokencost{RESET} library pricing.\n"
+            f"Cost estimates are approximations based on {CYAN}litellm{RESET} library pricing.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
@@ -138,7 +138,7 @@ def _emit_cost_warning_once() -> None:
         msg = (
             "\n[!] COST WARNING\n"
             "Traigent optimization will make multiple LLM API calls.\n"
-            "Cost estimates are approximations based on tokencost library pricing.\n"
+            "Cost estimates are approximations based on litellm library pricing.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
@@ -220,13 +220,22 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         if expires_at.tzinfo:
             now = now.replace(tzinfo=UTC)
         if expires_at > now:
-            logger.info(
-                f"CI optimization approved by legacy token: {token_data['approved_by']}"
-            )
+            # Sanitize user-controlled data before logging to prevent log injection
+            safe_approver = _sanitize_for_log(token_data.get("approved_by", "unknown"))
+            logger.info("CI optimization approved by legacy token: %s", safe_approver)
             return True
     except (ValueError, KeyError):
         pass
     return False
+
+
+def _sanitize_for_log(value: str, max_len: int = 50) -> str:
+    """Sanitize user-controlled data for safe logging.
+
+    Removes any characters that could be used for log injection attacks,
+    keeping only alphanumeric characters and common safe symbols.
+    """
+    return "".join(c for c in str(value)[:max_len] if c.isalnum() or c in "-_@.")
 
 
 def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
@@ -248,7 +257,8 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
             now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
             if expires_at > now:
                 logger.warning(
-                    f"Token approved by {token_data['approver']} (signature not verified)"
+                    "Token approved by %s (signature not verified)",
+                    _sanitize_for_log(token_data.get("approver", "unknown")),
                 )
                 return True
         except (ValueError, KeyError):
@@ -279,7 +289,8 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
             return False
         if expires_at > now:
             logger.info(
-                f"CI optimization approved by HMAC token: {token_data['approver']}"
+                "CI optimization approved by HMAC token: %s",
+                _sanitize_for_log(token_data.get("approver", "unknown")),
             )
             return True
         logger.debug("Token expired")
@@ -642,6 +653,11 @@ class OptimizedFunction:
         # Safety constraints
         self.safety_constraints = self._store_optional_param(
             kwargs, sentinel, "safety_constraints", None
+        )
+
+        # TVL promotion gate for statistical best-config selection
+        self.promotion_gate = self._store_optional_param(
+            kwargs, sentinel, "promotion_gate", None
         )
 
         self.kwargs = kwargs
@@ -1506,11 +1522,13 @@ class OptimizedFunction:
             metric_functions=effective_metric_functions or None,
         )
 
-    def _create_workflow_traces_tracker(self, traigent_config: TraigentConfig) -> Any:
+    def _create_workflow_traces_tracker(
+        self, _traigent_config: TraigentConfig  # noqa: ARG002
+    ) -> Any:
         """Create workflow traces tracker if backend is configured.
 
         Args:
-            traigent_config: Traigent configuration
+            _traigent_config: Traigent configuration (reserved for future use)
 
         Returns:
             WorkflowTracesTracker instance if backend is configured, None otherwise
@@ -1549,6 +1567,50 @@ class OptimizedFunction:
             logger.debug(f"Failed to initialize workflow traces tracker: {exc}")
             return None
 
+    def _collect_orchestrator_kwargs(
+        self,
+        algorithm_kwargs: dict[str, Any],
+        samples_include_pruned_value: bool,
+    ) -> dict[str, Any]:
+        """Collect optional kwargs for orchestrator from algorithm_kwargs and self."""
+        kwargs: dict[str, Any] = {
+            "cache_policy": algorithm_kwargs.get("cache_policy", "allow_repeats"),
+            "samples_include_pruned": samples_include_pruned_value,
+        }
+
+        # Copy optional keys from algorithm_kwargs if present
+        optional_keys = [
+            "budget_limit",
+            "budget_metric",
+            "budget_include_pruned",
+            "plateau_window",
+            "plateau_epsilon",
+            "cost_limit",
+            "cost_approved",
+            "tie_breakers",
+            "tvl_parameter_agents",
+        ]
+        for key in optional_keys:
+            if key in algorithm_kwargs:
+                kwargs[key] = algorithm_kwargs[key]
+
+        # Copy optional attributes from self if set
+        optional_attrs = [
+            ("default_config", lambda v: v.copy()),
+            ("constraints", None),
+            ("agents", None),
+            ("agent_prefixes", None),
+            ("agent_measures", None),
+            ("global_measures", None),
+            ("promotion_gate", None),
+        ]
+        for attr, transform in optional_attrs:
+            value = getattr(self, attr, None)
+            if value is not None:
+                kwargs[attr] = transform(value) if transform else value
+
+        return kwargs
+
     def _build_optimization_orchestrator(
         self,
         optimizer: Any,
@@ -1563,58 +1625,9 @@ class OptimizedFunction:
         algorithm_kwargs: dict[str, Any],
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
-        cache_policy = algorithm_kwargs.get("cache_policy", "allow_repeats")
-
-        orchestrator_kwargs: dict[str, Any] = {
-            "cache_policy": cache_policy,
-        }
-        if self.default_config:
-            orchestrator_kwargs["default_config"] = self.default_config.copy()
-
-        # Pass budget stop condition parameters
-        if "budget_limit" in algorithm_kwargs:
-            orchestrator_kwargs["budget_limit"] = algorithm_kwargs["budget_limit"]
-        if "budget_metric" in algorithm_kwargs:
-            orchestrator_kwargs["budget_metric"] = algorithm_kwargs["budget_metric"]
-        if "budget_include_pruned" in algorithm_kwargs:
-            orchestrator_kwargs["budget_include_pruned"] = algorithm_kwargs[
-                "budget_include_pruned"
-            ]
-
-        orchestrator_kwargs["samples_include_pruned"] = samples_include_pruned_value
-
-        # Pass constraints to orchestrator
-        if self.constraints:
-            orchestrator_kwargs["constraints"] = self.constraints
-
-        # Pass plateau stop condition parameters
-        if "plateau_window" in algorithm_kwargs:
-            orchestrator_kwargs["plateau_window"] = algorithm_kwargs["plateau_window"]
-        if "plateau_epsilon" in algorithm_kwargs:
-            orchestrator_kwargs["plateau_epsilon"] = algorithm_kwargs["plateau_epsilon"]
-        if "cost_limit" in algorithm_kwargs:
-            orchestrator_kwargs["cost_limit"] = algorithm_kwargs["cost_limit"]
-        if "cost_approved" in algorithm_kwargs:
-            orchestrator_kwargs["cost_approved"] = algorithm_kwargs["cost_approved"]
-
-        # Pass TVL 0.9 tie-breaker configuration
-        if "tie_breakers" in algorithm_kwargs:
-            orchestrator_kwargs["tie_breakers"] = algorithm_kwargs["tie_breakers"]
-
-        # Pass multi-agent configuration
-        if self.agents is not None:
-            orchestrator_kwargs["agents"] = self.agents
-        if self.agent_prefixes is not None:
-            orchestrator_kwargs["agent_prefixes"] = self.agent_prefixes
-        if self.agent_measures is not None:
-            orchestrator_kwargs["agent_measures"] = self.agent_measures
-        if self.global_measures is not None:
-            orchestrator_kwargs["global_measures"] = self.global_measures
-        # Pass TVL parameter_agents if provided from TVL spec
-        if "tvl_parameter_agents" in algorithm_kwargs:
-            orchestrator_kwargs["tvl_parameter_agents"] = algorithm_kwargs[
-                "tvl_parameter_agents"
-            ]
+        orchestrator_kwargs = self._collect_orchestrator_kwargs(
+            algorithm_kwargs, samples_include_pruned_value
+        )
 
         # Auto-initialize workflow traces tracker if backend is configured
         workflow_traces_tracker = self._create_workflow_traces_tracker(traigent_config)
@@ -1823,7 +1836,7 @@ class OptimizedFunction:
 
         # Phase 6: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
-        if max_trials and algorithm == "random":
+        if max_trials:
             optimizer_kwargs["max_trials"] = max_trials
 
         # Apply mock config overrides if present
@@ -2557,7 +2570,7 @@ To approve, use one of these methods:
             )
 
         # Security: Validate user-provided path to prevent file inclusion attacks
-        output_path = validate_user_path(path, for_write=True)
+        output_path: Path = validate_user_path(path, for_write=True)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if format == "slim":
