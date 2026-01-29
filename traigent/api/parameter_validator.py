@@ -45,7 +45,6 @@ class ParameterValidator:
     VALID_INJECTION_MODES = {
         InjectionMode.CONTEXT,
         InjectionMode.PARAMETER,
-        InjectionMode.ATTRIBUTE,
         InjectionMode.SEAMLESS,
     }
 
