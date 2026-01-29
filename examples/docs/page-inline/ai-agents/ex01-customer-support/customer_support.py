@@ -236,4 +236,8 @@ def demonstrate_customer_support():
 
 
 if __name__ == "__main__":
-    demonstrate_customer_support()
+    try:
+        demonstrate_customer_support()
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

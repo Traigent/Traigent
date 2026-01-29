@@ -113,4 +113,8 @@ def my_llm_function(prompt: str) -> str:
 
 
 if __name__ == "__main__":
-    print(my_llm_function("Say hello to the world"))
+    try:
+        print(my_llm_function("Say hello to the world"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

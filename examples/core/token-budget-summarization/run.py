@@ -309,12 +309,16 @@ def summarize_keyword(text: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Need tight summaries under a strict token budget without losing key facts?")
+    try:
+        print("Need tight summaries under a strict token budget without losing key facts?")
 
-    async def main() -> None:
-        trials = 9 if not MOCK else 4
-        r = await summarize_keyword.optimize(algorithm="random", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
+        async def main() -> None:
+            trials = 9 if not MOCK else 4
+            r = await summarize_keyword.optimize(algorithm="random", max_trials=trials)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

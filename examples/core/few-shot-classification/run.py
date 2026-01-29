@@ -173,13 +173,17 @@ def classify_sentiment(text: str, config: dict | None = None) -> str:
 
 
 if __name__ == "__main__":
-    print(
-        "Ever fought over which k and selection strategy make your few-shot prompt actually work?"
-    )
+    try:
+        print(
+            "Ever fought over which k and selection strategy make your few-shot prompt actually work?"
+        )
 
-    async def main() -> None:
-        trials = 8 if not MOCK else 4
-        r = await classify_sentiment.optimize(algorithm="grid", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
+        async def main() -> None:
+            trials = 8 if not MOCK else 4
+            r = await classify_sentiment.optimize(algorithm="grid", max_trials=trials)
+            print({"best_config": r.best_config, "best_score": r.best_score})
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

@@ -201,31 +201,35 @@ def demonstrate_configuration_types() -> None:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def main():
-        print("=" * 60)
-        print("Traigent Core Concepts: Configuration Spaces")
-        print("=" * 60)
+        async def main():
+            print("=" * 60)
+            print("Traigent Core Concepts: Configuration Spaces")
+            print("=" * 60)
 
-        # Show configuration types
-        demonstrate_configuration_types()
+            # Show configuration types
+            demonstrate_configuration_types()
 
-        print("\nRunning optimization with configuration space...")
+            print("\nRunning optimization with configuration space...")
 
-        # Run the optimization
-        results = await intelligent_assistant.optimize()
+            # Run the optimization
+            results = await intelligent_assistant.optimize()
 
-        if results:
-            print("\nBest configuration found:")
-            print(f"  Model: {results.best_config.get('model')}")
-            print(f"  Temperature: {results.best_config.get('temperature')}")
-            print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
-            style = results.best_config.get("response_style")
-            print(f"  Response Style: {style}")
+            if results:
+                print("\nBest configuration found:")
+                print(f"  Model: {results.best_config.get('model')}")
+                print(f"  Temperature: {results.best_config.get('temperature')}")
+                print(f"  Max Tokens: {results.best_config.get('max_tokens')}")
+                style = results.best_config.get("response_style")
+                print(f"  Response Style: {style}")
 
-            # Test with the optimized configuration
-            test_response = intelligent_assistant("What is machine learning?")
-            print(f"\nTest response: {test_response[:200]}...")
+                # Test with the optimized configuration
+                test_response = intelligent_assistant("What is machine learning?")
+                print(f"\nTest response: {test_response[:200]}...")
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

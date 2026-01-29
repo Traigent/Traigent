@@ -78,7 +78,11 @@ def adaptive_chat_bot(user_message: str) -> str:
 
 if __name__ == "__main__":
     try:
-        _res = adaptive_chat_bot("test input")
-        print(getattr(_res, "content", _res))
-    except Exception as e:
-        print(e)
+        try:
+            _res = adaptive_chat_bot("test input")
+            print(getattr(_res, "content", _res))
+        except Exception as e:
+            print(e)
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

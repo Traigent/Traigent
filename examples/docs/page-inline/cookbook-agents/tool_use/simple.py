@@ -58,12 +58,16 @@ def needs_tool(request: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await needs_tool.optimize(max_trials=10)
-        needs_tool.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", needs_tool("What's 123*7?"))
+        async def _main():
+            res = await needs_tool.optimize(max_trials=10)
+            needs_tool.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", needs_tool("What's 123*7?"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

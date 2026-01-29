@@ -126,4 +126,8 @@ def faq_answer(question: str) -> str:
 
 
 if __name__ == "__main__":
-    print(faq_answer("How can I reset my password?"))
+    try:
+        print(faq_answer("How can I reset my password?"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

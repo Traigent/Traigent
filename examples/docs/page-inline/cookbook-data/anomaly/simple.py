@@ -58,12 +58,16 @@ def has_anomaly(series: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await has_anomaly.optimize(max_trials=10)
-        has_anomaly.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", has_anomaly("1,2,100,3"))
+        async def _main():
+            res = await has_anomaly.optimize(max_trials=10)
+            has_anomaly.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", has_anomaly("1,2,100,3"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

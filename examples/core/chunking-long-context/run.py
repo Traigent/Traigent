@@ -350,12 +350,16 @@ def rag_qa(question: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Long docs, shallow answers? Tune chunking and top_k to lift grounded QA.")
+    try:
+        print("Long docs, shallow answers? Tune chunking and top_k to lift grounded QA.")
 
-    async def main() -> None:
-        trials = 12 if not MOCK else 4
-        r = await rag_qa.optimize(algorithm="grid", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
+        async def main() -> None:
+            trials = 12 if not MOCK else 4
+            r = await rag_qa.optimize(algorithm="grid", max_trials=trials)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
