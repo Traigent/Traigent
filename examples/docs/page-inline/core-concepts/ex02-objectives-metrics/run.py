@@ -50,8 +50,8 @@ async def main() -> None:
                 "description": "Specify relative importance",
                 "use_case": "Fine-tune the balance between objectives",
             },
-            "custom_metrics": {
-                "example": "custom_metrics={'satisfaction': my_custom_function}",
+            "metric_functions": {
+                "example": "metric_functions={'satisfaction': my_custom_function}",
                 "description": "Define domain-specific metrics",
                 "use_case": "Specialized evaluation criteria",
             },
