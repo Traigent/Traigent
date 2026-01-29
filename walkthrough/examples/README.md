@@ -85,7 +85,7 @@ Quick notes for new users:
 - **04 Multi-Objective**: Trade off accuracy, cost, and latency.
 - **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
 - **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
-- **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Gemini offers a free tier - great for testing!
+- **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Gemini offers a free tier - great for testing! This example validates keys before running and skips invalid providers (set `TRAIGENT_VALIDATE_KEYS=0` to skip validation).
 - **08 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
 
 ## Datasets

@@ -18,7 +18,8 @@ Usage (run from repo root):
 
     .venv/bin/python walkthrough/examples/real/07_multi_provider.py
 
-Note: This example gracefully handles missing API keys by skipping those providers.
+Note: This example validates API keys before running and skips any invalid providers.
+To skip validation, set TRAIGENT_VALIDATE_KEYS=0.
 Gemini offers a generous free tier - great for testing without API costs!
 """
 
@@ -26,7 +27,6 @@ import asyncio
 import logging
 import os
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -58,18 +58,74 @@ traigent.initialize(
 )
 
 # -----------------------------------------------------------------------------
-# Provider Detection - Check which API keys are available
+# Provider Detection - Check which API keys are available and valid
 # -----------------------------------------------------------------------------
-OPENAI_AVAILABLE = bool(os.getenv("OPENAI_API_KEY"))
-ANTHROPIC_AVAILABLE = bool(os.getenv("ANTHROPIC_API_KEY"))
-GOOGLE_AVAILABLE = bool(os.getenv("GOOGLE_API_KEY"))
+VALIDATE_KEYS = os.getenv("TRAIGENT_VALIDATE_KEYS", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_NOT_VALIDATED_NOTE = "Key set (not validated)"
 
 # Models organized by provider
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
 ANTHROPIC_MODELS = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
 GOOGLE_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
-# Build available models list based on which API keys are set
+def _validate_openai_key() -> tuple[bool, str]:
+    key = os.getenv("OPENAI_API_KEY")
+    if not key:
+        return False, "Set OPENAI_API_KEY"
+    if not VALIDATE_KEYS:
+        return True, _NOT_VALIDATED_NOTE
+    try:
+        from openai import OpenAI
+
+        OpenAI(api_key=key).models.list()
+        return True, "Available"
+    except Exception as exc:
+        return False, f"Invalid key ({type(exc).__name__})"
+
+
+def _validate_anthropic_key() -> tuple[bool, str]:
+    key = os.getenv("ANTHROPIC_API_KEY")
+    if not key:
+        return False, "Set ANTHROPIC_API_KEY"
+    if not VALIDATE_KEYS:
+        return True, _NOT_VALIDATED_NOTE
+    try:
+        from anthropic import Anthropic
+
+        Anthropic(api_key=key).messages.count_tokens(
+            model=ANTHROPIC_MODELS[0],
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return True, "Available"
+    except Exception as exc:
+        return False, f"Invalid key ({type(exc).__name__})"
+
+
+def _validate_google_key() -> tuple[bool, str]:
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        return False, "Set GOOGLE_API_KEY"
+    if not VALIDATE_KEYS:
+        return True, _NOT_VALIDATED_NOTE
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=key)
+        list(genai.list_models())
+        return True, "Available"
+    except Exception as exc:
+        return False, f"Invalid key ({type(exc).__name__})"
+
+
+OPENAI_AVAILABLE, OPENAI_STATUS = _validate_openai_key()
+ANTHROPIC_AVAILABLE, ANTHROPIC_STATUS = _validate_anthropic_key()
+GOOGLE_AVAILABLE, GOOGLE_STATUS = _validate_google_key()
+
+# Build available models list based on which API keys are set and valid
 AVAILABLE_MODELS: list[str] = []
 PROVIDER_MAP: dict[str, str] = {}
 
@@ -184,29 +240,30 @@ def answer_with_any_provider(question: str) -> str:
 def print_provider_status() -> None:
     """Print which providers are available based on API keys."""
     print("\nProvider Status:")
+    if VALIDATE_KEYS:
+        print("  (validated with a lightweight request per provider)")
     status_lines = [
         (
             "OpenAI",
             OPENAI_AVAILABLE,
-            "OPENAI_API_KEY",
+            OPENAI_STATUS,
             ", ".join(OPENAI_MODELS),
         ),
         (
             "Anthropic",
             ANTHROPIC_AVAILABLE,
-            "ANTHROPIC_API_KEY",
+            ANTHROPIC_STATUS,
             ", ".join(ANTHROPIC_MODELS),
         ),
         (
             "Google",
             GOOGLE_AVAILABLE,
-            "GOOGLE_API_KEY",
+            GOOGLE_STATUS,
             ", ".join(GOOGLE_MODELS) + " (free tier!)",
         ),
     ]
 
-    for provider, available, env_var, models in status_lines:
-        status = "Available" if available else f"Set {env_var}"
+    for provider, available, status, models in status_lines:
         symbol = "[OK]" if available else "[--]"
         print(f"  {symbol} {provider}: {status}")
         if available:
