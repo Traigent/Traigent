@@ -43,7 +43,6 @@ Examples:
 from __future__ import annotations
 
 import inspect
-import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -67,7 +66,12 @@ from traigent.config.parallel import (
     coerce_parallel_config,
     merge_parallel_configs,
 )
-from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
+from traigent.config.types import (
+    ExecutionMode,
+    InjectionMode,
+    is_traigent_disabled,
+    resolve_execution_mode,
+)
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -99,14 +103,17 @@ class InjectionOptions(BaseModel):
     """Configuration bundle controlling how optimized configs are injected.
 
     Attributes:
-        injection_mode: How to inject config ("context", "parameter", "attribute", "seamless").
+        injection_mode: How to inject config ("context", "parameter", "seamless").
+            - "context" (default): Thread-safe contextvars, access via get_config()
+            - "parameter": Explicit config param in function signature
+            - "seamless": Zero code change, AST transformation
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
         framework_targets: List of framework names to target.
-        allow_parallel_attribute: Opt-in to allow attribute mode with parallel trials.
-            Attribute mode is unsafe for parallel trials (race condition on shared
-            function attribute). Set to True only if you understand the risk and
-            are using context-based access inside the function body.
+
+    Note:
+        ATTRIBUTE mode was removed in v2.x due to thread-safety issues.
+        Use "context" (recommended) or "seamless" instead.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -117,7 +124,6 @@ class InjectionOptions(BaseModel):
     # Set to True explicitly when using framework integrations
     auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
-    allow_parallel_attribute: bool = False
 
 
 class ExecutionOptions(BaseModel):
@@ -291,7 +297,6 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "config_param": None,
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
-    "allow_parallel_attribute": False,
     "execution_mode": "edge_analytics",
     "local_storage_path": None,
     "minimal_logging": True,
@@ -662,9 +667,8 @@ def _resolve_injection_bundle_options(
     config_param: Any,
     auto_override_frameworks: Any,
     framework_targets: Any,
-    allow_parallel_attribute: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any]:
     """Resolve injection options from bundle."""
     if injection_bundle is None:
         return (
@@ -672,7 +676,6 @@ def _resolve_injection_bundle_options(
             config_param,
             auto_override_frameworks,
             framework_targets,
-            allow_parallel_attribute,
         )
 
     return (
@@ -692,12 +695,6 @@ def _resolve_injection_bundle_options(
             "framework_targets",
             framework_targets,
             injection_bundle.framework_targets,
-            defaults,
-        ),
-        _resolve_option(
-            "allow_parallel_attribute",
-            allow_parallel_attribute,
-            injection_bundle.allow_parallel_attribute,
             defaults,
         ),
     )
@@ -825,17 +822,23 @@ def _resolve_execution_bundle_options(
 def _resolve_injection_mode_enum(
     injection_mode: str | InjectionMode,
 ) -> str | InjectionMode:
-    """Convert string injection mode to enum, handling deprecations."""
+    """Convert string injection mode to enum, handling removed modes."""
     if not isinstance(injection_mode, str):
         return injection_mode
 
-    if injection_mode == "decorator":
-        warnings.warn(
-            "injection_mode='decorator' is deprecated. Use 'attribute' instead.",
-            DeprecationWarning,
-            stacklevel=4,
+    # Handle removed injection modes with helpful migration message
+    if injection_mode in ("attribute", "decorator"):
+        from traigent.utils.exceptions import ConfigurationError
+
+        raise ConfigurationError(
+            f"injection_mode='{injection_mode}' has been removed in v2.x.\n\n"
+            "Migration guide:\n"
+            '  Before: @traigent.optimize(injection_mode="attribute")\n'
+            "          config = my_func.current_config\n\n"
+            '  After:  @traigent.optimize(injection_mode="context")\n'
+            "          config = traigent.get_config()\n\n"
+            'For zero code changes, use injection_mode="seamless" instead.'
         )
-        return InjectionMode.ATTRIBUTE
 
     try:
         return InjectionMode(injection_mode)
@@ -847,7 +850,6 @@ def _resolve_injection_mode_enum(
 _JS_INCOMPATIBLE_INJECTION_MODES = frozenset(
     {
         InjectionMode.CONTEXT,  # Uses Python's contextvars
-        InjectionMode.ATTRIBUTE,  # Stores on Python function attribute
         InjectionMode.SEAMLESS,  # Modifies Python source code
     }
 )
@@ -1244,13 +1246,13 @@ def optimize(
             injection: Grouped injection settings (InjectionOptions or dict) covering
                 how optimized parameters are applied.
             injection_mode: Selector for the injection mechanism (context, parameter,
-                attribute, seamless). Available via the bundle or legacy support.
+                seamless). "context" (default) uses thread-safe contextvars,
+                "parameter" adds explicit config param, "seamless" uses AST
+                transformation for zero code changes.
             config_param: Parameter name used when ``injection_mode="parameter"``.
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
             framework_targets: Explicit list of framework classes to override.
-            allow_parallel_attribute: Opt-in to allow attribute mode with parallel
-                trials (unsafe by default due to shared function attributes).
 
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
@@ -1377,7 +1379,20 @@ def optimize(
         ... def medical_assistant(patient_query: str) -> str:  # doctest: +SKIP
         ...     # Data never leaves your infrastructure
         ...     return process_medical_query(patient_query)
+
+    Note:
+        Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
+        The decorator becomes a pass-through that returns the original function.
     """
+    # Check if Traigent is disabled via environment variable
+    # When disabled, @optimize becomes a no-op that returns the original function
+    if is_traigent_disabled():
+        logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
+
+        def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            return func
+
+        return passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
 
@@ -1452,7 +1467,6 @@ def optimize(
     config_param = combined_settings["config_param"]
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
-    allow_parallel_attribute = combined_settings["allow_parallel_attribute"]
     execution_mode = combined_settings["execution_mode"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
@@ -1510,14 +1524,12 @@ def optimize(
         config_param,
         auto_override_frameworks,
         framework_targets,
-        allow_parallel_attribute,
     ) = _resolve_injection_bundle_options(
         injection_bundle,
         injection_mode,
         config_param,
         auto_override_frameworks,
         framework_targets,
-        allow_parallel_attribute,
         defaults,
     )
 
@@ -1641,7 +1653,6 @@ def optimize(
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
-            allow_parallel_attribute=allow_parallel_attribute,
             execution_mode=execution_mode_enum,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
