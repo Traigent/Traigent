@@ -452,7 +452,8 @@ class OptimizationOrchestrator:
             from traigent.config.backend_config import BackendConfig
         except ModuleNotFoundError as err:
             # Cloud module not installed - check if this was the cloud module itself
-            if err.name and err.name.startswith("traigent.cloud"):
+            missing_module = getattr(err, "name", "") or ""
+            if missing_module.startswith("traigent.cloud"):
                 if self.traigent_config.execution_mode == "cloud":
                     # User explicitly requested cloud mode but plugin not installed
                     from traigent.utils.exceptions import FeatureNotAvailableError
@@ -701,9 +702,10 @@ class OptimizationOrchestrator:
         )
 
         # Check if we have sufficient samples for statistical comparison
-        if not candidate_metrics or not incumbent_metrics:
-            return self._simple_is_better(candidate_trial)
-        if not self._has_sufficient_samples(candidate_metrics, incumbent_metrics):
+        has_data = bool(candidate_metrics and incumbent_metrics)
+        if not has_data or not self._has_sufficient_samples(
+            candidate_metrics, incumbent_metrics
+        ):
             return self._simple_is_better(candidate_trial)
 
         # Use PromotionGate for statistical evaluation
@@ -1540,12 +1542,7 @@ class OptimizationOrchestrator:
             graph = self._create_optimization_workflow_graph(session_id)
 
             # Group spans by configuration_run_id so each trial gets trace_id in its metadata
-            spans_by_config_run: dict[str, list] = {}
-            for span in self._collected_spans:
-                config_run_id = span.configuration_run_id
-                if config_run_id not in spans_by_config_run:
-                    spans_by_config_run[config_run_id] = []
-                spans_by_config_run[config_run_id].append(span)
+            spans_by_config_run = self._group_spans_by_config_run()
 
             # Submit each group separately
             total_submitted = 0
@@ -1582,6 +1579,15 @@ class OptimizationOrchestrator:
         finally:
             # Clear collected spans after submission attempt
             self._collected_spans = []
+
+    def _group_spans_by_config_run(self) -> dict[str, list]:
+        """Group collected spans by configuration_run_id."""
+        from collections import defaultdict
+
+        spans_by_config_run: dict[str, list] = defaultdict(list)
+        for span in self._collected_spans:
+            spans_by_config_run[span.configuration_run_id].append(span)
+        return dict(spans_by_config_run)
 
     def _create_optimization_workflow_graph(
         self, session_id: str | None
@@ -1824,7 +1830,7 @@ class OptimizationOrchestrator:
         if not dataset or len(dataset) == 0:
             raise ValueError("Dataset cannot be empty")
 
-    async def create_session(
+    async def create_session(  # NOSONAR - async for API consistency with other orchestrator methods
         self, function_name: str | None = None, dataset_name: str | None = None
     ) -> str:
         """Create a session for optimization tracking.
