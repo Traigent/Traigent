@@ -4,7 +4,6 @@ import pytest
 
 from traigent.config.context import ConfigurationContext, get_config
 from traigent.config.providers import (
-    AttributeBasedProvider,
     ContextBasedProvider,
     ParameterBasedProvider,
     get_provider,
@@ -182,83 +181,6 @@ class TestParameterBasedProvider:
         assert provider.extract_config(test_func) is None
 
 
-class TestAttributeBasedProvider:
-    """Test suite for AttributeBasedProvider."""
-
-    def test_inject_config_sync_function(self):
-        """Test decorator injection with sync function."""
-        provider = AttributeBasedProvider()
-        config = {"model": "GPT-4o", "temperature": 0.7}
-
-        wrapped_func = provider.inject_config(lambda query: None, config)
-
-        # Test that config is accessible on wrapper
-        assert hasattr(wrapped_func, "current_config")
-        assert wrapped_func.current_config == config
-
-        # Test the actual functionality in a more realistic way
-        def test_func(query: str) -> str:
-            return f"Using {query}"
-
-        wrapped = provider.inject_config(test_func, config)
-        result = wrapped("GPT-4o")
-        assert result == "Using GPT-4o"
-        assert wrapped.current_config == config
-
-    @pytest.mark.asyncio
-    async def test_inject_config_async_function(self):
-        """Test decorator injection with async function."""
-        provider = AttributeBasedProvider()
-        config = {"model": "GPT-4o", "temperature": 0.7}
-
-        async def test_func(query: str) -> str:
-            current_config = test_func.current_config
-            return f"Using {current_config['model']}"
-
-        # Rebind test_func to the wrapper so the closure sees the wrapper
-        test_func = provider.inject_config(test_func, config)
-        result = await test_func("test query")
-
-        assert result == "Using GPT-4o"
-
-    def test_inject_config_custom_attribute_name(self):
-        """Test decorator injection with custom attribute name."""
-        provider = AttributeBasedProvider(attribute_name="my_config")
-        config = {"model": "GPT-4o"}
-
-        def test_func() -> str:
-            return "test"
-
-        wrapped_func = provider.inject_config(test_func, config)
-        result = wrapped_func()
-
-        assert result == "test"
-        assert hasattr(wrapped_func, "my_config")
-        assert wrapped_func.my_config == config
-
-    def test_extract_config(self):
-        """Test extracting config from function attribute."""
-        provider = AttributeBasedProvider()
-        config = {"model": "GPT-4o"}
-
-        def test_func():
-            pass
-
-        wrapped_func = provider.inject_config(test_func, config)
-        extracted = provider.extract_config(wrapped_func)
-
-        assert extracted == config
-
-    def test_supports_function(self):
-        """Test that decorator provider supports any function."""
-        provider = AttributeBasedProvider()
-
-        def test_func():
-            pass
-
-        assert provider.supports_function(test_func) is True
-
-
 class TestGetProvider:
     """Test suite for get_provider function."""
 
@@ -279,25 +201,27 @@ class TestGetProvider:
         assert isinstance(provider, ParameterBasedProvider)
         assert provider.default_param_name == "my_config"
 
-    def test_get_decorator_provider(self):
-        """Test getting decorator provider."""
-        provider = get_provider("attribute")
-        assert isinstance(provider, AttributeBasedProvider)
-        assert provider.attribute_name == "current_config"
-
-    def test_get_decorator_provider_with_custom_attribute(self):
-        """Test getting decorator provider with custom attribute name."""
-        provider = get_provider("attribute", attribute_name="my_config")
-        assert isinstance(provider, AttributeBasedProvider)
-        assert provider.attribute_name == "my_config"
-
     def test_get_unknown_provider(self):
         """Test error for unknown provider."""
         with pytest.raises(ConfigurationError, match="Unknown injection mode: unknown"):
             get_provider("unknown")
 
-    def test_decorator_backward_compatibility(self):
-        """Test that 'decorator' mode still works for backward compatibility."""
-        # Should not raise an error
-        provider = get_provider("decorator")
-        assert isinstance(provider, AttributeBasedProvider)
+    def test_attribute_mode_raises_configuration_error(self):
+        """Test that attribute mode raises ConfigurationError with migration guide."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_provider("attribute")
+
+        error_message = str(exc_info.value)
+        assert "attribute" in error_message
+        assert "removed" in error_message.lower()
+        assert "context" in error_message  # Migration suggestion
+        assert "seamless" in error_message  # Alternative
+
+    def test_decorator_mode_raises_configuration_error(self):
+        """Test that decorator mode (legacy alias) raises ConfigurationError."""
+        with pytest.raises(ConfigurationError) as exc_info:
+            get_provider("decorator")
+
+        error_message = str(exc_info.value)
+        assert "decorator" in error_message
+        assert "removed" in error_message.lower()
