@@ -220,13 +220,22 @@ def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
         if expires_at.tzinfo:
             now = now.replace(tzinfo=UTC)
         if expires_at > now:
-            logger.info(
-                f"CI optimization approved by legacy token: {token_data['approved_by']}"
-            )
+            # Sanitize user-controlled data before logging to prevent log injection
+            safe_approver = _sanitize_for_log(token_data.get("approved_by", "unknown"))
+            logger.info("CI optimization approved by legacy token: %s", safe_approver)
             return True
     except (ValueError, KeyError):
         pass
     return False
+
+
+def _sanitize_for_log(value: str, max_len: int = 50) -> str:
+    """Sanitize user-controlled data for safe logging.
+
+    Removes any characters that could be used for log injection attacks,
+    keeping only alphanumeric characters and common safe symbols.
+    """
+    return "".join(c for c in str(value)[:max_len] if c.isalnum() or c in "-_@.")
 
 
 def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
@@ -248,7 +257,8 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
             now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
             if expires_at > now:
                 logger.warning(
-                    f"Token approved by {token_data['approver']} (signature not verified)"
+                    "Token approved by %s (signature not verified)",
+                    _sanitize_for_log(token_data.get("approver", "unknown")),
                 )
                 return True
         except (ValueError, KeyError):
@@ -279,7 +289,8 @@ def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
             return False
         if expires_at > now:
             logger.info(
-                f"CI optimization approved by HMAC token: {token_data['approver']}"
+                "CI optimization approved by HMAC token: %s",
+                _sanitize_for_log(token_data.get("approver", "unknown")),
             )
             return True
         logger.debug("Token expired")
