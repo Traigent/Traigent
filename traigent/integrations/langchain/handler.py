@@ -659,7 +659,12 @@ class TraigentHandler(BaseCallbackHandler):
         try:
             from traigent.utils.cost_calculator import calculate_llm_cost
 
-            return float(calculate_llm_cost(model, input_tokens, output_tokens))
+            result = calculate_llm_cost(
+                model_name=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+            )
+            return result.total_cost
         except ImportError:
             # Fallback estimates (per 1M tokens)
             cost_per_1m = {
