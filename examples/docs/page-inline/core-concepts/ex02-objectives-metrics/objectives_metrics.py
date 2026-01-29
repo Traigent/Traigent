@@ -198,8 +198,8 @@ def balanced_support_bot(query: str) -> str:
         "response_format": ["brief", "standard", "detailed"],
     },
     eval_dataset=DATASET_FILE,
-    objectives=["cost", "custom:response_quality"],
-    custom_metrics={"response_quality": response_quality_score},
+    objectives=["cost", "response_quality"],
+    metric_functions={"response_quality": response_quality_score},
     constraints=[
         _max_cost_per_call,
         _min_quality_score,

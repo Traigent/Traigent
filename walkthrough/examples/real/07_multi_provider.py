@@ -243,7 +243,12 @@ async def main() -> None:
     # Calculate total trials based on configuration space
     total_trials = len(CONFIG_SPACE["model"]) * len(CONFIG_SPACE["temperature"])
 
-    start_time = time.perf_counter()
+    record_runtime = os.getenv("TRAIGENT_RECORD_RUNTIME", "").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+    start_time = time.perf_counter() if record_runtime else 0.0
     results = await answer_with_any_provider.optimize(
         algorithm="grid",
         max_trials=total_trials,
@@ -251,7 +256,9 @@ async def main() -> None:
         show_progress=True,
         random_seed=42,
     )
-    runtime_seconds = time.perf_counter() - start_time
+    if record_runtime:
+        runtime_seconds = time.perf_counter() - start_time
+        print(f"\nRecorded runtime (for estimate update): {runtime_seconds:.1f}s")
 
     print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
 
@@ -269,8 +276,6 @@ async def main() -> None:
     print(f"  Cost: ${results.best_metrics.get('cost', 0):.6f}")
     if "latency" in results.best_metrics:
         print(f"  Latency: {results.best_metrics.get('latency', 0):.3f}s")
-
-    print(f"\nActual runtime: {runtime_seconds:.1f}s")
 
     print("\n" + "-" * 55)
     print("Summary: Traigent optimized across all available providers")
