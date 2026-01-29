@@ -138,10 +138,20 @@ if (
     )
 
 
+def _count_dataset_examples(dataset_path: str) -> int:
+    """Count lines in the evaluation dataset."""
+    try:
+        with open(dataset_path) as f:
+            return sum(1 for line in f if line.strip())
+    except Exception:
+        return 0
+
+
 def _print_results(result: OptimizationResult) -> None:
     """Pretty-print aggregated and raw optimization data."""
 
     primary = result.objectives[0] if result.objectives else None
+    eval_examples = _count_dataset_examples(DATASET)
 
     def _mean_response_time(meta: Any) -> float | None:
         if not isinstance(meta, dict):
@@ -194,6 +204,14 @@ def _print_results(result: OptimizationResult) -> None:
     cols = [c for c in preferred_cols if c in df.columns]
     if cols:
         df = df[cols]
+
+    # Rename samples_count to trials (it's trials per config, not eval examples)
+    if "samples_count" in df.columns:
+        df = df.rename(columns={"samples_count": "trials"})
+
+    # Add eval_examples column showing actual dataset size
+    trials_idx = list(df.columns).index("trials") if "trials" in df.columns else 0
+    df.insert(trials_idx + 1, "eval_examples", eval_examples)
 
     if df_raw["avg_response_time"].notna().any():
         response_avg = (
