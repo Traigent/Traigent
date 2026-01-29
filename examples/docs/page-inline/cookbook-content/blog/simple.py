@@ -55,12 +55,16 @@ def write_intro(topic: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await write_intro.optimize(max_trials=10)
-        write_intro.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", write_intro("Traigent SDK"))
+        async def _main():
+            res = await write_intro.optimize(max_trials=10)
+            write_intro.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", write_intro("Traigent SDK"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
