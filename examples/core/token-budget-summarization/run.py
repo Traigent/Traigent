@@ -104,15 +104,16 @@ elif CONCURRENCY_PROFILE == "sequential":
     trial_concurrency = 1
     resolved_mode = "sequential"
 else:
+    # Parallel mode: 4 examples concurrently, 4 trials concurrently
     example_concurrency = max(1, _parse_int_env("TRAIGENT_EXAMPLE_CONCURRENCY", 4))
     trial_concurrency = max(
-        1,
+        2,
         _parse_int_env(
             "TRAIGENT_TRIAL_CONCURRENCY",
-            min(DEFAULT_WORKERS, TOTAL_CONFIGS),
+            4,  # Parallel trials (safe with get_trial_config())
         ),
     )
-    resolved_mode = "auto"
+    resolved_mode = "parallel"
 
 GLOBAL_PARALLEL_CONFIG = ParallelConfig(
     mode=resolved_mode,
@@ -285,7 +286,11 @@ def summarize_keyword(text: str) -> str:
     if MOCK:
         return _mock_summarize(text)
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    cfg = traigent.get_config()
+    # Use get_trial_config() for trial-specific config, fallback to get_config()
+    try:
+        cfg = traigent.get_trial_config()
+    except Exception:
+        cfg = traigent.get_config()
     style = cfg.get("style", "paragraph")
     max_tokens = int(cfg.get("max_tokens", 96))
     temperature = float(cfg.get("temperature", 0.0))
@@ -301,11 +306,18 @@ def summarize_keyword(text: str) -> str:
         timeout=None,
         stop=None,
     ).invoke([HumanMessage(content=prompt)])
-    raw = str(response.content).strip()
-    for k in ["budget", "timeline", "decision"]:
-        if k in raw.lower():
+    raw = str(response.content).strip().lower()
+    # Match all 20 dataset categories
+    categories = [
+        "budget", "decision", "timeline", "security", "reporting", "hiring",
+        "feedback", "deployment", "documentation", "collaboration", "performance",
+        "training", "compliance", "infrastructure", "design", "technical debt",
+        "marketing", "contract", "quality", "migration"
+    ]
+    for k in categories:
+        if k in raw:
             return k
-    return raw.split()[0][:16]
+    return raw.split()[0][:16] if raw.split() else "unknown"
 
 
 if __name__ == "__main__":
@@ -313,7 +325,13 @@ if __name__ == "__main__":
 
     async def main() -> None:
         trials = 9 if not MOCK else 4
-        r = await summarize_keyword.optimize(algorithm="random", max_trials=trials)
+        # Each trial evaluates 20 examples; with sequential execution ~2-3 min/trial
+        # Set generous timeout: 1 hour for real mode, 5 min for mock
+        timeout_seconds = 300.0 if MOCK else 3600.0
+        r = await summarize_keyword.optimize(
+            algorithm="random", max_trials=trials, timeout=timeout_seconds
+        )
+        print(f"Total trials: {len(r.trials)}, Stop reason: {r.stop_reason}")
         print({"best_config": r.best_config, "best_score": r.best_score})
         _print_results(r)
 
