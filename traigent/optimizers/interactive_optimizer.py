@@ -38,7 +38,10 @@ try:
     _CLOUD_MODELS_AVAILABLE = True
 except ModuleNotFoundError as err:
     # Check .name to distinguish missing cloud vs broken transitive dependency
-    if err.name and err.name.startswith("traigent.cloud"):
+    missing_module = getattr(err, "name", "") or ""
+    if missing_module == "traigent.cloud" or missing_module.startswith(
+        "traigent.cloud."
+    ):
         _CLOUD_MODELS_AVAILABLE = False
     else:
         raise  # Re-raise for broken dependencies like missing pydantic
