@@ -194,6 +194,7 @@ class TestExportCommand:
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             patch("traigent.cli.main.PersistenceManager") as mock_persistence_class,
+            patch("traigent.cli.main.WORKSPACE_ROOT", Path(tmpdir)),
         ):
             mock_persistence = Mock()
             mock_persistence_class.return_value = mock_persistence
@@ -219,6 +220,7 @@ class TestExportCommand:
         with (
             tempfile.TemporaryDirectory() as tmpdir,
             patch("traigent.cli.main.PersistenceManager") as mock_persistence_class,
+            patch("traigent.cli.main.WORKSPACE_ROOT", Path(tmpdir)),
         ):
             mock_persistence = Mock()
             mock_persistence_class.return_value = mock_persistence

@@ -93,6 +93,71 @@ class TestModuleNotFoundErrorNameCheck:
         assert dep_err.name != "traigent.cloud"
         assert not dep_err.name.startswith("traigent.cloud")
 
+    def test_getattr_pattern_handles_none_name(self):
+        """Verify getattr pattern handles errors without .name attribute.
+
+        This tests the S2583-compliant pattern used across modules:
+        `missing_module = getattr(err, "name", "") or ""`
+        """
+        # Create error without explicit name attribute (defaults to None)
+        err = ModuleNotFoundError("No module named 'some_module'")
+
+        # Pattern from platforms.py, specification_generator.py, etc.
+        missing_module = getattr(err, "name", "") or ""
+
+        # Should safely handle None/empty and not raise
+        is_cloud = (
+            missing_module == "traigent.cloud"
+            or missing_module.startswith("traigent.cloud.")
+        )
+        assert isinstance(is_cloud, bool)
+
+    def test_getattr_pattern_with_explicit_name(self):
+        """Verify getattr pattern correctly extracts .name when present."""
+        err = ModuleNotFoundError("No module named 'traigent.cloud.models'")
+        err.name = "traigent.cloud.models"
+
+        missing_module = getattr(err, "name", "") or ""
+
+        assert missing_module == "traigent.cloud.models"
+        is_cloud = (
+            missing_module == "traigent.cloud"
+            or missing_module.startswith("traigent.cloud.")
+        )
+        assert is_cloud
+
+    def test_getattr_pattern_avoids_false_positives(self):
+        """Verify pattern doesn't match similar but different module names.
+
+        The improved pattern uses exact match or startswith('.') to avoid
+        false positives like 'traigent.cloudy' matching 'traigent.cloud'.
+        """
+        err = ModuleNotFoundError("No module named 'traigent.cloudy'")
+        err.name = "traigent.cloudy"
+
+        missing_module = getattr(err, "name", "") or ""
+
+        # Old pattern would incorrectly match: missing_module.startswith("traigent.cloud")
+        # New pattern correctly rejects:
+        is_cloud = (
+            missing_module == "traigent.cloud"
+            or missing_module.startswith("traigent.cloud.")
+        )
+        assert not is_cloud, "Should not match 'traigent.cloudy'"
+
+    def test_getattr_pattern_matches_exact_cloud(self):
+        """Verify pattern matches exact 'traigent.cloud' module."""
+        err = ModuleNotFoundError("No module named 'traigent.cloud'")
+        err.name = "traigent.cloud"
+
+        missing_module = getattr(err, "name", "") or ""
+
+        is_cloud = (
+            missing_module == "traigent.cloud"
+            or missing_module.startswith("traigent.cloud.")
+        )
+        assert is_cloud
+
 
 class TestReentrantRegistryDiscovery:
     """Tests for re-entrant plugin discovery protection.
