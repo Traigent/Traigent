@@ -71,6 +71,9 @@ def _run_tests_safely(test_paths: list, test_name: str, timeout: int = 300):
             # Ensure tests run in mock mode
             "TRAIGENT_MOCK_LLM": "true",
             "TRAIGENT_OFFLINE_MODE": "true",
+            # Signal to conftest.py that we're running via subprocess wrapper
+            # This enables the JS tests which are otherwise skipped
+            "TRAIGENT_JS_TEST_SUBPROCESS": "1",
         },
     )
 

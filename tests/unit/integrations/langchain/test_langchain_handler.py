@@ -791,3 +791,98 @@ class TestTraigentHandlerModelExtraction:
             invocation_params={"model": "gpt-4-turbo"},
         )
         assert handler._llm_calls[run_id].model == "gpt-4-turbo"
+
+
+class TestCostEstimation:
+    """Test cost estimation methods including fallback logic."""
+
+    @pytest.fixture
+    def handler(self):
+        """Create a handler for testing."""
+        pytest.importorskip("langchain_core")
+        from traigent.integrations.langchain.handler import TraigentHandler
+
+        return TraigentHandler(trace_id="test-trace")
+
+    def test_fallback_cost_estimate_gpt4o(self, handler):
+        """Test fallback cost estimation for GPT-4o model."""
+        cost = handler._fallback_cost_estimate("gpt-4o", 1000, 500)
+        # GPT-4o: $2.50/1M input, $10.00/1M output
+        expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_gpt35_turbo(self, handler):
+        """Test fallback cost estimation for GPT-3.5-turbo model."""
+        cost = handler._fallback_cost_estimate("gpt-3.5-turbo", 1000, 500)
+        # GPT-3.5-turbo: $0.50/1M input, $1.50/1M output
+        expected = (1000 * 0.50 + 500 * 1.50) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_claude(self, handler):
+        """Test fallback cost estimation for Claude models."""
+        cost = handler._fallback_cost_estimate("claude-3-sonnet", 1000, 500)
+        # Claude-3-sonnet: $3.00/1M input, $15.00/1M output
+        expected = (1000 * 3.00 + 500 * 15.00) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_claude_haiku(self, handler):
+        """Test fallback cost estimation for Claude Haiku."""
+        cost = handler._fallback_cost_estimate("claude-3-haiku", 1000, 500)
+        # Claude-3-haiku: $0.25/1M input, $1.25/1M output
+        expected = (1000 * 0.25 + 500 * 1.25) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_unknown_model(self, handler):
+        """Test fallback cost estimation for unknown model."""
+        cost = handler._fallback_cost_estimate("some-unknown-model", 1000, 500)
+        # Default: $1.00/1M input, $3.00/1M output
+        expected = (1000 * 1.0 + 500 * 3.0) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_case_insensitive(self, handler):
+        """Test that model matching is case-insensitive."""
+        cost_lower = handler._fallback_cost_estimate("gpt-4o", 1000, 500)
+        cost_upper = handler._fallback_cost_estimate("GPT-4O", 1000, 500)
+        assert cost_lower == cost_upper
+
+    def test_estimate_cost_with_tokencost_available(self, handler):
+        """Test _estimate_cost when tokencost is available and works."""
+        from traigent.utils.cost_calculator import CostBreakdown
+
+        with patch(
+            "traigent.utils.cost_calculator.calculate_llm_cost"
+        ) as mock_calc:
+            mock_calc.return_value = CostBreakdown(total_cost=0.005)
+
+            with patch(
+                "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True
+            ):
+                cost = handler._estimate_cost("gpt-4o", 1000, 500)
+                assert cost == 0.005
+
+    def test_estimate_cost_falls_back_when_tokencost_returns_zero(self, handler):
+        """Test _estimate_cost falls back when tokencost returns 0."""
+        from traigent.utils.cost_calculator import CostBreakdown
+
+        with patch(
+            "traigent.utils.cost_calculator.calculate_llm_cost"
+        ) as mock_calc:
+            mock_calc.return_value = CostBreakdown(total_cost=0.0)  # Unknown model
+
+            with patch(
+                "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True
+            ):
+                cost = handler._estimate_cost("gpt-4o", 1000, 500)
+                # Should fall back to hardcoded estimates
+                expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
+                assert cost == pytest.approx(expected)
+
+    def test_estimate_cost_falls_back_when_tokencost_unavailable(self, handler):
+        """Test _estimate_cost falls back when tokencost not available."""
+        with patch(
+            "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False
+        ):
+            cost = handler._estimate_cost("gpt-4o", 1000, 500)
+            # Should use hardcoded estimates
+            expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
+            assert cost == pytest.approx(expected)
