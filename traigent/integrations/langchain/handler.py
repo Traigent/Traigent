@@ -657,9 +657,9 @@ class TraigentHandler(BaseCallbackHandler):
         Uses tokencost if available with litellm fallback, otherwise uses simple estimates.
         """
         try:
-            from traigent.utils.cost_calculator import calculate_cost
+            from traigent.utils.cost_calculator import calculate_llm_cost
 
-            return float(calculate_cost(model, input_tokens, output_tokens))
+            return float(calculate_llm_cost(model, input_tokens, output_tokens))
         except ImportError:
             # Fallback estimates (per 1M tokens)
             cost_per_1m = {
