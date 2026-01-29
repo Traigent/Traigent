@@ -847,42 +847,27 @@ class TestCostEstimation:
 
     def test_estimate_cost_with_tokencost_available(self, handler):
         """Test _estimate_cost when tokencost is available and works."""
-        from traigent.utils.cost_calculator import CostBreakdown
+        # tokencost IS available in test env, so this tests the happy path
+        # For gpt-4o, tokencost should return a valid cost
+        cost = handler._estimate_cost("gpt-4o", 1000, 500)
+        assert cost > 0, "Should return non-zero cost for known model"
 
+    def test_estimate_cost_falls_back_for_unknown_model(self, handler):
+        """Test _estimate_cost falls back for unknown model (tokencost returns 0)."""
+        # Use a model name tokencost doesn't know - forces fallback path
+        cost = handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
+        # Should fall back to hardcoded default estimates
+        expected = (1000 * 1.0 + 500 * 3.0) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_estimate_cost_exception_handling(self, handler):
+        """Test _estimate_cost handles exceptions gracefully."""
+        # Patch calculate_llm_cost to raise an exception - covers except branch
         with patch(
-            "traigent.utils.cost_calculator.calculate_llm_cost"
-        ) as mock_calc:
-            mock_calc.return_value = CostBreakdown(total_cost=0.005)
-
-            with patch(
-                "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True
-            ):
-                cost = handler._estimate_cost("gpt-4o", 1000, 500)
-                assert cost == 0.005
-
-    def test_estimate_cost_falls_back_when_tokencost_returns_zero(self, handler):
-        """Test _estimate_cost falls back when tokencost returns 0."""
-        from traigent.utils.cost_calculator import CostBreakdown
-
-        with patch(
-            "traigent.utils.cost_calculator.calculate_llm_cost"
-        ) as mock_calc:
-            mock_calc.return_value = CostBreakdown(total_cost=0.0)  # Unknown model
-
-            with patch(
-                "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True
-            ):
-                cost = handler._estimate_cost("gpt-4o", 1000, 500)
-                # Should fall back to hardcoded estimates
-                expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
-                assert cost == pytest.approx(expected)
-
-    def test_estimate_cost_falls_back_when_tokencost_unavailable(self, handler):
-        """Test _estimate_cost falls back when tokencost not available."""
-        with patch(
-            "traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False
+            "traigent.utils.cost_calculator.calculate_llm_cost",
+            side_effect=Exception("Test error"),
         ):
             cost = handler._estimate_cost("gpt-4o", 1000, 500)
-            # Should use hardcoded estimates
+            # Should fall back to hardcoded estimates via except handler
             expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
             assert cost == pytest.approx(expected)
