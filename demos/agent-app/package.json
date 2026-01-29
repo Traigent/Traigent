@@ -1,0 +1,21 @@
+{
+  "name": "traigent-agent-demo",
+  "version": "1.0.0",
+  "description": "Demo: Simple agent optimized with Traigent",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/run-optimization.js",
+    "dev": "tsx src/run-optimization.ts"
+  },
+  "dependencies": {
+    "@traigent/sdk": "file:../..",
+    "ai": "^3.0.0",
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.3.0"
+  }
+}

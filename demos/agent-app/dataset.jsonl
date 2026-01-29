@@ -1,0 +1,20 @@
+{"input": "This product is amazing! Exceeded all my expectations.", "expected_output": "positive"}
+{"input": "Terrible experience, very disappointed with the quality.", "expected_output": "negative"}
+{"input": "The item arrived on time and works as described.", "expected_output": "neutral"}
+{"input": "Best purchase I've ever made! Absolutely love it!", "expected_output": "positive"}
+{"input": "Complete waste of money. Do not buy this product.", "expected_output": "negative"}
+{"input": "It's okay, nothing special but does the job.", "expected_output": "neutral"}
+{"input": "Outstanding quality and fantastic customer service!", "expected_output": "positive"}
+{"input": "Broke after one week. Terrible build quality.", "expected_output": "negative"}
+{"input": "Average product for the price point.", "expected_output": "neutral"}
+{"input": "Exceeded expectations! Will definitely buy again.", "expected_output": "positive"}
+{"input": "Worst purchase ever. Completely unusable.", "expected_output": "negative"}
+{"input": "Does what it says. No complaints.", "expected_output": "neutral"}
+{"input": "Absolutely fantastic! Five stars all the way!", "expected_output": "positive"}
+{"input": "Arrived damaged and customer service was unhelpful.", "expected_output": "negative"}
+{"input": "Standard quality, standard price. Fair enough.", "expected_output": "neutral"}
+{"input": "Life-changing product! Can't imagine living without it.", "expected_output": "positive"}
+{"input": "Scam product. Nothing like the advertisement.", "expected_output": "negative"}
+{"input": "Meh. It's fine I guess.", "expected_output": "neutral"}
+{"input": "Perfect in every way! Highly recommend!", "expected_output": "positive"}
+{"input": "Don't waste your money on this garbage.", "expected_output": "negative"}

@@ -32,3 +32,13 @@ npm-debug.log*
 # Package manager lockfiles (keep package-lock.json if using npm)
 yarn.lock
 pnpm-lock.yaml
+
+# SonarQube
+.scannerwork/
+
+# Local tooling artifacts
+.traigent/
+.claude/
+claude.md
+tmp/
+sonar-project.local.properties
