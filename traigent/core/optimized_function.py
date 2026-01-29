@@ -123,7 +123,16 @@ def _emit_cost_warning_once() -> None:
     # Check if terminal supports colors (not redirected to file)
     use_colors = sys.stderr.isatty()
 
+    mock_val = os.getenv("TRAIGENT_MOCK_LLM", "false").lower()
+    mock_on = mock_val in ("true", "1", "yes")
+
     if use_colors:
+        if mock_on:
+            mock_line = (
+                f"  - Mock mode:             {CYAN}ENABLED{RESET} (no real API calls)\n"
+            )
+        else:
+            mock_line = "  - Mock mode:             off (set TRAIGENT_MOCK_LLM=true to enable)\n"
         msg = (
             f"\n{YELLOW}{BOLD}[!] COST WARNING{RESET}\n"
             f"{YELLOW}Traigent optimization will make multiple LLM API calls.{RESET}\n"
@@ -131,10 +140,14 @@ def _emit_cost_warning_once() -> None:
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
             f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
-            f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
+            f"{mock_line}"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
     else:
+        if mock_on:
+            mock_line = "  - Mock mode:             ENABLED (no real API calls)\n"
+        else:
+            mock_line = "  - Mock mode:             off (set TRAIGENT_MOCK_LLM=true to enable)\n"
         msg = (
             "\n[!] COST WARNING\n"
             "Traigent optimization will make multiple LLM API calls.\n"
@@ -142,8 +155,8 @@ def _emit_cost_warning_once() -> None:
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
             "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
-            "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
-            "  - Full details:          DISCLAIMER.md\n"
+            + mock_line
+            + "  - Full details:          DISCLAIMER.md\n"
         )
 
     # Use warnings module for filterability; fallback to stderr on encoding errors
@@ -2079,7 +2092,8 @@ class OptimizedFunction:
             return
 
         # No valid approval found
-        raise OptimizationError("""
+        raise OptimizationError(
+            """
 CI/CD Approval Required
 
 This optimization was triggered in a CI environment and requires approval.
@@ -2095,7 +2109,8 @@ To approve, use one of these methods:
 
 3. GitHub Actions with environment protection:
    Use 'environment: production' with required reviewers
-        """)
+        """
+        )
 
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization.

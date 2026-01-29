@@ -9,7 +9,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
-MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
+# Force non-mock mode for Traigent
+os.environ["TRAIGENT_MOCK_LLM"] = "false"
+os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
+
+# Check API key early
+if not os.getenv("ANTHROPIC_API_KEY"):
+    print("ERROR: ANTHROPIC_API_KEY not set. Export it first:")
+    print("  export ANTHROPIC_API_KEY='your-key-here'")
+    sys.exit(1)
+
+MOCK = False  # Set to True for mock mode without API calls
 BASE = Path(__file__).parent
 if MOCK:
     os.environ["HOME"] = str(BASE)
@@ -164,6 +174,10 @@ def _print_results(result: OptimizationResult) -> None:
     else:
         df_raw["avg_response_time"] = None
 
+    # Fallback: use duration column if avg_response_time is NaN
+    if "duration" in df_raw.columns:
+        df_raw["avg_response_time"] = df_raw["avg_response_time"].fillna(df_raw["duration"])
+
     config_cols = ["max_tokens", "temperature", "style"]
 
     df = result.to_aggregated_dataframe(primary_objective=primary)
@@ -176,7 +190,6 @@ def _print_results(result: OptimizationResult) -> None:
         "accuracy",
         "cost",
         "duration",
-        "avg_response_time",
     ]
     cols = [c for c in preferred_cols if c in df.columns]
     if cols:
@@ -199,36 +212,10 @@ def _print_results(result: OptimizationResult) -> None:
         df = df.sort_values(by=primary, ascending=ascending, na_position="last")
 
     if not df.empty:
+        # Add running number as first column
+        df.insert(0, "#", range(1, len(df) + 1))
         print("\nAggregated configurations and performance:")
         print(df.to_string(index=False))
-
-    preferred_raw = [
-        "trial_id",
-        "status",
-        "model",
-        "temperature",
-        "max_tokens",
-        "style",
-        "accuracy",
-        "cost",
-        "duration",
-        "avg_response_time",
-    ]
-    cols_raw = [c for c in preferred_raw if c in df_raw.columns]
-    if cols_raw:
-        df_raw = df_raw[cols_raw]
-
-    if "avg_response_time" in df_raw.columns:
-        df_raw["avg_response_time"] = df_raw["avg_response_time"].astype(float).round(3)
-
-    if primary and primary in df_raw.columns:
-        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-        ascending = any(p in primary.lower() for p in minimize_patterns)
-        df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")
-
-    if not df_raw.empty:
-        print("\nRaw (per-sample) trials:")
-        print(df_raw.to_string(index=False))
 
 
 @traigent.optimize(
