@@ -35,6 +35,12 @@ class _FailIfCalledEvaluator(BaseEvaluator):
 
 @pytest.mark.asyncio
 async def test_pre_constraints_prevent_evaluation() -> None:
+    """Test that pre-constraints prevent evaluation without consuming trial slots.
+
+    After fix for issue #27, constraint-rejected configs do NOT consume trial slots,
+    meaning they don't create trial records. The evaluator should never be called,
+    and the result should have no trials (since all configs were rejected).
+    """
     dataset = Dataset(
         examples=[EvaluationExample(input_data={"text": "hi"}, expected_output="hi")],
         name="t",
@@ -57,5 +63,8 @@ async def test_pre_constraints_prevent_evaluation() -> None:
         return "hi"
 
     result = await orchestrator.optimize(func=func, dataset=dataset)
-    assert result.trials
-    assert result.trials[0].status.value in {"failed", "pruned", "cancelled"}
+    # With fix for issue #27: constraint failures don't consume trial slots,
+    # so no trials are recorded (evaluator is never called)
+    assert result.trials == []
+    # Verify the optimization completed (optimizer's should_stop was respected)
+    assert result.status.value == "completed"

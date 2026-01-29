@@ -898,3 +898,45 @@ class TestRunSequentialTrial:
 
         assert action == "continue"
         assert trial_count == 0  # Not incremented because skipped
+
+    @pytest.mark.asyncio
+    async def test_constraint_failure_does_not_consume_trial_slot(self):
+        """Test that constraint-rejected configs don't consume trial slots (issue #27)."""
+
+        orchestrator = MockOrchestrator()
+        orchestrator.max_trials = 10
+
+        # Add a pre-constraint that always fails
+        def failing_constraint(config, metrics=None):
+            return False
+
+        failing_constraint.__tvl_constraint__ = {
+            "id": "test",
+            "message": "Always fails",
+        }
+        orchestrator._constraints_pre_eval = [failing_constraint]
+        orchestrator._abandon_optuna_trial = MagicMock()  # Mock the abandon method
+
+        lifecycle = TrialLifecycle(orchestrator)
+        dataset = create_mock_dataset()
+
+        async def mock_func(input_data):
+            return "result"
+
+        trial_count, action = await lifecycle.run_sequential_trial(
+            func=mock_func,
+            dataset=dataset,
+            session_id=None,
+            function_name="test_func",
+            trial_count=5,
+        )
+
+        # Key assertions: constraint failure should NOT consume a trial slot
+        assert action == "continue"
+        assert trial_count == 5  # NOT incremented - this is the bug fix for issue #27
+
+        # Verify Optuna trial was abandoned with appropriate reason
+        orchestrator._abandon_optuna_trial.assert_called_once()
+        call_kwargs = orchestrator._abandon_optuna_trial.call_args[1]
+        assert "trial_rejected_by_constraint" in call_kwargs.get("reason", "")
+        assert call_kwargs.get("status") == TrialStatus.PRUNED
