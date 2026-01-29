@@ -159,26 +159,21 @@ class TrialLifecycle:
                 stage="pre",
             )
         except TVLConstraintError as e:
-            # Constraint failed - create a failed trial without running evaluation
-            logger.info("Pre-constraint failed for config %s: %s", config_for_run, e)
-            failed_trial = TrialResult(
-                trial_id=str(trial_count),
-                config=config_for_run,
-                metrics={},
-                status=TrialStatus.FAILED,
-                duration=0.0,
-                timestamp=datetime.now(tz=UTC),
-                error_message=str(e),
-                metadata={"constraint_failure": True},
+            # Constraint failed - skip this config without consuming a trial slot
+            # (Fix for issue #27: constraint-rejected configs should not reduce actual evaluations)
+            logger.info(
+                "Pre-constraint failed for config %s: %s (not counting toward max_trials)",
+                config_for_run,
+                e,
             )
-            trial_count = await orchestrator._handle_trial_result(
-                trial_result=failed_trial,
-                optimizer_config=config,
-                current_trial_index=trial_count,
-                session_id=session_id,
-                optuna_trial_id=optuna_trial_id,
-                log_on_success=False,
-            )
+            if hasattr(orchestrator, "_abandon_optuna_trial"):
+                orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
+                    optuna_trial_id,
+                    reason=f"trial_rejected_by_constraint:{e}",
+                    config=config_for_run,
+                    status=TrialStatus.PRUNED,
+                    pruned_step=0,
+                )
             return trial_count, "continue"
 
         # Phase 2.1: Acquire cost permit before sequential trial execution
