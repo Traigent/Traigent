@@ -428,7 +428,7 @@ def optimized_openai(text: str) -> str:
         messages=[{"role": "user", "content": text}],
         temperature=config["temperature"]
     )
-    return response.choices[0].message.content
+    return str(response.choices[0].message.content)
 ```
 
 ### With Custom Frameworks

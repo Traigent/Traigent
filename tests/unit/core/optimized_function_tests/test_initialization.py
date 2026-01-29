@@ -59,6 +59,30 @@ class TestOptimizedFunctionInitialization:
         assert getattr(parallel_cfg, "trial_concurrency", None) == 2
         assert opt_func.kwargs.get("cache_results") is True
 
+    def test_cost_limit_stored_in_decorator_runtime_overrides(
+        self, simple_function, sample_config_space, sample_objectives, sample_dataset
+    ):
+        """Test that cost_limit passed at decoration time is stored for later use.
+
+        This verifies that cost_limit (and cost_approved) can be specified in the
+        @traigent.optimize() decorator and will be properly forwarded to the
+        orchestrator when .optimize() is called.
+        """
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space=sample_config_space,
+            objectives=sample_objectives,
+            eval_dataset=sample_dataset,
+            cost_limit=2.5,
+            cost_approved=True,
+        )
+
+        # Verify values are stored in _decorator_runtime_overrides
+        assert opt_func._decorator_runtime_overrides.get("cost_limit") == pytest.approx(
+            2.5
+        )
+        assert opt_func._decorator_runtime_overrides.get("cost_approved") is True
+
     def test_initialization_with_custom_evaluator(
         self, simple_function, sample_config_space
     ):

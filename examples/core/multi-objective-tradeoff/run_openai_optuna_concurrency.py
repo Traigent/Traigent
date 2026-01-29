@@ -34,11 +34,11 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.api.types import OptimizationResult
-from traigent.cloud.backend_client import BackendIntegratedClient
-from traigent.config.parallel import ParallelConfig
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
-from traigent.optimizers.pruners import CeilingPruner
+from traigent.api.types import OptimizationResult  # noqa: E402
+from traigent.cloud.backend_client import BackendIntegratedClient  # noqa: E402
+from traigent.config.parallel import ParallelConfig  # noqa: E402
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+from traigent.optimizers.pruners import CeilingPruner  # noqa: E402
 
 DATA_ROOT = (
     Path(__file__).resolve().parents[2] / "datasets" / "multi-objective-tradeoff"
@@ -46,6 +46,9 @@ DATA_ROOT = (
 
 # Setup logging to file - do this AFTER traigent import to override their config
 import logging
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 LOG_LEVEL = os.getenv("TRAIGENT_LOG_LEVEL", "INFO").upper()
 log_file = BASE / "debug_concurrency.log"

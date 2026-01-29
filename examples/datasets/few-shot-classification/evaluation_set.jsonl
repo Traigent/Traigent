@@ -2,3 +2,19 @@
 {"input": {"text": "Could be better."}, "output": "neutral"}
 {"input": {"text": "Absolutely loved it!"}, "output": "positive"}
 {"input": {"text": "This is the worst."}, "output": "negative"}
+{"input": {"text": "I have mixed feelings about this."}, "output": "neutral"}
+{"input": {"text": "Fantastic experience from start to finish!"}, "output": "positive"}
+{"input": {"text": "It was okay, nothing special."}, "output": "neutral"}
+{"input": {"text": "Terrible quality, very disappointed."}, "output": "negative"}
+{"input": {"text": "Exceeded all my expectations!"}, "output": "positive"}
+{"input": {"text": "Just average, neither good nor bad."}, "output": "neutral"}
+{"input": {"text": "Complete waste of time and money."}, "output": "negative"}
+{"input": {"text": "Great value for the price!"}, "output": "positive"}
+{"input": {"text": "It does what it says, nothing more."}, "output": "neutral"}
+{"input": {"text": "Would not recommend to anyone."}, "output": "negative"}
+{"input": {"text": "Best purchase I have made this year!"}, "output": "positive"}
+{"input": {"text": "Some good parts, some bad parts."}, "output": "neutral"}
+{"input": {"text": "Broke after just one week of use."}, "output": "negative"}
+{"input": {"text": "Highly recommend, works perfectly!"}, "output": "positive"}
+{"input": {"text": "Meets basic requirements adequately."}, "output": "neutral"}
+{"input": {"text": "Horrible customer service experience."}, "output": "negative"}

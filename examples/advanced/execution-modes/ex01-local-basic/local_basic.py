@@ -3,12 +3,16 @@
 
 Adapted from docs: runs fully locally with a small configuration space.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

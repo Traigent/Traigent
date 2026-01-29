@@ -24,6 +24,9 @@ for _depth in range(1, 7):
         continue
 from examples.utils.langchain_compat import ChatOpenAI
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
@@ -110,7 +113,7 @@ def adaptive_chat_bot(user_message: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
 
     # Get appropriate system prompt

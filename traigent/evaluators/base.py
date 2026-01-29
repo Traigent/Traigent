@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from collections.abc import Mapping
 from collections.abc import Mapping as CollectionsMapping
+from concurrent.futures import Executor
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -25,6 +26,7 @@ from traigent.evaluators.dataset_registry import (
     resolve_dataset_reference,
 )
 from traigent.evaluators.metrics_tracker import extract_llm_metrics
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.error_handler import APIKeyError
 from traigent.utils.error_handler import TraigentError as FriendlyTraigentError
 from traigent.utils.exceptions import (
@@ -154,7 +156,8 @@ def _resolve_dataset_source(
         resolved_path.relative_to(dataset_root)
     except ValueError as exc:
         raise ValidationError(
-            f"Dataset path must reside under {dataset_root}: {resolved_path}"
+            f"Dataset path must reside under {dataset_root}: {resolved_path}\n"
+            f"Hint: set {DATASET_ROOT_ENV} to the repo root (or run from it)."
         ) from exc
 
     if not resolved_path.is_file():
@@ -234,20 +237,6 @@ def _build_dataset(
         metadata = dict(metadata_hint)
     if registry_entry and registry_entry.metadata:
         metadata = {**(metadata or {}), **registry_entry.metadata}
-
-    # Store source path for JS runtime and other consumers
-    if metadata is None:
-        metadata = {}
-    metadata["source_path"] = str(resolved_path)
-
-    # Compute dataset hash for cache invalidation (file size + mtime_ns for efficiency)
-    # Uses nanosecond precision mtime to detect rapid changes within the same second
-    try:
-        stat_info = resolved_path.stat()
-        metadata["dataset_hash"] = f"{stat_info.st_size}_{stat_info.st_mtime_ns}"
-    except OSError:
-        # If we can't stat the file, skip the hash
-        pass
 
     metadata_out = metadata or None
 
@@ -660,16 +649,20 @@ class BaseEvaluator(ABC):
         self._metric_registry[name] = func
         logger.debug(f"Registered custom metric: {name}")
 
-    def _get_ragas_config(self) -> RagasConfig:
+    def _get_ragas_config(self) -> RagasConfig | None:
         column_map = None
         if self.config.get("ragas_column_map"):
             mapping = self.config["ragas_column_map"]
             if isinstance(mapping, Mapping):
                 column_map = mapping
+        llm = self.config.get("ragas_llm")
+        embeddings = self.config.get("ragas_embeddings")
+        if column_map is None and llm is None and embeddings is None:
+            return None
         return RagasConfig(
             column_map=column_map,
-            llm=self.config.get("ragas_llm"),
-            embeddings=self.config.get("ragas_embeddings"),
+            llm=llm,
+            embeddings=embeddings,
         )
 
     def override_metric(self, name: str, func: Callable[..., Any]) -> None:
@@ -962,143 +955,6 @@ class BaseEvaluator(ABC):
         return 0.0
 
     # Common evaluation methods to reduce duplication in subclasses
-
-    def _prepare_call_arguments(
-        self,
-        func: Callable[..., Any],
-        config: dict[str, Any],
-        input_data: dict[str, Any],
-    ) -> tuple[tuple[Any, ...], dict[str, Any]]:
-        """Determine call arguments based on injection mode.
-
-        Args:
-            func: Function to call
-            config: Configuration parameters
-            input_data: Input data for the function
-
-        Returns:
-            Tuple of (positional_args, keyword_args)
-        """
-        injection_mode = getattr(func, "_traigent_injection_mode", "context")
-
-        if injection_mode == "parameter" and isinstance(input_data, CollectionsMapping):
-            return (), {**input_data, **config}
-        if injection_mode == "parameter":
-            return (input_data,), dict(config)
-        if isinstance(
-            input_data, CollectionsMapping
-        ) and self._should_expand_input_mapping(func, input_data):
-            return (), dict(input_data)
-        return (input_data,), {}
-
-    async def _execute_async_with_timeout(
-        self,
-        func: Callable[..., Any],
-        call_args: tuple[Any, ...],
-        call_kwargs: dict[str, Any],
-    ) -> Any:
-        """Execute async function with optional timeout.
-
-        Args:
-            func: Async function to execute
-            call_args: Positional arguments
-            call_kwargs: Keyword arguments
-
-        Returns:
-            Function output
-        """
-        if self.timeout:
-            return await asyncio.wait_for(
-                func(*call_args, **call_kwargs), timeout=self.timeout
-            )
-        return await func(*call_args, **call_kwargs)
-
-    async def _execute_sync_in_thread(
-        self,
-        func: Callable[..., Any],
-        config: dict[str, Any],
-        call_args: tuple[Any, ...],
-        call_kwargs: dict[str, Any],
-        executor: Any | None,
-        trial_ctx: Any | None,
-    ) -> tuple[Any, str | None]:
-        """Execute sync function in thread pool with context propagation.
-
-        Args:
-            func: Sync function to execute
-            config: Configuration for context
-            call_args: Positional arguments
-            call_kwargs: Keyword arguments
-            executor: Optional thread pool executor
-            trial_ctx: Trial context to propagate to thread
-
-        Returns:
-            Tuple of (output, error_message)
-        """
-        from traigent.config.context import (
-            ConfigurationContext,
-            set_trial_context,
-        )
-        from traigent.config.context import trial_context as trial_context_var
-
-        def call_with_config() -> Any:
-            # Re-establish context in thread (contextvars don't propagate)
-            trial_token = None
-            if trial_ctx is not None:
-                trial_token = set_trial_context(trial_ctx)
-            try:
-                with ConfigurationContext(config):
-                    return func(*call_args, **call_kwargs)
-            finally:
-                if trial_token is not None:
-                    trial_context_var.reset(trial_token)
-
-        loop = asyncio.get_event_loop()
-        temporary_executor = None
-        submit_executor = executor
-
-        if submit_executor is None:
-            from concurrent.futures import ThreadPoolExecutor
-
-            temporary_executor = ThreadPoolExecutor(max_workers=1)
-            submit_executor = temporary_executor
-
-        try:
-            future = loop.run_in_executor(submit_executor, call_with_config)
-            if self.timeout:
-                done, _ = await asyncio.wait(
-                    {future},
-                    timeout=self.timeout,
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                if not done:
-                    future.cancel()
-                    error_msg = f"Function call timed out after {self.timeout}s"
-                    logger.warning(error_msg)
-                    return None, error_msg
-                return next(iter(done)).result(), None
-            return await future, None
-        finally:
-            if temporary_executor is not None:
-                temporary_executor.shutdown(wait=False, cancel_futures=True)
-
-    def _check_api_key_error(self, error: Exception) -> None:
-        """Check if exception is an API key error and raise APIKeyError if so.
-
-        Args:
-            error: The exception to check
-
-        Raises:
-            APIKeyError: If the error appears to be API key related
-        """
-        api_key_tokens = ("api key", "api_key", "authentication", "openai_api_key")
-        if any(token in str(error).lower() for token in api_key_tokens):
-            raise APIKeyError(
-                f"API key error detected. Set the required API key environment "
-                f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
-                f"Original error: {error}"
-            ) from error
-
     async def _execute_function(
         self,
         func: Callable[..., Any],
@@ -1118,44 +974,181 @@ class BaseEvaluator(ABC):
             func: Function to execute
             config: Configuration parameters
             input_data: Input data for the function
-            executor: Optional thread pool executor for sync functions
 
         Returns:
             Tuple of (output, error_message)
         """
         try:
-            from traigent.config.context import ConfigurationContext, get_trial_context
-
-            trial_ctx = get_trial_context()
-            call_args, call_kwargs = self._prepare_call_arguments(
-                func, config, input_data
+            # Import ConfigurationContext here to avoid circular imports
+            from traigent.config.context import (
+                ConfigurationContext,
+                get_trial_context,
+                set_trial_context,
+                trial_context,
             )
 
-            with ConfigurationContext(config):
-                if asyncio.iscoroutinefunction(func):
-                    output = await self._execute_async_with_timeout(
-                        func, call_args, call_kwargs
-                    )
-                else:
-                    output, error = await self._execute_sync_in_thread(
-                        func, config, call_args, call_kwargs, executor, trial_ctx
-                    )
-                    if error:
-                        return None, error
+            # Capture trial context for thread propagation (needed for get_config())
+            current_trial_ctx = get_trial_context()
 
+            # Set configuration context for function execution
+            with ConfigurationContext(config):
+                # For parameter injection mode, only pass input_data
+                # Config is available via ConfigurationContext
+                if hasattr(func, "_traigent_injection_mode"):
+                    injection_mode = func._traigent_injection_mode
+                else:
+                    injection_mode = "context"  # Default
+
+                if injection_mode == "parameter" and isinstance(
+                    input_data, CollectionsMapping
+                ):
+                    call_args: tuple[Any, ...] = ()
+                    call_kwargs: dict[str, Any] = {**input_data, **config}
+                elif injection_mode == "parameter":
+                    call_args = (input_data,)
+                    call_kwargs = dict(config)
+                elif isinstance(
+                    input_data, CollectionsMapping
+                ) and self._should_expand_input_mapping(func, input_data):
+                    call_args = ()
+                    call_kwargs = dict(input_data)
+                else:
+                    call_args = (input_data,)
+                    call_kwargs = {}
+
+                if asyncio.iscoroutinefunction(func):
+                    # Async function
+                    if self.timeout:
+                        output = await asyncio.wait_for(
+                            func(*call_args, **call_kwargs), timeout=self.timeout
+                        )
+                    else:
+                        output = await func(*call_args, **call_kwargs)
+                else:
+                    # Sync function - handle configuration differently for thread execution
+                    def call_with_config():
+                        # Re-establish both configuration and trial context in thread
+                        # (contextvars don't automatically propagate to ThreadPoolExecutor)
+                        trial_token = None
+                        if current_trial_ctx is not None:
+                            trial_token = set_trial_context(current_trial_ctx)
+                        try:
+                            with ConfigurationContext(config):
+                                # Use same injection logic for sync functions
+                                return func(*call_args, **call_kwargs)
+                        finally:
+                            if trial_token is not None:
+                                trial_context.reset(trial_token)
+
+                    if (
+                        executor is None
+                        and is_mock_llm()
+                        and getattr(self, "max_workers", 1) == 1
+                    ):
+                        # Avoid executor overhead in mock + sequential runs.
+                        output = call_with_config()
+                    else:
+                        loop = asyncio.get_event_loop()
+                        temporary_executor = None
+                        submit_executor = executor
+                        if submit_executor is None:
+                            from concurrent.futures import ThreadPoolExecutor
+
+                            temporary_executor = ThreadPoolExecutor(max_workers=1)
+                            submit_executor = temporary_executor
+
+                        try:
+                            future = loop.run_in_executor(
+                                submit_executor, call_with_config
+                            )
+
+                            def _consume_future_exception(
+                                fut: asyncio.Future[Any],
+                            ) -> None:
+                                try:
+                                    _ = fut.exception()
+                                except asyncio.CancelledError:
+                                    pass
+                                except Exception:
+                                    pass
+
+                            if self.timeout:
+                                done, _ = await asyncio.wait(
+                                    {future},
+                                    timeout=self.timeout,
+                                    return_when=asyncio.FIRST_COMPLETED,
+                                )
+                                if not done:
+                                    future.cancel()
+                                    future.add_done_callback(_consume_future_exception)
+                                    from traigent.core.exception_handler import (
+                                        is_network_available,
+                                    )
+                                    from traigent.utils.exceptions import NetworkError
+
+                                    if not is_network_available():
+                                        raise NetworkError(
+                                            "Network appears unavailable during function timeout."
+                                        )
+                                    error_msg = (
+                                        f"Function call timed out after {self.timeout}s"
+                                    )
+                                    logger.warning(error_msg)
+                                    return None, error_msg
+                                output = next(iter(done)).result()
+                            else:
+                                output = await future
+                        finally:
+                            if temporary_executor is not None:
+                                temporary_executor.shutdown(
+                                    wait=False, cancel_futures=True
+                                )
+
+            # Apply mock delay if enabled (simulates LLM latency for trace visibility)
             await self._apply_mock_delay_if_enabled()
+
             return output, None
 
         except ConfigurationError:
+            # Configuration-related issues should surface so the orchestrator can
+            # mark the trial as failed rather than silently falling back.
             raise
         except TimeoutError:
             error_msg = f"Function call timed out after {self.timeout}s"
             logger.warning(error_msg)
             return None, error_msg
+
         except (FriendlyTraigentError, CoreTraigentError):
+            # Surface authentication/configuration issues immediately.
+            # Note: APIKeyError is a subclass of FriendlyTraigentError
             raise
         except Exception as e:
-            self._check_api_key_error(e)
+            lowered = str(e).lower()
+
+            if any(
+                token in lowered
+                for token in ("api key", "api_key", "authentication", "openai_api_key")
+            ):
+                # Fail fast on API key errors - don't retry hundreds of times
+                raise APIKeyError(
+                    f"API key error detected. Set the required API key environment "
+                    f"variable or use TRAIGENT_MOCK_LLM=true for testing. "
+                    f"Original error: {e}"
+                ) from e
+
+            # Check if this is a network/vendor error - re-raise to trigger
+            # pause-on-error behavior at the orchestrator level.
+            # NOTE: Re-raising here bypasses storing an error result for this sample.
+            # This is intentional - network/vendor errors should pause the entire run
+            # rather than continue with potentially incomplete/stale results.
+            from traigent.core.exception_handler import (
+                is_network_exception,
+                is_vendor_exception,
+            )
+
+            if is_network_exception(e) or is_vendor_exception(e):
+                raise
+
             error_msg = f"Function call failed: {e}"
             logger.warning(error_msg)
             return None, error_msg
@@ -1166,6 +1159,7 @@ class BaseEvaluator(ABC):
         config: dict[str, Any],
         example: EvaluationExample,
         index: int,
+        executor: Executor | None,
         progress_callback: Callable[[int, dict[str, Any]], Any] | None,
     ) -> tuple[Any, str | None]:
         """Evaluate a single example in non-detailed mode with tracing."""
@@ -1178,7 +1172,7 @@ class BaseEvaluator(ABC):
 
         with self._example_trace_context(example_id, index, example) as span:
             output, error = await self._execute_function(
-                func, config, example.input_data, executor=None
+                func, config, example.input_data, executor=executor
             )
             execution_time = time.time() - start_time
 
@@ -1215,32 +1209,59 @@ class BaseEvaluator(ABC):
         example_results: list[ExampleResult | None] = []
         consumed = 0
         exhausted = False
+        executor = None
+        temporary_executor = None
 
-        for i, example in enumerate(dataset.examples):
-            if sample_lease and not sample_lease.try_take(1):
-                exhausted = True
-                break
+        if not is_mock_llm():
+            from concurrent.futures import ThreadPoolExecutor
 
-            if detailed:
-                result = await self._evaluate_single_detailed(
-                    func,
-                    config,
-                    example,
-                    i,
-                    executor=None,
-                    progress_callback=progress_callback,
+            temporary_executor = ThreadPoolExecutor(max_workers=1)
+            executor = temporary_executor
+
+        shutdown_wait = True
+        try:
+            for i, example in enumerate(dataset.examples):
+                if sample_lease and not sample_lease.try_take(1):
+                    exhausted = True
+                    break
+
+                if detailed:
+                    result = await self._evaluate_single_detailed(
+                        func,
+                        config,
+                        example,
+                        i,
+                        executor=executor,
+                        progress_callback=progress_callback,
+                    )
+                    example_results.append(result)
+                    outputs.append(result.actual_output)
+                    errors.append(result.error_message)
+                else:
+                    output, error = await self._evaluate_single_non_detailed(
+                        func,
+                        config,
+                        example,
+                        i,
+                        executor,
+                        progress_callback,
+                    )
+                    outputs.append(output)
+                    errors.append(error)
+
+                consumed += 1
+        except BaseException:
+            shutdown_wait = False
+            logger.debug(
+                "Skipping blocking executor shutdown to avoid hang on error path"
+            )
+            raise
+        finally:
+            if temporary_executor is not None:
+                temporary_executor.shutdown(
+                    wait=shutdown_wait,
+                    cancel_futures=True,
                 )
-                example_results.append(result)
-                outputs.append(result.actual_output)
-                errors.append(result.error_message)
-            else:
-                output, error = await self._evaluate_single_non_detailed(
-                    func, config, example, i, progress_callback
-                )
-                outputs.append(output)
-                errors.append(error)
-
-            consumed += 1
 
         return outputs, errors, example_results, consumed, exhausted
 
@@ -1286,6 +1307,17 @@ class BaseEvaluator(ABC):
             return True  # Skip this result
 
         if isinstance(result, (APIKeyError, FriendlyTraigentError, CoreTraigentError)):
+            raise result
+
+        # Check for network/vendor errors - re-raise to trigger pause-on-error.
+        # NOTE: Re-raising here bypasses storing an error result for this sample.
+        # This is intentional for pause-on-error behavior (see _execute_function).
+        from traigent.core.exception_handler import (
+            is_network_exception,
+            is_vendor_exception,
+        )
+
+        if is_network_exception(result) or is_vendor_exception(result):
             raise result
 
         if detailed:
@@ -1358,6 +1390,19 @@ class BaseEvaluator(ABC):
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
             raise
         except Exception as exc:
+            # Check for network/vendor errors - these should propagate up to trigger
+            # pause-on-error behavior instead of continuing with more examples.
+            # NOTE: Re-raising here cancels pending tasks and bypasses storing
+            # an error result. This is intentional for pause-on-error behavior.
+            from traigent.core.exception_handler import (
+                is_network_exception,
+                is_vendor_exception,
+            )
+
+            if is_network_exception(exc) or is_vendor_exception(exc):
+                await self._cancel_pending_tasks(pending_tasks, sample_lease)
+                raise
+
             self._store_error_result(
                 index,
                 exc,
@@ -2327,7 +2372,11 @@ class SimpleScoringEvaluator(BaseEvaluator):
         return example_metrics
 
     def _call_scoring_function(
-        self, output: Any, example: Any, llm_metrics: dict[str, Any] | None
+        self,
+        output: Any,
+        example: Any,
+        llm_metrics: dict[str, Any] | None,
+        config: dict[str, Any] | None = None,
     ) -> dict[str, float]:
         """Call single scoring function and return metrics.
 
@@ -2335,6 +2384,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
             output: Function output
             example: Current example being evaluated
             llm_metrics: Captured LLM metrics (if any)
+            config: Configuration dictionary (optional, for mock mode)
 
         Returns:
             Dictionary of metric name to score
@@ -2354,6 +2404,8 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 kwargs["expected"] = example.expected_output
             if "llm_metrics" in params and llm_metrics:
                 kwargs["llm_metrics"] = llm_metrics
+            if "config" in params and config:
+                kwargs["config"] = config
 
             result = self.scoring_function(**kwargs)
             if isinstance(result, dict):
@@ -2779,7 +2831,7 @@ class SimpleScoringEvaluator(BaseEvaluator):
                 output, example, config, dataset, example_index, llm_metrics
             )
         elif self.scoring_function:
-            return self._call_scoring_function(output, example, llm_metrics)
+            return self._call_scoring_function(output, example, llm_metrics, config)
         return {}
 
     def _create_failed_example_result(

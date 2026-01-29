@@ -232,6 +232,15 @@ class RateLimitError(RetryableError):
         super().__init__(message, retry_after=retry_after)
 
 
+class CostLimitExceeded(TraigentError):
+    """Raised when accumulated cost exceeds the configured limit."""
+
+    def __init__(self, accumulated: float, limit: float) -> None:
+        super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
+        self.accumulated = accumulated
+        self.limit = limit
+
+
 class NetworkError(RetryableError):
     """Network-related error."""
 

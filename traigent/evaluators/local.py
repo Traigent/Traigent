@@ -1376,10 +1376,8 @@ class LocalEvaluator(BaseEvaluator):
         """Log a one-time warning about mock mode accuracy."""
         if not self._mock_mode_warning_shown:
             logger.warning(
-                "MOCK LLM MODE ACTIVE: Accuracy metrics are SIMULATED (base=%.2f ± %.2f), "
-                "not computed from actual vs expected outputs. These metrics do not "
-                "reflect real model performance. Set TRAIGENT_MOCK_LLM=false for "
-                "real evaluations.",
+                "MOCK LLM MODE: Metrics are simulated (base=%.2f ± %.2f). "
+                "Set TRAIGENT_MOCK_LLM=false for real evaluations.",
                 base_accuracy,
                 variance / 2,
             )

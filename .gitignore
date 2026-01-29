@@ -1,5 +1,6 @@
 # Internal documentation (private feature planning)
 docs/internal/
+EXCEPTION_HANDLING_SPEC.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -203,6 +204,7 @@ resampling_configs.md
 !qa_samples.jsonl
 !tests/mcp/fixtures/sample_datasets.jsonl
 optimization_results/
+local_results/
 data/
 temp/
 .traigent/
@@ -222,6 +224,7 @@ scripts/run_mutmut_with_setup.sh
 
 # Temporary test scripts (development phase)
 test_phase*.py
+manual_validation_*.py
 test_multi_objective_implementation.py
 test_weighted_score_updates.py
 test_integration_weighted_scores.py

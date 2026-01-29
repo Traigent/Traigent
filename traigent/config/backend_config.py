@@ -13,7 +13,11 @@ import os
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
+from traigent.cloud.auth import MIN_TOKEN_LENGTH
+
 logger = logging.getLogger(__name__)
+_API_KEY_LOGGED = False
+_API_KEY_INVALID_WARNED = False
 
 
 class BackendConfig:
@@ -170,22 +174,42 @@ class BackendConfig:
         Returns:
             str | None: API key if configured, None otherwise
         """
+        from traigent.utils.env_config import is_mock_llm
+
+        if is_mock_llm():
+            return None
+
         env_var_preference = (
             "TRAIGENT_API_KEY",
             "OPTIGEN_API_KEY",
         )
 
+        global _API_KEY_LOGGED, _API_KEY_INVALID_WARNED
         for env_var in env_var_preference:
             api_key = os.environ.get(env_var)
             if api_key:
-                logger.info(f"✅ Using API key from {env_var} (length={len(api_key)})")
+                if len(api_key) < MIN_TOKEN_LENGTH:
+                    if not _API_KEY_INVALID_WARNED:
+                        logger.warning(
+                            "⚠️ %s is set but appears invalid (length=%d). "
+                            "Cloud features disabled. Unset it to silence this warning.",
+                            env_var,
+                            len(api_key),
+                        )
+                        _API_KEY_INVALID_WARNED = True
+                    return None
+                if not _API_KEY_LOGGED:
+                    logger.info(
+                        f"✅ Using API key from {env_var} (length={len(api_key)})"
+                    )
+                    _API_KEY_LOGGED = True
                 return api_key
 
         # Only warn if not in offline mode - offline mode doesn't need API keys
         from traigent.utils.env_config import is_backend_offline
 
         if not is_backend_offline():
-            logger.warning(
+            logger.debug(
                 "⚠️ No API key found in environment (checked TRAIGENT_API_KEY, OPTIGEN_API_KEY)"
             )
         return None

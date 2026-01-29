@@ -10,38 +10,23 @@ Integrated with unified authentication system for secure credential management.
 from __future__ import annotations
 
 import importlib.util
-from typing import TYPE_CHECKING, Any, cast
+import inspect
+from typing import Any, cast
 
 from traigent.agents.executor import (
     AgentExecutor,
     CostEstimate,
     PlatformConfigValidationResult,
 )
+from traigent.cloud.auth import (
+    AuthCredentials,
+    AuthMode,
+    get_auth_manager,
+)
+from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
-
-# Cloud auth imports - required at runtime for credential management
-try:
-    from traigent.cloud.auth import (
-        AuthCredentials,
-        AuthMode,
-        get_auth_manager,
-    )
-
-    _CLOUD_AUTH_AVAILABLE = True
-except ModuleNotFoundError as err:
-    # Check .name to distinguish missing cloud vs broken transitive dependency
-    if err.name and err.name.startswith("traigent.cloud"):
-        _CLOUD_AUTH_AVAILABLE = False
-        AuthCredentials = None  # type: ignore[misc,assignment]
-        AuthMode = None  # type: ignore[misc,assignment]
-        get_auth_manager = None  # type: ignore[misc,assignment]
-    else:
-        raise  # Re-raise for broken dependencies
-
-if TYPE_CHECKING:
-    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 
@@ -125,9 +110,12 @@ class LangChainAgentExecutor(AgentExecutor):
         llm_kwargs = {
             ("model" if modern_lc else "model_name"): model_name,
             "temperature": temperature,
-            "model_kwargs": {"max_tokens": max_tokens},
             **self._extract_llm_kwargs(config),
         }
+        if self._supports_langchain_param(chat_openai_cls, "max_tokens"):
+            llm_kwargs["max_tokens"] = max_tokens
+        else:
+            llm_kwargs["model_kwargs"] = {"max_tokens": max_tokens}
         llm = chat_openai_cls(**llm_kwargs)
         return llm, model_name
 
@@ -323,6 +311,18 @@ class LangChainAgentExecutor(AgentExecutor):
 
         return llm_params
 
+    @staticmethod
+    def _supports_langchain_param(chat_openai_cls: Any, param_name: str) -> bool:
+        """Check whether a LangChain ChatOpenAI class supports a parameter."""
+        try:
+            signature = inspect.signature(chat_openai_cls)
+        except (TypeError, ValueError):
+            try:
+                signature = inspect.signature(chat_openai_cls.__init__)
+            except (TypeError, ValueError):
+                return False
+        return param_name in signature.parameters
+
     def _format_prompt(self, template: str | None, input_data: dict[str, Any]) -> str:
         """Format prompt template with input data."""
         template_str = template or ""
@@ -380,12 +380,8 @@ class OpenAIAgentExecutor(AgentExecutor):
     async def _platform_initialize(self) -> None:
         """Initialize OpenAI components with unified auth integration."""
         try:
-            # Initialize unified auth manager (if available)
-            if _CLOUD_AUTH_AVAILABLE and get_auth_manager is not None:
-                self.auth_manager = get_auth_manager()
-            else:
-                self.auth_manager = None
-                logger.debug("Cloud auth not available, using environment credentials")
+            # Initialize unified auth manager
+            self.auth_manager = get_auth_manager()
 
             # Prepare default headers via unified auth (may be empty)
             default_headers = await self._get_authenticated_headers()
@@ -441,16 +437,16 @@ class OpenAIAgentExecutor(AgentExecutor):
                     CoreValidators.validate_string(api_key, "api_key", min_length=1)
                 )
 
-                # Authenticate to validate and enable rate limiting (if auth available)
-                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
-                    return cast(str | None, api_key)
-
                 # Create auth credentials for this API key
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=api_key,
                     metadata={"platform": "openai", "source": "platform_config"},
                 )
+
+                # Authenticate to validate and enable rate limiting
+                if self.auth_manager is None:
+                    return cast(str | None, api_key)
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
@@ -471,14 +467,14 @@ class OpenAIAgentExecutor(AgentExecutor):
                     )
                 )
 
-                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
-                    return env_api_key
-
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=env_api_key,
                     metadata={"platform": "openai", "source": "environment"},
                 )
+
+                if self.auth_manager is None:
+                    return env_api_key
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
