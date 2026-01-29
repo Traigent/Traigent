@@ -1041,6 +1041,8 @@ def check_constraints_conflict(
     constraints: list[Constraint],
     sample_configs: list[dict[str, Any]] | None = None,
     var_names: dict[int, str] | None = None,
+    *,
+    samples_exhaustive: bool = False,
 ) -> ConstraintConflict | None:
     """Check if constraints conflict with each other.
 
@@ -1051,8 +1053,7 @@ def check_constraints_conflict(
     Warning:
         This function can produce **false positives** when sample_configs is
         sparse. A conflict is reported if no sample satisfies all constraints,
-        but valid configurations may exist outside the samples. Ensure samples
-        adequately cover the parameter space, or treat results as advisory.
+        but valid configurations may exist outside the samples.
 
     Args:
         constraints: List of Constraint objects to check.
@@ -1061,23 +1062,37 @@ def check_constraints_conflict(
             For reliable conflict detection, provide samples that span
             the full domain of each constrained variable.
         var_names: Optional mapping from ParameterRange id() to config key.
+        samples_exhaustive: If True, report a conflict when no sample satisfies
+            all constraints. If False (default), return None in this case to
+            avoid false positives from sparse sampling. Set to True only when
+            sample_configs exhaustively covers the parameter space.
 
     Returns:
-        ConstraintConflict if a conflict is detected, None otherwise.
-        Note: None means no conflict was found in the samples, not that
-        no conflict exists.
+        ConstraintConflict if a definite conflict is detected, None otherwise.
+        When samples_exhaustive=False, returns None even if all samples fail,
+        since valid configurations may exist outside the samples.
 
     Example:
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>> c1 = require(temp.lte(0.5))
         >>> c2 = require(temp.gte(0.8))
-        >>> # These cannot both be satisfied
+        >>> # These cannot both be satisfied - use exhaustive for definite conflicts
         >>> conflict = check_constraints_conflict(
         ...     [c1, c2],
-        ...     sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}]
+        ...     sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}],
+        ...     samples_exhaustive=True,  # samples cover full domain
         ... )
         >>> if conflict:
         ...     print(conflict)
+
+        >>> # With sparse samples, avoid false positives
+        >>> result = check_constraints_conflict(
+        ...     [c1, c2],
+        ...     sample_configs=[{"temperature": 0.2}],  # sparse, missing 0.3-0.5
+        ...     samples_exhaustive=False,  # default, safe for sparse samples
+        ... )
+        >>> result is None  # No conflict reported (could be false negative)
+        True
     """
     if not constraints or not sample_configs:
         return None
@@ -1107,7 +1122,13 @@ def check_constraints_conflict(
 
         all_violations.append((config, violations))
 
-    # No config satisfied all constraints - this indicates a conflict
+    # No config satisfied all constraints - this may indicate a conflict
+    # But only report if samples_exhaustive=True to avoid false positives
+    if not samples_exhaustive:
+        # Sparse samples: don't report conflict as valid configs may exist
+        # outside the sample set (fix for issue #38)
+        return None
+
     # Report the config with the most violations for best diagnostics
     # (for mutually exclusive constraints, each config violates different ones)
     if all_violations and len(constraints) > 1:
