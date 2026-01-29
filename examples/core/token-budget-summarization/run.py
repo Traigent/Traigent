@@ -196,7 +196,6 @@ def _print_results(result: OptimizationResult) -> None:
         "temperature",
         "max_tokens",
         "style",
-        "samples_count",
         "accuracy",
         "cost",
         "duration",
@@ -205,13 +204,8 @@ def _print_results(result: OptimizationResult) -> None:
     if cols:
         df = df[cols]
 
-    # Rename samples_count to trials (it's trials per config, not eval examples)
-    if "samples_count" in df.columns:
-        df = df.rename(columns={"samples_count": "trials"})
-
     # Add eval_examples column showing actual dataset size
-    trials_idx = list(df.columns).index("trials") if "trials" in df.columns else 0
-    df.insert(trials_idx + 1, "eval_examples", eval_examples)
+    df.insert(len(df.columns), "eval_examples", eval_examples)
 
     if df_raw["avg_response_time"].notna().any():
         response_avg = (

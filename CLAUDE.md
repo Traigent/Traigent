@@ -302,6 +302,7 @@ The CI workflow uses different flags than local development:
 5. **Type Hints**: Required for all public APIs. Run `make lint` to verify.
 6. **Dependencies**: Add new deps to `pyproject.toml` under the appropriate optional group (e.g., `integrations`).
 7. **SonarQube Compliance**: Avoid patterns that trigger SonarQube S2583 (see below).
+8. **Never Push Without Permission**: NEVER run `git push` to any remote branch without explicit user permission. Always wait for the user to say "push" or "push it".
 
 ## ⚠️ SonarQube S2583: Conditions Always True/False
 
