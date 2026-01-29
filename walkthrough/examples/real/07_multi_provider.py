@@ -19,7 +19,6 @@ Usage (run from repo root):
     .venv/bin/python walkthrough/examples/real/07_multi_provider.py
 
 Note: This example validates API keys before running and skips any invalid providers.
-It also skips unsupported models for a provider to avoid repeated errors.
 To skip validation, set TRAIGENT_VALIDATE_KEYS=0.
 Gemini offers a generous free tier - great for testing without API costs!
 """
@@ -28,8 +27,6 @@ import asyncio
 import logging
 import os
 import sys
-import time
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -53,8 +50,6 @@ from utils.scoring import token_match_score
 # -----------------------------------------------------------------------------
 configure_logging()
 logger = setup_example_logger("07_multi_provider")
-logging.getLogger("tokencost").setLevel(logging.ERROR)
-logging.getLogger("tokencost.costs").setLevel(logging.ERROR)
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -77,136 +72,76 @@ OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
 ANTHROPIC_MODELS = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
 GOOGLE_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
-def _status_for_models(available: list[str], all_models: list[str]) -> str:
-    if not available:
-        return "No supported models"
-    if len(available) == len(all_models):
-        return "Available"
-    return f"Available ({len(available)}/{len(all_models)})"
-
-
-def _validate_openai() -> tuple[bool, str, list[str], list[str]]:
+def _validate_openai_key() -> tuple[bool, str]:
     key = os.getenv("OPENAI_API_KEY")
     if not key:
-        return False, "Set OPENAI_API_KEY", [], []
+        return False, "Set OPENAI_API_KEY"
     if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE, OPENAI_MODELS[:], []
+        return True, _NOT_VALIDATED_NOTE
     try:
         from openai import OpenAI
 
-        client = OpenAI(api_key=key)
-        model_ids = {m.id for m in client.models.list().data}
-        available = [m for m in OPENAI_MODELS if m in model_ids]
-        missing = [m for m in OPENAI_MODELS if m not in model_ids]
-        if not available:
-            return False, "No supported models", [], missing
-        return True, _status_for_models(available, OPENAI_MODELS), available, missing
+        OpenAI(api_key=key).models.list()
+        return True, "Available"
     except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})", [], OPENAI_MODELS[:]
+        return False, f"Invalid key ({type(exc).__name__})"
 
 
-def _validate_anthropic() -> tuple[bool, str, list[str], list[str]]:
+def _validate_anthropic_key() -> tuple[bool, str]:
     key = os.getenv("ANTHROPIC_API_KEY")
     if not key:
-        return False, "Set ANTHROPIC_API_KEY", [], []
+        return False, "Set ANTHROPIC_API_KEY"
     if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE, ANTHROPIC_MODELS[:], []
+        return True, _NOT_VALIDATED_NOTE
     try:
         from anthropic import Anthropic
+
+        Anthropic(api_key=key).messages.count_tokens(
+            model=ANTHROPIC_MODELS[0],
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return True, "Available"
     except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})", [], ANTHROPIC_MODELS[:]
-
-    client = Anthropic(api_key=key)
-    available: list[str] = []
-    missing: list[str] = []
-    for model in ANTHROPIC_MODELS:
-        try:
-            client.messages.count_tokens(
-                model=model,
-                messages=[{"role": "user", "content": "ping"}],
-            )
-            available.append(model)
-        except Exception as exc:
-            name = type(exc).__name__
-            if name in ("AuthenticationError", "PermissionDeniedError"):
-                return False, f"Invalid key ({name})", [], ANTHROPIC_MODELS[:]
-            missing.append(model)
-    if not available:
-        return False, "No supported models", [], missing
-    return True, _status_for_models(available, ANTHROPIC_MODELS), available, missing
+        return False, f"Invalid key ({type(exc).__name__})"
 
 
-def _match_supported_model(target: str, supported_ids: set[str]) -> str | None:
-    if target in supported_ids:
-        return target
-    for model_id in supported_ids:
-        if model_id.startswith(target):
-            return model_id
-    return None
-
-
-def _validate_google() -> tuple[bool, str, list[str], list[str]]:
+def _validate_google_key() -> tuple[bool, str]:
     key = os.getenv("GOOGLE_API_KEY")
     if not key:
-        return False, "Set GOOGLE_API_KEY", [], []
+        return False, "Set GOOGLE_API_KEY"
     if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE, GOOGLE_MODELS[:], []
+        return True, _NOT_VALIDATED_NOTE
     try:
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", category=FutureWarning, module="google.generativeai"
-            )
-            import google.generativeai as genai
+        import google.generativeai as genai
 
         genai.configure(api_key=key)
-        models = list(genai.list_models())
-        supported_ids = {
-            m.name.split("/")[-1]
-            for m in models
-            if "generateContent" in (m.supported_generation_methods or [])
-        }
-        available: list[str] = []
-        missing: list[str] = []
-        for model in GOOGLE_MODELS:
-            matched = _match_supported_model(model, supported_ids)
-            if matched:
-                available.append(matched)
-            else:
-                missing.append(model)
-        if not available:
-            return False, "No supported models", [], missing
-        return True, _status_for_models(available, GOOGLE_MODELS), available, missing
+        list(genai.list_models())
+        return True, "Available"
     except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})", [], GOOGLE_MODELS[:]
+        return False, f"Invalid key ({type(exc).__name__})"
 
 
-OPENAI_AVAILABLE, OPENAI_STATUS, OPENAI_OK_MODELS, OPENAI_MISSING_MODELS = (
-    _validate_openai()
-)
-ANTHROPIC_AVAILABLE, ANTHROPIC_STATUS, ANTHROPIC_OK_MODELS, ANTHROPIC_MISSING_MODELS = (
-    _validate_anthropic()
-)
-GOOGLE_AVAILABLE, GOOGLE_STATUS, GOOGLE_OK_MODELS, GOOGLE_MISSING_MODELS = (
-    _validate_google()
-)
+OPENAI_AVAILABLE, OPENAI_STATUS = _validate_openai_key()
+ANTHROPIC_AVAILABLE, ANTHROPIC_STATUS = _validate_anthropic_key()
+GOOGLE_AVAILABLE, GOOGLE_STATUS = _validate_google_key()
 
 # Build available models list based on which API keys are set and valid
 AVAILABLE_MODELS: list[str] = []
 PROVIDER_MAP: dict[str, str] = {}
 
 if OPENAI_AVAILABLE:
-    AVAILABLE_MODELS.extend(OPENAI_OK_MODELS)
-    for model in OPENAI_OK_MODELS:
+    AVAILABLE_MODELS.extend(OPENAI_MODELS)
+    for model in OPENAI_MODELS:
         PROVIDER_MAP[model] = "openai"
 
 if ANTHROPIC_AVAILABLE:
-    AVAILABLE_MODELS.extend(ANTHROPIC_OK_MODELS)
-    for model in ANTHROPIC_OK_MODELS:
+    AVAILABLE_MODELS.extend(ANTHROPIC_MODELS)
+    for model in ANTHROPIC_MODELS:
         PROVIDER_MAP[model] = "anthropic"
 
 if GOOGLE_AVAILABLE:
-    AVAILABLE_MODELS.extend(GOOGLE_OK_MODELS)
-    for model in GOOGLE_OK_MODELS:
+    AVAILABLE_MODELS.extend(GOOGLE_MODELS)
+    for model in GOOGLE_MODELS:
         PROVIDER_MAP[model] = "google"
 
 # -----------------------------------------------------------------------------
@@ -312,32 +247,27 @@ def print_provider_status() -> None:
             "OpenAI",
             OPENAI_AVAILABLE,
             OPENAI_STATUS,
-            ", ".join(OPENAI_OK_MODELS),
-            OPENAI_MISSING_MODELS,
+            ", ".join(OPENAI_MODELS),
         ),
         (
             "Anthropic",
             ANTHROPIC_AVAILABLE,
             ANTHROPIC_STATUS,
-            ", ".join(ANTHROPIC_OK_MODELS),
-            ANTHROPIC_MISSING_MODELS,
+            ", ".join(ANTHROPIC_MODELS),
         ),
         (
             "Google",
             GOOGLE_AVAILABLE,
             GOOGLE_STATUS,
-            ", ".join(GOOGLE_OK_MODELS) + " (free tier!)",
-            GOOGLE_MISSING_MODELS,
+            ", ".join(GOOGLE_MODELS) + " (free tier!)",
         ),
     ]
 
-    for provider, available, status, models, missing in status_lines:
+    for provider, available, status, models in status_lines:
         symbol = "[OK]" if available else "[--]"
         print(f"  {symbol} {provider}: {status}")
         if available:
             print(f"       Models: {models}")
-            if missing:
-                print(f"       Skipped: {', '.join(missing)}")
 
 
 async def main() -> None:
@@ -349,8 +279,8 @@ async def main() -> None:
     print_provider_status()
 
     if not AVAILABLE_MODELS:
-        print("\nERROR: No supported models available.")
-        print("Check your API keys and model availability:")
+        print("\nERROR: No API keys found!")
+        print("Set at least one of these environment variables:")
         print("  export OPENAI_API_KEY='your-key'")
         print("  export ANTHROPIC_API_KEY='your-key'")
         print("  export GOOGLE_API_KEY='your-key'  # Free tier available!")
