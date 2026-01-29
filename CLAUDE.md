@@ -294,6 +294,74 @@ The CI workflow uses different flags than local development:
 2. Run `make lint` (runs ruff + mypy + bandit)
 3. Verify: `black --check traigent/ && isort --check-only traigent/`
 
+## 🔍 SonarQube Local Validation (CRITICAL)
+
+**BEFORE pushing code changes, ALWAYS validate with local SonarQube to avoid CI failures.**
+
+### Why This Matters
+- SonarCloud enforces **80%+ coverage on new code**
+- Coverage is measured on **source files**, not test files
+- Tests must **import and execute** the actual code paths being changed
+- Writing tests that only test patterns (not the actual files) will NOT provide coverage
+
+### Pre-Push Checklist for Code Changes
+
+1. **Generate coverage report for changed files:**
+   ```bash
+   # Identify changed source files
+   git diff --name-only origin/main -- 'traigent/**/*.py'
+
+   # Run tests with coverage for those specific modules
+   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true \
+     pytest tests/ --cov=traigent.module.changed --cov-report=xml:coverage.xml
+   ```
+
+2. **Run local SonarQube scan:**
+   ```bash
+   # Ensure SonarQube is running
+   curl -s http://localhost:9000/api/system/status
+
+   # Run scan (requires sonar-scanner installed)
+   source .env.local && make sonar-local
+   ```
+
+3. **Check coverage on new code:**
+   - Open http://localhost:9000/dashboard?id=Traigent
+   - Navigate to "New Code" tab
+   - Verify **Coverage on New Code ≥ 80%**
+
+### Common Coverage Mistakes
+
+```python
+# ❌ WRONG - Testing the pattern, not the actual file
+# This test covers test_plugin_architecture.py, NOT platforms.py
+def test_getattr_pattern():
+    err = ModuleNotFoundError("test")
+    err.name = "traigent.cloud"
+    missing = getattr(err, "name", "") or ""
+    assert missing.startswith("traigent.cloud")
+
+# ✅ CORRECT - Import and trigger the actual code path
+def test_platforms_cloud_not_installed():
+    with patch.dict(sys.modules, {"traigent.cloud.auth": None}):
+        # Force reimport to trigger the exception handler
+        import importlib
+        import traigent.agents.platforms as platforms
+        importlib.reload(platforms)
+        assert platforms._CLOUD_AUTH_AVAILABLE is False
+```
+
+### If Local SonarQube Not Available
+
+At minimum, verify coverage locally:
+```bash
+# Run coverage and check percentage
+pytest tests/unit/path/to/relevant_tests.py \
+  --cov=traigent.module.you.changed \
+  --cov-report=term-missing \
+  --cov-fail-under=80
+```
+
 ## 🚨 Critical Rules
 1. **Format Before Commit**: Always run `make format` before committing Python changes.
 2. **Cross-Repo Policy**: Do not modify external systems. File issues for backend/upstream changes.
