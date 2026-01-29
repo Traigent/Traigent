@@ -35,7 +35,7 @@ def optimize(
     objectives: list[str] | ObjectiveSchema | None = None,
     configuration_space: dict[str, Any] | ConfigSpace | None = None,
     default_config: dict[str, Any] | None = None,
-    constraints: list[Constraint | Callable[..., Any]] | None = None,
+    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
 
     # TVL integration
     tvl_spec: str | Path | None = None,
@@ -65,6 +65,13 @@ def optimize(
 - **Type**: `list[str] | ObjectiveSchema | None`
 - **Default**: `["accuracy"]`
 - **Description**: Target metrics to optimize
+
+> **Understanding Accuracy**: The meaning of "accuracy" depends on your use case:
+> - **Classification**: Exact match percentage (e.g., sentiment classification)
+> - **Semantic Similarity**: Embedding-based comparison (default, requires `OPENAI_API_KEY`)
+> - **Custom Metrics**: ROUGE, BLEU, or business-specific calculations
+>
+> See the [Evaluation Guide](../user-guide/evaluation_guide.md#understanding-accuracy) for detailed explanations and examples.
 
 **String List Form** (Simple):
 
@@ -149,7 +156,7 @@ Banded objectives use TOST (Two One-Sided Tests) to statistically verify that th
 - **Default**: `None`
 - **Description**: Search space describing tunable parameters
 
-> ⚠️ **Deprecation Notice (TVL 0.9)**: The `configuration_space` parameter is deprecated in favor of the `tvars` section in TVL spec files. When using TVL specs, define your search space using `tvars` (typed variables) for full TVL 0.9 support including type safety, units, and registry domains. A `DeprecationWarning` is raised when loading specs with `configuration_space`.
+> ⚠️ **Deprecation Notice (TVL 0.9)**: When using TVL spec files, the `configuration_space` key inside the spec is deprecated in favor of `tvars` (typed variables). The decorator parameter itself remains valid. Define your search space using `tvars` for full TVL 0.9 support including type safety, units, and registry domains.
 
 **Discrete Choices** (List):
 
@@ -378,6 +385,38 @@ from traigent.api.decorators import EvaluationOptions
 - `custom_evaluator`: Custom evaluation function
 - `scoring_function`: Custom scoring function
 - `metric_functions`: Dict of metric name to evaluator functions
+
+##### Evaluation Methods
+
+Traigent supports multiple evaluation approaches through its parameters:
+
+| Method | Parameter | Use Case |
+|--------|-----------|----------|
+| Exact Match | Default (no param needed) | Classification, yes/no, categories (binary pass/fail) |
+| Graded Scoring | `scoring_function` | Custom graded evaluation (0.0-1.0) - partial matches, fuzzy matching |
+| LLM-as-Judge | `custom_evaluator` | Complex quality assessment - nuanced evaluation, code review |
+| Multi-Metric / RAGAS | `metric_functions` | Multiple dimensions, semantic similarity (via RAGAS) |
+
+##### LLM-as-Judge Example
+
+For tasks requiring nuanced evaluation (code quality, writing style, factual accuracy), implement an LLM-based evaluator:
+
+```python
+def llm_evaluator(output: str, expected: str, **kwargs) -> float:
+    """Use an LLM to evaluate output quality."""
+    # Your LLM evaluation logic here
+    # See 06_custom_evaluator.py for complete implementation
+    return 0.8  # Replace: return your calculated score (0.0 to 1.0)
+
+@traigent.optimize(
+    custom_evaluator=llm_evaluator,
+    # ... other parameters
+)
+def my_function(prompt: str) -> str:
+    ...
+```
+
+Complete Example: See [06_custom_evaluator.py](../../walkthrough/examples/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
 
 #### `injection`
 
@@ -635,7 +674,9 @@ def my_agent(query: str) -> str:
 ## Related Documentation
 
 - [Complete Function Specification](./complete-function-specification.md) - Full API reference
+- [Evaluation Guide](../user-guide/evaluation_guide.md) - Understanding accuracy metrics, evaluation methods, and troubleshooting
 - [Injection Modes Guide](../user-guide/injection_modes.md) - Configuration injection patterns
 - [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
+- [Custom Evaluator Example](../../walkthrough/examples/real/06_custom_evaluator.py) - LLM-as-Judge implementation

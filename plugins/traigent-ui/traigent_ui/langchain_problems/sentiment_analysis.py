@@ -358,7 +358,7 @@ class SentimentAnalysisProblem(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.2,
-                model_kwargs={"max_tokens": 100},
+                max_tokens=100,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -418,7 +418,7 @@ Provide sentiment and confidence level.""",
             llm = ChatOpenAI(
                 model="gpt-4o-mini",  # Will be overridden by Traigent
                 temperature=0.2,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 100},  # Will be overridden by Traigent
+                max_tokens=100,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

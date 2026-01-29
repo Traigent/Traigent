@@ -291,7 +291,7 @@ class BasicArithmeticProblem(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-3.5-turbo",
                 temperature=0.0,
-                model_kwargs={"max_tokens": 50},
+                max_tokens=50,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -336,7 +336,7 @@ If the problem involves decimals, round to 2 decimal places.""",
             llm = ChatOpenAI(
                 model="gpt-3.5-turbo",  # Will be overridden by Traigent
                 temperature=0.0,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 50},  # Will be overridden by Traigent
+                max_tokens=50,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

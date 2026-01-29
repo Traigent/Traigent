@@ -8,7 +8,7 @@ You'll learn how to:
 - Understand domain specifications
 - Work with different TVAR types
 
-Run with: python explore_tvars.py
+Run with (from repo root): .venv/bin/python examples/tvl/tutorials/02_typed_tvars/explore_tvars.py
 """
 
 from pathlib import Path

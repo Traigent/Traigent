@@ -4,6 +4,7 @@
 Extends the basic version with prompt tuning, optional few-shots,
 and lightweight context engineering. Still minimal, still SDK-native.
 """
+
 import json
 import os
 import sys
@@ -22,6 +23,9 @@ for _depth in range(1, 7):
     except IndexError:
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

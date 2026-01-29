@@ -895,12 +895,17 @@ class TrialOperations:
                             not _warned_weighted_score_failure
                             and not is_backend_offline()
                         ):
-                            logger.warning(
-                                "Cannot connect to backend while updating weighted score for %s (%s). Skipping.",
-                                trial_id,
-                                self._describe_backend(),
-                            )
-                            _warned_weighted_score_failure = True
+                            if BackendConfig.get_api_key():
+                                logger.warning(
+                                    "Cannot connect to backend while updating weighted score for %s (%s). Skipping.",
+                                    trial_id,
+                                    self._describe_backend(),
+                                )
+                                _warned_weighted_score_failure = True
+                            else:
+                                logger.debug(
+                                    "Skipping weighted score update (no Traigent API key)."
+                                )
                         else:
                             logger.debug(
                                 "Cannot connect to backend for weighted score update (trial %s)",

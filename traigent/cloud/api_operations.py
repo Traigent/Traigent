@@ -26,10 +26,8 @@ from traigent.cloud.models import (
     TrialSuggestion,
 )
 from traigent.config.backend_config import BackendConfig
-from traigent.utils.env_config import is_backend_offline
-from traigent.utils.exceptions import MetricExtractionError
+from traigent.utils.env_config import is_backend_offline, is_mock_llm
 from traigent.utils.logging import get_logger
-from traigent.utils.validation import validate_numeric_metric
 
 # Optional aiohttp dependency handling
 try:
@@ -66,9 +64,17 @@ except ImportError:
 
 # Track whether we've already warned about backend unavailability (per session)
 _backend_unavailable_warned: bool = False
+_api_key_error_shown: bool = False
 
 # Common log message for fallback to local optimization
 _LOCAL_FALLBACK_MSG = "   Traigent will fall back to local optimization"
+
+_API_KEY_ERROR_MESSAGES = {
+    401: "⚠️ API key invalid or expired. Check at https://traigent.ai",
+    402: "⚠️ API key needs more budget. Manage at https://traigent.ai",
+    403: "⚠️ API key lacks permission. Check at https://traigent.ai",
+}
+_DEFAULT_API_KEY_ERROR_MESSAGE = "⚠️ API key issue. Verify at https://traigent.ai"
 
 # Content-Type header for JSON requests
 _JSON_CONTENT_TYPE = "application/json"
@@ -77,6 +83,12 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
 
 logger = get_logger(__name__)
+
+
+def reset_api_key_error_state() -> None:
+    """Reset API key error message state for a new optimization run."""
+    global _api_key_error_shown
+    _api_key_error_shown = False
 
 
 class ApiOperations:
@@ -346,6 +358,7 @@ class ApiOperations:
 
     def _handle_session_error(self, status_code: int, error_msg: str) -> None:
         """Log and raise appropriate errors for non-success HTTP responses."""
+        self._handle_api_key_error(status_code)
 
         if status_code == 500:
             logger.warning("⚡ Cloud backend returned server error (HTTP 500)")
@@ -391,12 +404,20 @@ class ApiOperations:
             logger.debug(f"Backend connection failed (offline mode): {error}")
         # Only show full warning once per session to reduce log noise
         elif not _backend_unavailable_warned:
-            logger.warning(f"⚡ Cloud backend unavailable (connection failed): {error}")
-            if "localhost" in str(error) or "127.0.0.1" in str(error):
-                logger.info(
-                    "💡 This is normal for local development - backend tracking unavailable"
+            has_api_key = self.client.auth_manager.has_api_key()
+            if has_api_key:
+                logger.warning(
+                    f"⚡ Cloud backend unavailable (connection failed): {error}"
                 )
-                logger.info("   Results will be saved to local storage only")
+                if "localhost" in str(error) or "127.0.0.1" in str(error):
+                    logger.info(
+                        "💡 This is normal for local development - backend tracking unavailable"
+                    )
+                    logger.info("   Results will be saved to local storage only")
+            else:
+                logger.debug(
+                    f"Cloud backend unavailable (connection failed, no API key): {error}"
+                )
             _backend_unavailable_warned = True
         else:
             logger.debug(f"Backend connection failed: {error}")
@@ -435,6 +456,27 @@ class ApiOperations:
 
         logger.error(f"Error creating Traigent session: {error}")
         raise error
+
+    def _handle_api_key_error(self, status_code: int) -> bool:
+        """Log a user-facing notice for API key errors once per optimization run."""
+        global _api_key_error_shown
+
+        if status_code not in _API_KEY_ERROR_MESSAGES:
+            return False
+        if is_mock_llm() or is_backend_offline():
+            return False
+        if _api_key_error_shown:
+            return False
+        if not self.client.auth_manager.has_api_key():
+            return False
+
+        message = _API_KEY_ERROR_MESSAGES.get(
+            status_code, _DEFAULT_API_KEY_ERROR_MESSAGE
+        )
+        print(message)
+        logger.info(message)
+        _api_key_error_shown = True
+        return True
 
     async def update_config_run_status(self, config_run_id: str, status: str) -> bool:
         """Update configuration run status in the backend.
@@ -507,54 +549,29 @@ class ApiOperations:
             return False
 
         try:
-            # Convert metrics to backend measures format per Traigent schema
-            # Map Traigent metrics to standard measure IDs
+            # Convert metrics to backend measures format per OptiGen schema
+            # Map Traigent metrics to OptiGen standard measure IDs
             mapped_metrics = {}
 
-            # Standard Traigent measure mappings with strict validation
-            if "accuracy" in metrics and metrics["accuracy"] is not None:
+            # Helper function to ensure value is a valid number
+            def ensure_numeric(value):
+                """Ensure value is a valid number, converting if necessary."""
+                if value is None:
+                    return 0.0
                 try:
-                    mapped_metrics["accuracy"] = validate_numeric_metric(
-                        metrics["accuracy"],
-                        field_name="accuracy",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.error(
-                        f"Invalid 'accuracy' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'accuracy'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "accuracy",
-                            "value": metrics["accuracy"],
-                        },
-                    )
-                    return False
+                    return float(value)
+                except (TypeError, ValueError):
+                    return 0.0
 
+            # Standard OptiGen measure mappings
+            if "accuracy" in metrics and metrics["accuracy"] is not None:
+                mapped_metrics["accuracy"] = ensure_numeric(metrics["accuracy"])
             if "score" in metrics and metrics["score"] is not None:
-                try:
-                    mapped_metrics["score"] = validate_numeric_metric(
-                        metrics["score"],
-                        field_name="score",
-                        trial_id=config_run_id,
-                    )
-                except MetricExtractionError as e:
-                    logger.error(
-                        f"Invalid 'score' metric for config run {config_run_id}: {e.message}",
-                        extra={
-                            "hint": "Ensure your evaluation function returns numeric values for 'score'. "
-                            "Check that the value is not None, NaN, or Inf.",
-                            "config_run_id": config_run_id,
-                            "field": "score",
-                            "value": metrics["score"],
-                        },
-                    )
-                    return False
+                mapped_metrics["score"] = ensure_numeric(metrics["score"])
             elif (
                 "accuracy" in metrics and metrics["accuracy"] is not None
             ):  # Use accuracy as score if no explicit score
-                mapped_metrics["score"] = mapped_metrics["accuracy"]
+                mapped_metrics["score"] = ensure_numeric(metrics["accuracy"])
 
             # Include other standard measures if present
             for key in [
@@ -566,65 +583,20 @@ class ApiOperations:
                 "context_recall",
             ]:
                 if key in metrics and metrics[key] is not None:
-                    try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            metrics[key],
-                            field_name=key,
-                            trial_id=config_run_id,
-                        )
-                    except MetricExtractionError as e:
-                        logger.error(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
-                            extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
-                                "Check that the value is not None, NaN, or Inf.",
-                                "config_run_id": config_run_id,
-                                "field": key,
-                                "value": metrics[key],
-                            },
-                        )
-                        return False
+                    mapped_metrics[key] = ensure_numeric(metrics[key])
 
             # Include any other metrics as-is, ensuring they are numeric
             for key, value in metrics.items():
                 if key not in mapped_metrics and value is not None:
-                    try:
-                        mapped_metrics[key] = validate_numeric_metric(
-                            value,
-                            field_name=key,
-                            trial_id=config_run_id,
-                        )
-                    except MetricExtractionError as e:
-                        logger.error(
-                            f"Invalid '{key}' metric for config run {config_run_id}: {e.message}",
-                            extra={
-                                "hint": f"Ensure your evaluation function returns numeric values for '{key}'. "
-                                "Check that the value is not None, NaN, or Inf. "
-                                "Custom metrics must be numeric types (int, float).",
-                                "config_run_id": config_run_id,
-                                "field": key,
-                                "value": value,
-                            },
-                        )
-                        return False
+                    mapped_metrics[key] = ensure_numeric(value)
 
-            # Build measures data in schema-compliant array format
-            # Per configuration_run_schema.json, measures must be array of MeasureResult objects
-            # Type: dict[str, list[dict[str, float]] | None]
-            measures_data: dict[str, list[dict[str, float]] | None]
-            if mapped_metrics:
-                measure_result = dict(mapped_metrics)
-                measures_data = {"measures": [measure_result]}
-            else:
-                # Omit measures if empty (per schema - use null or omit when no results)
-                measures_data = {"measures": None}
+            # Build measures data in the correct OptiGen format
+            measures_data = {"measures": {"metrics": mapped_metrics, "metadata": {}}}
 
-            # Add execution time to workflow_metadata when backend supports it
-            # TODO: Once backend adds workflow_metadata field, send via that endpoint
+            # Add execution time if provided
             if execution_time is not None:
-                logger.debug(
-                    f"execution_time={execution_time} should be sent via workflow_metadata field "
-                    f"(not yet supported by backend). Skipping for now."
+                measures_data["measures"]["metadata"]["execution_time"] = float(
+                    execution_time
                 )
 
             connector = self._build_connector()

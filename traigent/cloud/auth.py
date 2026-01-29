@@ -94,7 +94,7 @@ class AuthCredentials:
         if self.mode in {AuthMode.CLOUD, AuthMode.API_KEY} and not (
             self.api_key or self.jwt_token
         ):
-            logger.warning("No credentials provided for cloud authentication mode")
+            logger.debug("No credentials provided for cloud authentication mode")
 
     def __repr__(self) -> str:
         """Secure string representation masking sensitive data."""

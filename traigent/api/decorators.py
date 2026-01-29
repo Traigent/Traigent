@@ -43,15 +43,14 @@ Examples:
 from __future__ import annotations
 
 import inspect
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 if TYPE_CHECKING:
-    from traigent.api.config_space import ConfigSpace
     from traigent.api.constraints import BoolExpr, Constraint
-    from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
 from pydantic import BaseModel, ConfigDict
 
@@ -60,18 +59,12 @@ from traigent.api.parameter_ranges import (
     is_inline_param_definition,
     normalize_configuration_space,
 )
-from traigent.api.types import AgentDefinition
 from traigent.config.parallel import (
     ParallelConfig,
     coerce_parallel_config,
     merge_parallel_configs,
 )
-from traigent.config.types import (
-    ExecutionMode,
-    InjectionMode,
-    is_traigent_disabled,
-    resolve_execution_mode,
-)
+from traigent.config.types import ExecutionMode, InjectionMode, resolve_execution_mode
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
@@ -102,26 +95,17 @@ class InjectionOptions(BaseModel):
     """Configuration bundle controlling how optimized configs are injected.
 
     Attributes:
-        injection_mode: How to inject config ("context", "parameter", "seamless").
-            - "context" (default): Thread-safe contextvars, access via get_config()
-            - "parameter": Explicit config param in function signature
-            - "seamless": Zero code change, AST transformation
+        injection_mode: How to inject config ("context", "parameter", "attribute", "seamless").
         config_param: Parameter name for injection_mode="parameter".
         auto_override_frameworks: Whether to auto-override framework calls.
         framework_targets: List of framework names to target.
-
-    Note:
-        ATTRIBUTE mode was removed in v2.x due to thread-safety issues.
-        Use "context" (recommended) or "seamless" instead.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     injection_mode: str | InjectionMode = InjectionMode.CONTEXT
     config_param: str | None = None
-    # Default to False - requires traigent-integrations plugin for framework overrides
-    # Set to True explicitly when using framework integrations
-    auto_override_frameworks: bool = False
+    auto_override_frameworks: bool = True
     framework_targets: list[str] | None = None
 
 
@@ -141,14 +125,6 @@ class ExecutionOptions(BaseModel):
             Default is 1 (no repetition). Set to 3-5 for noisy evaluations.
         reps_aggregation: How to aggregate metrics across repetitions.
             Options: "mean" (default), "median", "min", "max".
-        runtime: Runtime to execute trials in ("python" or "node").
-            When set to "node", trials are executed in a Node.js subprocess.
-        js_module: Path to the JS module containing the trial function.
-            Required when runtime="node".
-        js_function: Name of the exported function to call in the JS module.
-            Default is "runTrial".
-        js_timeout: Timeout for JS trial execution in seconds.
-            Default is 300 (5 minutes).
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -162,12 +138,6 @@ class ExecutionOptions(BaseModel):
     samples_include_pruned: bool = True
     reps_per_trial: int = 1
     reps_aggregation: str = "mean"
-    # JS Bridge options
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
 
 
 class MockModeOptions(BaseModel):
@@ -288,13 +258,12 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "configuration_space": None,
     "default_config": None,
     "constraints": None,
-    "safety_constraints": None,
     "tvl_spec": None,
     "tvl_environment": None,
     "tvl": None,
     "injection_mode": InjectionMode.CONTEXT,
     "config_param": None,
-    "auto_override_frameworks": False,  # Requires traigent-integrations plugin
+    "auto_override_frameworks": True,
     "framework_targets": None,
     "execution_mode": "edge_analytics",
     "local_storage_path": None,
@@ -312,17 +281,6 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "execution": None,
     "mock": None,
     "max_trials": 50,
-    # Early stopping parameters
-    "plateau_window": None,  # Stop if no improvement for N trials
-    "plateau_epsilon": None,  # Improvement threshold for plateau detection
-    # Multi-agent configuration
-    "agents": None,  # Explicit agent definitions
-    "agent_prefixes": None,  # Prefix-based agent inference
-    "agent_measures": None,  # Agent-to-measures mapping
-    "global_measures": None,  # Global (non-agent) measures
-    # Config persistence (Phase 1 of optimization-persistency feature)
-    "auto_load_best": False,  # Auto-load best config on decoration
-    "load_from": None,  # Explicit path to load config from
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -354,9 +312,6 @@ class LegacyOptimizeArgs:
     configuration_space: dict[str, Any] | None = None
     default_config: dict[str, Any] | None = None
     constraints: list[Callable[..., Any]] | None = None
-    safety_constraints: list[Any] | None = (
-        None  # SafetyConstraint | CompoundSafetyConstraint
-    )
     tvl_spec: str | None = None
     tvl_environment: str | None = None
     tvl: TVLOptions | dict[str, Any] | None = None
@@ -379,14 +334,6 @@ class LegacyOptimizeArgs:
     injection: InjectionOptions | dict[str, Any] | None = None
     execution: ExecutionOptions | dict[str, Any] | None = None
     mock: MockModeOptions | dict[str, Any] | None = None
-    # Multi-agent configuration
-    agents: dict[str, AgentDefinition] | None = None
-    agent_prefixes: list[str] | None = None
-    agent_measures: dict[str, list[str]] | None = None
-    global_measures: list[str] | None = None
-    # Config persistence
-    auto_load_best: bool | None = None
-    load_from: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -423,7 +370,6 @@ class LegacyOptimizeArgs:
             ("configuration_space", self.configuration_space),
             ("default_config", self.default_config),
             ("constraints", self.constraints),
-            ("safety_constraints", self.safety_constraints),
             ("tvl_spec", self.tvl_spec),
             ("tvl_environment", self.tvl_environment),
             ("tvl", self.tvl),
@@ -446,12 +392,6 @@ class LegacyOptimizeArgs:
             ("injection", self.injection),
             ("execution", self.execution),
             ("mock", self.mock),
-            ("agents", self.agents),
-            ("agent_prefixes", self.agent_prefixes),
-            ("agent_measures", self.agent_measures),
-            ("global_measures", self.global_measures),
-            ("auto_load_best", self.auto_load_best),
-            ("load_from", self.load_from),
         ]
 
 
@@ -699,22 +639,6 @@ def _resolve_injection_bundle_options(
     )
 
 
-@dataclass
-class JSRuntimeConfig:
-    """Configuration for JS runtime execution."""
-
-    runtime: str = "python"
-    js_module: str | None = None
-    js_function: str = "runTrial"
-    js_timeout: float = 300.0
-    js_parallel_workers: int = 1
-
-    @property
-    def is_js_runtime(self) -> bool:
-        """Return True if this is a JS runtime configuration."""
-        return self.runtime == "node"
-
-
 def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
     execution_mode: Any,
@@ -725,7 +649,7 @@ def _resolve_execution_bundle_options(
     max_total_examples: Any,
     samples_include_pruned: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, JSRuntimeConfig | None]:
+) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
     """Resolve execution options from bundle and validate enterprise features."""
     if execution_bundle is None:
         return (
@@ -736,7 +660,6 @@ def _resolve_execution_bundle_options(
             privacy_enabled,
             max_total_examples,
             samples_include_pruned,
-            None,  # js_runtime_config
         )
 
     # Validate enterprise-gated features
@@ -751,27 +674,6 @@ def _resolve_execution_bundle_options(
             "reps_aggregation is not available in this version. "
             "This feature requires Traigent Enterprise. "
             "Contact sales@traigent.ai for more information."
-        )
-
-    # Build JS runtime config if runtime is "node"
-    js_runtime_config = None
-    if execution_bundle.runtime == "node":
-        if not execution_bundle.js_module:
-            raise ValueError(
-                "js_module is required when runtime='node'. "
-                "Specify the path to your JS module containing the trial function."
-            )
-        js_runtime_config = JSRuntimeConfig(
-            runtime=execution_bundle.runtime,
-            js_module=execution_bundle.js_module,
-            js_function=execution_bundle.js_function,
-            js_timeout=execution_bundle.js_timeout,
-            js_parallel_workers=execution_bundle.js_parallel_workers,
-        )
-    elif execution_bundle.runtime not in ("python", "node"):
-        raise ValueError(
-            f"Invalid runtime '{execution_bundle.runtime}'. "
-            "Supported values are 'python' (default) or 'node' (JavaScript)."
         )
 
     return (
@@ -814,84 +716,28 @@ def _resolve_execution_bundle_options(
             execution_bundle.samples_include_pruned,
             defaults,
         ),
-        js_runtime_config,
     )
 
 
 def _resolve_injection_mode_enum(
     injection_mode: str | InjectionMode,
 ) -> str | InjectionMode:
-    """Convert string injection mode to enum, handling removed modes."""
+    """Convert string injection mode to enum, handling deprecations."""
     if not isinstance(injection_mode, str):
         return injection_mode
 
-    # Handle removed injection modes with helpful migration message
-    if injection_mode in ("attribute", "decorator"):
-        from traigent.utils.exceptions import ConfigurationError
-
-        raise ConfigurationError(
-            f"injection_mode='{injection_mode}' has been removed in v2.x.\n\n"
-            "Migration guide:\n"
-            '  Before: @traigent.optimize(injection_mode="attribute")\n'
-            "          config = my_func.current_config\n\n"
-            '  After:  @traigent.optimize(injection_mode="context")\n'
-            "          config = traigent.get_config()\n\n"
-            'For zero code changes, use injection_mode="seamless" instead.'
+    if injection_mode == "decorator":
+        warnings.warn(
+            "injection_mode='decorator' is deprecated. Use 'attribute' instead.",
+            DeprecationWarning,
+            stacklevel=4,
         )
+        return InjectionMode.ATTRIBUTE
 
     try:
         return InjectionMode(injection_mode)
     except ValueError:
         return injection_mode
-
-
-# Injection modes that are incompatible with JS runtime
-_JS_INCOMPATIBLE_INJECTION_MODES = frozenset(
-    {
-        InjectionMode.CONTEXT,  # Uses Python's contextvars
-        InjectionMode.SEAMLESS,  # Modifies Python source code
-    }
-)
-
-
-def _validate_js_runtime_injection_mode(
-    js_runtime_config: JSRuntimeConfig | None,
-    injection_mode: str | InjectionMode,
-) -> None:
-    """Validate that injection mode is compatible with JS runtime.
-
-    When runtime='node', Python-specific injection modes are not supported
-    because the trial config is passed directly to the JS function via the
-    NDJSON protocol.
-
-    Args:
-        js_runtime_config: JS runtime configuration (None if runtime='python')
-        injection_mode: The injection mode being used
-
-    Raises:
-        ValueError: If injection mode is incompatible with JS runtime
-    """
-    if js_runtime_config is None or not js_runtime_config.is_js_runtime:
-        return
-
-    # Normalize to enum for comparison
-    mode_enum = (
-        injection_mode
-        if isinstance(injection_mode, InjectionMode)
-        else (
-            InjectionMode(injection_mode)
-            if injection_mode in [m.value for m in InjectionMode]
-            else None
-        )
-    )
-
-    if mode_enum in _JS_INCOMPATIBLE_INJECTION_MODES:
-        raise ValueError(
-            f"injection_mode='{mode_enum.value if mode_enum else injection_mode}' "
-            f"is not compatible with runtime='node'. "
-            f"When using JavaScript runtime, config is passed directly to the JS function "
-            f"via the trial protocol. Use injection_mode='parameter' or omit it."
-        )
 
 
 def _resolve_execution_mode_enum(
@@ -1097,7 +943,7 @@ def _process_runtime_overrides(
 
 
 def _process_config_space_constraints(
-    configuration_space: dict[str, Any] | ConfigSpace | None,
+    configuration_space: dict[str, Any] | None,
     constraints: list[Any] | None,
 ) -> tuple[Any, Any, Any]:
     """Process ConfigSpace constraints, returning constraints and var_names."""
@@ -1123,16 +969,15 @@ def _process_config_space_constraints(
 
 
 def _normalize_config_space_and_defaults(
-    configuration_space: dict[str, Any] | ConfigSpace | None,
+    configuration_space: dict[str, Any] | None,
     inline_params: dict[str, Any],
     default_config: dict[str, Any] | None,
     config_space_constraints: Any,
     constraints: list[Any] | None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[Any] | None]:
     """Normalize configuration space and merge defaults."""
-    normalized_space: dict[str, Any] | None = None
     if inline_params or configuration_space:
-        normalized_space, param_defaults = normalize_configuration_space(
+        configuration_space, param_defaults = normalize_configuration_space(
             configuration_space, inline_params
         )
         if param_defaults:
@@ -1141,16 +986,15 @@ def _normalize_config_space_and_defaults(
     if config_space_constraints and not constraints:
         constraints = config_space_constraints
 
-    return normalized_space, default_config, constraints
+    return configuration_space, default_config, constraints
 
 
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
-    configuration_space: dict[str, Any] | ConfigSpace | None = None,
+    configuration_space: dict[str, Any] | None = None,
     default_config: dict[str, Any] | None = None,
     constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None = None,
-    safety_constraints: list[SafetyConstraint | CompoundSafetyConstraint] | None = None,
     tvl_spec: str | Path | None = None,
     tvl_environment: str | None = None,
     tvl: TVLOptions | dict[str, Any] | None = None,
@@ -1158,14 +1002,6 @@ def optimize(
     injection: InjectionOptions | dict[str, Any] | None = None,
     execution: ExecutionOptions | dict[str, Any] | None = None,
     mock: MockModeOptions | dict[str, Any] | None = None,
-    # Multi-agent configuration
-    agents: dict[str, AgentDefinition] | None = None,
-    agent_prefixes: list[str] | None = None,
-    agent_measures: dict[str, list[str]] | None = None,
-    global_measures: list[str] | None = None,
-    # Config persistence
-    auto_load_best: bool = False,
-    load_from: str | None = None,
     legacy: LegacyOptimizeArgs | dict[str, Any] | None = None,
     **runtime_overrides: Any,
 ) -> Callable[[Callable[..., Any]], Any]:
@@ -1190,20 +1026,6 @@ def optimize(
             In seamless/attribute modes these override literal values during the
             initial run. In parameter mode the dict is converted to a TraigentConfig
             and provided as the ``config`` argument.
-
-            Default Value Precedence (highest to lowest):
-                1. Explicit ``default_config`` dict values
-                2. ``ParameterRange.default`` values (e.g., ``Range(0.0, 1.0, default=0.7)``)
-                3. Optimizer-suggested defaults (e.g., Optuna's suggest_* midpoint)
-
-            Example showing precedence::
-
-                >>> @traigent.optimize(
-                ...     temperature=Range(0.0, 1.0, default=0.5),  # Precedence 2
-                ...     default_config={"temperature": 0.7},      # Precedence 1 (wins)
-                ... )
-                ... def my_func(): ...
-
         constraints: Optional validators receiving ``config`` and ``metrics``. Return
             True to accept a configuration or False to skip it.
 
@@ -1229,9 +1051,7 @@ def optimize(
             injection: Grouped injection settings (InjectionOptions or dict) covering
                 how optimized parameters are applied.
             injection_mode: Selector for the injection mechanism (context, parameter,
-                seamless). "context" (default) uses thread-safe contextvars,
-                "parameter" adds explicit config param, "seamless" uses AST
-                transformation for zero code changes.
+                attribute, seamless). Available via the bundle or legacy support.
             config_param: Parameter name used when ``injection_mode="parameter"``.
             auto_override_frameworks: Toggle to auto-detect supported frameworks
                 (LangChain, OpenAI, Anthropic, etc.) and override their parameters.
@@ -1336,23 +1156,16 @@ def optimize(
         ...         "safety_filter": ["strict", "moderate"]
         ...     }
         ... )
-        ... def medical_assistant(patient_query: str) -> str:  # doctest: +SKIP
+        ... def medical_assistant(patient_query: str) -> str:
         ...     # Data never leaves your infrastructure
         ...     return process_medical_query(patient_query)
-
-    Note:
-        Set TRAIGENT_DISABLED=1 environment variable to disable all optimization.
-        The decorator becomes a pass-through that returns the original function.
+        >>> result = my_agent("Hello")
+        >>>
+        >>> # Run optimization
+        >>> import asyncio
+        >>> optimization_result = asyncio.run(my_agent.optimize())
+        >>> best_config = my_agent.get_best_config()
     """
-    # Check if Traigent is disabled via environment variable
-    # When disabled, @optimize becomes a no-op that returns the original function
-    if is_traigent_disabled():
-        logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
-
-        def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
-            return func
-
-        return passthrough_decorator
 
     legacy_args = _parse_legacy_args(legacy)
 
@@ -1369,7 +1182,6 @@ def optimize(
         "configuration_space": configuration_space,
         "default_config": default_config,
         "constraints": constraints,
-        "safety_constraints": safety_constraints,
         "tvl_spec": tvl_spec,
         "tvl_environment": tvl_environment,
         "tvl": tvl,
@@ -1377,12 +1189,6 @@ def optimize(
         "injection": injection,
         "execution": execution,
         "mock": mock,
-        "agents": agents,
-        "agent_prefixes": agent_prefixes,
-        "agent_measures": agent_measures,
-        "global_measures": global_measures,
-        "auto_load_best": auto_load_best,
-        "load_from": load_from,
     }
     for key, value in direct_inputs.items():
         record_option(key, value, "optimize parameter")
@@ -1403,7 +1209,6 @@ def optimize(
     configuration_space = combined_settings["configuration_space"]
     default_config = combined_settings["default_config"]
     constraints = combined_settings["constraints"]
-    safety_constraints = combined_settings["safety_constraints"]
 
     # Process ConfigSpace constraints
     config_space_constraints, config_space_var_names, _ = (
@@ -1440,14 +1245,6 @@ def optimize(
     metric_functions = combined_settings["metric_functions"]
     tvl_spec_value = combined_settings["tvl_spec"]
     tvl_environment_value = combined_settings["tvl_environment"]
-    # Multi-agent configuration
-    agents_config = combined_settings["agents"]
-    agent_prefixes_config = combined_settings["agent_prefixes"]
-    agent_measures_config = combined_settings["agent_measures"]
-    global_measures_config = combined_settings["global_measures"]
-    # Config persistence
-    auto_load_best_config = combined_settings["auto_load_best"]
-    load_from_config = combined_settings["load_from"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1501,7 +1298,6 @@ def optimize(
         privacy_enabled,
         max_total_examples,
         samples_include_pruned,
-        js_runtime_config,
     ) = _resolve_execution_bundle_options(
         execution_bundle,
         execution_mode,
@@ -1562,9 +1358,6 @@ def optimize(
 
         actual_injection_mode = _resolve_injection_mode_enum(injection_mode)
 
-        # Validate injection mode is compatible with JS runtime
-        _validate_js_runtime_injection_mode(js_runtime_config, actual_injection_mode)
-
         execution_mode_enum, effective_privacy_enabled = _resolve_execution_mode_enum(
             actual_execution_mode, privacy_enabled
         )
@@ -1603,7 +1396,6 @@ def optimize(
             configuration_space=configuration_space,
             default_config=default_config,
             constraints=normalized_constraints,
-            safety_constraints=safety_constraints,
             injection_mode=actual_injection_mode,
             config_param=config_param,
             auto_override_frameworks=auto_override_frameworks,
@@ -1620,16 +1412,6 @@ def optimize(
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             requested_execution_mode=requested_execution_mode,
-            # Multi-agent configuration
-            agents=agents_config,
-            agent_prefixes=agent_prefixes_config,
-            agent_measures=agent_measures_config,
-            global_measures=global_measures_config,
-            # Config persistence
-            auto_load_best=auto_load_best_config,
-            load_from=load_from_config,
-            # JS runtime configuration
-            js_runtime_config=js_runtime_config,
             **combined_runtime_overrides,
         )
 

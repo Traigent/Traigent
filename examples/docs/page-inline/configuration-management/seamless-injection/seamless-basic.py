@@ -37,7 +37,7 @@ def generate_summary(text: str) -> str:
     llm = ChatOpenAI(
         model="gpt-3.5-turbo",  # Traigent will optimize this
         temperature=0.7,  # And this
-        model_kwargs={"max_tokens": 150},  # And this
+        max_tokens=150,  # And this
     )
 
     prompt = f"Summarize this text in 2-3 sentences: {text}"
@@ -62,7 +62,7 @@ def optimized_summary(text: str) -> str:
     llm = ChatOpenAI(
         model="gpt-3.5-turbo",  # Becomes optimal model automatically
         temperature=0.7,  # Becomes optimal temperature automatically
-        model_kwargs={"max_tokens": 150},  # Becomes optimal token limit automatically
+        max_tokens=150,  # Becomes optimal token limit automatically
     )
 
     prompt = f"Summarize this text in 2-3 sentences: {text}"
@@ -70,7 +70,7 @@ def optimized_summary(text: str) -> str:
     return getattr(response, "content", str(response))
 
 
-# Traigent finds: model="gpt-4o-mini", temperature=0.3, model_kwargs={"max_tokens": 200
+# Traigent finds: model="gpt-4o-mini", temperature=0.3, max_tokens=200
 # Your function automatically uses these optimal values!
 
 if __name__ == "__main__":

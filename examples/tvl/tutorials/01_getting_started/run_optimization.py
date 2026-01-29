@@ -5,7 +5,7 @@ TVL 0.9 Tutorial: Getting Started with Traigent Optimization
 This script demonstrates how to use a TVL spec with the Traigent decorator
 to optimize an LLM application.
 
-Run with: python run_optimization.py
+Run with (from repo root): .venv/bin/python examples/tvl/tutorials/01_getting_started/run_optimization.py
 """
 
 import random

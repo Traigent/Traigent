@@ -8,6 +8,9 @@ import asyncio
 import copy
 import inspect
 import math
+import os
+import sys
+import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
@@ -79,6 +82,7 @@ from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import should_show_cloud_notice
 from traigent.utils.exceptions import (
     OptimizationError,
 )
@@ -96,6 +100,12 @@ from .tracing import (
 )
 
 logger = get_logger(__name__)
+
+CLOUD_UNAVAILABLE_NOTICE = (
+    "⚠️ Full insights unavailable without Traigent Cloud API key.\n"
+    "  You're missing: AI recommendations • trade-off analysis • cost tracking • audit features.\n"
+    "  Get yours now at https://traigent.ai"
+)
 
 # Orchestrator constants
 PROGRESS_LOG_INTERVAL = 10  # Log progress every N trials
@@ -151,10 +161,28 @@ class OptimizationOrchestrator:
         self.timeout = timeout
         self.traigent_config = config or TraigentConfig()
         self.config = kwargs
+        self._interactive = sys.stdin.isatty()
+        pause_requested = os.getenv("TRAIGENT_PAUSE_ON_ERROR", "true").lower() == "true"
+        self._pause_on_error = pause_requested and self._interactive
+        self._show_progress = self._resolve_show_progress_setting()
+        self._progress_lock = threading.Lock()
+        self._progress_last_best_score: float | None = None
+        self._progress_last_emitted_trial = 0
+        self._progress_needs_newline = False
+        if pause_requested and not self._interactive:
+            logger.info(
+                "TRAIGENT_PAUSE_ON_ERROR requested but stdin is not a TTY; "
+                "pausing disabled."
+            )
         self.parallel_trials = normalize_parallel_trials(parallel_trials)
         self.parallel_execution_manager = ParallelExecutionManager(
             parallel_trials=self.parallel_trials,
         )
+        if self._pause_on_error and self.parallel_trials > 1:
+            logger.info(
+                "Pause-on-error disabled when parallel_trials > 1; "
+                "use sequential mode (e.g., TRAIGENT_PARALLEL=0) to enable pausing."
+            )
         self.progress_manager = ProgressManager(
             total_trials=max_trials,
             algorithm_name=optimizer.__class__.__name__,
@@ -518,6 +546,7 @@ class OptimizationOrchestrator:
         self._failed_trials = 0
         self._best_trial_cached: TrialResult | None = None
         self._consumed_examples = 0
+        self._cloud_notice_shown = False
         # Lock for protecting shared state mutations during parallel trial execution
         self._state_lock = asyncio.Lock()
 
@@ -830,6 +859,7 @@ class OptimizationOrchestrator:
         if should_log:
             self._log_progress(new_count)
 
+        self._maybe_emit_progress_output(new_count)
         self._register_examples_attempted(trial_result)
 
         return new_count
@@ -1593,6 +1623,14 @@ class OptimizationOrchestrator:
         if self.cost_enforcer is not None:
             self.cost_enforcer.reset()
 
+        self._cloud_notice_shown = False
+        from traigent.cloud.api_operations import reset_api_key_error_state
+
+        reset_api_key_error_state()
+        if should_show_cloud_notice(self.traigent_config):
+            print(CLOUD_UNAVAILABLE_NOTICE)
+            self._cloud_notice_shown = True
+
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
 
@@ -1739,6 +1777,9 @@ class OptimizationOrchestrator:
         # Validate dataset
         self._validate_dataset(dataset)
 
+        # Check cost approval before starting timers or sessions
+        self._check_cost_approval(dataset)
+
         # Perform standard initialization (logging, session creation, callbacks)
         session_id = self._initialize_optimization_run(func, dataset, function_name)
 
@@ -1778,6 +1819,52 @@ class OptimizationOrchestrator:
                 f"limit: ${self.cost_enforcer.config.limit:.2f}. "
                 f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
             )
+
+    def _handle_vendor_exception(self, error: Exception) -> bool:
+        """Handle vendor errors with optional pause/resume."""
+        if not self._pause_on_error:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on vendor error.")
+            return False
+        from traigent.core.exception_handler import handle_vendor_exception
+
+        return handle_vendor_exception(error)
+
+    def _handle_network_exception(self, error: Exception) -> bool:
+        """Handle network errors with optional pause/resume."""
+        if not self._pause_on_error:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on network error.")
+            return False
+        from traigent.core.exception_handler import handle_network_exception
+
+        return handle_network_exception(error)
+
+    def _handle_budget_limit_pause(self) -> bool:
+        """Handle cost limit pause/raise flow. Returns True to continue."""
+        if not self._pause_on_error or self.cost_enforcer is None:
+            return False
+        if not self._interactive:
+            logger.warning("Non-interactive mode: stopping on cost limit.")
+            return False
+        from traigent.core.exception_handler import handle_budget_limit_reached
+
+        status = self.cost_enforcer.get_status()
+        should_continue, new_limit = handle_budget_limit_reached(
+            status.limit_usd, status.accumulated_cost_usd
+        )
+        if should_continue:
+            logger.info(
+                "User raised cost limit from $%.2f to $%.2f",
+                status.limit_usd,
+                new_limit,
+            )
+            self.cost_enforcer.update_limit(new_limit)
+            self._stop_reason = None
+            return True
+        return False
 
     def _check_budget_limits(
         self, trial_count: int
@@ -1824,6 +1911,11 @@ class OptimizationOrchestrator:
                 break
 
             if self._should_stop(trial_count):
+                if (
+                    self._stop_reason == "cost_limit"
+                    and self._handle_budget_limit_pause()
+                ):
+                    continue
                 break
 
             if self.parallel_trials > 1:
@@ -1846,6 +1938,11 @@ class OptimizationOrchestrator:
                 )
 
             if action == "break":
+                if (
+                    self._stop_reason == "cost_limit"
+                    and self._handle_budget_limit_pause()
+                ):
+                    continue
                 break
 
         return trial_count
@@ -1889,6 +1986,8 @@ class OptimizationOrchestrator:
             f"{len(self._trials)} trials, best score: {result.best_score:.4f}, "
             f"total cost: ${cost_status.accumulated_cost_usd:.4f}"
         )
+        if self._cloud_notice_shown:
+            print(f"\n{CLOUD_UNAVAILABLE_NOTICE}")
 
     async def _run_optimization_with_tracing(
         self,
@@ -1899,8 +1998,6 @@ class OptimizationOrchestrator:
         session_span: Any,
     ) -> OptimizationResult:
         """Run optimization with tracing enabled."""
-        self._check_cost_approval(dataset)
-
         try:
             # Check for immediate timeout
             if self.timeout is not None and self.timeout == 0:
@@ -1908,9 +2005,10 @@ class OptimizationOrchestrator:
                 self._status = OptimizationStatus.CANCELLED
                 return self._create_optimization_result()
 
-            await self._run_optimization_loop(
+            trial_count = await self._run_optimization_loop(
                 func, dataset, session_id, function_identifier
             )
+            self._finalize_progress_output(trial_count)
 
             # Set final status
             self._status = (
@@ -2162,6 +2260,176 @@ class OptimizationOrchestrator:
             f"success rate: {success_rate:.2%}, "
             f"elapsed: {elapsed:.1f}s"
         )
+
+    def _resolve_show_progress_setting(self) -> bool:
+        """Resolve progress output enablement (env overrides config)."""
+        raw_value = os.getenv("TRAIGENT_SHOW_PROGRESS")
+        if raw_value is not None:
+            normalized = raw_value.strip().lower()
+            return normalized in {"1", "true", "yes", "y", "on"}
+        return bool(self.config.get("show_progress", False))
+
+    def _format_progress_score(self, score: float | None) -> str:
+        if score is None:
+            return "N/A"
+        if 0.0 <= score <= 1.0:
+            return f"{score:.1%}"
+        return f"{score:.3f}"
+
+    def _format_progress_cost(self, cost: float | None) -> str:
+        if cost is None:
+            return "N/A"
+        if cost < 0:
+            return "N/A"
+        if cost < 0.01:
+            return f"${cost:.4f}".rstrip("0").rstrip(".")
+        if cost >= 1000:
+            return f"${cost:,.0f}"
+        return f"${cost:.2f}"
+
+    def _get_primary_best_score(self) -> float | None:
+        best_trial = self.best_result
+        if best_trial is None or not self.optimizer.objectives:
+            return None
+        primary_objective = self.optimizer.objectives[0]
+        return best_trial.get_metric(primary_objective, None)
+
+    def _get_total_cost(self) -> float | None:
+        if not getattr(self, "cost_enforcer", None):
+            return None
+        try:
+            return self.cost_enforcer.get_status().accumulated_cost_usd
+        except Exception:
+            return None
+
+    def _is_new_best_score(self, best_score: float | None) -> bool:
+        if best_score is None:
+            return False
+        previous = self._progress_last_best_score
+        if previous is None:
+            return True
+        primary_objective = (
+            self.optimizer.objectives[0] if self.optimizer.objectives else ""
+        )
+        minimization = (
+            _is_minimization_objective(primary_objective)
+            if primary_objective
+            else False
+        )
+        if minimization:
+            return best_score < previous
+        return best_score > previous
+
+    def _should_emit_progress_line(
+        self,
+        trial_count: int,
+        *,
+        is_new_best: bool,
+        is_final: bool,
+        is_early_stop: bool,
+        force: bool,
+    ) -> bool:
+        if not self._show_progress:
+            return False
+        if trial_count <= 0:
+            return False
+        if force:
+            return True
+        return (
+            trial_count == 1
+            or trial_count % PROGRESS_LOG_INTERVAL == 0
+            or is_new_best
+            or is_final
+            or is_early_stop
+        )
+
+    def _emit_progress_line(
+        self,
+        trial_count: int,
+        *,
+        is_new_best: bool = False,
+        is_final: bool = False,
+        is_early_stop: bool = False,
+        force: bool = False,
+    ) -> None:
+        if not self._should_emit_progress_line(
+            trial_count,
+            is_new_best=is_new_best,
+            is_final=is_final,
+            is_early_stop=is_early_stop,
+            force=force,
+        ):
+            return
+
+        total_trials = self.max_trials
+        total_display = str(total_trials) if total_trials else "?"
+        best_score = self._get_primary_best_score()
+        line = (
+            f"🔄 Trial {trial_count}/{total_display} | "
+            f"Best score: {self._format_progress_score(best_score)} | "
+            f"Cost: {self._format_progress_cost(self._get_total_cost())}"
+        )
+
+        use_tty = sys.stderr.isatty()
+        with self._progress_lock:
+            if use_tty:
+                print(f"\r{line}", end="", file=sys.stderr, flush=True)
+                self._progress_needs_newline = True
+                if is_final:
+                    print(file=sys.stderr)
+                    self._progress_needs_newline = False
+            else:
+                print(line, file=sys.stderr, flush=True)
+                self._progress_needs_newline = False
+
+        self._progress_last_emitted_trial = trial_count
+
+    def _ensure_progress_newline(self) -> None:
+        if not self._progress_needs_newline:
+            return
+        if not sys.stderr.isatty():
+            self._progress_needs_newline = False
+            return
+        with self._progress_lock:
+            print(file=sys.stderr)
+        self._progress_needs_newline = False
+
+    def _emit_stop_line(self, trial_count: int, reason: StopReason | None) -> None:
+        if not self._show_progress or not reason:
+            return
+        self._ensure_progress_newline()
+        total_trials = self.max_trials
+        total_display = str(total_trials) if total_trials else "?"
+        line = f"✅ Stopped early at trial {trial_count}/{total_display} ({reason})"
+        with self._progress_lock:
+            print(line, file=sys.stderr, flush=True)
+
+    def _maybe_emit_progress_output(self, trial_count: int) -> None:
+        if not self._show_progress:
+            return
+        best_score = self._get_primary_best_score()
+        is_new_best = self._is_new_best_score(best_score)
+        if is_new_best:
+            self._progress_last_best_score = best_score
+        self._emit_progress_line(trial_count, is_new_best=is_new_best)
+
+    def _finalize_progress_output(self, trial_count: int) -> None:
+        if not self._show_progress:
+            return
+        if trial_count > 0 and self._progress_last_emitted_trial != trial_count:
+            self._emit_progress_line(trial_count, is_final=True, force=True)
+        else:
+            self._ensure_progress_newline()
+
+        is_early_stop = False
+        if self._stop_reason and self._stop_reason != "max_trials_reached":
+            if self.max_trials is None:
+                is_early_stop = True
+            else:
+                is_early_stop = trial_count < self.max_trials
+
+        if is_early_stop:
+            self._emit_stop_line(trial_count, self._stop_reason)
 
     def register_metric(self, spec: MetricSpec) -> None:
         """Register or override a metric specification for aggregation."""
