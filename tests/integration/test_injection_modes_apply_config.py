@@ -268,79 +268,8 @@ def test_context_mode():
     print("\n✅ Context mode test passed!")
 
 
-# Test function for Attribute mode
-@optimize(
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-        "temperature": [0.1, 0.5, 0.9],
-    },
-    injection_mode="attribute",
-    objectives=["accuracy"],
-)
-def attribute_qa_agent(question: str) -> str:
-    """Q&A agent using attribute injection - config stored as function attribute."""
-    # Get Tuned Variables from function attribute
-    # The config is stored on the wrapped function
-    if hasattr(attribute_qa_agent, "_wrapped_func") and hasattr(
-        attribute_qa_agent._wrapped_func, "current_config"
-    ):
-        config = attribute_qa_agent._wrapped_func.current_config
-    elif hasattr(attribute_qa_agent, "current_config"):
-        config = attribute_qa_agent.current_config
-    else:
-        config = {}
-
-    model = config.get("model", "gpt-3.5-turbo")
-    temperature = config.get("temperature", 0.7)
-
-    # Simulate different model behaviors
-    if model == "gpt-4o":
-        quality = "excellent"
-    elif model == "gpt-4o-mini":
-        quality = "very good"
-    else:
-        quality = "good"
-
-    temp_desc = (
-        "creative"
-        if temperature > 0.7
-        else "balanced" if temperature > 0.3 else "focused"
-    )
-
-    return f"[{model}|temp={temperature}|{temp_desc}|{quality}] Answer to: {question}"
-
-
-def test_attribute_mode():
-    """Test apply_best_config with Attribute injection mode."""
-    print("\n=== Testing Attribute Mode ===")
-
-    # Before optimization - uses default values
-    print("\n1. Before optimization (default values):")
-    result = attribute_qa_agent("What is Deep Learning?")
-    print(f"   Result: {result}")
-
-    # Simulate optimization results
-    mock_results = create_mock_optimization_result()
-    attribute_qa_agent._optimization_results = mock_results
-
-    # Apply best config
-    print("\n2. Applying best config...")
-    success = attribute_qa_agent.apply_best_config()
-    print(f"   Apply success: {success}")
-    print(f"   Best config applied: {attribute_qa_agent._current_config}")
-
-    # After applying best config - should use optimized values
-    print("\n3. After apply_best_config (optimized values):")
-    result = attribute_qa_agent("What is Deep Learning?")
-    print(f"   Result: {result}")
-
-    # Verify the result contains optimized parameters
-    assert "gpt-4o" in result, "Attribute mode should use optimized model"
-    assert "temp=0.1" in result, "Attribute mode should use optimized temperature"
-    assert "focused" in result, "Low temperature should be 'focused'"
-    assert "excellent" in result, "gpt-4o should have 'excellent' quality"
-
-    print("\n✅ Attribute mode test passed!")
+# Note: Attribute mode was removed in v2.x due to thread-safety issues
+# The seamless mode is already tested above and provides similar functionality
 
 
 def main():
@@ -358,12 +287,11 @@ def main():
         # Test Context mode
         test_context_mode()
 
-        # Test Attribute mode
-        test_attribute_mode()
+        # Note: Attribute mode was removed in v2.x due to thread-safety issues
 
         print("\n" + "=" * 60)
         print(
-            "🎉 All tests passed! apply_best_config works correctly with all 4 injection modes."
+            "🎉 All tests passed! apply_best_config works correctly with all 3 injection modes."
         )
         print("\nKey findings:")
         print(
@@ -373,10 +301,9 @@ def main():
         print(
             "3. Context mode: Traigent uses Python's contextvars for config injection"
         )
-        print("4. Attribute mode: Traigent stores config as function attribute")
-        print("5. All modes correctly apply the best config after optimization")
+        print("4. All modes correctly apply the best config after optimization")
         print(
-            "6. The _setup_function_wrapper method properly handles all injection strategies"
+            "5. The _setup_function_wrapper method properly handles all injection strategies"
         )
 
     except Exception as e:

@@ -987,7 +987,12 @@ class OptimizedFunction:
             tvl_spec: Optional TVL spec path to load at runtime.
             tvl_environment: Environment overlay to apply when loading the spec.
             tvl: Structured TVL options (dict or TVLOptions) for runtime overrides.
-            **algorithm_kwargs: Additional algorithm parameters
+            **algorithm_kwargs: Additional algorithm-specific parameters.
+                For grid search (algorithm="grid"):
+                    - parameter_order: dict[str, int | float] controlling iteration order.
+                      Lower values = varies slowest, higher values = varies fastest.
+                      Alias: ``order``.
+                      Example: ``parameter_order={"model": 0, "temperature": 1}``
 
         Returns:
             OptimizationResult with trial results and best configuration

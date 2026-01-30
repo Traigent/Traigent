@@ -174,6 +174,8 @@ def test_js_tests_discoverable():
     if not existing_paths:
         pytest.skip("No JS tests found")
 
+    import os
+
     result = subprocess.run(
         [
             sys.executable,
@@ -187,6 +189,11 @@ def test_js_tests_discoverable():
         text=True,
         timeout=60,
         cwd=str(PROJECT_ROOT),
+        env={
+            **dict(os.environ),
+            # Must set subprocess flag even for collection
+            "TRAIGENT_JS_TEST_SUBPROCESS": "1",
+        },
     )
 
     # Parse output to count collected tests
