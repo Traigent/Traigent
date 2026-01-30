@@ -1759,16 +1759,19 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
         }
 
     def fetch_current_pricing(self, providers=None, **kwargs):
-        """Fetch current pricing information using tokencost library with fallback."""
+        """Fetch current pricing information using litellm library with fallback."""
         if providers is None:
             providers = ["openai", "anthropic"]
 
         pricing: dict[str, Any] = {}
 
         try:
-            from tokencost import calculate_completion_cost, calculate_prompt_cost
+            from traigent.utils.cost_calculator import (
+                calculate_completion_cost,
+                calculate_prompt_cost,
+            )
 
-            # Use tokencost to get real-time pricing for common models
+            # Use litellm to get real-time pricing for common models
             test_prompt = [{"role": "user", "content": "test"}]
             test_completion = "test"
 
@@ -1797,14 +1800,12 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                                 "output": output_cost,
                             }
                         except Exception as e:
-                            # Skip models that tokencost doesn't recognize
-                            logger.debug(
-                                f"Skipping model {model}: tokencost error: {e}"
-                            )
+                            # Skip models that litellm doesn't recognize
+                            logger.debug(f"Skipping model {model}: litellm error: {e}")
                             continue
 
         except ImportError:
-            # Fallback to static pricing data if tokencost not available
+            # Fallback to static pricing data if litellm not available
             pricing_data = {
                 "openai": {
                     "gpt-4o": {"input": 0.01, "output": 0.03},
@@ -1821,7 +1822,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                 if provider in pricing_data:
                     pricing[provider] = pricing_data[provider]
 
-        # Add non-LLM pricing data (these aren't handled by tokencost)
+        # Add non-LLM pricing data (these aren't handled by litellm)
         if "aws" in providers:
             pricing["aws"] = {
                 "compute": {"on_demand": 0.1, "spot": 0.03},
