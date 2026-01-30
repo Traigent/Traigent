@@ -53,7 +53,7 @@ if TYPE_CHECKING:
     from traigent.api.constraints import BoolExpr, Constraint
     from traigent.api.safety import CompoundSafetyConstraint, SafetyConstraint
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from traigent.api.functions import _GLOBAL_CONFIG
 from traigent.api.parameter_ranges import (
@@ -124,6 +124,17 @@ class InjectionOptions(BaseModel):
     # Set to True explicitly when using framework integrations
     auto_override_frameworks: bool = False
     framework_targets: list[str] | None = None
+
+    @field_validator("injection_mode", mode="before")
+    @classmethod
+    def validate_injection_mode(cls, v: str | InjectionMode) -> str | InjectionMode:
+        """Validate injection_mode and reject removed modes."""
+        if isinstance(v, str) and v in ("attribute", "decorator"):
+            raise ValueError(
+                f"injection_mode='{v}' has been removed in v2.x. "
+                'Use "context" (recommended), "parameter", or "seamless" instead.'
+            )
+        return v
 
 
 class ExecutionOptions(BaseModel):
@@ -1390,6 +1401,7 @@ def optimize(
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
         def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            """Return the function unchanged when Traigent is disabled via environment variable."""
             return func
 
         return passthrough_decorator

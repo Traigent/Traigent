@@ -479,51 +479,105 @@ def max_tokens_constraint(
 
 
 def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstraint:
-    """Create constraint based on model cost using tokencost library."""
+    """Create constraint based on model cost using litellm library.
+
+    Uses litellm for cost calculation with fallback to simplified pricing
+    for unknown models. The constraint validates that estimated cost per
+    1k tokens is within the specified limit.
+
+    IMPORTANT: Unknown models that can't be priced will FAIL the constraint
+    (return infinity) to prevent them from silently passing.
+    """
 
     def calculate_cost(config: dict[str, Any]) -> float:
-        """Calculate cost based on model and token usage."""
+        """Calculate cost based on model and token usage.
+
+        Returns float('inf') for unknown models to ensure they fail the constraint.
+        """
         model = config.get("model", "gpt-4o-mini")
         max_tokens = config.get("max_tokens", 150)
 
+        # Method 1: Try litellm.cost_per_token directly with 1000 tokens
+        # This is the most accurate method
         try:
-            from tokencost import calculate_completion_cost, calculate_prompt_cost
+            import litellm
 
-            # Create sample content to estimate cost per token
-            sample_prompt = [{"role": "user", "content": "a" * 10}]  # ~10 tokens
-            sample_completion = "a" * 10  # ~10 tokens
+            # Get cost per token directly from litellm (1000 input + 1000 output)
+            input_cost, output_cost = litellm.cost_per_token(
+                model=model, prompt_tokens=1000, completion_tokens=1000
+            )
 
-            # Get costs and calculate rate per token
-            prompt_cost = calculate_prompt_cost(sample_prompt, model)
-            completion_cost = calculate_completion_cost(sample_completion, model)
+            if input_cost > 0 or output_cost > 0:
+                # Calculate average cost per 1k tokens
+                avg_cost_per_1k = (input_cost + output_cost) / 2
+                return float(avg_cost_per_1k * (max_tokens / 1000))
 
-            # Estimate cost for max_tokens (assume 50/50 split between input/output)
-            input_tokens = max_tokens * 0.5
-            output_tokens = max_tokens * 0.5
+            # Zero cost could mean unknown model or legitimately free
+            # Check if model is actually known to litellm
+            from traigent.utils.cost_calculator import _is_model_known_to_litellm
 
-            # Calculate per-token rates
-            input_rate = prompt_cost / 10  # 10 tokens in sample
-            output_rate = completion_cost / 10  # 10 tokens in sample
-
-            total_cost = (input_tokens * input_rate) + (output_tokens * output_rate)
-            return float(total_cost)
+            if _is_model_known_to_litellm(model):
+                # Known model with 0 cost (free tier) - allow it
+                return 0.0
 
         except ImportError:
-            pass  # Fall through to fallback
+            pass  # litellm not available
         except Exception as e:
-            logger.warning(f"Detailed cost calculation failed: {e}")
+            logger.debug(
+                "litellm cost_per_token failed for model %r: %s",
+                model,
+                e,
+                exc_info=True,
+            )
             pass  # Fall through to fallback
 
-        # Fallback to simplified cost model ($/1k tokens)
-        model_costs = {
-            "gpt-4o-mini": 0.002,
-            "GPT-4o": 0.06,
-            "claude-3": 0.015,
-            "claude-3-opus": 0.075,
-        }
+        # Method 2: Fallback to FALLBACK_MODEL_PRICING from cost_calculator
+        try:
+            from traigent.utils.cost_calculator import (
+                FALLBACK_MODEL_PRICING,
+                _normalize_model_for_fallback,
+            )
 
-        cost_per_1k = model_costs.get(model, 0.002)
-        return float(cost_per_1k * (max_tokens / 1000))
+            base_model = _normalize_model_for_fallback(model)
+
+            # Try exact match first
+            pricing = None
+            for key, value in FALLBACK_MODEL_PRICING.items():
+                if key.lower() == base_model:
+                    pricing = value
+                    break
+
+            # Try prefix matching - prefer longest match
+            if not pricing:
+                best_match_len = 0
+                for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
+                    key_lower = model_key.lower()
+                    if base_model.startswith(key_lower):
+                        if len(key_lower) > best_match_len:
+                            best_match_len = len(key_lower)
+                            pricing = model_pricing
+                    elif key_lower.startswith(base_model):
+                        if len(base_model) > best_match_len:
+                            best_match_len = len(base_model)
+                            pricing = model_pricing
+
+            if pricing:
+                # Calculate cost per 1k tokens from per-token pricing
+                input_cost_per_1k = pricing["input_cost_per_token"] * 1000
+                output_cost_per_1k = pricing["output_cost_per_token"] * 1000
+                # Average input/output cost
+                avg_cost_per_1k = (input_cost_per_1k + output_cost_per_1k) / 2
+                return float(avg_cost_per_1k * (max_tokens / 1000))
+
+        except ImportError:
+            pass  # FALLBACK_MODEL_PRICING not available
+
+        # Ultimate fallback: Unknown model - return infinity to FAIL the constraint
+        # This prevents unknown models from silently passing cost checks
+        logger.warning(
+            "Unknown model %r has no pricing info - failing cost constraint", model
+        )
+        return float("inf")
 
     return ResourceConstraint("model_cost", calculate_cost, max_cost_per_1k_tokens)
 

@@ -106,9 +106,8 @@ class TestModuleNotFoundErrorNameCheck:
         missing_module = getattr(err, "name", "") or ""
 
         # Should safely handle None/empty and not raise
-        is_cloud = (
-            missing_module == "traigent.cloud"
-            or missing_module.startswith("traigent.cloud.")
+        is_cloud = missing_module == "traigent.cloud" or missing_module.startswith(
+            "traigent.cloud."
         )
         assert isinstance(is_cloud, bool)
 
@@ -120,9 +119,8 @@ class TestModuleNotFoundErrorNameCheck:
         missing_module = getattr(err, "name", "") or ""
 
         assert missing_module == "traigent.cloud.models"
-        is_cloud = (
-            missing_module == "traigent.cloud"
-            or missing_module.startswith("traigent.cloud.")
+        is_cloud = missing_module == "traigent.cloud" or missing_module.startswith(
+            "traigent.cloud."
         )
         assert is_cloud
 
@@ -139,9 +137,8 @@ class TestModuleNotFoundErrorNameCheck:
 
         # Old pattern would incorrectly match: missing_module.startswith("traigent.cloud")
         # New pattern correctly rejects:
-        is_cloud = (
-            missing_module == "traigent.cloud"
-            or missing_module.startswith("traigent.cloud.")
+        is_cloud = missing_module == "traigent.cloud" or missing_module.startswith(
+            "traigent.cloud."
         )
         assert not is_cloud, "Should not match 'traigent.cloudy'"
 
@@ -152,9 +149,8 @@ class TestModuleNotFoundErrorNameCheck:
 
         missing_module = getattr(err, "name", "") or ""
 
-        is_cloud = (
-            missing_module == "traigent.cloud"
-            or missing_module.startswith("traigent.cloud.")
+        is_cloud = missing_module == "traigent.cloud" or missing_module.startswith(
+            "traigent.cloud."
         )
         assert is_cloud
 

@@ -77,25 +77,21 @@ class TestConfigurationIntegration:
         sig = inspect.signature(test_function.func)  # Original function
         assert "config" in sig.parameters
 
-    def test_decorator_based_injection(self):
-        """Test decorator-based configuration injection."""
+    def test_seamless_based_injection(self):
+        """Test seamless-based configuration injection."""
 
         @optimize(
             eval_dataset=self.dataset_path,
             configuration_space={"multiplier": [1, 2]},
-            injection_mode="attribute",
+            injection_mode="seamless",
         )
         def test_function(text: str) -> str:
-            config = test_function.current_config
-            multiplier = config.get("multiplier", 1)
-            return text.upper() * multiplier
+            # Seamless mode modifies variable assignments in source code
+            return text.upper()
 
         # Test that function works
         result = test_function("hello")
-        assert result in ["HELLO", "HELLOHELLO"]
-
-        # Check that config is accessible
-        assert hasattr(test_function, "current_config")
+        assert result == "HELLO"
 
     def test_invalid_injection_mode(self):
         """Test error for invalid injection mode."""
