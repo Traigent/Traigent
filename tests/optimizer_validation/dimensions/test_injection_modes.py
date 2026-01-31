@@ -32,8 +32,8 @@ from tests.optimizer_validation.specs import (
     basic_scenario,
 )
 
-# All supported injection modes
-INJECTION_MODES = ["context", "parameter", "attribute", "seamless"]
+# All supported injection modes (attribute was removed in v2.x)
+INJECTION_MODES = ["context", "parameter", "seamless"]
 
 
 class TestInjectionModeMatrix:
@@ -289,6 +289,9 @@ class TestParameterInjection:
         assert validation.passed, validation.summary()
 
 
+@pytest.mark.skip(
+    reason="attribute injection mode was removed in v2.x - use context, parameter, or seamless instead"
+)
 class TestAttributeInjection:
     """Tests specific to ATTRIBUTE injection mode.
 

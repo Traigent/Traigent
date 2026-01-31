@@ -439,11 +439,12 @@ class TestOptunaInjectionModes:
         configuration injection strategies.
 
     Coverage Gap Addressed:
-        Only context injection was tested; adding seamless, parameter, attribute.
+        Only context injection was tested; adding seamless, parameter.
     """
 
+    # Note: attribute injection mode was removed in v2.x
     @pytest.mark.parametrize("algorithm", OPTUNA_ALGORITHMS)
-    @pytest.mark.parametrize("injection_mode", ["seamless", "parameter", "attribute"])
+    @pytest.mark.parametrize("injection_mode", ["seamless", "parameter"])
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_optuna_injection_modes(
