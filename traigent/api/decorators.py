@@ -1390,6 +1390,7 @@ def optimize(
         logger.debug("Traigent disabled via TRAIGENT_DISABLED env var, returning no-op")
 
         def passthrough_decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            """No-op decorator that returns the function unchanged when Traigent is disabled."""
             return func
 
         return passthrough_decorator
