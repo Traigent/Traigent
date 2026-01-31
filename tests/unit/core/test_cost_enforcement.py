@@ -19,6 +19,7 @@ from traigent.api.types import TrialResult, TrialStatus
 from traigent.core.cost_enforcement import (
     CostEnforcer,
     CostEnforcerConfig,
+    CostEstimate,
     CostLimitExceeded,
     CostStatus,
     OptimizationAborted,
@@ -1066,3 +1067,382 @@ class TestCostEnforcerApprovalToken:
         assert enforcer._active_permits == {}
         assert enforcer._sync_used is False
         assert enforcer._async_used is False
+
+
+# =============================================================================
+# Adaptive Cost Estimation Tests (Issue #66)
+# =============================================================================
+
+
+class TestAdaptiveCostEstimation:
+    """Tests for adaptive cost estimation features."""
+
+    @pytest.fixture(autouse=True)
+    def clear_mock_mode(self) -> Generator[None, None, None]:
+        """Ensure mock mode is disabled for tests that need real tracking."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+            yield
+
+    def test_cost_confidence_low_with_few_samples(self) -> None:
+        """Confidence is low with few cost samples."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # No samples
+        confidence = enforcer.get_cost_confidence()
+        assert confidence <= 0.5
+
+        # Add one sample
+        permit = enforcer.acquire_permit()
+        enforcer.track_cost(0.05, permit=permit)
+
+        confidence = enforcer.get_cost_confidence()
+        assert 0.3 <= confidence <= 0.6
+
+    def test_cost_confidence_increases_with_samples(self) -> None:
+        """Confidence increases as more samples are collected."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=100.0))
+
+        # Add consistent cost samples
+        for _ in range(5):
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.05, permit=permit)
+
+        confidence_5 = enforcer.get_cost_confidence()
+
+        # Add more samples
+        for _ in range(5):
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.05, permit=permit)
+
+        confidence_10 = enforcer.get_cost_confidence()
+
+        # Confidence should increase (or stay high) with more consistent samples
+        assert confidence_10 >= confidence_5 * 0.9  # Allow small variation
+
+    def test_cost_confidence_low_with_high_variance(self) -> None:
+        """Confidence is low when costs vary significantly."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=100.0))
+
+        # Add highly variable cost samples
+        costs = [0.01, 0.10, 0.02, 0.15, 0.01, 0.20]
+        for cost in costs:
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(cost, permit=permit)
+
+        confidence = enforcer.get_cost_confidence()
+        # High variance = low confidence
+        assert confidence < 0.7
+
+    def test_estimate_remaining_cost_initial(self) -> None:
+        """Remaining cost estimate uses initial value with few samples."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+        )
+
+        # No samples yet
+        estimate = enforcer.estimate_remaining_cost(10)
+
+        assert isinstance(estimate, CostEstimate)
+        assert estimate.samples_used == 0
+        # Initial estimate: 0.05 * 10 * 1.2 (safety margin) = 0.6
+        assert 0.5 <= estimate.estimated_remaining_cost <= 0.7
+        assert estimate.confidence <= 0.5
+
+    def test_estimate_remaining_cost_adaptive(self) -> None:
+        """Remaining cost estimate adapts to observed costs."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+        )
+
+        # Add samples with higher cost than initial estimate
+        for _ in range(5):
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.10, permit=permit)  # 2x initial estimate
+
+        estimate = enforcer.estimate_remaining_cost(10)
+
+        assert estimate.samples_used == 5
+        # Should be based on observed 0.10 average, not initial 0.05
+        assert estimate.estimated_remaining_cost > 0.10 * 10  # At least 10 * 0.10
+
+    def test_estimate_remaining_cost_safety_margin(self) -> None:
+        """Safety margin is applied to remaining cost estimate."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=100.0))
+
+        # Add consistent samples
+        for _ in range(5):
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.10, permit=permit)
+
+        estimate_default = enforcer.estimate_remaining_cost(10)
+        estimate_high_margin = enforcer.estimate_remaining_cost(10, safety_margin=2.0)
+
+        # Higher safety margin = higher estimate
+        assert (
+            estimate_high_margin.estimated_remaining_cost
+            > estimate_default.estimated_remaining_cost
+        )
+        # Safety margin is adjusted based on confidence, so it may be >= requested
+        assert estimate_high_margin.safety_margin >= 2.0
+
+    def test_cost_status_includes_confidence(self) -> None:
+        """CostStatus includes estimated cost and confidence."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Add some samples
+        for _ in range(3):
+            permit = enforcer.acquire_permit()
+            enforcer.track_cost(0.05, permit=permit)
+
+        status = enforcer.get_status()
+
+        assert hasattr(status, "estimated_cost_per_trial")
+        assert hasattr(status, "cost_confidence")
+        assert status.estimated_cost_per_trial > 0
+        assert 0.0 <= status.cost_confidence <= 1.0
+
+
+class TestCostDivergenceWarning:
+    """Tests for cost divergence warning logs."""
+
+    @pytest.fixture(autouse=True)
+    def clear_mock_mode(self) -> Generator[None, None, None]:
+        """Ensure mock mode is disabled for tests that need real tracking."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+            yield
+
+    def test_high_divergence_logs_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Warning is logged when actual cost diverges high from estimate."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+        )
+
+        # Track a cost 3x higher than estimate (default threshold is 2.0)
+        permit = enforcer.acquire_permit()
+        with caplog.at_level("WARNING"):
+            enforcer.track_cost(0.15, permit=permit)  # 3x higher
+
+        assert any("divergence" in record.message.lower() for record in caplog.records)
+
+    def test_low_divergence_logs_info(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Info is logged when actual cost is much lower than estimate."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.10)
+        )
+
+        # Track a cost 3x lower than estimate
+        permit = enforcer.acquire_permit()
+        with caplog.at_level("INFO"):
+            enforcer.track_cost(0.03, permit=permit)  # ~3x lower
+
+        assert any(
+            "below estimate" in record.message.lower() for record in caplog.records
+        )
+
+    def test_normal_cost_no_divergence_warning(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """No warning when cost is within normal range of estimate."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+        )
+
+        # Track a cost close to estimate (1.5x)
+        permit = enforcer.acquire_permit()
+        with caplog.at_level("WARNING"):
+            enforcer.track_cost(0.075, permit=permit)  # 1.5x - within threshold
+
+        assert not any(
+            "divergence" in record.message.lower() for record in caplog.records
+        )
+
+    def test_custom_divergence_threshold(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Custom divergence threshold from environment variable."""
+        enforcer = CostEnforcer(
+            config=CostEnforcerConfig(limit=100.0, estimated_cost_per_trial=0.05)
+        )
+
+        # Set higher threshold (4.0x)
+        with patch.dict(os.environ, {"TRAIGENT_COST_DIVERGENCE_THRESHOLD": "4.0"}):
+            permit = enforcer.acquire_permit()
+            with caplog.at_level("WARNING"):
+                enforcer.track_cost(0.15, permit=permit)  # 3x - now within threshold
+
+        # Should NOT log warning since 3x < 4x threshold
+        assert not any(
+            "divergence" in record.message.lower()
+            for record in caplog.records
+            if record.levelname == "WARNING"
+        )
+
+
+class TestCostEstimateDataclass:
+    """Tests for CostEstimate dataclass."""
+
+    def test_cost_estimate_fields(self) -> None:
+        """CostEstimate has expected fields."""
+        estimate = CostEstimate(
+            estimated_remaining_cost=1.5,
+            confidence=0.8,
+            samples_used=10,
+            safety_margin=1.2,
+        )
+
+        assert estimate.estimated_remaining_cost == 1.5
+        assert estimate.confidence == 0.8
+        assert estimate.samples_used == 10
+        assert estimate.safety_margin == 1.2
+
+    def test_cost_estimate_default_margin(self) -> None:
+        """CostEstimate has default safety margin."""
+        estimate = CostEstimate(
+            estimated_remaining_cost=1.0,
+            confidence=0.5,
+            samples_used=5,
+        )
+
+        assert estimate.safety_margin == 1.2  # Default
+
+
+class TestCostEnforcerInvariants:
+    """Tests for invariant verification methods."""
+
+    @pytest.fixture(autouse=True)
+    def clear_mock_mode(self) -> Generator[None, None, None]:
+        """Ensure mock mode is disabled for tests that need real tracking."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+            yield
+
+    def test_verify_invariants_passes_on_valid_state(self) -> None:
+        """_verify_invariants returns empty list for valid state."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Fresh enforcer should have no violations
+        violations = enforcer._verify_invariants()
+        assert violations == []
+
+    def test_assert_invariants_passes_on_valid_state(self) -> None:
+        """assert_invariants doesn't raise for valid state."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Should not raise
+        enforcer.assert_invariants()
+
+    def test_verify_invariants_detects_negative_in_flight(self) -> None:
+        """_verify_invariants detects negative in_flight_count."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Manually corrupt state to test invariant detection
+        enforcer._in_flight_count = -1
+
+        violations = enforcer._verify_invariants()
+        assert len(violations) >= 1
+        assert any("I1 violated" in v for v in violations)
+
+    def test_verify_invariants_detects_mismatched_permits(self) -> None:
+        """_verify_invariants detects mismatch between permits and count."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Corrupt state: count doesn't match permits dict
+        enforcer._in_flight_count = 2
+        enforcer._active_permits = {}  # Empty but count says 2
+
+        violations = enforcer._verify_invariants()
+        assert any("I3 violated" in v for v in violations)
+
+    def test_assert_invariants_raises_on_violation(self) -> None:
+        """assert_invariants raises AssertionError on violation."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Corrupt state
+        enforcer._reserved_cost = -1.0
+
+        with pytest.raises(AssertionError, match="invariant violations"):
+            enforcer.assert_invariants()
+
+    def test_invariants_hold_after_operations(self) -> None:
+        """Invariants hold after normal operations."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Perform various operations
+        permit1 = enforcer.acquire_permit()
+        enforcer.assert_invariants()
+
+        permit2 = enforcer.acquire_permit()
+        enforcer.assert_invariants()
+
+        enforcer.track_cost(0.1, permit=permit1)
+        enforcer.assert_invariants()
+
+        enforcer.release_permit(permit2)
+        enforcer.assert_invariants()
+
+
+class TestCostEnforcerEdgeCases:
+    """Tests for edge cases and boundary conditions."""
+
+    @pytest.fixture(autouse=True)
+    def clear_mock_mode(self) -> Generator[None, None, None]:
+        """Ensure mock mode is disabled for tests that need real tracking."""
+        with patch.dict(os.environ, {"TRAIGENT_MOCK_LLM": "false"}):
+            yield
+
+    def test_check_thresholds_zero_limit(self) -> None:
+        """_check_thresholds handles zero limit gracefully."""
+        config = CostEnforcerConfig(limit=0.0)
+        enforcer = CostEnforcer(config=config)
+
+        # Should not raise or divide by zero
+        enforcer._check_thresholds()
+
+    def test_cost_confidence_with_zero_mean(self) -> None:
+        """get_cost_confidence handles edge case of zero mean."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        # Add zero-cost samples
+        enforcer._cost_samples = [0.0, 0.0, 0.0]
+
+        # Should return low confidence, not crash
+        confidence = enforcer.get_cost_confidence()
+        assert 0.0 <= confidence <= 1.0
+
+    def test_safe_int_valid_value(self) -> None:
+        """safe_int returns valid parsed value."""
+        with patch.dict(os.environ, {"TRAIGENT_FALLBACK_TRIAL_LIMIT": "25"}):
+            enforcer = CostEnforcer()
+            assert enforcer.config.fallback_trial_limit == 25
+
+    def test_safe_int_invalid_string(self) -> None:
+        """safe_int handles non-numeric string."""
+        with patch.dict(os.environ, {"TRAIGENT_FALLBACK_TRIAL_LIMIT": "not_a_number"}):
+            enforcer = CostEnforcer()
+            # Should fall back to default
+            assert enforcer.config.fallback_trial_limit == 10
+
+    @pytest.mark.asyncio
+    async def test_release_permit_async_double_release(self) -> None:
+        """Async release_permit handles double-release gracefully."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        permit = await enforcer.acquire_permit_async()
+        result1 = await enforcer.release_permit_async(permit)
+        assert result1 is True
+
+        result2 = await enforcer.release_permit_async(permit)
+        assert result2 is False
+
+    @pytest.mark.asyncio
+    async def test_track_cost_async_already_released_permit(self) -> None:
+        """track_cost_async handles already-released permit."""
+        enforcer = CostEnforcer(config=CostEnforcerConfig(limit=10.0))
+
+        permit = await enforcer.acquire_permit_async()
+        await enforcer.release_permit_async(permit)
+
+        # Track cost on already-released permit - should still track cost
+        await enforcer.track_cost_async(0.1, permit=permit)
+        assert enforcer.accumulated_cost == 0.1
