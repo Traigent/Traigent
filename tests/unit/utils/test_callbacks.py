@@ -1904,3 +1904,118 @@ class TestCallbackManagerTimeoutAndIsolation:
         # All 4 timeouts should be recorded
         assert len(manager.callback_failures) == 4
         assert all(f.error_type == "timeout" for f in manager.callback_failures)
+
+    def test_exception_with_timeout_enabled(
+        self, mock_callback: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test exception is recorded when timeout is enabled (ThreadPoolExecutor path).
+
+        This test ensures the exception handling path inside the ThreadPoolExecutor
+        try block is exercised (lines 538-543 in callbacks.py).
+        """
+        mock_callback.on_optimization_start.side_effect = ValueError("Executor exception")
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)  # Timeout enabled
+        caplog.set_level(logging.WARNING)
+
+        manager.on_optimization_start({"model": ["gpt-4"]}, ["accuracy"], "grid")
+
+        assert len(manager.callback_failures) == 1
+        failure = manager.callback_failures[0]
+        assert failure.callback_name == "MockCallback"
+        assert failure.method == "on_optimization_start"
+        assert failure.error_type == "exception"
+        assert "Executor exception" in failure.error_message
+        assert any("failed" in record.message.lower() for record in caplog.records)
+
+    def test_successful_callback_with_timeout_enabled(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test successful callback execution when timeout is enabled.
+
+        This ensures the happy path through ThreadPoolExecutor is covered.
+        """
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)
+
+        manager.on_optimization_start({"model": ["gpt-4"]}, ["accuracy"], "grid")
+
+        # No failures should be recorded
+        assert len(manager.callback_failures) == 0
+        mock_callback.on_optimization_start.assert_called_once()
+
+    def test_multiple_callbacks_with_timeout_mixed_results(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Test multiple callbacks with timeout where one fails and one succeeds.
+
+        This tests the ThreadPoolExecutor path with mixed success/failure.
+        """
+        failing_callback = MagicMock(spec=OptimizationCallback)
+        failing_callback.on_trial_start.side_effect = RuntimeError("Callback crashed")
+
+        success_callback = MagicMock(spec=OptimizationCallback)
+
+        manager = CallbackManager(
+            callbacks=[failing_callback, success_callback], timeout=5.0  # Timeout enabled
+        )
+        caplog.set_level(logging.WARNING)
+
+        manager.on_trial_start(0, {"model": "gpt-4"})
+
+        # First callback should fail, second should succeed
+        assert len(manager.callback_failures) == 1
+        assert manager.callback_failures[0].error_type == "exception"
+        assert "Callback crashed" in manager.callback_failures[0].error_message
+        success_callback.on_trial_start.assert_called_once()
+
+    def test_all_callback_methods_with_timeout_enabled(
+        self, mock_callback: MagicMock
+    ) -> None:
+        """Test all callback methods work correctly with timeout enabled."""
+        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)
+
+        # Test all methods execute successfully
+        manager.on_optimization_start({"model": ["gpt-4"]}, ["accuracy"], "grid")
+        manager.on_trial_start(0, {"model": "gpt-4"})
+
+        trial = TrialResult(
+            trial_id="trial_1",
+            config={"model": "gpt-4"},
+            metrics={"accuracy": 0.85},
+            status=TrialStatus.COMPLETED,
+            duration=10.0,
+            timestamp=datetime.now(UTC),
+        )
+        progress = ProgressInfo(
+            current_trial=1,
+            total_trials=10,
+            completed_trials=1,
+            successful_trials=1,
+            failed_trials=0,
+            best_score=0.85,
+            best_config={"model": "gpt-4"},
+            elapsed_time=10.0,
+            estimated_remaining=90.0,
+            current_algorithm="grid",
+        )
+        manager.on_trial_complete(trial, progress)
+
+        result = OptimizationResult(
+            trials=[],
+            best_config={"model": "gpt-4"},
+            best_score=0.92,
+            optimization_id="opt_1",
+            duration=120.5,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="grid",
+            timestamp=datetime.now(UTC),
+        )
+        manager.on_optimization_complete(result)
+
+        # All methods should be called, no failures
+        assert len(manager.callback_failures) == 0
+        mock_callback.on_optimization_start.assert_called_once()
+        mock_callback.on_trial_start.assert_called_once()
+        mock_callback.on_trial_complete.assert_called_once()
+        mock_callback.on_optimization_complete.assert_called_once()
