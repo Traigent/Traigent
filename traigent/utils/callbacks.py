@@ -513,7 +513,11 @@ class CallbackManager:
 
         # Use ThreadPoolExecutor for timeout protection
         # Note: We don't use context manager to avoid blocking on shutdown
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        # In Python 3.9+, executor threads are daemon by default, allowing
+        # clean process exit even if callbacks are blocked
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="callback"
+        )
         try:
             future = executor.submit(method_func, *args)
             try:
