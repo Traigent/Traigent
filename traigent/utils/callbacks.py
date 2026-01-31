@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..utils.logging import get_logger
@@ -430,16 +432,159 @@ class SimpleProgressCallback(OptimizationCallback):
                 self._output(f"⚙️  Best config: {result.best_config}")
 
 
-class CallbackManager:
-    """Manages multiple optimization callbacks."""
+@dataclass
+class CallbackFailure:
+    """Records a callback failure for reporting.
 
-    def __init__(self, callbacks: list[OptimizationCallback] | None = None) -> None:
+    Attributes:
+        callback_name: Name of the callback class that failed
+        method: The callback method that failed (e.g., 'on_trial_complete')
+        error_type: Type of error ('timeout' or 'exception')
+        error_message: Human-readable error description
+        timestamp: When the failure occurred
+    """
+
+    callback_name: str
+    method: str
+    error_type: str  # 'timeout' or 'exception'
+    error_message: str
+    timestamp: float = field(default_factory=time.time)
+
+
+class CallbackManager:
+    """Manages multiple optimization callbacks with timeout and exception isolation.
+
+    This class ensures that callback failures (exceptions or timeouts) do not
+    block or crash the optimization process. All failures are logged and tracked
+    for reporting.
+
+    Attributes:
+        callbacks: List of registered callbacks
+        timeout: Maximum seconds to wait for a callback (default 5.0)
+        callback_failures: List of recorded callback failures
+    """
+
+    DEFAULT_TIMEOUT: float = 5.0
+
+    def __init__(
+        self,
+        callbacks: list[OptimizationCallback] | None = None,
+        timeout: float | None = None,
+    ) -> None:
         """Initialize callback manager.
 
         Args:
             callbacks: List of callback instances
+            timeout: Maximum seconds to wait for a callback (default 5.0).
+                Set to None or 0 to disable timeout protection.
         """
         self.callbacks = callbacks or []
+        self.timeout = timeout if timeout is not None else self.DEFAULT_TIMEOUT
+        self.callback_failures: list[CallbackFailure] = []
+
+    def _invoke_callback_safe(
+        self,
+        callback: OptimizationCallback,
+        method_name: str,
+        method_func: Callable[..., Any],
+        *args: Any,
+    ) -> None:
+        """Safely invoke a callback method with timeout and exception handling.
+
+        Args:
+            callback: The callback instance
+            method_name: Name of the method being called (for logging)
+            method_func: The actual method to call
+            *args: Arguments to pass to the method
+        """
+        callback_name = callback.__class__.__name__
+
+        # If timeout is disabled, invoke directly with exception handling only
+        if not self.timeout or self.timeout <= 0:
+            try:
+                method_func(*args)
+            except Exception as e:
+                self._record_failure(callback_name, method_name, "exception", str(e))
+                logger.warning(
+                    f"Callback {callback_name}.{method_name} failed: {e} "
+                    "- continuing optimization"
+                )
+            return
+
+        # Use ThreadPoolExecutor for timeout protection
+        # Note: We don't use context manager to avoid blocking on shutdown
+        # In Python 3.9+, executor threads are daemon by default, allowing
+        # clean process exit even if callbacks are blocked
+        executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="callback"
+        )
+        try:
+            future = executor.submit(method_func, *args)
+            try:
+                future.result(timeout=self.timeout)
+            except concurrent.futures.TimeoutError:
+                self._record_failure(
+                    callback_name,
+                    method_name,
+                    "timeout",
+                    f"Timed out after {self.timeout}s",
+                )
+                logger.warning(
+                    f"Callback {callback_name}.{method_name} timed out "
+                    f"after {self.timeout}s - continuing optimization"
+                )
+                # Cancel if possible (may not stop already-running threads)
+                future.cancel()
+            except Exception as e:
+                self._record_failure(callback_name, method_name, "exception", str(e))
+                logger.warning(
+                    f"Callback {callback_name}.{method_name} failed: {e} "
+                    "- continuing optimization"
+                )
+        finally:
+            # Don't wait for threads to finish - they may be blocked
+            executor.shutdown(wait=False)
+
+    def _record_failure(
+        self, callback_name: str, method: str, error_type: str, error_message: str
+    ) -> None:
+        """Record a callback failure for later reporting."""
+        self.callback_failures.append(
+            CallbackFailure(
+                callback_name=callback_name,
+                method=method,
+                error_type=error_type,
+                error_message=error_message,
+            )
+        )
+
+    def get_failure_summary(self) -> dict[str, Any]:
+        """Get a summary of all callback failures.
+
+        Returns:
+            Dictionary with failure counts and details
+        """
+        if not self.callback_failures:
+            return {"total_failures": 0, "failures": []}
+
+        return {
+            "total_failures": len(self.callback_failures),
+            "timeout_count": sum(
+                1 for f in self.callback_failures if f.error_type == "timeout"
+            ),
+            "exception_count": sum(
+                1 for f in self.callback_failures if f.error_type == "exception"
+            ),
+            "failures": [
+                {
+                    "callback": f.callback_name,
+                    "method": f.method,
+                    "type": f.error_type,
+                    "message": f.error_message,
+                }
+                for f in self.callback_failures
+            ],
+        }
 
     def add_callback(self, callback: OptimizationCallback) -> None:
         """Add a callback."""
@@ -459,36 +604,46 @@ class CallbackManager:
         )
         for i, callback in enumerate(self.callbacks):
             logger.debug(f"Calling callback {i}: {callback.__class__.__name__}")
-            try:
-                callback.on_optimization_start(config_space, objectives, algorithm)
-            except Exception as e:
-                logger.warning(
-                    f"Callback error in on_optimization_start: {e}", exc_info=True
-                )
+            self._invoke_callback_safe(
+                callback,
+                "on_optimization_start",
+                callback.on_optimization_start,
+                config_space,
+                objectives,
+                algorithm,
+            )
 
     def on_trial_start(self, trial_number: int, config: dict[str, Any]) -> None:
         """Notify all callbacks of trial start."""
         for callback in self.callbacks:
-            try:
-                callback.on_trial_start(trial_number, config)
-            except Exception as e:
-                logger.warning(f"Callback error in on_trial_start: {e}")
+            self._invoke_callback_safe(
+                callback,
+                "on_trial_start",
+                callback.on_trial_start,
+                trial_number,
+                config,
+            )
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Notify all callbacks of trial completion."""
         for callback in self.callbacks:
-            try:
-                callback.on_trial_complete(trial, progress)
-            except Exception as e:
-                logger.warning(f"Callback error in on_trial_complete: {e}")
+            self._invoke_callback_safe(
+                callback,
+                "on_trial_complete",
+                callback.on_trial_complete,
+                trial,
+                progress,
+            )
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Notify all callbacks of optimization completion."""
         for callback in self.callbacks:
-            try:
-                callback.on_optimization_complete(result)
-            except Exception as e:
-                logger.warning(f"Callback error in on_optimization_complete: {e}")
+            self._invoke_callback_safe(
+                callback,
+                "on_optimization_complete",
+                callback.on_optimization_complete,
+                result,
+            )
 
 
 class DetailedProgressCallback(OptimizationCallback):
