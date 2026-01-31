@@ -38,8 +38,8 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Run only core tests to reduce execution time and resource usage
-          pytest tests/unit/core/ tests/unit/api/ tests/unit/tvl/ \
+          # Run core tests and utils tests to ensure coverage for all changed code
+          pytest tests/unit/core/ tests/unit/api/ tests/unit/tvl/ tests/unit/utils/ \
             --cov=traigent \
             --cov-report=xml \
             --cov-report=term \
