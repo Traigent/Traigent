@@ -409,17 +409,13 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully - no valid configs exist
-        # May result in error or empty results
-
-        # Verify trials were executed with valid configs
+        # When all configs are rejected by constraint, we get 0 trials
         if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
+            assert (
+                len(result.trials) == 0
+            ), "Should have 0 trials (all configs rejected)"
 
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        # Skip validator - it expects trials, but none exist when all rejected
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -444,18 +440,13 @@ class TestConstraintEdgeCases:
 
         _, result = await scenario_runner(scenario)
 
-        # None is falsy, so should act like False
-        # Document observed behavior
-
-        # Verify trials were executed with valid configs
+        # None is falsy, so should act like False - all configs rejected
         if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
+            assert (
+                len(result.trials) == 0
+            ), "Should have 0 trials (None returns = falsy = rejected)"
 
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        # Skip validator - it expects trials, but none exist when all rejected
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -481,16 +472,13 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle exception gracefully
-
-        # Verify trials were executed with valid configs
+        # Exception in constraint = rejection, all configs rejected = 0 trials
         if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
+            assert (
+                len(result.trials) == 0
+            ), "Should have 0 trials (exception = rejection)"
 
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        # Skip validator - it expects trials, but none exist when all rejected
 
     @pytest.mark.unit
     @pytest.mark.asyncio

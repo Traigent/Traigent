@@ -286,7 +286,7 @@ class TestCustomEvaluatorWithInjectionModes:
 
     @pytest.mark.parametrize(
         "injection_mode",
-        ["context", "parameter", "attribute", "seamless"],
+        ["context", "parameter", "seamless"],  # attribute removed in v2.x
     )
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -924,12 +924,11 @@ class TestWeightedObjectivesWithInjectionModes:
     Coverage Gap Addressed:
         Weighted × seamless injection
         Weighted × parameter injection
-        Weighted × attribute injection
     """
 
     @pytest.mark.parametrize(
         "injection_mode",
-        ["context", "parameter", "attribute", "seamless"],
+        ["context", "parameter", "seamless"],  # attribute removed in v2.x
     )
     @pytest.mark.unit
     @pytest.mark.asyncio

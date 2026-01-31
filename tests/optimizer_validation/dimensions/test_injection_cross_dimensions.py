@@ -37,11 +37,11 @@ from tests.optimizer_validation.specs import (
     TestScenario,
 )
 
-# All injection modes
-INJECTION_MODES = ["context", "parameter", "attribute", "seamless"]
+# All injection modes (attribute was removed in v2.x)
+INJECTION_MODES = ["context", "parameter", "seamless"]
 
 # Non-context injection modes (these have more gaps)
-NON_CONTEXT_MODES = ["parameter", "attribute", "seamless"]
+NON_CONTEXT_MODES = ["parameter", "seamless"]
 
 
 class TestInjectionModeWithAlgorithms:
