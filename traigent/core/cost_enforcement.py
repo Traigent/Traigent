@@ -4,18 +4,29 @@ Provides thread-safe real-time cost tracking with user handshake approval.
 This is the single source of truth for cost tracking - shared by orchestrator
 and stop conditions to avoid double counting.
 
+Adaptive Cost Estimation:
+    The module uses adaptive cost estimation based on observed trial costs:
+    - Initial estimates use configured estimated_cost_per_trial
+    - After trials complete, estimates update via exponential moving average (EMA)
+    - Confidence levels indicate reliability of estimates (0.0-1.0)
+    - Warnings log when estimates diverge significantly from reality
+
 Environment Variables:
     TRAIGENT_RUN_COST_LIMIT: Maximum USD spending per optimization run (default: 2.0)
     TRAIGENT_COST_APPROVED: Skip handshake if "true" (default: false)
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_MOCK_LLM: Bypass all cost tracking when "true" (no real LLM costs)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
+    TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
+        this value (default: 2.0, meaning 2x divergence triggers warning)
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import os
+import statistics
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -109,6 +120,29 @@ class CostEnforcerConfig:
 
 
 @dataclass
+class CostEstimate:
+    """Adaptive cost estimation result.
+
+    Provides estimated remaining cost with confidence level based on
+    observed trial cost variance.
+
+    Attributes:
+        estimated_remaining_cost: Estimated cost for remaining trials in USD
+        confidence: Confidence level (0.0-1.0) based on observed variance
+            - 0.0-0.3: Low confidence (few samples or high variance)
+            - 0.3-0.7: Medium confidence (moderate samples and variance)
+            - 0.7-1.0: High confidence (many samples, low variance)
+        samples_used: Number of cost samples used for estimation
+        safety_margin: Safety margin multiplier applied (default 1.2)
+    """
+
+    estimated_remaining_cost: float
+    confidence: float
+    samples_used: int
+    safety_margin: float = 1.2
+
+
+@dataclass
 class CostStatus:
     """Current cost tracking status for logging/auditing."""
 
@@ -120,6 +154,8 @@ class CostStatus:
     warning_threshold_reached: bool = field(default=False)
     in_flight_count: int = field(default=0)
     reserved_cost_usd: float = field(default=0.0)
+    estimated_cost_per_trial: float = field(default=0.05)
+    cost_confidence: float = field(default=0.5)
 
 
 class CostEnforcer:
@@ -774,10 +810,14 @@ Options:
 
         Called with lock held. Uses EMA with alpha=0.3 to balance responsiveness
         with stability. Also maintains a sample buffer for more accurate estimates.
+        Logs warning if actual cost diverges significantly from estimate.
 
         Args:
             actual_cost: The actual cost observed for a trial.
         """
+        # Check for divergence before updating estimate
+        self._check_cost_divergence(actual_cost)
+
         # Keep last 10 samples for reference
         self._cost_samples.append(actual_cost)
         if len(self._cost_samples) > 10:
@@ -786,6 +826,127 @@ Options:
         # Use exponential moving average for estimation
         alpha = 0.3  # Weight for new observations
         self._estimated_cost = alpha * actual_cost + (1 - alpha) * self._estimated_cost
+
+    def _check_cost_divergence(self, actual_cost: float) -> None:
+        """Check if actual cost diverges significantly from estimate.
+
+        Called with lock held. Logs warning if ratio exceeds threshold.
+        Configured via TRAIGENT_COST_DIVERGENCE_THRESHOLD (default 2.0).
+
+        Args:
+            actual_cost: The actual cost observed for a trial.
+        """
+        if self._estimated_cost <= 0 or actual_cost <= 0:
+            return
+
+        threshold_str = os.getenv("TRAIGENT_COST_DIVERGENCE_THRESHOLD", "2.0")
+        try:
+            threshold = float(threshold_str)
+        except ValueError:
+            threshold = 2.0
+
+        ratio = actual_cost / self._estimated_cost
+
+        if ratio > threshold:
+            logger.warning(
+                "Cost divergence detected: actual $%.4f is %.1fx higher than "
+                "estimated $%.4f. Estimates may be inaccurate.",
+                actual_cost,
+                ratio,
+                self._estimated_cost,
+            )
+        elif ratio < 1 / threshold:
+            logger.info(
+                "Cost below estimate: actual $%.4f is %.1fx lower than "
+                "estimated $%.4f. Adjusting estimates.",
+                actual_cost,
+                1 / ratio,
+                self._estimated_cost,
+            )
+
+    def get_cost_confidence(self) -> float:
+        """Calculate confidence level for cost estimates.
+
+        Confidence is based on the coefficient of variation (CV) of observed
+        cost samples. Lower variance relative to mean = higher confidence.
+
+        Returns:
+            Confidence level between 0.0 and 1.0:
+            - 0.0-0.3: Low confidence (few samples or high variance)
+            - 0.3-0.7: Medium confidence (moderate samples/variance)
+            - 0.7-1.0: High confidence (many samples, low variance)
+        """
+        with self._lock:
+            if len(self._cost_samples) < 3:
+                # Too few samples for reliable confidence
+                return 0.5 if len(self._cost_samples) > 0 else 0.3
+
+            try:
+                mean = statistics.mean(self._cost_samples)
+                if mean <= 0:
+                    return 0.3
+
+                variance = statistics.variance(self._cost_samples)
+                # Coefficient of variation (CV) = std_dev / mean
+                cv = math.sqrt(variance) / mean
+
+                # Map CV to confidence: CV=0 -> conf=1.0, CV=1 -> conf=0.1
+                # Using exponential decay for smooth mapping
+                confidence = math.exp(-cv * 2)
+
+                # Adjust based on sample count (more samples = higher confidence)
+                sample_factor = min(len(self._cost_samples) / 10.0, 1.0)
+                confidence = confidence * (0.5 + 0.5 * sample_factor)
+
+                return max(0.1, min(1.0, confidence))
+
+            except (statistics.StatisticsError, ValueError, ZeroDivisionError):
+                return 0.3
+
+    def estimate_remaining_cost(
+        self, remaining_trials: int, *, safety_margin: float = 1.2
+    ) -> CostEstimate:
+        """Estimate cost for remaining trials with confidence.
+
+        Uses adaptive estimation based on observed trial costs:
+        - Before 3 trials: Uses initial estimate
+        - After 3+ trials: Uses rolling average with confidence-based margin
+
+        Args:
+            remaining_trials: Number of trials still to execute
+            safety_margin: Multiplier to add safety buffer (default 1.2 = 20%)
+
+        Returns:
+            CostEstimate with estimated remaining cost and confidence level
+        """
+        with self._lock:
+            confidence = self.get_cost_confidence()
+            samples_used = len(self._cost_samples)
+
+            if samples_used < 3:
+                # Use initial estimate with low confidence
+                estimated = self._estimated_cost * remaining_trials * safety_margin
+                return CostEstimate(
+                    estimated_remaining_cost=estimated,
+                    confidence=confidence,
+                    samples_used=samples_used,
+                    safety_margin=safety_margin,
+                )
+
+            # Use rolling average of recent samples (more stable than EMA)
+            recent_avg = statistics.mean(self._cost_samples[-10:])
+
+            # Adjust safety margin based on confidence (lower confidence = higher margin)
+            adjusted_margin = safety_margin + (1 - confidence) * 0.5
+
+            estimated = recent_avg * remaining_trials * adjusted_margin
+
+            return CostEstimate(
+                estimated_remaining_cost=estimated,
+                confidence=confidence,
+                samples_used=samples_used,
+                safety_margin=adjusted_margin,
+            )
 
     def _check_thresholds(self) -> None:
         """Check and log warnings at cost thresholds (called with lock held)."""
@@ -903,7 +1064,7 @@ Options:
         """Get current cost tracking status for logging/auditing.
 
         Returns:
-            CostStatus with current tracking state.
+            CostStatus with current tracking state including cost confidence.
         """
         with self._lock:
             pct = (
@@ -920,6 +1081,8 @@ Options:
                 warning_threshold_reached=pct >= self.config.warning_threshold,
                 in_flight_count=self._in_flight_count,
                 reserved_cost_usd=self._reserved_cost,
+                estimated_cost_per_trial=self._estimated_cost,
+                cost_confidence=self.get_cost_confidence(),
             )
 
     def reset(self) -> None:
