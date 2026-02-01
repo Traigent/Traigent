@@ -849,7 +849,7 @@ class TestInvalidConstraintSignatures:
         result_validator,
     ) -> None:
         """Test constraint function with no parameters."""
-        from tests.optimizer_validation.specs import ConstraintSpec
+        from tests.optimizer_validation.specs import ConstraintSpec, ExpectedResult
 
         def no_params() -> bool:
             return True
@@ -865,22 +865,22 @@ class TestInvalidConstraintSignatures:
                 )
             ],
             max_trials=2,
+            # Constraint with invalid signature (no params) will reject all configs
+            expected=ExpectedResult(min_trials=0, max_trials=0),
             gist_template="no-param-const -> {error_type()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
 
-        # Verify trials were executed with valid configs
+        # Constraint with no parameters cannot be called correctly by the system,
+        # which passes config as an argument. This results in all configs being
+        # rejected, so we expect 0 trials to complete.
         if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
+            # Invalid constraint signature leads to 0 trials (all configs rejected)
+            assert len(result.trials) == 0, "Invalid constraint should reject all configs"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
-
-        # Should fail when calling constraint
 
     @pytest.mark.unit
     @pytest.mark.asyncio

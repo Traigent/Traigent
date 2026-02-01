@@ -9,11 +9,11 @@ Purpose:
     3. The combination affects config serialization, transmission, and context
 
 Dimensions Covered:
-    - InjectionMode: context, parameter, attribute, seamless
+    - InjectionMode: context, parameter, seamless
     - ExecutionMode: edge_analytics, privacy, hybrid, cloud, standard
 
 Coverage Goal:
-    Full pairwise coverage = 4 injection modes × 5 execution modes = 20 combinations
+    Full pairwise coverage = 3 injection modes × 5 execution modes = 15 combinations
 
 Validation Approach:
     Tests verify that optimization completes successfully with correct results
@@ -26,8 +26,8 @@ import pytest
 
 from tests.optimizer_validation.specs import TestScenario, basic_scenario
 
-# All injection modes
-INJECTION_MODES = ["context", "parameter", "attribute", "seamless"]
+# All injection modes (attribute was removed in v2.x)
+INJECTION_MODES = ["context", "parameter", "seamless"]
 
 # All execution modes
 EXECUTION_MODES = ["edge_analytics", "privacy", "hybrid", "cloud", "standard"]
@@ -44,7 +44,6 @@ class TestInjectionExecutionPairwise:
     Why This Matters:
         - Cloud modes may need to serialize configs differently
         - Privacy modes may restrict what context is available
-        - Attribute injection may behave differently in distributed execution
         - Seamless injection requires source access which may not work in cloud
     """
 
