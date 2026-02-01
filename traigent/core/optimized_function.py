@@ -65,12 +65,19 @@ from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.env_config import is_backend_offline, is_mock_llm, is_production
+from traigent.utils.env_config import (
+    get_validation_timeout,
+    is_backend_offline,
+    is_mock_llm,
+    is_production,
+    skip_provider_validation,
+)
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
     OptimizationError,
     OptimizationStateError,
+    ProviderValidationError,
     TVLValidationError,
     ValidationError,
 )
@@ -602,6 +609,9 @@ class OptimizedFunction:
         self.samples_include_pruned = self._store_optional_param(
             kwargs, sentinel, "samples_include_pruned", True, as_bool=True
         )
+        self.validate_providers = self._store_optional_param(
+            kwargs, sentinel, "validate_providers", True, as_bool=True
+        )
 
         self.kwargs = kwargs
         excluded_runtime_keys = {
@@ -912,7 +922,8 @@ class OptimizedFunction:
             algorithm: Optimization algorithm to use. If None, uses the
                 algorithm specified in the decorator (self.algorithm).
             max_trials: Maximum number of trials
-            timeout: Maximum optimization time in seconds
+            timeout: Maximum optimization time in seconds. Note: ``timeout_seconds``
+                is deprecated; use ``timeout`` instead.
             save_to: Path to save results
             custom_evaluator: Custom evaluation function that takes (func, config, input_data)
                             and returns metrics dict. If provided, overrides default evaluation.
@@ -933,6 +944,21 @@ class OptimizedFunction:
         """
         logger.info(f"Starting optimization of {self.func.__name__}")
         _emit_cost_warning_once()
+
+        # Handle common alias: timeout_seconds -> timeout
+        if "timeout_seconds" in algorithm_kwargs:
+            if timeout is None:
+                timeout = algorithm_kwargs.pop("timeout_seconds")
+                logger.warning(
+                    "timeout_seconds is deprecated, use timeout instead. "
+                    "The value has been applied."
+                )
+            else:
+                algorithm_kwargs.pop("timeout_seconds")
+                logger.warning(
+                    "Both timeout and timeout_seconds provided; using timeout. "
+                    "timeout_seconds is deprecated."
+                )
 
         algorithm_kwargs = self._prepare_algorithm_kwargs(algorithm_kwargs)
         objectives, legacy_objectives = self._validate_objectives_input(
@@ -1261,6 +1287,120 @@ class OptimizedFunction:
             self.samples_include_pruned = bool(samples_include_pruned_value)
 
         return dataset, max_total_examples_value, bool(samples_include_pruned_value)
+
+    def _validate_provider_keys(
+        self,
+        configuration_space: dict[str, Any] | None,
+    ) -> None:
+        """Validate provider API keys before running optimization.
+
+        This method checks that API keys are valid for all providers used in
+        the configuration space. It helps fail fast before starting expensive
+        optimization runs.
+
+        Validation is skipped when:
+        - TRAIGENT_SKIP_PROVIDER_VALIDATION=true
+        - TRAIGENT_MOCK_LLM=true
+        - validate_providers=False in decorator
+
+        For unknown models (not matching known provider patterns), a warning
+        is logged but validation continues.
+
+        Args:
+            configuration_space: The configuration space containing model options.
+
+        Raises:
+            ProviderValidationError: If any known provider has an invalid API key.
+        """
+        # Check toggle precedence (first match wins):
+        # 1. validate_providers=False in decorator -> skip
+        # 2. TRAIGENT_SKIP_PROVIDER_VALIDATION=true -> skip
+        # 3. TRAIGENT_MOCK_LLM=true -> skip (handled by skip_provider_validation)
+        if not getattr(self, "validate_providers", True):
+            logger.debug("Provider validation skipped (decorator override)")
+            return
+
+        if skip_provider_validation():
+            logger.debug("Provider validation skipped (environment override)")
+            return
+
+        # Extract models from configuration space
+        if configuration_space is None:
+            return
+
+        models = self._extract_models_from_config_space(configuration_space)
+        if not models:
+            return
+
+        # Run validation
+        from traigent.providers.validation import (
+            get_failed_providers,
+            print_provider_status,
+            validate_providers,
+        )
+
+        timeout = get_validation_timeout()
+        results = validate_providers(models, timeout=timeout)
+
+        # Print status (matches walkthrough example 07 format)
+        print_provider_status(results)
+
+        # Check for failures
+        failed = get_failed_providers(results)
+        if failed:
+            failed_list = ", ".join(
+                f"{provider} ({error})" for provider, error in failed
+            )
+            raise ProviderValidationError(
+                f"Provider validation failed. Invalid keys: {failed_list}. "
+                "Set TRAIGENT_SKIP_PROVIDER_VALIDATION=true to bypass.",
+                failed_providers=failed,
+                details={"results": {p: s.message for p, s in results.items()}},
+            )
+
+    def _extract_models_from_config_space(
+        self,
+        configuration_space: dict[str, Any],
+    ) -> list[str]:
+        """Extract model names from configuration space.
+
+        Looks for 'model' key in the configuration space and extracts
+        all model name options.
+
+        Args:
+            configuration_space: The configuration space dict.
+
+        Returns:
+            List of model names found in the configuration space.
+        """
+        models: list[str] = []
+
+        # Check for 'model' key (common pattern)
+        model_value = configuration_space.get("model")
+        if model_value is not None:
+            if isinstance(model_value, str):
+                models.append(model_value)
+            elif isinstance(model_value, (list, tuple)):
+                models.extend(str(m) for m in model_value if m is not None)
+
+        # Also check for provider-specific model keys
+        for key in ("router_model", "agent_model", "llm_model", "chat_model"):
+            value = configuration_space.get(key)
+            if value is not None:
+                if isinstance(value, str):
+                    models.append(value)
+                elif isinstance(value, (list, tuple)):
+                    models.extend(str(m) for m in value if m is not None)
+
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        unique_models: list[str] = []
+        for model in models:
+            if model not in seen:
+                seen.add(model)
+                unique_models.append(model)
+
+        return unique_models
 
     def _resolve_effective_parallel_config(
         self,
@@ -1677,6 +1817,9 @@ class OptimizedFunction:
         dataset, max_total_examples_value, samples_include_pruned_value = (
             self._prepare_optimization_dataset(algorithm_kwargs)
         )
+
+        # Phase 3.5: Validate provider API keys
+        self._validate_provider_keys(effective_config_space)
 
         # Phase 4: Try cloud execution if applicable
         cloud_result = await self._try_cloud_execution(

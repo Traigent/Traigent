@@ -281,6 +281,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "execution": None,
     "mock": None,
     "max_trials": 50,
+    "validate_providers": True,
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -1239,6 +1240,7 @@ def optimize(
     privacy_enabled = combined_settings["privacy_enabled"]
     max_total_examples = combined_settings["max_total_examples"]
     samples_include_pruned = combined_settings["samples_include_pruned"]
+    validate_providers = combined_settings["validate_providers"]
     mock_mode_config = combined_settings["mock_mode_config"]
     custom_evaluator = combined_settings["custom_evaluator"]
     scoring_function = combined_settings["scoring_function"]
@@ -1412,6 +1414,7 @@ def optimize(
             scoring_function=scoring_function,
             metric_functions=metric_functions,
             requested_execution_mode=requested_execution_mode,
+            validate_providers=validate_providers,
             **combined_runtime_overrides,
         )
 
