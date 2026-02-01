@@ -291,22 +291,26 @@ def analyze_tradeoffs() -> None:
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Traigent Core Concepts: Objectives & Metrics")
-    print("=" * 60)
+    try:
+        print("=" * 60)
+        print("Traigent Core Concepts: Objectives & Metrics")
+        print("=" * 60)
 
-    # Demonstrate objective types
-    demonstrate_objective_types()
+        # Demonstrate objective types
+        demonstrate_objective_types()
 
-    # Analyze tradeoffs
-    analyze_tradeoffs()
+        # Analyze tradeoffs
+        analyze_tradeoffs()
 
-    print("\n" + "=" * 50)
-    print("Optimization Examples")
-    print("=" * 50)
+        print("\n" + "=" * 50)
+        print("Optimization Examples")
+        print("=" * 50)
 
-    print("\n1. Cost-optimized bot (single objective)")
-    print("2. Balanced support bot (multi-objective)")
-    print("3. Quality-constrained bot (custom metrics + constraints)")
+        print("\n1. Cost-optimized bot (single objective)")
+        print("2. Balanced support bot (multi-objective)")
+        print("3. Quality-constrained bot (custom metrics + constraints)")
 
-    print("\nThese examples show how Traigent optimizes for different goals.")
+        print("\nThese examples show how Traigent optimizes for different goals.")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

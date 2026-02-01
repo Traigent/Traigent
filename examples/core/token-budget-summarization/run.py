@@ -320,19 +320,23 @@ def summarize_keyword(text: str) -> str:
     return raw.split()[0][:16] if raw.split() else "unknown"
 
 
+async def main() -> None:
+    trials = 9 if not MOCK else 4
+    # Each trial evaluates 20 examples; with sequential execution ~2-3 min/trial
+    # Set generous timeout: 1 hour for real mode, 5 min for mock
+    timeout_seconds = 300.0 if MOCK else 3600.0
+    r = await summarize_keyword.optimize(
+        algorithm="random", max_trials=trials, timeout=timeout_seconds
+    )
+    print(f"Total trials: {len(r.trials)}, Stop reason: {r.stop_reason}")
+    print({"best_config": r.best_config, "best_score": r.best_score})
+    _print_results(r)
+
+
 if __name__ == "__main__":
-    print("Need tight summaries under a strict token budget without losing key facts?")
-
-    async def main() -> None:
-        trials = 9 if not MOCK else 4
-        # Each trial evaluates 20 examples; with sequential execution ~2-3 min/trial
-        # Set generous timeout: 1 hour for real mode, 5 min for mock
-        timeout_seconds = 300.0 if MOCK else 3600.0
-        r = await summarize_keyword.optimize(
-            algorithm="random", max_trials=trials, timeout=timeout_seconds
-        )
-        print(f"Total trials: {len(r.trials)}, Stop reason: {r.stop_reason}")
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
-
-    asyncio.run(main())
+    try:
+        print("Need tight summaries under a strict token budget without losing key facts?")
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

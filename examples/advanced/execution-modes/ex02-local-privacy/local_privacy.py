@@ -121,4 +121,8 @@ def sensitive_function(customer_data: str) -> str:
 
 
 if __name__ == "__main__":
-    print(sensitive_function("John Doe ordered item #123"))
+    try:
+        print(sensitive_function("John Doe ordered item #123"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

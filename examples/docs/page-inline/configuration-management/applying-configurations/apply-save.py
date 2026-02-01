@@ -119,15 +119,19 @@ def production_support_agent(query: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def optimize_and_save() -> None:
-        results = await customer_support_agent.optimize(
-            algorithm="random",
-            max_trials=10,
-            random_seed=42,
-        )
-        CONFIG_PATH.write_text(json.dumps(results.best_config, indent=2))
+        async def optimize_and_save() -> None:
+            results = await customer_support_agent.optimize(
+                algorithm="random",
+                max_trials=10,
+                random_seed=42,
+            )
+            CONFIG_PATH.write_text(json.dumps(results.best_config, indent=2))
 
-    asyncio.run(optimize_and_save())
-    print(production_support_agent("How do I reset my password?"))
+        asyncio.run(optimize_and_save())
+        print(production_support_agent("How do I reset my password?"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

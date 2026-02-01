@@ -79,14 +79,18 @@ def extract_fields(text: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await extract_fields.optimize(max_trials=10)
-        extract_fields.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print(
-            "Test:", extract_fields("Invoice: Globex Corp billed $2500 on 2024-06-10.")
-        )
+        async def _main():
+            res = await extract_fields.optimize(max_trials=10)
+            extract_fields.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print(
+                "Test:", extract_fields("Invoice: Globex Corp billed $2500 on 2024-06-10.")
+            )
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

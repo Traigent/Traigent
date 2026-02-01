@@ -621,48 +621,52 @@ def answer(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the Optuna optimization demo")
-    parser.add_argument(
-        "--verbose-results",
-        action="store_true",
-        help="Print detailed per-example outputs for each trial",
-    )
-    parser.add_argument(
-        "--max-trials",
-        type=int,
-        default=None,
-        help="Override the number of optimization trials to run",
-    )
-    parser.add_argument(
-        "--budget-limit",
-        type=float,
-        default=None,
-        help="Override the cost budget used for early stopping",
-    )
-    args = parser.parse_args()
-
-    print("Crunching math expressions with Optuna…")
-
-    async def main() -> None:
-        trials = args.max_trials if args.max_trials is not None else MAX_TRIALS
-        runtime_budget = (
-            args.budget_limit if args.budget_limit is not None else BUDGET_LIMIT
+    try:
+        parser = argparse.ArgumentParser(description="Run the Optuna optimization demo")
+        parser.add_argument(
+            "--verbose-results",
+            action="store_true",
+            help="Print detailed per-example outputs for each trial",
         )
+        parser.add_argument(
+            "--max-trials",
+            type=int,
+            default=None,
+            help="Override the number of optimization trials to run",
+        )
+        parser.add_argument(
+            "--budget-limit",
+            type=float,
+            default=None,
+            help="Override the cost budget used for early stopping",
+        )
+        args = parser.parse_args()
 
-        optimize_kwargs: dict[str, Any] = {"max_trials": trials}
-        if runtime_budget is not None and runtime_budget > 0:
-            optimize_kwargs.update(
-                {
-                    "budget_limit": runtime_budget,
-                    "budget_metric": "total_cost",
-                }
+        print("Crunching math expressions with Optuna…")
+
+        async def main() -> None:
+            trials = args.max_trials if args.max_trials is not None else MAX_TRIALS
+            runtime_budget = (
+                args.budget_limit if args.budget_limit is not None else BUDGET_LIMIT
             )
 
-        r = await answer.optimize(**optimize_kwargs)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
-        if args.verbose_results:
-            _dump_example_results(r, show_full_output=True)
-        _validate_concurrency_log(DEFAULT_WEIGHTED_CONCURRENCY)
+            optimize_kwargs: dict[str, Any] = {"max_trials": trials}
+            if runtime_budget is not None and runtime_budget > 0:
+                optimize_kwargs.update(
+                    {
+                        "budget_limit": runtime_budget,
+                        "budget_metric": "total_cost",
+                    }
+                )
 
-    asyncio.run(main())
+            r = await answer.optimize(**optimize_kwargs)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
+            if args.verbose_results:
+                _dump_example_results(r, show_full_output=True)
+            _validate_concurrency_log(DEFAULT_WEIGHTED_CONCURRENCY)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

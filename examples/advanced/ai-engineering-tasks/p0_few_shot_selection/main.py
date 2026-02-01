@@ -505,22 +505,26 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # Handle both sync and async execution
     try:
-        asyncio.run(main())
-    except RuntimeError:
-        # Fallback for environments where asyncio is not available
-        console.print("[dim]Running in synchronous mode...[/dim]\n")
+        # Handle both sync and async execution
+        try:
+            asyncio.run(main())
+        except RuntimeError:
+            # Fallback for environments where asyncio is not available
+            console.print("[dim]Running in synchronous mode...[/dim]\n")
 
-        # Generate sample dataset
-        tasks = generate_evaluation_tasks(num_tasks=10)
-        console.print(f"✅ Generated {len(tasks)} sample tasks\n")
+            # Generate sample dataset
+            tasks = generate_evaluation_tasks(num_tasks=10)
+            console.print(f"✅ Generated {len(tasks)} sample tasks\n")
 
-        # Show configuration space
-        console.print("[bold]Traigent Configuration Space:[/bold]")
-        for key, values in EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE.items():
-            console.print(f"  {key}: {values}")
+            # Show configuration space
+            console.print("[bold]Traigent Configuration Space:[/bold]")
+            for key, values in EXAMPLE_EXAMPLE_SELECTION_SEARCH_SPACE.items():
+                console.print(f"  {key}: {values}")
 
-        console.print(
-            "\n[green]This example demonstrates systematic optimization of few-shot selection![/green]"
-        )
+            console.print(
+                "\n[green]This example demonstrates systematic optimization of few-shot selection![/green]"
+            )
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

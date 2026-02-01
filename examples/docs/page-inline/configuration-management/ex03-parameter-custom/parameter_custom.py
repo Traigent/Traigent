@@ -133,9 +133,13 @@ def adaptive_chat_bot(user_message: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
-    import dataclasses
-    import json
+    try:
+        import asyncio
+        import dataclasses
+        import json
 
-    result = asyncio.run(adaptive_chat_bot.optimize(max_trials=10))
-    print(json.dumps(dataclasses.asdict(result), default=str, indent=2))
+        result = asyncio.run(adaptive_chat_bot.optimize(max_trials=10))
+        print(json.dumps(dataclasses.asdict(result), default=str, indent=2))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

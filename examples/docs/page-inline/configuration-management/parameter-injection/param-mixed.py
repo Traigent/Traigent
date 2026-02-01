@@ -82,7 +82,11 @@ def smart_document_processor(document: str) -> str:
 
 if __name__ == "__main__":
     try:
-        _res = smart_document_processor("test input")
-        print(getattr(_res, "content", _res))
-    except Exception as e:
-        print(e)
+        try:
+            _res = smart_document_processor("test input")
+            print(getattr(_res, "content", _res))
+        except Exception as e:
+            print(e)
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
