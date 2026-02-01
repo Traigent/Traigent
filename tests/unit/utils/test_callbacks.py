@@ -1913,8 +1913,12 @@ class TestCallbackManagerTimeoutAndIsolation:
         This test ensures the exception handling path inside the ThreadPoolExecutor
         try block is exercised (lines 538-543 in callbacks.py).
         """
-        mock_callback.on_optimization_start.side_effect = ValueError("Executor exception")
-        manager = CallbackManager(callbacks=[mock_callback], timeout=5.0)  # Timeout enabled
+        mock_callback.on_optimization_start.side_effect = ValueError(
+            "Executor exception"
+        )
+        manager = CallbackManager(
+            callbacks=[mock_callback], timeout=5.0
+        )  # Timeout enabled
         caplog.set_level(logging.WARNING)
 
         manager.on_optimization_start({"model": ["gpt-4"]}, ["accuracy"], "grid")
@@ -1955,7 +1959,8 @@ class TestCallbackManagerTimeoutAndIsolation:
         success_callback = MagicMock(spec=OptimizationCallback)
 
         manager = CallbackManager(
-            callbacks=[failing_callback, success_callback], timeout=5.0  # Timeout enabled
+            callbacks=[failing_callback, success_callback],
+            timeout=5.0,  # Timeout enabled
         )
         caplog.set_level(logging.WARNING)
 
