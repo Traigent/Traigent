@@ -286,7 +286,7 @@ class TestCustomEvaluatorWithInjectionModes:
 
     @pytest.mark.parametrize(
         "injection_mode",
-        ["context", "parameter", "attribute", "seamless"],
+        ["context", "parameter", "seamless"],
     )
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -929,7 +929,7 @@ class TestWeightedObjectivesWithInjectionModes:
 
     @pytest.mark.parametrize(
         "injection_mode",
-        ["context", "parameter", "attribute", "seamless"],
+        ["context", "parameter", "seamless"],
     )
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -342,12 +342,6 @@ class TestOptimizedFunctionIntegration:
 
         assert isinstance(func_param, OptimizedFunction)
 
-        # Decorator injection
-        @optimize(injection_mode="attribute", configuration_space={"x": [1, 2, 3]})
-        def func_decorator(x):
-            return x
-
-        assert isinstance(func_decorator, OptimizedFunction)
 
     def test_framework_override_configuration(self):
         """Test framework override configuration."""
@@ -598,20 +592,6 @@ class TestJSRuntimeInjectionModeValidation:
             def js_func(x: int) -> int:
                 return x
 
-    def test_js_runtime_rejects_attribute_injection_mode(self):
-        """Test that runtime='node' rejects injection_mode='attribute'."""
-        from traigent.api.decorators import ExecutionOptions, InjectionOptions
-
-        with pytest.raises(ValueError, match="not compatible with runtime='node'"):
-
-            @optimize(
-                configuration_space={"x": [1, 2, 3]},
-                injection=InjectionOptions(injection_mode="attribute"),
-                execution=ExecutionOptions(runtime="node", js_module="./test.js"),
-            )
-            def js_func(x: int) -> int:
-                return x
-
     def test_js_runtime_rejects_seamless_injection_mode(self):
         """Test that runtime='node' rejects injection_mode='seamless'."""
         from traigent.api.decorators import ExecutionOptions, InjectionOptions
@@ -672,7 +652,7 @@ class TestJSRuntimeInjectionModeValidation:
         from traigent.api.decorators import ExecutionOptions, InjectionOptions
 
         # Test non-parameter modes (don't require special function signature)
-        for mode in ["context", "attribute", "seamless"]:
+        for mode in ["context", "seamless"]:
             # Should not raise for Python runtime
             @optimize(
                 configuration_space={"x": [1, 2, 3]},

@@ -60,7 +60,6 @@ class TestParameterValidator:
         valid_modes = [
             InjectionMode.CONTEXT,
             InjectionMode.PARAMETER,
-            InjectionMode.ATTRIBUTE,
             InjectionMode.SEAMLESS,
         ]
 
@@ -71,7 +70,7 @@ class TestParameterValidator:
 
     def test_validate_injection_mode_string(self):
         """Test validation of injection mode string values."""
-        valid_strings = ["context", "parameter", "attribute", "seamless"]
+        valid_strings = ["context", "parameter", "seamless"]
 
         for mode_str in valid_strings:
             # Should not raise exception - validate returns None on success
@@ -242,11 +241,10 @@ class TestParameterValidator:
 
     def test_normalize_injection_mode_string(self):
         """Test normalization of string injection modes."""
-        string_modes = ["context", "parameter", "attribute", "seamless"]
+        string_modes = ["context", "parameter", "seamless"]
         expected_enums = [
             InjectionMode.CONTEXT,
             InjectionMode.PARAMETER,
-            InjectionMode.ATTRIBUTE,
             InjectionMode.SEAMLESS,
         ]
 

@@ -184,7 +184,7 @@ def list_dimensions() -> dict[str, list[str]]:
         Dictionary mapping dimension names to lists of valid values
     """
     return {
-        "InjectionMode": ["context", "seamless", "parameter", "attribute"],
+        "InjectionMode": ["context", "seamless", "parameter"],
         "ExecutionMode": [
             "edge_analytics",
             "privacy",

@@ -122,39 +122,6 @@ class TestKeyInjectionExecutionCombinations:
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_attribute_edge_analytics_simple(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test attribute injection with edge_analytics.
-
-        Simple attribute storage for local optimization.
-        """
-        scenario = basic_scenario(
-            name="attribute_edge_analytics",
-            injection_mode="attribute",
-            execution_mode="edge_analytics",
-            max_trials=3,
-            gist_template="attribute+edge -> {trial_count()} | {status()}",
-        )
-
-        _, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception), f"Unexpected error: {result}"
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
-
 
 class TestMultiObjectiveWithConstraints:
     """Test multi-objective optimization combined with constraints."""

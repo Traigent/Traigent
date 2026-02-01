@@ -778,18 +778,6 @@ def scenario_runner(
         }
         if scenario.injection_mode == "parameter":
             injection_kwargs["config_param"] = "traigent_config"
-        # Opt-in for attribute mode + parallel execution to avoid safety guard
-        parallel_config_candidate = scenario.parallel_config
-        if parallel_config_candidate is None and scenario.mock_mode_config:
-            parallel_trials = scenario.mock_mode_config.get("parallel_trials")
-            if parallel_trials is not None:
-                parallel_config_candidate = {"trial_concurrency": parallel_trials}
-                if parallel_trials > 1:
-                    parallel_config_candidate["mode"] = "parallel"
-        if scenario.injection_mode == "attribute" and parallel_config_candidate:
-            trial_concurrency = parallel_config_candidate.get("trial_concurrency", 1)
-            if isinstance(trial_concurrency, int) and trial_concurrency > 1:
-                injection_kwargs["allow_parallel_attribute"] = True
 
         # Generate per-test seed for mock mode reproducibility
         # Use scenario name to create deterministic seed unique to each test

@@ -173,7 +173,7 @@ class TestScenario:
     markers: list[str] = field(default_factory=list)
 
     # Core configuration
-    injection_mode: Literal["context", "parameter", "attribute", "seamless"] = "context"
+    injection_mode: Literal["context", "parameter", "seamless"] = "context"
     execution_mode: Literal[
         "edge_analytics", "privacy", "hybrid", "standard", "cloud"
     ] = "edge_analytics"

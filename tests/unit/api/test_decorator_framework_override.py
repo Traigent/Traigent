@@ -135,36 +135,6 @@ class TestDecoratorWithFrameworkOverride:
         result2 = param_function("What is 2+2?")
         assert "Model:" in result2
 
-    def test_decorator_mode_attribute(self):
-        """Test decorator mode stores config as attribute."""
-
-        @optimize(
-            eval_dataset=test_dataset,
-            objectives=["accuracy"],
-            configuration_space={
-                "model": ["gpt-3.5-turbo", "gpt-4"],
-                "temperature": [0.1, 0.5, 0.9],
-            },
-            injection_mode="attribute",
-        )
-        def decorator_function(question: str) -> str:
-            # Check if config is available as attribute
-            if hasattr(decorator_function, "traigent_config"):
-                config = decorator_function.traigent_config
-                return f"Using: {config['model']}"
-            return "No config attribute"
-
-        # Initially no config
-        result = decorator_function("test")
-        assert "No config attribute" in result
-
-        # Set config attribute
-        decorator_function.traigent_config = {"model": "gpt-4", "temperature": 0.5}
-
-        # Now config is available
-        result2 = decorator_function("test")
-        assert "Using: gpt-4" in result2
-
     def test_multiple_injection_modes(self):
         """Test that different injection modes work independently."""
 
@@ -196,18 +166,6 @@ class TestDecoratorWithFrameworkOverride:
                 return f"Param: {config['model']}"
             return "Param: no config"
 
-        # Decorator mode function
-        @optimize(
-            eval_dataset=test_dataset,
-            objectives=["accuracy"],
-            configuration_space={"model": ["claude-2"], "temperature": [0.3]},
-            injection_mode="attribute",
-        )
-        def decorator_func(text: str) -> str:
-            if hasattr(decorator_func, "traigent_config"):
-                return f"Decorator: {decorator_func.traigent_config['model']}"
-            return "Decorator: no config"
-
         # Test each mode independently
         set_config(TraigentConfig(model="gpt-4", temperature=0.5))
         assert "Context: gpt-4" in context_func("test")
@@ -215,9 +173,6 @@ class TestDecoratorWithFrameworkOverride:
         # When we pass a dict, it gets converted to TraigentConfig
         result = param_func("test", config={"model": "gpt-3.5-turbo"})
         assert "Param:" in result  # Less specific assertion
-
-        decorator_func.traigent_config = {"model": "claude-2"}
-        assert "Decorator: claude-2" in decorator_func("test")
 
     def test_framework_override_with_mock(self):
         """Test framework override with mocked framework."""
