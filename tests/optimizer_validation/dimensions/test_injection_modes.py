@@ -7,7 +7,7 @@ Purpose:
     to the target function.
 
 Dimensions Covered:
-    - InjectionMode: context, parameter, attribute, seamless
+    - InjectionMode: context, parameter, seamless
     - ConfigSpaceType: categorical (via default config space)
 
 Test Categories:
@@ -45,7 +45,7 @@ class TestInjectionModeMatrix:
         modes are tested with identical scenarios for fair comparison.
 
     Dimensions Covered:
-        - InjectionMode: all four modes via parametrization
+        - InjectionMode: all three modes via parametrization
         - ConfigSpaceType: categorical (model selection)
         - StopCondition: max_trials
 
