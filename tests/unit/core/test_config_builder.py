@@ -282,7 +282,8 @@ class TestOptimizedFunctionConfig:
 
     def test_validate_valid_injection_modes(self) -> None:
         """Test validation passes for all valid injection modes."""
-        for mode in ["context", "parameter", "decorator"]:
+        # Note: "decorator" and "attribute" were removed in v2.x
+        for mode in ["context", "parameter", "seamless"]:
             config = OptimizedFunctionConfig(injection_mode=mode)
             result = config.validate()
             assert result["is_valid"] is True, f"Failed for mode: {mode}"
