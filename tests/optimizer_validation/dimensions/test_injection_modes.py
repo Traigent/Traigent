@@ -7,7 +7,7 @@ Purpose:
     to the target function.
 
 Dimensions Covered:
-    - InjectionMode: context, parameter, attribute, seamless
+    - InjectionMode: context, parameter, seamless
     - ConfigSpaceType: categorical (via default config space)
 
 Test Categories:
@@ -32,8 +32,8 @@ from tests.optimizer_validation.specs import (
     basic_scenario,
 )
 
-# All supported injection modes
-INJECTION_MODES = ["context", "parameter", "attribute", "seamless"]
+# All supported injection modes (attribute mode was removed in v2.x)
+INJECTION_MODES = ["context", "parameter", "seamless"]
 
 
 class TestInjectionModeMatrix:
@@ -272,71 +272,6 @@ class TestParameterInjection:
             injection_mode="parameter",
             max_trials=2,
             gist_template="param-config -> {trial_count()} | {status()}",
-        )
-
-        func, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception)
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
-
-
-class TestAttributeInjection:
-    """Tests specific to ATTRIBUTE injection mode.
-
-    Purpose:
-        Validate attribute-based configuration injection, where configs are
-        stored as an attribute on the function object itself.
-
-    How Attribute Injection Works:
-        The optimizer sets func.traigent_config before each call. The function
-        can access its own config via self.traigent_config (for methods) or
-        inspect.currentframe() for functions.
-
-    Why Attribute Injection Matters:
-        Attribute injection is useful for class-based designs where methods
-        need access to optimization config without changing method signatures.
-        Common in LangChain and similar frameworks.
-    """
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_attribute_injection_stores_config(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test attribute injection stores config as function attribute.
-
-        Purpose:
-            Verify that configuration is correctly stored as a function
-            attribute and accessible during execution.
-
-        Expectations:
-            - func.traigent_config attribute exists during execution
-            - Attribute contains current trial's configuration
-            - Configuration changes between trials
-
-        Why This Validates Attribute Injection:
-            Attribute injection must properly set the attribute before each
-            call and ensure the correct config is visible. This test runs
-            multiple trials to verify attribute updates correctly.
-
-        Dimensions: InjectionMode=attribute, ConfigSpaceType=categorical
-        """
-        scenario = basic_scenario(
-            name="attribute_storage",
-            injection_mode="attribute",
-            max_trials=2,
-            gist_template="attr-storage -> {trial_count()} | {status()}",
         )
 
         func, result = await scenario_runner(scenario)

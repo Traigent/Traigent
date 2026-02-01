@@ -11,10 +11,10 @@ Purpose:
 Gap Analysis Reference:
     Based on comprehensive test coverage analysis that identified:
     - All modes missing tests for: bayesian algorithm
-    - seamless/parameter/attribute missing: grid, optuna_tpe, optuna_cmaes, optuna_random
-    - seamless/parameter/attribute have NO parallel execution tests
+    - seamless/parameter missing: grid, optuna_tpe, optuna_cmaes, optuna_random
+    - seamless/parameter have NO parallel execution tests
     - All modes missing tests for: continuous_only config spaces
-    - seamless/parameter/attribute missing most stop condition tests
+    - seamless/parameter missing most stop condition tests
 
 Test Categories:
     1. InjectionMode × Algorithm - Ensure all algorithms work with all injection modes
@@ -37,11 +37,11 @@ from tests.optimizer_validation.specs import (
     TestScenario,
 )
 
-# All injection modes
-INJECTION_MODES = ["context", "parameter", "attribute", "seamless"]
+# All injection modes (attribute mode was removed in v2.x)
+INJECTION_MODES = ["context", "parameter", "seamless"]
 
 # Non-context injection modes (these have more gaps)
-NON_CONTEXT_MODES = ["parameter", "attribute", "seamless"]
+NON_CONTEXT_MODES = ["parameter", "seamless"]
 
 
 class TestInjectionModeWithAlgorithms:
