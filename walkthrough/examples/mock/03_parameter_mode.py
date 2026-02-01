@@ -72,12 +72,13 @@ def results_match_score(output: str, expected: str, config: dict | None = None, 
     eval_dataset=str(DATASETS / "simple_questions.jsonl"),
     objectives=OBJECTIVES,
     injection_mode="parameter",
+    config_param="config",  # Explicit parameter name for clarity
     scoring_function=results_match_score,
     configuration_space=CONFIG_SPACE,
     execution_mode="edge_analytics",
     mock_mode_config=MOCK_MODE_CONFIG,
 )
-def answer_with_control(question: str, config: TraigentConfig) -> str:
+def answer_with_control(question: str, config: dict) -> str:
     """Function with explicit configuration parameter."""
     model = config.get("model", DEFAULT_MOCK_MODEL)
     temperature = config.get("temperature", 0.5)
