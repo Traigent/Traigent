@@ -1,137 +1,239 @@
-## HotpotQA Walkthrough — What This Demo Shows
+# HotpotQA Multi-Hop QA Optimization Demo
 
-This walkthrough lets you experience how Traigent optimizes a multi‑hop question‑answering agent on the HotpotQA distractor setting. You will see Traigent explore different agent configurations (models, prompting, retrieval depth, etc.), automatically score answers, and surface the best trade‑offs between quality, cost, and latency.
+This walkthrough demonstrates how Traigent optimizes a multi-hop question-answering agent using the HotpotQA benchmark. You'll see how different configurations (model, temperature, retrieval depth, prompt style) affect quality, cost, and latency.
 
-### What you’ll see
+## What You'll Learn
 
-- Multi‑hop QA behavior on a small HotpotQA slice (two‑step reasoning over multiple paragraphs).
-- Side‑by‑side runs of different configurations: model choice, temperature, max tokens, and retrieval depth (k).
-- Automatic scoring with Answer Exact‑Match (EM) and F1, plus cost and latency accounting per run.
-- A concise summary of best‑performing configurations and the Pareto frontier (quality vs. cost/latency).
-- Optional single‑question traces to inspect how retrieval depth and prompt style affect answers.
+- **Multi-objective optimization**: Balance quality, cost, and latency simultaneously
+- **RAG parameter tuning**: Optimize retrieval depth (`k`) and reranking strategies
+- **Prompt style optimization**: Compare direct answers vs chain-of-thought reasoning
+- **Mock mode**: Fast iteration without API costs
 
-### Why HotpotQA?
+## Quick Start
 
-HotpotQA requires combining evidence from multiple passages to answer a single question. That makes it perfect for demonstrating how Traigent tunes retrieval and reasoning “knobs” and measures the impact on outcomes.
-
-## How the demo works
-
-We use the HotpotQA “distractor” format (each question ships with 10 paragraphs: 2 relevant + 8 distractors). Traigent tests variations such as:
-
-- Retrieval depth `k` (how many chunks to retrieve from the sources and include in the context).
-- Reranking of retrieved chunks: on/off.
-- Prompt style (direct answer vs. step‑by‑step reasoning).
-- Model family and size (e.g., gpt‑4o‑mini, gpt‑4o, gpt‑3.5‑turbo).
-- Temperature and max tokens.
-
-
-Objectives and reports include:
-
-- Quality: Answer EM and F1.
-- Cost: per‑call USD estimates from token usage.
-- Latency: p95 or average end‑to‑end time.
-- Optional safety/response‑length checks when enabled.
-
-## Run the demo
-
-You can explore HotpotQA optimization in two ways.
-
-### Quick setup script
-
-Run `./install.sh` to provision a dedicated virtual environment, install Traigent with all walkthrough dependencies, and generate a sample HotpotQA dataset if needed. Re-run the script any time; it skips completed steps (use `FORCE_REINSTALL=1` to force dependency reinstalls).
-
-#### What the script does
-- Prompts you to **use your currently activated virtual environment** (make sure it’s active before answering “yes”) or to let the script create a dedicated `.venv` inside this folder.
-- Installs Traigent plus the integration requirements into the selected environment (skipped if already present unless `FORCE_REINSTALL=1`). If you’d rather install manually, run `pip install -r walkthrough/hotpotQA/requirements.txt` followed by `pip install -e .` inside the environment of your choice.
-- Generates a lightweight HotpotQA sample dataset the first time it runs. We default to `validation[:50]`, i.e., the first 50 examples from the official validation split, because it is quick to download (via Hugging Face `datasets`) and still showcases multi-hop behavior. Adjust `HOTPOT_SAMPLE_SLICE` for larger samples or replace the file with the official distractor dev set when you need full fidelity.
-- No large Wikipedia dump is required. The HotpotQA distractor format already includes the supporting paragraphs inside the dataset, so the walkthrough operates entirely on local files—models do not reach out to the live web unless you modify the pipeline to do so.
-
-### Run the optimization demo
+### Mock Mode (No API Keys Required)
 
 ```bash
-./run_demo.sh
+# From the repository root:
+python walkthrough/hotpotQA/run_demo.py
 ```
 
-The script wraps `run_demo.py`, which optimizes a compact mock-mode HotpotQA agent with high-impact variables (`model`, `temperature`, `retriever_k`, `prompt_style`, `retrieval_reranker`, `max_output_tokens`). Optuna-backed search is enabled by default, and the mock simulator makes it fast to inspect results without real API keys.
+Mock mode is the default—no flags needed.
 
-#### Run against live models
-
-1. Export your API keys (only the providers you plan to target are required):
-   ```bash
-   export OPENAI_API_KEY="sk-..."      # required for gpt-4o / gpt-4o-mini
-   export ANTHROPIC_API_KEY="sk-ant-..."  # required for haiku-3.5
-   ```
-2. Disable mock mode (`true` by default in the demo) and launch with the full command:
-   ```bash
-   TRAIGENT_MOCK_LLM=false ./run_demo.sh
-   ```
-
-The real-mode pipeline streams the retrieved context into OpenAI (`gpt-4o`, `gpt-4o-mini`) and Anthropic (`haiku-3.5`) models, so expect live API usage, latency, and billing. Leave `TRAIGENT_MOCK_LLM=true` (default) to keep runs local and deterministic.
-
-The demo simultaneously tunes several high-impact variables:
-- `model` — compare OpenAI `gpt-4o` / `gpt-4o-mini` vs. Anthropic `haiku-3.5`.
-- `temperature` — adjust generation determinism (0.1, 0.3, 0.7).
-- `retriever_k` — number of paragraphs pulled from the HotpotQA context (3, 5, 8).
-- `prompt_style` — direct answer (`vanilla`) vs. chain-of-thought reasoning (`cot`).
-- `retrieval_reranker` — optional reranking pass (`none`, `mono_t5`).
-- `max_output_tokens` — cap on answer length (256 or 384 tokens).
-
-### Option A — Interactive walkthrough (guided)
-
-Use the interactive launcher and follow the prompts. The RAG chapter mirrors the HotpotQA flow and highlights the same optimization levers.
+### Real Mode (With LLM API Calls)
 
 ```bash
-./launch_walkthrough.sh
+# For OpenAI models (gpt-4o, gpt-4o-mini):
+export OPENAI_API_KEY="sk-..."
+
+# For Anthropic models (haiku-3.5):
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+python walkthrough/hotpotQA/run_demo.py --real
 ```
 
-### Option B — Case‑study CLI (scripted)
+## What the Demo Optimizes
 
-Run the dedicated HotpotQA scenario via the paper experiments CLI. Start in mock mode (no API keys required):
+The demo explores these configuration parameters:
+
+| Parameter | Values | Description |
+|-----------|--------|-------------|
+| `model` | gpt-4o, gpt-4o-mini, haiku-3.5 | LLM to use |
+| `temperature` | 0.1, 0.3, 0.7 | Generation randomness |
+| `retriever_k` | 3, 5, 8 | Number of context passages to retrieve |
+| `prompt_style` | vanilla, cot | Direct answer vs chain-of-thought |
+| `retrieval_reranker` | none, mono_t5 | Re-score retrieved passages for relevance |
+| `max_output_tokens` | 256, 384 | Maximum response length |
+
+**Objectives optimized:**
+- `quality` - Answer correctness (Exact Match + F1 token overlap, weighted)
+- `latency_p95_ms` - 95th percentile response time
+- `cost_usd_per_1k` - Cost per 1000 tokens
+
+## Sample Output (Mock Mode)
+
+```
+============================================================
+  Traigent HotpotQA Multi-Hop QA Optimization Demo
+============================================================
+  Mode: MOCK
+  (No API keys required - using simulated responses)
+
+Optimization Configuration:
+  Objectives: quality, latency_p95_ms, cost_usd_per_1k
+  Total combinations: 216 (3 model x 3 temperature x 3 retriever_k x 2 prompt_style x 2 retrieval_reranker x 2 max_output_tokens)
+  Max trials: 12
+  Parallel trials: 4
+
+Configuration Space:
+  - model: ['gpt-4o', 'gpt-4o-mini', 'haiku-3.5']
+  - temperature: [0.1, 0.3, 0.7]
+  - retriever_k: [3, 5, 8]
+  - prompt_style: ['vanilla', 'cot']
+  - retrieval_reranker: ['none', 'mono_t5']
+  - max_output_tokens: [256, 384]
+
+Starting optimization...
+
+================================================================================
+  Trial Results (MOCK - 12 trials)
+================================================================================
+  # | Model        | Temp |  K | Style   |  Quality |  Latency |       Cost
+--------------------------------------------------------------------------------
+> 1 | gpt-4o-mini  |  0.1 |  5 | vanilla |   72.1%* |  2750ms  | $0.00023*
+  2 | haiku-3.5    |  0.3 |  3 | vanilla |   62.3%  |  2250ms* | $0.00033
+  3 | gpt-4o       |  0.1 |  5 | cot     |   47.1%  |  5050ms  | $0.00750
+...
+--------------------------------------------------------------------------------
+Legend: * = Best in column, > = Overall best configuration
+
+Best Configuration Found:
+----------------------------------------
+  model: gpt-4o-mini
+  temperature: 0.1
+  retriever_k: 5
+  prompt_style: vanilla
+
+Sample Question & Answer:
+----------------------------------------
+  Q: What is the capital of the country where the Eiffel Tower is located?
+
+  Model Answer: Paris
+
+  Expected: Paris
+
+============================================================
+  Demo Complete!
+============================================================
+```
+
+## Why HotpotQA?
+
+HotpotQA requires combining evidence from multiple passages to answer a single question (multi-hop reasoning). This makes it ideal for demonstrating:
+
+- How retrieval depth (`k`) affects answer quality
+- Trade-offs between model capability and cost
+- Impact of chain-of-thought prompting on accuracy
+
+## Dataset
+
+This demo includes 8 sample examples for quick testing. For production evaluation, download the full HotpotQA benchmark.
+
+### Included Sample Data (8 examples)
+
+The demo ships with 8 custom multi-hop questions designed to demonstrate Traigent's optimization capabilities:
+
+- **Bridge questions**: "What is the capital of the country where the Eiffel Tower is located?"
+- **Bridge questions**: "Who founded the company that created the iPhone?"
+
+### Using the Full HotpotQA Benchmark
+
+For comprehensive evaluation with the full 7,405-example validation set:
 
 ```bash
-TRAIGENT_MOCK_LLM=true \
-python paper_experiments/cli.py optimize \
-  --scenario hotpotqa \
-  --algorithm optuna_nsga2 \
-  --trials 20 \
-  --parallel-trials 4 \
-  --export-trials trial_history.json \
-  --export-figures
+# From the repository root:
+
+# 1. Download the official HotpotQA distractor dev set (~47MB)
+wget http://curtis.ml.cmu.edu/datasets/hotpot/hotpot_dev_distractor_v1.json
+
+# 2. Set the path and run (the file is now in your repo root)
+export HOTPOTQA_DATASET_PATH="$PWD/hotpot_dev_distractor_v1.json"
+python walkthrough/hotpotQA/run_demo.py --real
 ```
 
-To use real models, set your API keys and turn off mock mode:
+The `HOTPOTQA_DATASET_PATH` environment variable tells the demo where to find the benchmark file. Use an absolute path or `$PWD` to avoid issues.
 
+**Important notes:**
+
+- The full benchmark runs take longer and cost more in real mode
+- Default loads 100 examples; to load more, edit `paper_experiments/case_study_rag/dataset.py` and change `max_examples or 100` to your desired number
+- Unset the environment variable to return to bundled examples:
+
+```bash
+unset HOTPOTQA_DATASET_PATH
+```
+
+**License**: HotpotQA is released under [CC BY-SA 4.0](https://hotpotqa.github.io/).
+See the [official HotpotQA website](https://hotpotqa.github.io/) for citation and terms.
+
+### Example Data Structure
+
+Each example includes:
+- The question
+- Supporting context passages (2 gold + distractors)
+- The expected answer
+- Metadata (question type, difficulty level)
+
+## Why Results May Vary
+
+Even in mock mode, results can vary slightly because:
+- Optuna's sampling is stochastic (different trial orderings)
+- Multi-objective optimization may find different Pareto-optimal points
+
+In real mode, additional variation comes from:
+- LLM non-determinism (even at low temperature)
+- API latency fluctuations
+
+### Understanding Quality Scores
+
+The quality metric uses **Exact Match + F1 scoring** (standard for HotpotQA). The demo includes answer extraction to handle verbose model outputs:
+
+- Expected: `"Paris"`
+- Model answer: `"Based on my analysis, the answer is Paris."`
+- Extracted answer: `"Paris"` → **100% match**
+
+Real mode typically achieves **48-71% quality** depending on model:
+- **gpt-4o-mini**: 67-71% (concise answers score best)
+- **haiku-3.5**: 54-67% (competitive with extraction)
+- **gpt-4o**: 48-50% (verbose outputs hurt precision)
+
+### Cost and Token Tracking
+
+The demo uses LangChain's integration with OpenAI and Anthropic. Traigent automatically captures token usage and cost from LangChain responses via its interceptor—no manual tracking needed. This allows parallel execution in both mock and real modes.
+
+## File Structure
+
+```
+walkthrough/hotpotQA/
+├── README.md           # This file
+├── run_demo.py         # Main demo script
+├── run_demo.sh         # Shell wrapper
+├── install.sh          # Environment setup script
+└── requirements.txt    # Python dependencies
+
+paper_experiments/case_study_rag/
+├── dataset.py          # HotpotQA dataset loader
+├── metrics.py          # Quality/latency/cost metrics
+├── pipeline.py         # Response formatting utilities
+└── simulator.py        # Mock answer generator
+```
+
+## Troubleshooting
+
+### "ModuleNotFoundError: No module named 'traigent'"
+
+Run from the repository root after installing:
+```bash
+pip install -e .
+python walkthrough/hotpotQA/run_demo.py
+```
+
+### "OPENAI_API_KEY not set" (in real mode)
+
+Export your API key before running:
 ```bash
 export OPENAI_API_KEY="sk-..."
-# export ANTHROPIC_API_KEY="sk-ant-..."   # if you enable Anthropic models
-
-python paper_experiments/cli.py optimize \
-  --scenario hotpotqa \
-  --algorithm optuna_nsga2 \
-  --trials 60 \
-  --parallel-trials 6 \
-  --mock-mode off \
-  --export-trials trial_history.json \
-  --export-figures
+python walkthrough/hotpotQA/run_demo.py --real
 ```
 
-## What to look for in the results
+## Next Steps
 
-Artifacts are written under `paper_experiments/artifacts/hotpotqa/<run-id>/`:
+After running this demo, explore:
 
-- `baseline_manual.json` — metrics for a hand‑crafted baseline configuration.
-- `tvo_summary.json` — optimizer output with best configurations and Pareto frontier.
-- `trial_history.json` — per‑trial metrics (used for figure export).
-- `figure_data/` — optional data for charts (hypervolume over time, feasible vs. pruned trials).
-
-When reading the tables, compare how increasing `k` or enabling step‑by‑step prompting changes EM/F1, cost, and latency. Traigent’s optimizer will highlight configurations that improve quality without unnecessary cost or delay.
-
-## Customizing the demo
-
-- Dataset: A small demo slice ships at `paper_experiments/case_study_rag/datasets/hotpotqa_dev_subset.jsonl`. Use `data_ingest.py` to create a larger dev slice.
-- Knobs: Modify the configuration space in `paper_experiments/case_study_rag/pipeline.py` to add/remove models, k‑values, or prompting styles.
-- Constraints: Toggle structure‑aware pruning with `--constraints on|off` to see how it shapes the search.
+- **[Walkthrough Examples](../examples/)**: More Traigent patterns (RAG, multi-provider, privacy modes)
+- **[Core Examples](../../examples/core/)**: Production-ready example patterns
+- **[SDK Documentation](../../docs/)**: Full API reference
 
 ---
 
-This demonstration is meant to make the optimization effects tangible: tweak retrieval and reasoning levers, see how answers improve, and understand the cost/latency trade‑offs—without changing your agent code.
+This demo shows the optimization effects without changing your agent code—just decorate with `@traigent.optimize()` and let Traigent find the best configuration.
