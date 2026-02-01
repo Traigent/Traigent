@@ -84,6 +84,31 @@ flowchart LR
     Continue -->|done| History
     Continue -->|done| Pareto
     Continue -->|done| Best
+
+    %% Styling
+    style Optimizer fill:#9333ea,stroke:#7c3aed,color:#fff
+    style App fill:#3b82f6,stroke:#2563eb,color:#fff
+    style Orchestrator fill:#f97316,stroke:#ea580c,color:#fff
+    style Results fill:#22c55e,stroke:#16a34a,color:#fff
+
+    style TPE fill:#a855f7,stroke:#9333ea,color:#fff
+    style Grid fill:#a855f7,stroke:#9333ea,color:#fff
+    style NSGA fill:#a855f7,stroke:#9333ea,color:#fff
+
+    style Decorator fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Function fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Evaluator fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Dataset fill:#60a5fa,stroke:#3b82f6,color:#fff
+
+    style Suggest fill:#fb923c,stroke:#f97316,color:#fff
+    style Inject fill:#fb923c,stroke:#f97316,color:#fff
+    style Evaluate fill:#fb923c,stroke:#f97316,color:#fff
+    style Record fill:#fb923c,stroke:#f97316,color:#fff
+    style Continue fill:#fb923c,stroke:#f97316,color:#fff
+
+    style History fill:#4ade80,stroke:#22c55e,color:#fff
+    style Pareto fill:#4ade80,stroke:#22c55e,color:#fff
+    style Best fill:#4ade80,stroke:#22c55e,color:#fff
 ```
 
 **How it works:**
