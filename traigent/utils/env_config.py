@@ -251,3 +251,51 @@ def is_backend_offline() -> bool:
 def is_development() -> bool:
     """Check if running in development mode."""
     return _get_environment_name() in {"dev", "development"}
+
+
+def skip_provider_validation() -> bool:
+    """Check if provider validation should be skipped.
+
+    Provider validation is skipped when:
+    - TRAIGENT_SKIP_PROVIDER_VALIDATION=true is set
+    - TRAIGENT_MOCK_LLM=true is set (no real API calls)
+
+    This allows users to bypass validation for:
+    - Custom/internal models not recognized by Traigent
+    - Testing scenarios where validation is not needed
+    - Environments where validation requests are blocked
+
+    Returns:
+        True if provider validation should be skipped, False otherwise.
+
+    See also:
+        - is_mock_llm(): Check if LLM API calls should be mocked
+        - validate_providers param in @traigent.optimize decorator
+    """
+    # Skip if mock mode is enabled (no real API calls anyway)
+    if is_mock_llm():
+        return True
+
+    # Skip if explicitly disabled
+    skip_env = get_env_var("TRAIGENT_SKIP_PROVIDER_VALIDATION", "false")
+    return skip_env.lower() in ("true", "1", "yes")
+
+
+def get_validation_timeout() -> float:
+    """Get provider validation timeout in seconds.
+
+    Reads from TRAIGENT_VALIDATION_TIMEOUT environment variable.
+    Defaults to 5.0 seconds if not set.
+
+    Returns:
+        Validation timeout in seconds.
+    """
+    timeout_str = get_env_var("TRAIGENT_VALIDATION_TIMEOUT", "5.0")
+    try:
+        return float(timeout_str)
+    except ValueError:
+        logger.warning(
+            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s', using default 5.0s",
+            timeout_str,
+        )
+        return 5.0
