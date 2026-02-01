@@ -1,6 +1,6 @@
 # ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
 
-**Current Version**: 0.9.0 (Beta)
+**Current Version**: 0.10.0 (Beta)
 
 ---
 
@@ -39,6 +39,60 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 ### Agent Configuration Hooks
 
 ![Traigent Agent Hooks Demo](docs/demos/output/github-hooks.svg)
+
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart LR
+    subgraph Optimizer["<b>Optimizer</b>"]
+        TPE["TPE"]
+        Grid["Grid"]
+        NSGA["NSGA-II"]
+    end
+
+    subgraph App["<b>Your Application</b>"]
+        Decorator["@traigent.optimize()<br/><i>objectives, tuned vars,<br/>constraints, budget</i>"]
+        Function["Your Function"]
+        Evaluator["Evaluator<br/><i>(LLM-as-Judge)</i>"]
+        Dataset["Dataset<br/><i>(.jsonl)</i>"]
+    end
+
+    subgraph Orchestrator["<b>Traigent Orchestrator</b>"]
+        Suggest["1. Suggest<br/><i>propose config</i>"]
+        Inject["2. Inject<br/><i>override params</i>"]
+        Evaluate["3. Evaluate<br/><i>run & score</i>"]
+        Record["4. Record<br/><i>update optimizer</i>"]
+        Continue{"5. Continue?<br/><i>budget, trials</i>"}
+    end
+
+    subgraph Results["<b>Results</b>"]
+        History["History"]
+        Pareto["Pareto Front"]
+        Best["Best Config"]
+    end
+
+    Optimizer <-..->|suggest /<br/>learn| Suggest
+    Decorator --> Inject
+    Function --> Inject
+    Suggest --> Inject
+    Inject --> Evaluate
+    Evaluator --> Evaluate
+    Dataset --> Evaluate
+    Evaluate --> Record
+    Record --> Continue
+    Continue -->|next| Suggest
+    Continue -->|done| History
+    Continue -->|done| Pareto
+    Continue -->|done| Best
+```
+
+**How it works:**
+
+1. **Suggest**: The optimizer proposes a configuration to test
+2. **Inject**: Traigent overrides your function's parameters with the proposed config
+3. **Evaluate**: Your function runs against the dataset, scored by the evaluator
+4. **Record**: Results update the optimizer's model
+5. **Continue**: Loop continues until budget/trials exhausted, then outputs results
 
 ## 🚀 Quick Example: See Tuned Variables in Action
 
