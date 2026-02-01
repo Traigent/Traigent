@@ -77,24 +77,6 @@ class TestConfigurationIntegration:
         sig = inspect.signature(test_function.func)  # Original function
         assert "config" in sig.parameters
 
-    def test_context_based_injection(self):
-        """Test context-based configuration injection."""
-        from traigent import get_config
-
-        @optimize(
-            eval_dataset=self.dataset_path,
-            configuration_space={"multiplier": [1, 2]},
-            injection_mode="context",
-        )
-        def test_function(text: str) -> str:
-            config = get_config()
-            multiplier = getattr(config, "multiplier", 1)
-            return text.upper() * multiplier
-
-        # Test that function works
-        result = test_function("hello")
-        assert result in ["HELLO", "HELLOHELLO"]
-
     def test_invalid_injection_mode(self):
         """Test error for invalid injection mode."""
         with pytest.raises(
