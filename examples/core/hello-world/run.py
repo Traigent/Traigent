@@ -345,65 +345,69 @@ def answer_question(question: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Wondering whether RAG helps and what top_k to use?")
+    try:
+        print("Wondering whether RAG helps and what top_k to use?")
 
-    async def main() -> None:
-        trials = 10  # Change this number to set max configurations
-        r: OptimizationResult = await answer_question.optimize(
-            algorithm="random", max_trials=trials
-        )
-        print({"best_config": r.best_config, "best_score": r.best_score})
+        async def main() -> None:
+            trials = 10  # Change this number to set max configurations
+            r: OptimizationResult = await answer_question.optimize(
+                algorithm="random", max_trials=trials
+            )
+            print({"best_config": r.best_config, "best_score": r.best_score})
 
-        # Print aggregated table (one row per configuration) for readability
-        df = r.to_aggregated_dataframe(primary_objective="cost")
-        preferred_cols = [
-            "model",
-            "temperature",
-            "use_rag",
-            "top_k",
-            "samples_count",
-            "accuracy",
-            "cost",
-            "duration",
-        ]
-        cols = [c for c in preferred_cols if c in df.columns]
-        if cols:
-            df = df[cols]
+            # Print aggregated table (one row per configuration) for readability
+            df = r.to_aggregated_dataframe(primary_objective="cost")
+            preferred_cols = [
+                "model",
+                "temperature",
+                "use_rag",
+                "top_k",
+                "samples_count",
+                "accuracy",
+                "cost",
+                "duration",
+            ]
+            cols = [c for c in preferred_cols if c in df.columns]
+            if cols:
+                df = df[cols]
 
-        # Sort by primary objective if available
-        primary = r.objectives[0] if r.objectives else None
-        if primary and primary in df.columns:
-            assert isinstance(primary, str)
-            minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-            ascending = any(p in primary.lower() for p in minimize_patterns)
-            df = df.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
+            # Sort by primary objective if available
+            primary = r.objectives[0] if r.objectives else None
+            if primary and primary in df.columns:
+                assert isinstance(primary, str)
+                minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+                ascending = any(p in primary.lower() for p in minimize_patterns)
+                df = df.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
 
-        print("\nAggregated configurations and performance:")
-        print(df.to_string(index=False))
+            print("\nAggregated configurations and performance:")
+            print(df.to_string(index=False))
 
-        # Also show raw per-sample table for debugging (optional)
-        df_raw = r.to_dataframe()
-        cols_raw = [
-            "trial_id",
-            "status",
-            "model",
-            "temperature",
-            "use_rag",
-            "top_k",
-            "accuracy",
-            "cost",
-            "duration",
-        ]
-        cols_raw = [c for c in cols_raw if c in df_raw.columns]
-        if cols_raw:
-            df_raw = df_raw[cols_raw]
-        primary = r.objectives[0] if r.objectives else None
-        if primary and primary in df_raw.columns:
-            assert isinstance(primary, str)
-            minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
-            ascending = any(p in primary.lower() for p in minimize_patterns)
-            df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
-        print("\nRaw (per-sample) trials:")
-        print(df_raw.to_string(index=False))
+            # Also show raw per-sample table for debugging (optional)
+            df_raw = r.to_dataframe()
+            cols_raw = [
+                "trial_id",
+                "status",
+                "model",
+                "temperature",
+                "use_rag",
+                "top_k",
+                "accuracy",
+                "cost",
+                "duration",
+            ]
+            cols_raw = [c for c in cols_raw if c in df_raw.columns]
+            if cols_raw:
+                df_raw = df_raw[cols_raw]
+            primary = r.objectives[0] if r.objectives else None
+            if primary and primary in df_raw.columns:
+                assert isinstance(primary, str)
+                minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+                ascending = any(p in primary.lower() for p in minimize_patterns)
+                df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
+            print("\nRaw (per-sample) trials:")
+            print(df_raw.to_string(index=False))
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

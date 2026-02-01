@@ -129,8 +129,12 @@ def solve_arithmetic(expression: str) -> str:
 
 
 if __name__ == "__main__":
-    # Test the function
-    print("Testing solve_arithmetic function...")
-    test_expr = "2 + 3 * 4"
-    result = solve_arithmetic(test_expr)
-    print(f"{test_expr} = {result}")
+    try:
+        # Test the function
+        print("Testing solve_arithmetic function...")
+        test_expr = "2 + 3 * 4"
+        result = solve_arithmetic(test_expr)
+        print(f"{test_expr} = {result}")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

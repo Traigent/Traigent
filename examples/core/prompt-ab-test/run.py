@@ -305,12 +305,16 @@ def qa_with_variant(question: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Prompt A vs B—stop guessing; run an A/B that picks a winner.")
+    try:
+        print("Prompt A vs B—stop guessing; run an A/B that picks a winner.")
 
-    async def main() -> None:
-        trials = 12 if not MOCK else 4
-        r = await qa_with_variant.optimize(algorithm="grid", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
+        async def main() -> None:
+            trials = 12 if not MOCK else 4
+            r = await qa_with_variant.optimize(algorithm="grid", max_trials=trials)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
 
-    asyncio.run(main())
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

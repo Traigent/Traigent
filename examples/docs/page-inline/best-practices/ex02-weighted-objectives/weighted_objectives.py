@@ -150,9 +150,13 @@ def select_answer(question: str, choices: list[str]) -> int:
 
 
 if __name__ == "__main__":
-    print(
-        select_answer(
-            "How to reset password?",
-            ["Email support", "Use Reset Password", "Create new account", "Wait"],
+    try:
+        print(
+            select_answer(
+                "How to reset password?",
+                ["Email support", "Use Reset Password", "Create new account", "Wait"],
+            )
         )
-    )
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

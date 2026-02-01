@@ -122,6 +122,10 @@ def quick_setup(base_path: Path, execution_mode: str = "edge_analytics") -> bool
 
 
 if __name__ == "__main__":
-    print("Traigent Examples Setup Utilities")
-    print(f"Mock mode: {is_mock_mode()}")
-    print(f"Datasets path: {get_datasets_path()}")
+    try:
+        print("Traigent Examples Setup Utilities")
+        print(f"Mock mode: {is_mock_mode()}")
+        print(f"Datasets path: {get_datasets_path()}")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

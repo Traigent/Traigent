@@ -134,8 +134,12 @@ class OptimizedChatBot:
 
 
 if __name__ == "__main__":
-    bot = OptimizedChatBot()
-    print(bot.generate_response("How do I reset my password?"))
+    try:
+        bot = OptimizedChatBot()
+        print(bot.generate_response("How do I reset my password?"))
 
-    bot.update_config("customer_support_optimal.json")
-    print(bot.generate_response("Do you support enterprise SSO?"))
+        bot.update_config("customer_support_optimal.json")
+        print(bot.generate_response("Do you support enterprise SSO?"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

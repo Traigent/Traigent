@@ -55,12 +55,16 @@ def summarize_kpis(kpis: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await summarize_kpis.optimize(max_trials=10)
-        summarize_kpis.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:\n", summarize_kpis("revenue=+12%, churn=3.1%, nps=47"))
+        async def _main():
+            res = await summarize_kpis.optimize(max_trials=10)
+            summarize_kpis.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:\n", summarize_kpis("revenue=+12%, churn=3.1%, nps=47"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)
