@@ -1,0 +1,7 @@
+# Traigent SDK Hybrid Mode Dependencies
+# Required for external agentic service optimization via REST API
+
+-r requirements.txt
+
+# Hybrid mode - HTTP/2 client for external service communication
+httpx[http2]>=0.24.0

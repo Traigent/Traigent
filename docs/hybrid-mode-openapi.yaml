@@ -1,0 +1,765 @@
+openapi: 3.0.3
+info:
+  title: Traigent Hybrid Mode API
+  description: |
+    REST API contract for external agentic services integrating with Traigent optimization.
+
+    Implement these endpoints to enable Traigent to optimize your service's configuration.
+  version: "1.0.0"
+  contact:
+    name: Traigent Support
+    url: https://github.com/traigent/traigent-sdk
+  license:
+    name: Proprietary
+    url: https://traigent.ai/license
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: https://your-service.example.com
+    description: Production server
+
+tags:
+  - name: Discovery
+    description: Service discovery and capability endpoints
+  - name: Execution
+    description: Agent execution endpoints
+  - name: Evaluation
+    description: Output evaluation endpoints
+  - name: Health
+    description: Health and session management
+
+paths:
+  /traigent/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Get service capabilities
+      description: |
+        Returns the service capabilities for the initial handshake.
+        Traigent SDK calls this first to discover what features your service supports.
+      tags:
+        - Discovery
+      responses:
+        "200":
+          description: Service capabilities
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceCapabilities"
+              example:
+                version: "1.0"
+                supports_evaluate: true
+                supports_keep_alive: false
+                supports_streaming: false
+                max_batch_size: 100
+
+  /traigent/v1/config-space:
+    get:
+      operationId: getConfigSpace
+      summary: Get tunable configuration space
+      description: |
+        Returns tunable variable definitions. Traigent uses these to understand
+        what parameters it can optimize for your service.
+      tags:
+        - Discovery
+      responses:
+        "200":
+          description: Configuration space with tunable definitions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConfigSpaceResponse"
+              example:
+                schema_version: "0.9"
+                capability_id: "my_agent"
+                tunables:
+                  - name: model
+                    type: enum
+                    domain:
+                      values: ["gpt-4o", "claude-3-sonnet", "llama-70b"]
+                    default: "gpt-4o"
+                  - name: temperature
+                    type: float
+                    domain:
+                      range: [0.0, 2.0]
+                      resolution: 0.1
+                    default: 0.7
+                constraints: {}
+
+  /traigent/v1/execute:
+    post:
+      operationId: execute
+      summary: Execute agent with configuration
+      description: |
+        Execute the agent with a specific configuration on a batch of inputs.
+        This is the main endpoint where your agent processes inputs using the provided configuration.
+      tags:
+        - Execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExecuteRequest"
+            example:
+              request_id: "550e8400-e29b-41d4-a716-446655440000"
+              capability_id: "my_agent"
+              config:
+                model: "gpt-4o"
+                temperature: 0.5
+              inputs:
+                - input_id: "ex_001"
+                  data:
+                    query: "What is machine learning?"
+              timeout_ms: 30000
+      responses:
+        "200":
+          description: Execution completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExecuteResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /traigent/v1/evaluate:
+    post:
+      operationId: evaluate
+      summary: Evaluate outputs against targets
+      description: |
+        Evaluate outputs against expected targets to measure quality.
+        This endpoint is optional - only implement if supports_evaluate is true in capabilities.
+      tags:
+        - Evaluation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvaluateRequest"
+            example:
+              request_id: "660e8400-e29b-41d4-a716-446655440001"
+              capability_id: "my_agent"
+              execution_id: "exec_123456"
+              evaluations:
+                - input_id: "ex_001"
+                  output:
+                    response: "Machine learning is..."
+                  target:
+                    expected: "Machine learning is a type of AI..."
+      responses:
+        "200":
+          description: Evaluation completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EvaluateResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /traigent/v1/health:
+    get:
+      operationId: getHealth
+      summary: Health check
+      description: Health check endpoint for monitoring and load balancer health checks.
+      tags:
+        - Health
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthCheckResponse"
+              example:
+                status: healthy
+                version: "1.0.0"
+                uptime_seconds: 3600.5
+
+  /traigent/v1/keep-alive:
+    post:
+      operationId: keepAlive
+      summary: Session heartbeat
+      description: |
+        Session heartbeat for stateful agents.
+        Only implement if supports_keep_alive is true in capabilities.
+      tags:
+        - Health
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - session_id
+              properties:
+                session_id:
+                  type: string
+                  description: Session identifier
+      responses:
+        "200":
+          description: Session alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [alive]
+                  session_id:
+                    type: string
+
+components:
+  schemas:
+    ServiceCapabilities:
+      type: object
+      description: Service capabilities discovered via handshake
+      required:
+        - version
+      properties:
+        version:
+          type: string
+          description: API version (e.g., "1.0")
+          example: "1.0"
+        supports_evaluate:
+          type: boolean
+          description: Whether separate evaluate endpoint is available
+          default: true
+        supports_keep_alive:
+          type: boolean
+          description: Whether keep-alive heartbeat is supported
+          default: false
+        supports_streaming:
+          type: boolean
+          description: Whether streaming responses are supported
+          default: false
+        max_batch_size:
+          type: integer
+          description: Maximum inputs per execute request
+          default: 100
+          minimum: 1
+        max_payload_bytes:
+          type: integer
+          description: Maximum request payload size (null = unlimited)
+          nullable: true
+
+    ConfigSpaceResponse:
+      type: object
+      description: Response from config-space discovery endpoint
+      required:
+        - schema_version
+        - capability_id
+        - tunables
+      properties:
+        schema_version:
+          type: string
+          description: TVL schema version
+          example: "0.9"
+        capability_id:
+          type: string
+          description: Identifier for the capability
+          example: "my_agent"
+        tunables:
+          type: array
+          description: List of tunable variable definitions
+          items:
+            $ref: "#/components/schemas/TunableDefinition"
+        constraints:
+          type: object
+          description: Structural and behavioral constraints
+          additionalProperties:
+            type: array
+            items:
+              type: string
+
+    TunableDefinition:
+      type: object
+      description: Tunable variable definition following TVL 0.9 specification
+      required:
+        - name
+        - type
+      properties:
+        name:
+          type: string
+          description: Variable name (must be valid Python identifier)
+          pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+          example: "temperature"
+        type:
+          type: string
+          description: Variable type
+          enum: [bool, int, float, str, enum]
+          example: "float"
+        domain:
+          $ref: "#/components/schemas/TunableDomain"
+        default:
+          description: Default value (type depends on tunable type)
+        agent:
+          type: string
+          description: Agent name for multi-agent grouping
+        is_tool:
+          type: boolean
+          description: True if this tunable configures an MCP tool
+          default: false
+        constraints:
+          type: array
+          description: Conditional constraints
+          items:
+            type: string
+          example: ["requires model == gpt-4"]
+
+    TunableDomain:
+      type: object
+      description: Domain specification for tunable variable
+      properties:
+        values:
+          type: array
+          description: Allowed values (for enum and str types)
+          items: {}
+          example: ["gpt-4o", "claude-3-sonnet"]
+        range:
+          type: array
+          description: "[min, max] range (for int and float types)"
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+          example: [0.0, 2.0]
+        resolution:
+          type: number
+          description: Step size for float types
+          example: 0.1
+
+    ExecuteRequest:
+      type: object
+      description: Request to execute agent with configuration on inputs
+      required:
+        - capability_id
+        - config
+        - inputs
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Idempotency key for retry safety
+        capability_id:
+          type: string
+          description: Identifier for the agent capability to invoke
+        config:
+          type: object
+          description: Configuration parameters (tunable values)
+          additionalProperties: true
+        inputs:
+          type: array
+          description: List of input examples to process
+          items:
+            $ref: "#/components/schemas/InputItem"
+          minItems: 1
+        session_id:
+          type: string
+          description: Session ID for stateful agents
+          nullable: true
+        batch_options:
+          $ref: "#/components/schemas/BatchOptions"
+        timeout_ms:
+          type: integer
+          description: Request timeout in milliseconds
+          default: 30000
+          minimum: 1000
+
+    InputItem:
+      type: object
+      description: |
+        Single input item for execution.
+
+        **Privacy-preserving mode**: Only `input_id` is required. Your service uses
+        the ID to look up the actual input data locally. The input data is never
+        transmitted to Traigent.
+
+        **Standard mode**: Include `data` with the actual input content.
+      required:
+        - input_id
+      properties:
+        input_id:
+          type: string
+          description: |
+            Unique identifier for this input. In privacy-preserving mode, your
+            service uses this ID to look up the actual input data locally.
+          example: "ex_001"
+        data:
+          type: object
+          description: |
+            Input data (structure defined by your agent). Optional in privacy-preserving
+            mode where the service looks up data by input_id.
+          additionalProperties: true
+          example:
+            query: "What is machine learning?"
+
+    BatchOptions:
+      type: object
+      description: Options for batch execution control
+      properties:
+        parallelism:
+          type: integer
+          description: Maximum concurrent executions within batch
+          default: 1
+          minimum: 1
+        fail_fast:
+          type: boolean
+          description: Stop batch on first failure
+          default: false
+        timeout_per_item_ms:
+          type: integer
+          description: Per-item timeout (0 = use request timeout)
+          default: 0
+          minimum: 0
+
+    ExecuteResponse:
+      type: object
+      description: Response from agent execution
+      required:
+        - request_id
+        - execution_id
+        - status
+        - outputs
+        - operational_metrics
+      properties:
+        request_id:
+          type: string
+          description: Echoed request ID for correlation
+        execution_id:
+          type: string
+          description: Unique ID for this execution (used in evaluate)
+        status:
+          type: string
+          description: Execution status
+          enum: [completed, partial, failed]
+        outputs:
+          type: array
+          description: Per-input results
+          items:
+            $ref: "#/components/schemas/OutputItem"
+        operational_metrics:
+          $ref: "#/components/schemas/OperationalMetrics"
+        quality_metrics:
+          type: object
+          description: Quality metrics if using combined mode
+          additionalProperties:
+            type: number
+          nullable: true
+        session_id:
+          type: string
+          description: Session ID for stateful agents
+          nullable: true
+        error:
+          $ref: "#/components/schemas/ExecutionError"
+
+    OutputItem:
+      type: object
+      description: |
+        Output for a single input.
+
+        **Privacy-preserving mode**: Return `output_id` instead of `output`. Your service
+        stores the actual output locally and only shares the identifier. Traigent only
+        sees the ID and associated metrics.
+
+        **Standard mode**: Include `output` with the actual output content.
+      required:
+        - input_id
+      properties:
+        input_id:
+          type: string
+          description: Matching input identifier
+        output:
+          type: object
+          description: |
+            Agent output (structure defined by your agent). Optional in privacy-preserving
+            mode where only output_id is returned.
+          additionalProperties: true
+        output_id:
+          type: string
+          description: |
+            Unique identifier for this output. Used in privacy-preserving mode where
+            the actual output content is stored locally by the service.
+          example: "out_001_run_abc"
+        cost_usd:
+          type: number
+          description: Cost for this input in USD
+          format: double
+        latency_ms:
+          type: number
+          description: Latency for this input in milliseconds
+          format: double
+
+    OperationalMetrics:
+      type: object
+      description: Aggregate operational metrics from execution
+      required:
+        - total_cost_usd
+      properties:
+        total_cost_usd:
+          type: number
+          description: Total cost in USD
+          format: double
+          example: 0.005
+        cost_usd:
+          type: number
+          description: Alias for total_cost_usd
+          format: double
+        latency_ms:
+          type: number
+          description: Total latency in milliseconds
+          format: double
+          example: 330
+        tokens_used:
+          type: integer
+          description: Total tokens consumed
+        tokens_input:
+          type: integer
+          description: Input tokens
+        tokens_output:
+          type: integer
+          description: Output tokens
+        cache_hits:
+          type: integer
+          description: Number of cache hits
+        retry_count:
+          type: integer
+          description: Number of retries
+      additionalProperties:
+        description: Custom operational metrics
+        oneOf:
+          - type: number
+          - type: integer
+          - type: string
+          - type: boolean
+
+    EvaluateRequest:
+      type: object
+      description: Request to evaluate outputs against targets
+      required:
+        - capability_id
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Idempotency key for retry safety
+        capability_id:
+          type: string
+          description: Identifier for the evaluation capability
+        execution_id:
+          type: string
+          description: Reference to previous execute (for caching)
+          nullable: true
+        evaluations:
+          type: array
+          description: List of output+target pairs to evaluate
+          items:
+            $ref: "#/components/schemas/EvaluationItem"
+        config:
+          type: object
+          description: Optional config for evaluation parameters
+          additionalProperties: true
+          nullable: true
+        session_id:
+          type: string
+          description: Session ID for stateful agents
+          nullable: true
+
+    EvaluationItem:
+      type: object
+      description: |
+        Single evaluation item with output and target.
+
+        **Privacy-preserving mode**: Use `output_id` and `target_id` instead of actual content.
+        Your service looks up the actual data locally using these IDs. This ensures that
+        sensitive input/output content is never transmitted to Traigent.
+
+        **Standard mode**: Include `output` and `target` with actual content.
+
+        Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
+      required:
+        - input_id
+      properties:
+        input_id:
+          type: string
+          description: Matching input identifier
+        output:
+          type: object
+          description: |
+            Agent output to evaluate. Optional if using output_id for privacy-preserving mode.
+          additionalProperties: true
+        output_id:
+          type: string
+          description: |
+            Reference to output stored locally by the service. Used in privacy-preserving
+            mode where actual output content is not transmitted. The service looks up
+            the output by this ID when performing evaluation.
+          example: "out_001_run_abc"
+        target:
+          type: object
+          description: |
+            Expected/reference output. Optional if using target_id for privacy-preserving mode.
+          additionalProperties: true
+        target_id:
+          type: string
+          description: |
+            Reference to expected output stored locally by the service. Used in privacy-preserving
+            mode where actual target content is not transmitted. The service looks up
+            the expected output by this ID when performing evaluation.
+          example: "target_001"
+
+    EvaluateResponse:
+      type: object
+      description: Response from evaluation
+      required:
+        - request_id
+        - status
+        - results
+        - aggregate_metrics
+      properties:
+        request_id:
+          type: string
+          description: Echoed request ID
+        status:
+          type: string
+          description: Evaluation status
+          enum: [completed, partial, failed]
+        results:
+          type: array
+          description: Per-example evaluation results
+          items:
+            $ref: "#/components/schemas/EvaluationResult"
+        aggregate_metrics:
+          type: object
+          description: Aggregated statistics per metric
+          additionalProperties:
+            $ref: "#/components/schemas/AggregateMetricStats"
+
+    EvaluationResult:
+      type: object
+      description: Evaluation result for a single example
+      required:
+        - input_id
+        - metrics
+      properties:
+        input_id:
+          type: string
+          description: Matching input identifier
+        metrics:
+          type: object
+          description: Quality metrics for this example
+          additionalProperties:
+            type: number
+          example:
+            accuracy: 0.92
+            relevance: 0.88
+            fluency: 0.95
+
+    AggregateMetricStats:
+      type: object
+      description: Aggregated statistics for a metric
+      required:
+        - mean
+        - std
+        - n
+      properties:
+        mean:
+          type: number
+          description: Mean value across all examples
+          format: double
+        std:
+          type: number
+          description: Standard deviation
+          format: double
+        n:
+          type: integer
+          description: Number of examples
+
+    HealthCheckResponse:
+      type: object
+      description: Response from health check endpoint
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          description: Health status
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+          description: Service version
+        uptime_seconds:
+          type: number
+          description: Service uptime in seconds
+          format: double
+        details:
+          type: object
+          description: Additional health details
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      description: Error response format
+      required:
+        - error
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorDetails"
+
+    ErrorDetails:
+      type: object
+      description: Error details
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: "INVALID_CONFIG"
+        message:
+          type: string
+          description: Human-readable error message
+        details:
+          type: object
+          description: Additional error details
+          additionalProperties: true
+
+    ExecutionError:
+      type: object
+      description: Execution error details
+      nullable: true
+      properties:
+        code:
+          type: string
+          description: Error code
+        message:
+          type: string
+          description: Error message
+        failed_inputs:
+          type: array
+          description: List of failed input IDs
+          items:
+            type: string
