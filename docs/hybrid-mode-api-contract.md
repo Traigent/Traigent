@@ -2,6 +2,40 @@
 
 This document defines the REST API contract for external services integrating with Traigent's Hybrid Mode optimization.
 
+## Machine-Readable Specifications
+
+For code generation and validation, use these schema files:
+
+| Format | File | Description |
+|--------|------|-------------|
+| **OpenAPI 3.0** | [hybrid-mode-openapi.yaml](./hybrid-mode-openapi.yaml) | Full API specification with examples |
+| **JSON Schema** | [hybrid-mode-schemas.json](./hybrid-mode-schemas.json) | DTO definitions for validation |
+
+### Using the OpenAPI Spec
+
+Generate client code:
+```bash
+# Python client
+openapi-generator generate -i docs/hybrid-mode-openapi.yaml -g python -o client/
+
+# TypeScript client
+openapi-generator generate -i docs/hybrid-mode-openapi.yaml -g typescript-fetch -o client/
+```
+
+Validate requests/responses:
+```python
+from jsonschema import validate
+import json
+
+with open("docs/hybrid-mode-schemas.json") as f:
+    schemas = json.load(f)
+
+# Validate an execute response
+validate(response_data, schemas["definitions"]["ExecuteResponse"])
+```
+
+---
+
 ## Overview
 
 Hybrid Mode allows Traigent to optimize external agentic services by:
