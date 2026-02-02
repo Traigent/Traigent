@@ -1,0 +1,901 @@
+"""Integration tests for hybrid mode optimization.
+
+Tests the complete hybrid mode workflow including:
+- Full optimization loop with mock external service
+- Cost limit enforcement
+- Batch size control
+- Keep-alive heartbeat and cleanup
+- Transport abstraction
+"""
+
+import asyncio
+
+import pytest
+
+from tests.integration.hybrid.mock_hybrid_server import (
+    MockHTTPTransport,
+    MockHybridServer,
+    MockServerConfig,
+)
+from traigent.hybrid.discovery import ConfigSpaceDiscovery
+from traigent.hybrid.lifecycle import AgentLifecycleManager
+from traigent.hybrid.protocol import (
+    HybridEvaluateRequest,
+    HybridExecuteRequest,
+)
+
+
+class TestHybridModeConfigSpaceDiscovery:
+    """Integration tests for config space discovery."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server for testing."""
+        return MockHybridServer()
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_fetch_and_normalize_config_space(
+        self, transport: MockHTTPTransport
+    ) -> None:
+        """Test fetching and normalizing config space from service."""
+        discovery = ConfigSpaceDiscovery(transport)
+
+        config_space = await discovery.fetch_and_normalize()
+
+        # Verify TVAR normalization
+        assert "model" in config_space
+        assert config_space["model"] == ["fast", "accurate", "balanced"]
+
+        assert "temperature" in config_space
+        assert config_space["temperature"]["low"] == 0.0
+        assert config_space["temperature"]["high"] == 1.0
+        assert config_space["temperature"]["step"] == 0.1
+
+        assert "max_retries" in config_space
+        assert config_space["max_retries"]["low"] == 0
+        assert config_space["max_retries"]["high"] == 5
+        assert config_space["max_retries"]["type"] == "int"
+
+        assert "use_cache" in config_space
+        assert config_space["use_cache"] == [True, False]
+
+    @pytest.mark.asyncio
+    async def test_discovery_caching(self, transport: MockHTTPTransport) -> None:
+        """Test that discovery caches results."""
+        discovery = ConfigSpaceDiscovery(transport)
+
+        # First fetch
+        await discovery.fetch()
+        capability_id_1 = discovery.get_capability_id()
+
+        # Second fetch should return cached
+        await discovery.fetch()
+        capability_id_2 = discovery.get_capability_id()
+
+        assert capability_id_1 == capability_id_2 == "mock_test_agent"
+
+    @pytest.mark.asyncio
+    async def test_discovery_clear_cache(self, transport: MockHTTPTransport) -> None:
+        """Test clearing cache forces re-fetch."""
+        discovery = ConfigSpaceDiscovery(transport)
+
+        await discovery.fetch()
+        tvars_1 = discovery.get_tvars()
+
+        discovery.clear_cache()
+
+        # After clear, should have no TVARs until fetch
+        tvars_empty = discovery.get_tvars()
+        assert tvars_empty == []
+
+        # Re-fetch
+        await discovery.fetch()
+        tvars_2 = discovery.get_tvars()
+        assert len(tvars_2) == len(tvars_1)
+
+
+class TestHybridModeExecution:
+    """Integration tests for hybrid mode execution flow."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server for testing."""
+        return MockHybridServer()
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_execute_single_example(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test executing a single example."""
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.3},
+            inputs=[{"input_id": "ex_1", "data": {"query": "test question"}}],
+        )
+
+        response = await transport.execute(request)
+
+        assert response.status == "completed"
+        assert len(response.outputs) == 1
+        assert response.outputs[0]["input_id"] == "ex_1"
+        assert "output" in response.outputs[0]
+        assert response.operational_metrics["total_cost_usd"] > 0
+
+        # Verify server received the config
+        assert mock_server.execute_call_count == 1
+        assert mock_server.received_configs[0]["model"] == "accurate"
+
+    @pytest.mark.asyncio
+    async def test_execute_batch(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test executing a batch of examples."""
+        inputs = [
+            {"input_id": f"ex_{i}", "data": {"query": f"question {i}"}}
+            for i in range(5)
+        ]
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "balanced"},
+            inputs=inputs,
+        )
+
+        response = await transport.execute(request)
+
+        assert response.status == "completed"
+        assert len(response.outputs) == 5
+
+        # Verify costs scale with batch size
+        total_cost = response.operational_metrics["total_cost_usd"]
+        assert total_cost == 5 * mock_server.config.cost_per_example
+
+    @pytest.mark.asyncio
+    async def test_execute_with_session(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test executing with session ID for stateful agents."""
+        session_id = "session_123"
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=[{"input_id": "ex_1", "data": {}}],
+            session_id=session_id,
+        )
+
+        response = await transport.execute(request)
+
+        assert response.status == "completed"
+        assert response.session_id == session_id
+        assert session_id in mock_server.active_sessions
+
+    @pytest.mark.asyncio
+    async def test_model_affects_cost(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test that different model configurations affect cost."""
+        inputs = [{"input_id": "ex_1", "data": {}}]
+
+        # Fast model - lower cost
+        request_fast = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=inputs,
+        )
+        response_fast = await transport.execute(request_fast)
+        cost_fast = response_fast.operational_metrics["total_cost_usd"]
+
+        mock_server.reset()
+
+        # Accurate model - higher cost
+        request_accurate = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},
+            inputs=inputs,
+        )
+        response_accurate = await transport.execute(request_accurate)
+        cost_accurate = response_accurate.operational_metrics["total_cost_usd"]
+
+        # Accurate should cost more than fast
+        assert cost_accurate > cost_fast
+
+
+class TestHybridModeEvaluation:
+    """Integration tests for hybrid mode evaluation flow."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server for testing."""
+        return MockHybridServer()
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_evaluate_outputs(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test evaluating outputs against targets."""
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output": {"quality_score": 0.9, "response": "answer 1"},
+                    "target": {"expected": "correct answer"},
+                },
+                {
+                    "input_id": "ex_2",
+                    "output": {"quality_score": 0.7, "response": "answer 2"},
+                    "target": {"expected": "correct answer"},
+                },
+            ],
+        )
+
+        response = await transport.evaluate(request)
+
+        assert response.status == "completed"
+        assert len(response.results) == 2
+        assert "accuracy" in response.aggregate_metrics
+        assert response.aggregate_metrics["accuracy"]["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_then_evaluate(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test two-phase: execute then evaluate workflow."""
+        # Phase 1: Execute
+        exec_request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.2},
+            inputs=[
+                {"input_id": "ex_1", "data": {"query": "What is 2+2?"}},
+                {"input_id": "ex_2", "data": {"query": "Capital of France?"}},
+            ],
+        )
+        exec_response = await transport.execute(exec_request)
+
+        assert exec_response.status == "completed"
+
+        # Phase 2: Evaluate
+        evaluations = [
+            {
+                "input_id": out["input_id"],
+                "output": out["output"],
+                "target": {"expected": "correct"},
+            }
+            for out in exec_response.outputs
+        ]
+
+        eval_request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            execution_id=exec_response.execution_id,
+            evaluations=evaluations,
+        )
+        eval_response = await transport.evaluate(eval_request)
+
+        assert eval_response.status == "completed"
+        assert mock_server.execute_call_count == 1
+        assert mock_server.evaluate_call_count == 1
+
+
+class TestHybridModeLifecycle:
+    """Integration tests for agent lifecycle management."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server for testing."""
+        return MockHybridServer()
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_register_and_release(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test registering and releasing sessions."""
+        manager = AgentLifecycleManager(
+            transport=transport,
+            heartbeat_interval=0.1,  # Fast for tests
+        )
+
+        session_id = manager.create_session()
+        await manager.register(session_id)
+
+        assert manager.session_count == 1
+        assert manager.is_session_alive(session_id)
+
+        await manager.release()
+
+        assert manager.session_count == 0
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_heartbeat(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test that heartbeat calls keep-alive endpoint."""
+        manager = AgentLifecycleManager(
+            transport=transport,
+            heartbeat_interval=0.05,  # Very fast for test
+        )
+
+        session_id = "test_session"
+
+        # Execute a request to register session on server
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={},
+            inputs=[{"input_id": "ex_1", "data": {}}],
+            session_id=session_id,
+        )
+        await transport.execute(request)
+
+        # Now register with lifecycle manager
+        await manager.register(session_id)
+
+        # Wait for heartbeats
+        await asyncio.sleep(0.2)
+
+        # Should have called keep-alive
+        assert mock_server.keep_alive_call_count > 0
+
+        await manager.release()
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_context_manager(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test using lifecycle manager as context manager."""
+        async with AgentLifecycleManager(
+            transport=transport,
+            heartbeat_interval=0.1,
+        ) as manager:
+            await manager.register("session_1")
+            await manager.register("session_2")
+            assert manager.session_count == 2
+
+        # After exit, should be released
+        assert manager.session_count == 0
+
+
+class TestHybridModeCostControl:
+    """Integration tests for cost tracking and limits."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server with specific cost configuration."""
+        config = MockServerConfig(cost_per_example=0.01)  # $0.01 per example
+        return MockHybridServer(config=config)
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_cost_tracking_single_batch(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test that costs are accurately tracked for single batch."""
+        inputs = [{"input_id": f"ex_{i}", "data": {}} for i in range(10)]
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "balanced"},  # 1x cost multiplier
+            inputs=inputs,
+        )
+
+        response = await transport.execute(request)
+
+        # Should be 10 * $0.01 = $0.10
+        assert response.operational_metrics["total_cost_usd"] == pytest.approx(0.10)
+
+    @pytest.mark.asyncio
+    async def test_cost_tracking_multiple_batches(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test cost accumulation across multiple batches."""
+        total_cost = 0.0
+
+        for batch_idx in range(3):
+            inputs = [
+                {"input_id": f"batch{batch_idx}_ex_{i}", "data": {}} for i in range(5)
+            ]
+
+            request = HybridExecuteRequest(
+                capability_id="mock_test_agent",
+                config={"model": "balanced"},
+                inputs=inputs,
+            )
+
+            response = await transport.execute(request)
+            total_cost += response.operational_metrics["total_cost_usd"]
+
+        # 3 batches * 5 examples * $0.01 = $0.15
+        assert total_cost == pytest.approx(0.15)
+
+    @pytest.mark.asyncio
+    async def test_per_example_cost_extraction(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test extracting per-example costs from response."""
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},  # 2x cost
+            inputs=[
+                {"input_id": "ex_1", "data": {}},
+                {"input_id": "ex_2", "data": {}},
+            ],
+        )
+
+        response = await transport.execute(request)
+
+        # Each output should have its own cost
+        for output in response.outputs:
+            assert "cost_usd" in output
+            assert output["cost_usd"] == pytest.approx(0.02)  # $0.01 * 2x
+
+
+class TestHybridModeBatchControl:
+    """Integration tests for batch size control."""
+
+    @pytest.fixture
+    def mock_server(self) -> MockHybridServer:
+        """Create mock server."""
+        return MockHybridServer()
+
+    @pytest.fixture
+    def transport(self, mock_server: MockHybridServer) -> MockHTTPTransport:
+        """Create mock transport."""
+        return MockHTTPTransport(mock_server)
+
+    @pytest.mark.asyncio
+    async def test_batch_size_one(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test batch size of 1 (sequential execution)."""
+        for i in range(3):
+            request = HybridExecuteRequest(
+                capability_id="mock_test_agent",
+                config={"model": "fast"},
+                inputs=[{"input_id": f"ex_{i}", "data": {}}],
+            )
+            await transport.execute(request)
+
+        # Should have 3 separate execute calls
+        assert mock_server.execute_call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_batch_size_all(
+        self, transport: MockHTTPTransport, mock_server: MockHybridServer
+    ) -> None:
+        """Test sending all examples in one batch."""
+        inputs = [{"input_id": f"ex_{i}", "data": {}} for i in range(10)]
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=inputs,
+        )
+        response = await transport.execute(request)
+
+        # Should have 1 execute call with 10 outputs
+        assert mock_server.execute_call_count == 1
+        assert len(response.outputs) == 10
+
+
+class TestHybridModeErrorHandling:
+    """Integration tests for error handling."""
+
+    @pytest.mark.asyncio
+    async def test_handle_execute_failure(self) -> None:
+        """Test handling execute failures gracefully."""
+        config = MockServerConfig(fail_execute_after=0)  # Fail immediately
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={},
+            inputs=[{"input_id": "ex_1", "data": {}}],
+        )
+
+        response = await transport.execute(request)
+        assert response.status == "failed"
+        assert response.error is not None
+
+    @pytest.mark.asyncio
+    async def test_handle_evaluate_not_supported(self) -> None:
+        """Test handling when evaluate is not supported."""
+        config = MockServerConfig(supports_evaluate=False)
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[{"input_id": "ex_1", "output": {}, "target": {}}],
+        )
+
+        response = await transport.evaluate(request)
+        assert response.status == "failed"
+
+    @pytest.mark.asyncio
+    async def test_transport_close(self) -> None:
+        """Test transport cleanup on close."""
+        server = MockHybridServer()
+        transport = MockHTTPTransport(server)
+
+        await transport.close()
+        assert transport._closed is True
+
+
+class TestHybridModeCapabilities:
+    """Integration tests for capability negotiation."""
+
+    @pytest.mark.asyncio
+    async def test_capabilities_full_featured(self) -> None:
+        """Test discovering full-featured service."""
+        config = MockServerConfig(
+            supports_evaluate=True,
+            supports_keep_alive=True,
+        )
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        capabilities = await transport.capabilities()
+
+        assert capabilities.supports_evaluate is True
+        assert capabilities.supports_keep_alive is True
+        assert capabilities.version == "1.0"
+
+    @pytest.mark.asyncio
+    async def test_capabilities_minimal(self) -> None:
+        """Test discovering minimal service."""
+        config = MockServerConfig(
+            supports_evaluate=False,
+            supports_keep_alive=False,
+        )
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        capabilities = await transport.capabilities()
+
+        assert capabilities.supports_evaluate is False
+        assert capabilities.supports_keep_alive is False
+
+    @pytest.mark.asyncio
+    async def test_health_check(self) -> None:
+        """Test health check endpoint."""
+        server = MockHybridServer()
+        transport = MockHTTPTransport(server)
+
+        health = await transport.health_check()
+
+        assert health.status == "healthy"
+        assert health.version == "1.0.0-mock"
+
+
+class TestHybridModePrivacyPreserving:
+    """Integration tests for privacy-preserving mode.
+
+    Tests that the API correctly handles:
+    - Execute with only input_id (no data content)
+    - Execute returning output_id instead of output content
+    - Evaluate with output_id and target_id instead of content
+    - Mixed mode (some content, some IDs)
+    """
+
+    @pytest.fixture
+    def privacy_server(self) -> MockHybridServer:
+        """Create mock server in privacy-preserving mode."""
+        config = MockServerConfig(privacy_preserving=True)
+        return MockHybridServer(config=config)
+
+    @pytest.fixture
+    def privacy_transport(
+        self, privacy_server: MockHybridServer
+    ) -> MockHTTPTransport:
+        """Create mock transport for privacy mode."""
+        return MockHTTPTransport(privacy_server)
+
+    @pytest.mark.asyncio
+    async def test_execute_privacy_mode_input_id_only(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test execute with only input_id - data looked up locally."""
+        # Pre-store input data on server (simulates client-side storage)
+        privacy_server.store_input("ex_1", {"query": "What is AI?"})
+        privacy_server.store_input("ex_2", {"query": "What is ML?"})
+
+        # Request with only input_ids, no data
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.3},
+            inputs=[
+                {"input_id": "ex_1"},  # No data field
+                {"input_id": "ex_2"},  # No data field
+            ],
+        )
+
+        response = await privacy_transport.execute(request)
+
+        assert response.status == "completed"
+        assert len(response.outputs) == 2
+
+        # In privacy mode, outputs should have output_id, not output content
+        for out in response.outputs:
+            assert "output_id" in out
+            assert "output" not in out
+            assert out["input_id"] in ["ex_1", "ex_2"]
+
+    @pytest.mark.asyncio
+    async def test_execute_privacy_mode_returns_output_id(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that privacy mode returns output_id instead of output content."""
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
+            session_id="session_123",
+        )
+
+        response = await privacy_transport.execute(request)
+
+        assert response.status == "completed"
+        output = response.outputs[0]
+
+        # Should have output_id, not output
+        assert "output_id" in output
+        assert "output" not in output
+        assert output["output_id"] == "out_ex_1_session_123"
+
+        # Output should be stored locally on server
+        stored_output = privacy_server.get_output(output["output_id"])
+        assert "quality_score" in stored_output
+        assert "response" in stored_output
+
+    @pytest.mark.asyncio
+    async def test_evaluate_privacy_mode_with_ids(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test evaluate using output_id and target_id instead of content."""
+        # Pre-store output and target data on server
+        privacy_server._output_storage["out_ex_1"] = {
+            "quality_score": 0.9,
+            "response": "AI is artificial intelligence",
+        }
+        privacy_server.store_target("target_ex_1", {"expected": "AI is..."})
+
+        privacy_server._output_storage["out_ex_2"] = {
+            "quality_score": 0.7,
+            "response": "ML is machine learning",
+        }
+        privacy_server.store_target("target_ex_2", {"expected": "ML is..."})
+
+        # Request with only IDs, no content
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output_id": "out_ex_1",  # ID instead of content
+                    "target_id": "target_ex_1",  # ID instead of content
+                },
+                {
+                    "input_id": "ex_2",
+                    "output_id": "out_ex_2",
+                    "target_id": "target_ex_2",
+                },
+            ],
+        )
+
+        response = await privacy_transport.evaluate(request)
+
+        assert response.status == "completed"
+        assert len(response.results) == 2
+        assert "accuracy" in response.aggregate_metrics
+
+        # Verify metrics are computed correctly from stored data
+        for result in response.results:
+            assert "accuracy" in result["metrics"]
+            assert "relevance" in result["metrics"]
+
+    @pytest.mark.asyncio
+    async def test_standard_mode_includes_full_content(
+        self,
+    ) -> None:
+        """Test that standard mode (non-privacy) includes full content."""
+        config = MockServerConfig(privacy_preserving=False)
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "balanced"},
+            inputs=[{"input_id": "ex_1", "data": {"query": "test question"}}],
+        )
+
+        response = await transport.execute(request)
+
+        assert response.status == "completed"
+        output = response.outputs[0]
+
+        # Standard mode: should have output content, not output_id
+        assert "output" in output
+        assert "output_id" not in output
+        assert "response" in output["output"]
+        assert "quality_score" in output["output"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_mode_evaluate(
+        self,
+    ) -> None:
+        """Test mixed mode: some content, some IDs in same request."""
+        config = MockServerConfig(privacy_preserving=False)
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        # Pre-store one target, provide other inline
+        server.store_target("target_ex_2", {"expected": "Machine learning..."})
+
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output": {"quality_score": 0.9, "response": "answer 1"},
+                    "target": {"expected": "correct answer"},  # Full content
+                },
+                {
+                    "input_id": "ex_2",
+                    "output": {"quality_score": 0.7, "response": "answer 2"},
+                    "target_id": "target_ex_2",  # ID reference
+                },
+            ],
+        )
+
+        response = await transport.evaluate(request)
+
+        assert response.status == "completed"
+        assert len(response.results) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_then_evaluate_privacy_flow(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test complete privacy-preserving workflow: execute then evaluate."""
+        session_id = "privacy_session_001"
+
+        # Pre-store input data
+        privacy_server.store_input("ex_1", {"query": "What is 2+2?"})
+        privacy_server.store_input("ex_2", {"query": "Capital of France?"})
+
+        # Pre-store target data
+        privacy_server.store_target("target_ex_1", {"expected": "4"})
+        privacy_server.store_target("target_ex_2", {"expected": "Paris"})
+
+        # Phase 1: Execute with only input_ids
+        exec_request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.2},
+            inputs=[
+                {"input_id": "ex_1"},
+                {"input_id": "ex_2"},
+            ],
+            session_id=session_id,
+        )
+        exec_response = await privacy_transport.execute(exec_request)
+
+        assert exec_response.status == "completed"
+        assert len(exec_response.outputs) == 2
+
+        # Collect output_ids from response
+        output_ids = {
+            out["input_id"]: out["output_id"] for out in exec_response.outputs
+        }
+
+        # Phase 2: Evaluate with output_ids and target_ids
+        eval_request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            execution_id=exec_response.execution_id,
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output_id": output_ids["ex_1"],
+                    "target_id": "target_ex_1",
+                },
+                {
+                    "input_id": "ex_2",
+                    "output_id": output_ids["ex_2"],
+                    "target_id": "target_ex_2",
+                },
+            ],
+            session_id=session_id,
+        )
+        eval_response = await privacy_transport.evaluate(eval_request)
+
+        assert eval_response.status == "completed"
+        assert privacy_server.execute_call_count == 1
+        assert privacy_server.evaluate_call_count == 1
+
+        # Verify quality metrics are computed
+        assert "accuracy" in eval_response.aggregate_metrics
+        assert eval_response.aggregate_metrics["accuracy"]["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_privacy_mode_cost_tracking(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that cost tracking works correctly in privacy mode."""
+        privacy_server.store_input("ex_1", {"query": "test 1"})
+        privacy_server.store_input("ex_2", {"query": "test 2"})
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},  # 2x cost
+            inputs=[
+                {"input_id": "ex_1"},
+                {"input_id": "ex_2"},
+            ],
+        )
+
+        response = await privacy_transport.execute(request)
+
+        # Costs should still be tracked even in privacy mode
+        assert response.operational_metrics["total_cost_usd"] > 0
+
+        for output in response.outputs:
+            assert "cost_usd" in output
+            assert output["cost_usd"] > 0
+
+    @pytest.mark.asyncio
+    async def test_privacy_mode_session_scoped_outputs(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that output_ids are scoped to sessions to prevent collisions."""
+        # Same input_id but different sessions
+        request1 = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
+            session_id="session_A",
+        )
+
+        request2 = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},
+            inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
+            session_id="session_B",
+        )
+
+        response1 = await privacy_transport.execute(request1)
+        response2 = await privacy_transport.execute(request2)
+
+        output_id_1 = response1.outputs[0]["output_id"]
+        output_id_2 = response2.outputs[0]["output_id"]
+
+        # Output IDs should be different due to session scoping
+        assert output_id_1 != output_id_2
+        assert "session_A" in output_id_1
+        assert "session_B" in output_id_2
+
+        # Both outputs should be stored separately
+        assert privacy_server.get_output(output_id_1) != {}
+        assert privacy_server.get_output(output_id_2) != {}

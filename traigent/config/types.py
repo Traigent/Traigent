@@ -24,6 +24,8 @@ class ExecutionMode(str, Enum):
     - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
     - STANDARD: Cloud orchestration with data sharing for balanced performance.
     - CLOUD: Full SaaS execution where optimization and trials run in the cloud.
+    - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints.
+      Enables optimization of any agentic service that implements the Traigent API contract.
     """
 
     EDGE_ANALYTICS = "edge_analytics"
@@ -31,6 +33,7 @@ class ExecutionMode(str, Enum):
     HYBRID = "hybrid"
     STANDARD = "standard"
     CLOUD = "cloud"
+    HYBRID_API = "hybrid_api"
 
 
 def resolve_execution_mode(
@@ -150,6 +153,7 @@ class TraigentConfig:
         "hybrid",
         "standard",
         "cloud",
+        "hybrid_api",
     ] = "edge_analytics"
     local_storage_path: str | None = None
     minimal_logging: bool = True
