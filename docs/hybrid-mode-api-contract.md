@@ -52,6 +52,56 @@ Example: `http://your-service:8080/traigent/v1/capabilities`
 
 ---
 
+## Privacy-Preserving Mode (Default)
+
+Traigent Hybrid Mode is designed with privacy as the default. **Only configuration values and metrics are observed during optimization** - the actual content of inputs, outputs, and targets is never transmitted to Traigent.
+
+### How It Works
+
+1. **Inputs**: Only `input_id` is required. Your service stores input data locally and looks it up by ID.
+2. **Outputs**: Return `output_id` instead of `output` content. Your service stores outputs locally.
+3. **Evaluation**: Use `output_id` and `target_id` instead of actual content. Your service performs evaluation locally.
+
+### What Traigent Observes
+
+| Data | Observed by Traigent |
+|------|---------------------|
+| Tunable definitions (config-space) | ✓ Yes |
+| Configuration values per trial | ✓ Yes |
+| Operational metrics (cost, latency, tokens) | ✓ Yes |
+| Quality metrics (accuracy, relevance, etc.) | ✓ Yes |
+| Input data content | ✗ No (only IDs) |
+| Output data content | ✗ No (only IDs) |
+| Target/expected output content | ✗ No (only IDs) |
+
+### Session and ID Management
+
+For privacy-preserving mode, your service must:
+
+1. **Generate unique IDs**: Create stable identifiers for inputs, outputs, and targets
+2. **Track session context**: Use `session_id` to scope outputs to specific optimization runs
+3. **Store data locally**: Maintain a local mapping of IDs to actual content
+4. **Handle ID collisions**: Different optimization runs may reuse input IDs but produce different outputs - use `session_id` to distinguish
+
+**Example ID format**:
+
+```text
+input_id: "example_001"                    # Stable across runs
+output_id: "out_example_001_run_abc123"    # Scoped to run
+target_id: "target_001"                    # Stable across runs
+```
+
+### Standard Mode (Optional)
+
+If privacy is not a concern, you can send full content:
+- Include `data` in `InputItem`
+- Include `output` in `OutputItem`
+- Include `output` and `target` in `EvaluationItem`
+
+Both modes can be mixed - for example, send input `data` but return only `output_id`.
+
+---
+
 ## Endpoints
 
 ### GET /traigent/v1/capabilities
@@ -252,7 +302,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `input_id` | string | Yes | Unique identifier for this input |
-| `data` | object | Yes | Input data (structure defined by your agent) |
+| `data` | object | No | Input data (optional in privacy-preserving mode) |
 
 **Batch Options**:
 | Field | Type | Default | Description |
@@ -317,7 +367,8 @@ Execute the agent with a specific configuration on a batch of inputs.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `input_id` | string | Yes | Matching input identifier |
-| `output` | object | Yes | Agent output (structure defined by your agent) |
+| `output` | object | No | Agent output (optional in privacy-preserving mode) |
+| `output_id` | string | No | Output identifier (for privacy-preserving mode) |
 | `cost_usd` | number | No | Cost for this input |
 | `latency_ms` | number | No | Latency for this input |
 
@@ -389,8 +440,10 @@ Evaluate outputs against expected targets to measure quality.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `input_id` | string | Yes | Matching input identifier |
-| `output` | object | Yes | Agent output to evaluate |
-| `target` | object | Yes | Expected/reference output |
+| `output` | object | No | Agent output (optional in privacy-preserving mode) |
+| `output_id` | string | No | Output identifier (for privacy-preserving mode) |
+| `target` | object | No | Expected/reference output (optional in privacy-preserving mode) |
+| `target_id` | string | No | Target identifier (for privacy-preserving mode) |
 
 #### Response (200 OK)
 

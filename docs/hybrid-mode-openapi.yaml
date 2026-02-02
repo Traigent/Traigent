@@ -390,18 +390,28 @@ components:
 
     InputItem:
       type: object
-      description: Single input item for execution
+      description: |
+        Single input item for execution.
+
+        **Privacy-preserving mode**: Only `input_id` is required. Your service uses
+        the ID to look up the actual input data locally. The input data is never
+        transmitted to Traigent.
+
+        **Standard mode**: Include `data` with the actual input content.
       required:
         - input_id
-        - data
       properties:
         input_id:
           type: string
-          description: Unique identifier for this input
+          description: |
+            Unique identifier for this input. In privacy-preserving mode, your
+            service uses this ID to look up the actual input data locally.
           example: "ex_001"
         data:
           type: object
-          description: Input data (structure defined by your agent)
+          description: |
+            Input data (structure defined by your agent). Optional in privacy-preserving
+            mode where the service looks up data by input_id.
           additionalProperties: true
           example:
             query: "What is machine learning?"
@@ -467,18 +477,32 @@ components:
 
     OutputItem:
       type: object
-      description: Output for a single input
+      description: |
+        Output for a single input.
+
+        **Privacy-preserving mode**: Return `output_id` instead of `output`. Your service
+        stores the actual output locally and only shares the identifier. Traigent only
+        sees the ID and associated metrics.
+
+        **Standard mode**: Include `output` with the actual output content.
       required:
         - input_id
-        - output
       properties:
         input_id:
           type: string
           description: Matching input identifier
         output:
           type: object
-          description: Agent output (structure defined by your agent)
+          description: |
+            Agent output (structure defined by your agent). Optional in privacy-preserving
+            mode where only output_id is returned.
           additionalProperties: true
+        output_id:
+          type: string
+          description: |
+            Unique identifier for this output. Used in privacy-preserving mode where
+            the actual output content is stored locally by the service.
+          example: "out_001_run_abc"
         cost_usd:
           type: number
           description: Cost for this input in USD
@@ -565,23 +589,46 @@ components:
 
     EvaluationItem:
       type: object
-      description: Single evaluation item with output and target
+      description: |
+        Single evaluation item with output and target.
+
+        **Privacy-preserving mode**: Use `output_id` and `target_id` instead of actual content.
+        Your service looks up the actual data locally using these IDs. This ensures that
+        sensitive input/output content is never transmitted to Traigent.
+
+        **Standard mode**: Include `output` and `target` with actual content.
+
+        Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
       required:
         - input_id
-        - output
-        - target
       properties:
         input_id:
           type: string
           description: Matching input identifier
         output:
           type: object
-          description: Agent output to evaluate
+          description: |
+            Agent output to evaluate. Optional if using output_id for privacy-preserving mode.
           additionalProperties: true
+        output_id:
+          type: string
+          description: |
+            Reference to output stored locally by the service. Used in privacy-preserving
+            mode where actual output content is not transmitted. The service looks up
+            the output by this ID when performing evaluation.
+          example: "out_001_run_abc"
         target:
           type: object
-          description: Expected/reference output
+          description: |
+            Expected/reference output. Optional if using target_id for privacy-preserving mode.
           additionalProperties: true
+        target_id:
+          type: string
+          description: |
+            Reference to expected output stored locally by the service. Used in privacy-preserving
+            mode where actual target content is not transmitted. The service looks up
+            the expected output by this ID when performing evaluation.
+          example: "target_001"
 
     EvaluateResponse:
       type: object
