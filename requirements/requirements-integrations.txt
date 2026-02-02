@@ -10,7 +10,7 @@ langchain-community>=0.3.27
 langchain-anthropic>=0.2.0
 langchain-openai>=0.3.30
 langchain-chroma>=0.2.5
-langchain-google-genai>=0.0.10
+langchain-google-genai>=2.1.4
 openai>=1.0.0
 anthropic>=0.18.0
 rank_bm25>=0.2.2
@@ -23,4 +23,7 @@ boto3>=1.28.0
 botocore>=1.31.0
 
 # Google Generative AI (Gemini)
-google-generativeai>=0.7.0
+# google-genai: Google's forward SDK for direct Gemini support (Traigent primary)
+# google-generativeai: Kept for langchain-google-genai compatibility
+google-genai>=0.8.0
+google-generativeai>=0.3.0

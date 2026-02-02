@@ -87,6 +87,8 @@ class ProgressBarCallback(OptimizationCallback):
         self.update_interval = update_interval
         self.last_update = 0.0
         self.start_time = 0.0
+        # Track last progress for final update
+        self._last_progress: ProgressInfo | None = None
 
     def on_optimization_start(
         self, config_space: dict[str, Any], objectives: list[str], algorithm: str
@@ -106,6 +108,9 @@ class ProgressBarCallback(OptimizationCallback):
 
     def on_trial_complete(self, trial: TrialResult, progress: ProgressInfo) -> None:
         """Called when a trial completes."""
+        # Always store last progress for final update
+        self._last_progress = progress
+
         current_time = time.time()
 
         # Throttle updates
@@ -140,7 +145,29 @@ class ProgressBarCallback(OptimizationCallback):
 
     def on_optimization_complete(self, result: OptimizationResult) -> None:
         """Called when optimization completes."""
-        # Using print for final progress display output
+        # Draw final 100% progress bar (throttle may have skipped the last update)
+        if self._last_progress is not None:
+            bar = "█" * self.width
+            elapsed = time.strftime(
+                "%M:%S", time.gmtime(self._last_progress.elapsed_time)
+            )
+            best_score_str = (
+                f"{self._last_progress.best_score:.3f}"
+                if self._last_progress.best_score is not None
+                else "N/A"
+            )
+            total = self._last_progress.total_trials
+            # Using print for final progress display output
+            print(
+                f"\r[{bar}] 100.0% "
+                f"({total}/{total}) "
+                f"✅ {self._last_progress.successful_trials} "
+                f"❌ {self._last_progress.failed_trials} "
+                f"⏱️  {elapsed} "
+                f"🏆 {best_score_str}",
+                flush=True,
+            )
+
         print("\n")
         if result.stop_reason == "timeout" or result.status == "cancelled":
             timeout_value = None
