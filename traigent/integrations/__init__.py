@@ -174,7 +174,8 @@ try:
     )
 
     DSPY_INTEGRATION_AVAILABLE = DSPY_AVAILABLE
-except ImportError:
+except (ImportError, KeyError, RuntimeError):
+    # KeyError/RuntimeError can occur due to pydantic/litellm version conflicts
     DSPY_INTEGRATION_AVAILABLE = False
     DSPY_AVAILABLE = False
 
