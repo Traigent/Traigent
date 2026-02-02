@@ -609,14 +609,14 @@ class TraigentCloudClient(BaseTraigentClient):
             CloudOptimizationResult with optimization results
 
         Raises:
-            CloudServiceError: If cloud optimization fails and fallback disabled
+            CloudServiceError: If cloud optimization fails
         """
         start_time = time.time()
 
         try:
             # Check if aiohttp is available
             if not AIOHTTP_AVAILABLE:
-                raise CloudServiceError("aiohttp not available, using fallback")
+                raise CloudServiceError("aiohttp not available for cloud optimization")
 
             # Check authentication
             auth_status = self.auth.is_authenticated()
@@ -675,15 +675,9 @@ class TraigentCloudClient(BaseTraigentClient):
 
         except Exception as e:
             await self._reset_http_session("cloud optimization failure")
-            logger.warning(f"Cloud optimization failed: {e}")
-
-            if self.enable_fallback:
-                logger.info("Falling back to local optimization")
-                return await self._fallback_optimization(
-                    function_name, dataset, configuration_space, objectives, max_trials
-                )
-            else:
-                raise CloudServiceError(f"Cloud optimization failed: {e}") from None
+            logger.error(f"Cloud optimization failed: {e}")
+            # No silent fallback - fail fast with clear error
+            raise CloudServiceError(f"Cloud optimization failed: {e}") from None
 
     async def _submit_optimization(
         self, request_data: dict[str, Any]

@@ -9,8 +9,8 @@ The Alloy model (docs/traceability/alloy/cost_enforcement.als) is intentionally
 mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
-   regardless of how configurations are injected (CONTEXT, PARAMETER, ATTRIBUTE)
-   or where optimization runs (EDGE_ANALYTICS, CLOUD, HYBRID, STANDARD).
+   regardless of how configurations are injected (CONTEXT, PARAMETER, ATTRIBUTE).
+   Note: only EDGE_ANALYTICS execution mode is currently supported.
 
 2. **InjectionMode affects decorator → user function**, NOT orchestrator → CostEnforcer:
    - TraigentConfig has no injection_mode field
@@ -235,12 +235,9 @@ INJECTION_MODES = [
 ]
 
 # All execution modes to test
+# Note: cloud/hybrid raise ConfigurationError (not yet supported), standard/privacy removed
 EXECUTION_MODES = [
     ExecutionMode.EDGE_ANALYTICS,
-    ExecutionMode.CLOUD,
-    ExecutionMode.HYBRID,
-    ExecutionMode.STANDARD,
-    # PRIVACY is alias for HYBRID
 ]
 
 
@@ -338,12 +335,10 @@ class TestCostEnforcerModeMatrix:
     @pytest.mark.parametrize(
         "execution_mode,injection_mode",
         [
+            # Note: cloud/hybrid/standard not supported; only edge_analytics works
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.CONTEXT),
-            (ExecutionMode.CLOUD, InjectionMode.PARAMETER),
-            (ExecutionMode.HYBRID, InjectionMode.ATTRIBUTE),
-            (ExecutionMode.STANDARD, InjectionMode.CONTEXT),
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
-            (ExecutionMode.CLOUD, InjectionMode.ATTRIBUTE),
+            (ExecutionMode.EDGE_ANALYTICS, InjectionMode.ATTRIBUTE),
         ],
     )
     @pytest.mark.asyncio
@@ -353,10 +348,10 @@ class TestCostEnforcerModeMatrix:
         injection_mode: InjectionMode,
         sample_dataset: Dataset,
     ) -> None:
-        """Verify I1-I8 hold for representative mode combinations.
+        """Verify I1-I8 hold for injection mode combinations.
 
-        This is a pairwise sampling of the mode matrix to provide explicit
-        evidence that the orthogonality assumption holds.
+        Tests only edge_analytics mode (only supported mode in open-source SDK).
+        cloud/hybrid are not yet supported, standard/privacy have been removed.
         """
         context = f"exec={execution_mode.value},inj={injection_mode.value}"
 

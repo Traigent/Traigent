@@ -182,8 +182,6 @@ class OptimizedFunctionConfig:
         valid_execution_modes = [
             ExecutionMode.EDGE_ANALYTICS.value,
             ExecutionMode.HYBRID.value,
-            ExecutionMode.PRIVACY.value,
-            ExecutionMode.STANDARD.value,
             ExecutionMode.CLOUD.value,
         ]
         if self.execution_mode not in valid_execution_modes:

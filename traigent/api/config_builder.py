@@ -155,28 +155,23 @@ class ConfigurationBuilder:
     def _resolve_privacy_settings(
         self,
         privacy_enabled: bool | None,
-        execution_mode: ExecutionMode | str,
+        _execution_mode: ExecutionMode | str,
     ) -> bool | None:
         """
         Resolve privacy settings based on execution mode.
 
+        Note: privacy_enabled is orthogonal to execution_mode. It controls
+        whether input/output is included in telemetry when auto_sync is enabled.
+
         Args:
             privacy_enabled: Explicit privacy setting
-            execution_mode: Current execution mode
+            _execution_mode: Unused, kept for API compatibility
 
         Returns:
             Effective privacy setting
         """
-        if privacy_enabled is not None:
-            return privacy_enabled
-
-        # Auto-enable privacy for privacy execution mode
-        mode_enum = resolve_execution_mode(execution_mode)
-        if mode_enum is ExecutionMode.PRIVACY:
-            logger.debug("Auto-enabling privacy for 'privacy' execution mode")
-            return True
-
-        return None
+        # Privacy is explicitly set by user, not inferred from execution mode
+        return privacy_enabled
 
     def update_global_config(self, **config_updates: Any) -> None:
         """Update global configuration."""

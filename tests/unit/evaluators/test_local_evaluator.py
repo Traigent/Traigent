@@ -262,29 +262,31 @@ class TestLocalEvaluatorTokenEstimation:
 
     @pytest.mark.asyncio
     async def test_execution_modes_token_handling(self, sample_dataset):
-        """Test token metrics handling across different execution modes."""
+        """Test token metrics handling with edge_analytics execution mode.
+
+        Note: Only edge_analytics is currently supported. privacy/standard
+        were removed, cloud/hybrid are not yet supported.
+        """
 
         async def test_function(text: str) -> str:
             return "output"
 
         config = {}
 
-        # Test different execution modes
-        for mode in ["edge_analytics", "privacy"]:
-            evaluator = LocalEvaluator(
-                metrics=["accuracy"], detailed=True, execution_mode=mode
-            )
+        evaluator = LocalEvaluator(
+            metrics=["accuracy"], detailed=True, execution_mode="edge_analytics"
+        )
 
-            result = await evaluator.evaluate(test_function, config, sample_dataset)
+        result = await evaluator.evaluate(test_function, config, sample_dataset)
 
-            # All modes should have token metrics
-            assert "input_tokens" in result.aggregated_metrics
-            assert result.aggregated_metrics["input_tokens"] > 0
+        # Should have token metrics
+        assert "input_tokens" in result.aggregated_metrics
+        assert result.aggregated_metrics["input_tokens"] > 0
 
-            # Check example results have token data
-            for example_result in result.example_results:
-                assert "input_tokens" in example_result.metrics
-                assert example_result.metrics["input_tokens"] > 0
+        # Check example results have token data
+        for example_result in result.example_results:
+            assert "input_tokens" in example_result.metrics
+            assert example_result.metrics["input_tokens"] > 0
 
     @pytest.mark.asyncio
     async def test_metrics_with_errors(self, evaluator, sample_dataset):

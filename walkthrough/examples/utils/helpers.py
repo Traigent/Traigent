@@ -61,6 +61,10 @@ def configure_logging() -> None:
     log_level = os.getenv("TRAIGENT_LOG_LEVEL", "WARNING").upper()
     traigent.configure(logging_level=log_level)
 
+    # Suppress noisy warnings from third-party libraries
+    logging.getLogger("tokencost.costs").setLevel(logging.ERROR)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
 
 def is_valid_traigent_key(value: str) -> bool:
     """Validate Traigent API key format.

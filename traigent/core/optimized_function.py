@@ -428,31 +428,14 @@ class OptimizedFunction:
         self.framework_targets = framework_targets or []
 
         # Execution mode configuration
-        requested_mode = getattr(self, "_requested_execution_mode", None)
+        # resolve_execution_mode raises ConfigurationError for unsupported modes
         try:
             effective_mode_enum = resolve_execution_mode(execution_mode)
         except (TypeError, ValueError) as exc:
             raise ValueError(str(exc)) from None
 
-        privacy_alias_requested = False
-        if effective_mode_enum is ExecutionMode.PRIVACY:
-            effective_mode_enum = ExecutionMode.HYBRID
-            privacy_alias_requested = True
-
         self._effective_execution_mode = effective_mode_enum
-        if (
-            requested_mode
-            and requested_mode.lower() == "privacy"
-            and effective_mode_enum is ExecutionMode.HYBRID
-        ):
-            display_mode = "privacy"
-            privacy_alias_requested = True
-        elif requested_mode:
-            display_mode = requested_mode.lower()
-        else:
-            display_mode = effective_mode_enum.value
-        self.execution_mode = display_mode
-        self._privacy_alias_requested = privacy_alias_requested
+        self.execution_mode = effective_mode_enum.value
         self.local_storage_path = local_storage_path
         self.minimal_logging = minimal_logging
 
@@ -462,7 +445,11 @@ class OptimizedFunction:
         self.metric_functions = metric_functions
 
     def _is_cloud_execution_mode(self) -> bool:
-        """Return True when configured for managed cloud execution."""
+        """Return True when configured for managed cloud execution.
+
+        Note: Currently always returns False since only edge_analytics mode
+        is supported. CLOUD and HYBRID modes raise ConfigurationError.
+        """
         effective_mode = getattr(self, "_effective_execution_mode", None)
         if isinstance(effective_mode, ExecutionMode):
             mode_enum = effective_mode
@@ -472,7 +459,6 @@ class OptimizedFunction:
             )
         return mode_enum in {
             ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
             ExecutionMode.HYBRID,
         }
 
@@ -1226,7 +1212,7 @@ class OptimizedFunction:
         """Create and store TraigentConfig for the optimization run."""
         traigent_config = TraigentConfig(
             execution_mode=cast(
-                Literal["edge_analytics", "privacy", "hybrid", "standard", "cloud"],
+                Literal["edge_analytics", "hybrid", "cloud"],
                 self.execution_mode,
             ),
             local_storage_path=self.local_storage_path,

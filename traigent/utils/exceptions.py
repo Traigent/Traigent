@@ -4,7 +4,29 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any
+
+
+def _traigent_excepthook(exc_type, exc_value, exc_tb):
+    """Custom exception hook for clean ConfigurationError output.
+
+    Shows just the error message without full traceback for ConfigurationError,
+    unless TRAIGENT_DEBUG is set.
+    """
+    if issubclass(exc_type, ConfigurationError) and not os.getenv("TRAIGENT_DEBUG"):
+        # Clean output: just the exception type and message
+        print(f"{exc_type.__module__}.{exc_type.__name__}: {exc_value}", file=sys.stderr)
+        sys.exit(1)
+    else:
+        # Default behavior for other exceptions
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+# Install custom hook (only if not already customized)
+if sys.excepthook is sys.__excepthook__:
+    sys.excepthook = _traigent_excepthook
 
 
 class TraigentError(Exception):
@@ -17,7 +39,15 @@ class TraigentError(Exception):
 
 
 class ConfigurationError(TraigentError):
-    """Error in optimization configuration."""
+    """Error in optimization configuration.
+
+    This error is raised when:
+    - Configuration values are invalid or malformed
+    - Configuration features are not yet supported (e.g., cloud/hybrid execution modes)
+    - Required configuration is missing
+
+    Set TRAIGENT_DEBUG=1 to see full tracebacks.
+    """
 
 
 class ProviderValidationError(ConfigurationError):

@@ -375,7 +375,14 @@ if __name__ == "__main__":
             primary = r.objectives[0] if r.objectives else None
             if primary and primary in df.columns:
                 assert isinstance(primary, str)
-                minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+                minimize_patterns = [
+                    "cost",
+                    "latency",
+                    "error",
+                    "loss",
+                    "time",
+                    "duration",
+                ]
                 ascending = any(p in primary.lower() for p in minimize_patterns)
                 df = df.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
 
@@ -401,7 +408,14 @@ if __name__ == "__main__":
             primary = r.objectives[0] if r.objectives else None
             if primary and primary in df_raw.columns:
                 assert isinstance(primary, str)
-                minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+                minimize_patterns = [
+                    "cost",
+                    "latency",
+                    "error",
+                    "loss",
+                    "time",
+                    "duration",
+                ]
                 ascending = any(p in primary.lower() for p in minimize_patterns)
                 df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")  # type: ignore[call-arg]
             print("\nRaw (per-sample) trials:")

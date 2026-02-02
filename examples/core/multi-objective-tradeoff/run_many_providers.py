@@ -778,7 +778,9 @@ def answer(
 
 if __name__ == "__main__":
     try:
-        parser = argparse.ArgumentParser(description="Run the multi-provider tradeoff demo")
+        parser = argparse.ArgumentParser(
+            description="Run the multi-provider tradeoff demo"
+        )
         parser.add_argument(
             "--verbose-results",
             action="store_true",
@@ -802,7 +804,9 @@ if __name__ == "__main__":
 
         async def main() -> None:
             trials = (
-                args.max_trials if args.max_trials is not None else (10 if not MOCK else 4)
+                args.max_trials
+                if args.max_trials is not None
+                else (10 if not MOCK else 4)
             )
             r = await answer.optimize(max_trials=trials, model=args.model)
             print({"best_config": r.best_config, "best_score": r.best_score})

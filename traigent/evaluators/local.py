@@ -1176,9 +1176,36 @@ class LocalEvaluator(BaseEvaluator):
             )
             metrics_tracker.add_example_metrics(example_metric)
 
-        # Compute aggregated metrics
+        # Compute aggregated metrics (include built-ins even with custom functions)
         if self.metric_functions:
-            aggregated_metrics: dict[str, float] = {}
+            # Filter to registry/RAGAS metrics, but exclude those already provided
+            # by custom metric_functions (e.g., skip built-in accuracy if
+            # scoring_function provides it - avoids redundant computation).
+            # Note: scoring_function maps to "accuracy" key only; cost/latency
+            # built-ins remain unless explicitly overridden via metric_functions.
+            custom_metric_keys = set(self.metric_functions.keys())
+            base_metric_names = [
+                name
+                for name in self.metrics
+                if (name in self._metric_registry or name in self._ragas_metric_names)
+                and name not in custom_metric_keys
+            ]
+            if base_metric_names:
+                original_metrics = self.metrics
+                try:
+                    self.metrics = base_metric_names
+                    aggregated_metrics = self.compute_metrics(
+                        outputs,
+                        expected_outputs,
+                        errors,
+                        dataset=dataset,
+                        example_results=example_results,
+                        example_metrics=metrics_tracker.example_metrics,
+                    )
+                finally:
+                    self.metrics = original_metrics
+            else:
+                aggregated_metrics = {}
         else:
             aggregated_metrics = self.compute_metrics(
                 outputs,

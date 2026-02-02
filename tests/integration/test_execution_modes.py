@@ -9,7 +9,7 @@ import pytest
 from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.cloud.optimizer_client import OptimizerDirectClient
 from traigent.config.types import ExecutionMode
-from traigent.traigent_client import TraigentClient as OptiGenClient
+from traigent.traigent_client import TraigentClient as TraigentClient
 
 
 class TestExecutionModes:
@@ -72,7 +72,7 @@ class TestExecutionModes:
         os.environ["TRAIGENT_FORCE_LOCAL"] = "true"
 
         try:
-            client = OptiGenClient(
+            client = TraigentClient(
                 execution_mode="edge_analytics", agent_builder=mock_agent_builder
             )
 
@@ -104,7 +104,7 @@ class TestExecutionModes:
 
     def test_legacy_local_label_is_accepted(self):
         """Ensure legacy execution_mode='edge_analytics' still maps to Edge Analytics."""
-        client = OptiGenClient(execution_mode="edge_analytics")
+        client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @pytest.mark.asyncio
@@ -160,7 +160,7 @@ class TestExecutionModes:
                 MockOptimizer.return_value = mock_optimizer
 
                 # Create client in standard mode
-                client = OptiGenClient(
+                client = TraigentClient(
                     execution_mode="standard",
                     agent_builder=mock_agent_builder,
                     api_key="test_key",
@@ -219,7 +219,7 @@ class TestExecutionModes:
             MockBackend.return_value = mock_backend
 
             # Create client in SaaS mode
-            client = OptiGenClient(execution_mode="cloud", api_key="test_key")
+            client = TraigentClient(execution_mode="cloud", api_key="test_key")
 
             # Run optimization
             result = await client.optimize(
@@ -244,17 +244,17 @@ class TestExecutionModes:
     async def test_execution_mode_auto_detection(self):
         """Test automatic execution mode detection."""
         # Test Edge Analytics detection (no API key)
-        client = OptiGenClient(execution_mode="auto")
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
         # Test SaaS mode detection (with API key)
-        client = OptiGenClient(execution_mode="auto", api_key="test_key")
+        client = TraigentClient(execution_mode="auto", api_key="test_key")
         assert client.execution_mode == ExecutionMode.CLOUD
 
         # Test standard mode detection (privacy flag)
         os.environ["TRAIGENT_PRIVATE_DATA"] = "true"
         try:
-            client = OptiGenClient(execution_mode="auto", api_key="test_key")
+            client = TraigentClient(execution_mode="auto", api_key="test_key")
             assert client.execution_mode == ExecutionMode.STANDARD
         finally:
             del os.environ["TRAIGENT_PRIVATE_DATA"]
@@ -350,7 +350,7 @@ class TestExecutionModes:
             mock_backend.__aexit__ = AsyncMock()
             MockBackend.return_value = mock_backend
 
-            client = OptiGenClient(
+            client = TraigentClient(
                 execution_mode="standard",
                 agent_builder=mock_agent_builder,
                 api_key="test_key",  # Need API key for backend client
@@ -438,7 +438,7 @@ class TestPrivacyCompliance:
             # Run in standard mode
             os.environ["TRAIGENT_FORCE_HYBRID"] = "true"
             try:
-                OptiGenClient(
+                TraigentClient(
                     execution_mode="standard", agent_builder=mock_agent_builder
                 )
 
@@ -509,7 +509,7 @@ class TestPerformanceAndScaling:
         # Create multiple clients
         clients = []
         for _i in range(3):
-            client = OptiGenClient(
+            client = TraigentClient(
                 execution_mode="edge_analytics",  # Use Edge Analytics for simplicity
                 agent_builder=mock_agent_builder,
             )

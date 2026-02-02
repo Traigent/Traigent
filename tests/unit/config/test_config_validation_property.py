@@ -5,7 +5,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
-from traigent.utils.exceptions import ValidationError
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 # ==============================================================================
 # Property-based tests for temperature validation
@@ -106,43 +106,35 @@ def test_presence_penalty_rejects_invalid_range(penalty):
     st.sampled_from(
         [
             "edge_analytics",
-            "privacy",
-            "hybrid",
-            "standard",
-            "cloud",
             ExecutionMode.EDGE_ANALYTICS,
-            ExecutionMode.PRIVACY,
-            ExecutionMode.HYBRID,
-            ExecutionMode.STANDARD,
-            ExecutionMode.CLOUD,
         ]
     )
 )
 def test_execution_mode_accepts_valid_values(mode):
-    """Property: All valid execution modes should be accepted."""
+    """Property: Only edge_analytics execution mode is accepted."""
     config = TraigentConfig(execution_mode=mode)
-    # Privacy mode should be converted to hybrid with privacy_enabled
-    if isinstance(mode, str) and mode == "privacy":
-        assert config.execution_mode == "hybrid"
-        assert config.privacy_enabled is True
-    elif isinstance(mode, ExecutionMode) and mode == ExecutionMode.PRIVACY:
-        assert config.execution_mode == "hybrid"
-        assert config.privacy_enabled is True
-    else:
-        expected = mode.value if isinstance(mode, ExecutionMode) else mode
-        assert config.execution_mode == expected
+    expected = mode.value if isinstance(mode, ExecutionMode) else mode
+    assert config.execution_mode == expected
+
+
+@given(
+    st.sampled_from(["cloud", "hybrid", ExecutionMode.CLOUD, ExecutionMode.HYBRID])
+)
+def test_execution_mode_rejects_unsupported_modes(mode):
+    """Property: cloud and hybrid modes raise ConfigurationError (not yet supported)."""
+    with pytest.raises(ConfigurationError, match="not yet supported"):
+        TraigentConfig(execution_mode=mode)
 
 
 @given(
     st.text().filter(
-        lambda x: x
-        not in ["edge_analytics", "privacy", "hybrid", "standard", "cloud", ""]
+        lambda x: x not in ["edge_analytics", "cloud", "hybrid", ""]
         and x.strip() != ""  # Exclude whitespace-only strings (treated as empty)
     )
 )
 def test_execution_mode_rejects_invalid_values(mode):
     """Property: Invalid execution mode strings should be rejected."""
-    with pytest.raises((ValueError, ValidationError)):
+    with pytest.raises(ConfigurationError, match="No such mode"):
         TraigentConfig(execution_mode=mode)
 
 
@@ -250,19 +242,27 @@ def test_custom_params_preserved(custom_params):
 # ==============================================================================
 
 
-@given(
-    st.sampled_from(
-        ["edge_analytics", "privacy", "hybrid", "standard", "cloud", "", "  ", None]
-    )
-)
-def test_resolve_execution_mode_handles_all_valid_inputs(mode_str):
-    """Property: resolve_execution_mode should handle all valid inputs."""
+@given(st.sampled_from(["edge_analytics", "", "  ", None]))
+def test_resolve_execution_mode_handles_valid_inputs(mode_str):
+    """Property: resolve_execution_mode handles edge_analytics and defaults."""
     result = resolve_execution_mode(mode_str)
     assert isinstance(result, ExecutionMode)
+    # All resolve to EDGE_ANALYTICS (it's the only supported mode and the default)
+    assert result == ExecutionMode.EDGE_ANALYTICS
 
-    # Empty strings and None should use default
-    if not mode_str or (isinstance(mode_str, str) and not mode_str.strip()):
-        assert result == ExecutionMode.CLOUD  # default
+
+@given(st.sampled_from(["cloud", "hybrid"]))
+def test_resolve_execution_mode_rejects_unsupported_modes(mode_str):
+    """Property: resolve_execution_mode rejects cloud/hybrid (not yet supported)."""
+    with pytest.raises(ConfigurationError, match="not yet supported"):
+        resolve_execution_mode(mode_str)
+
+
+@given(st.sampled_from(["privacy", "standard", "invalid", "local"]))
+def test_resolve_execution_mode_rejects_invalid_modes(mode_str):
+    """Property: resolve_execution_mode rejects invalid modes."""
+    with pytest.raises(ConfigurationError, match="No such mode"):
+        resolve_execution_mode(mode_str)
 
 
 @given(

@@ -351,7 +351,9 @@ def rag_qa(question: str) -> str:
 
 if __name__ == "__main__":
     try:
-        print("Long docs, shallow answers? Tune chunking and top_k to lift grounded QA.")
+        print(
+            "Long docs, shallow answers? Tune chunking and top_k to lift grounded QA."
+        )
 
         async def main() -> None:
             trials = 12 if not MOCK else 4

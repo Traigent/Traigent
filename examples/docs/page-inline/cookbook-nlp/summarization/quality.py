@@ -81,7 +81,9 @@ if __name__ == "__main__":
             res = await summarize.optimize(max_trials=10)
             summarize.set_config(res.best_config)
             print("Best config:", res.best_config)
-            print("Test:", summarize("Traigent optimizes LLM apps for quality and cost."))
+            print(
+                "Test:", summarize("Traigent optimizes LLM apps for quality and cost.")
+            )
 
         asyncio.run(_main())
     except KeyboardInterrupt:

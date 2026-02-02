@@ -1,7 +1,7 @@
 """Session management operations for Traigent Cloud Client.
 
 This module handles session creation, lifecycle management, and hybrid mode
-operations for both privacy-preserving and cloud-based optimization.
+operations for edge_analytics and cloud-based optimization.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid
@@ -234,12 +234,12 @@ class SessionOperations:
                 objectives=[optimization_goal],
                 dataset_metadata={
                     "size": metadata.get("dataset_size", 0) if metadata else 0,
-                    "privacy_mode": True,
+                    "privacy_enabled": True,
                 },
                 max_trials=max_trials_from_metadata,
                 optimization_strategy={"mode": "local_execution"},
                 user_id=None,  # Privacy preserving
-                billing_tier="privacy",
+                billing_tier="edge_analytics",
                 metadata=metadata or {},
             )
 

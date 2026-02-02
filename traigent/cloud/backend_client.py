@@ -701,7 +701,7 @@ class BackendIntegratedClient:
         summary_stats: dict[str, Any],
         status: str = "completed",
     ) -> bool:
-        """Submit summary statistics for privacy-preserving mode.
+        """Submit summary statistics when privacy_enabled=True.
         Delegates to trial_operations module."""
         return await self._trial_ops.submit_summary_stats(
             session_id, trial_id, config, summary_stats, status
@@ -754,23 +754,23 @@ class BackendIntegratedClient:
         return self._api_ops.map_to_backend_status(status)
 
     def _normalize_execution_mode(self, execution_mode: str | None) -> str:
-        """Translate SDK execution modes to backend-supported values."""
+        """Translate SDK execution modes to backend-supported values.
+
+        Only accepts exact execution mode values - no aliases.
+        """
         if not execution_mode:
-            return "standard"
+            return "local"  # Default for edge_analytics mode
 
         normalized = execution_mode.strip().lower()
-        mode_aliases = {
+        # Only exact values, no aliases per design decision
+        mode_map = {
             "edge_analytics": "local",
-            "edge": "local",
-            "local": "local",
-            "privacy": "privacy",
-            "private": "privacy",
-            "hybrid": "local",
-            "standard": "standard",
+            "hybrid": "local",  # Maps to local for backend
             "cloud": "cloud",
-            "saas": "cloud",
         }
-        return mode_aliases.get(normalized, "standard")
+        if normalized not in mode_map:
+            raise ValueError(f"Invalid execution_mode: {normalized}")
+        return mode_map[normalized]
 
     def _sanitize_error_message(self, error_message: str | None) -> str | None:
         """Sanitize error message for transmission.

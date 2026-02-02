@@ -52,18 +52,17 @@ traigent.initialize(
 # -----------------------------------------------------------------------------
 DATASETS = Path(__file__).parent.parent / "datasets"
 
-# Models from three different providers: OpenAI, Anthropic, and Google
+# Models from three providers: OpenAI, Anthropic, and Google
 # In real mode, each requires its respective API key
 PROVIDER_MODELS = {
     # OpenAI models (requires OPENAI_API_KEY)
     "gpt-4o-mini": "openai",
     "gpt-4o": "openai",
     # Anthropic models (requires ANTHROPIC_API_KEY)
-    "claude-3-haiku-20240307": "anthropic",
-    "claude-3-5-sonnet-20241022": "anthropic",
-    # Google Gemini models (requires GOOGLE_API_KEY) - includes free tier
-    "gemini-1.5-flash": "google",
-    "gemini-1.5-pro": "google",
+    "claude-sonnet-4-20250514": "anthropic",
+    # Google Gemini models (requires GOOGLE_API_KEY)
+    "gemini-2.0-flash": "google",
+    "gemini-1.5-pro-latest": "google",
 }
 
 OBJECTIVES = ["accuracy", "cost", "latency"]
@@ -120,28 +119,12 @@ def results_match_score(
 def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.
 
-    This function demonstrates how to route requests to different providers
-    based on the model name. Traigent injects the configuration, and your
-    code decides which provider SDK to call.
-
-    In production, you would import and use:
-    - langchain_openai.ChatOpenAI for OpenAI models
-    - langchain_anthropic.ChatAnthropic for Claude models
-    - langchain_google_genai.ChatGoogleGenerativeAI for Gemini models
+    In mock mode, returns pre-defined answers with model-specific accuracy.
+    For real API calls, see walkthrough/examples/real/07_multi_provider.py.
     """
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
-    # In mock mode, we return pre-defined answers
-    # In real mode, this would call the appropriate provider SDK
     set_mock_model(model)
-
-    # This is where you would add provider-specific logic:
-    # if provider == "openai":
-    #     llm = ChatOpenAI(model=model, temperature=config.get("temperature"))
-    # elif provider == "anthropic":
-    #     llm = ChatAnthropic(model=model, temperature=config.get("temperature"))
-    # elif provider == "google":
-    #     llm = ChatGoogleGenerativeAI(model=model, temperature=config.get("temperature"))
 
     time.sleep(get_mock_latency(model, "simple_qa") * 0.01)
     return ANSWERS.get(normalize_text(question), "I don't know")
@@ -164,10 +147,10 @@ async def main() -> None:
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
 
     # Run optimization across all providers
-    # max_trials=12 covers all 6 models x 2 temperatures
+    # max_trials=10 covers all 5 models x 2 temperatures
     results = await answer_with_any_provider.optimize(
         algorithm="grid",
-        max_trials=12,
+        max_trials=10,
         show_progress=True,
         random_seed=42,
     )
@@ -200,7 +183,6 @@ async def main() -> None:
     print("     export ANTHROPIC_API_KEY='your-key'  # For Claude models")
     print("     export GOOGLE_API_KEY='your-key'     # For Gemini models")
     print("  2. Run: python walkthrough/examples/real/07_multi_provider.py")
-    print("\nNote: Gemini offers a free tier - great for testing!")
 
 
 if __name__ == "__main__":

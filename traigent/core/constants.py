@@ -138,10 +138,9 @@ VALIDATION_ERROR_CODES = {
 
 # Supported execution modes
 EXECUTION_MODES = [
-    "edge_analytics",  # Client-side execution only
-    "privacy",  # Privacy-preserving mode
-    "standard",  # Standard cloud execution
-    "cloud",  # Full cloud optimization
+    "edge_analytics",  # Default, working
+    "hybrid",  # Not yet supported
+    "cloud",  # Not yet supported
 ]
 
 # Default execution mode

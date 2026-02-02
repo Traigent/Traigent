@@ -81,16 +81,17 @@ class TestOptimizeDecorator:
         assert "test-10-1-1" in result
 
     def test_decorator_with_cloud_execution_mode(self):
-        """Test decorator when execution_mode='cloud'."""
+        """Test decorator when execution_mode='cloud' raises ConfigurationError."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        @optimize(
-            configuration_space={"model": ["claude", "gpt-4"]},
-            execution_mode="cloud",
-        )
-        def ai_function(model: str) -> str:
-            return f"Using {model}"
+        with pytest.raises(ConfigurationError, match="not yet supported"):
 
-        assert isinstance(ai_function, OptimizedFunction)
+            @optimize(
+                configuration_space={"model": ["claude", "gpt-4"]},
+                execution_mode="cloud",
+            )
+            def ai_function(model: str) -> str:
+                return f"Using {model}"
 
     def test_decorator_with_auto_optimize(self):
         """Test decorator with auto optimization enabled."""

@@ -662,7 +662,7 @@ class TrialOperations:
         summary_stats: dict[str, Any],
         status: str = "completed",
     ) -> bool:
-        """Submit summary statistics for privacy-preserving mode.
+        """Submit summary statistics when privacy_enabled=True.
 
         Args:
             session_id: Session ID
@@ -692,17 +692,18 @@ class TrialOperations:
 
             # Prepare metadata - REQUIRED by backend to avoid NoneType errors
             submission_metadata = {
-                "mode": "privacy",  # Explicitly set mode for summary stats
+                "mode": "edge_analytics",
                 "sdk_version": "2.0.0",
                 "aggregation_method": "pandas.describe",
-                "execution_mode": "privacy",  # Use "privacy" not "edge_analytics"
+                "execution_mode": "edge_analytics",
+                "privacy_enabled": True,  # Explicit flag for privacy-preserving mode
                 "total_examples": summary_stats.get("total_examples", 0),
                 # Include summary_stats metadata
                 **summary_stats.get("metadata", {}),
             }
 
             # IMPORTANT: Backend always expects metrics field
-            # For privacy mode, send summary stats as metrics
+            # For privacy-enabled mode, send summary stats as metrics
             submission_data = {
                 "trial_id": trial_id,
                 "config": config,
@@ -711,7 +712,7 @@ class TrialOperations:
                 ),  # Send summary stats metrics here
                 "metadata": submission_metadata,  # REQUIRED - backend expects this
                 "status": backend_status,
-                # Also include summary_stats for backend to detect privacy mode
+                # Also include summary_stats for backend to detect privacy-enabled mode
                 "summary_stats": summary_stats,
             }
 

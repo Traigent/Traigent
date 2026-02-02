@@ -745,20 +745,21 @@ def _resolve_execution_mode_enum(
     execution_mode: str | ExecutionMode,
     privacy_enabled: bool | None,
 ) -> tuple[ExecutionMode, bool | None]:
-    """Resolve execution mode enum and handle privacy deprecation."""
+    """Resolve execution mode enum.
+
+    Note: resolve_execution_mode() handles all validation and raises
+    ConfigurationError for unsupported modes (cloud/hybrid) or removed
+    modes (privacy/standard).
+    """
+    from traigent.utils.exceptions import ConfigurationError
+
     try:
         execution_mode_enum = resolve_execution_mode(execution_mode)
+    except ConfigurationError:
+        # Re-raise with no traceback for clean user-facing error
+        raise
     except (TypeError, ValueError) as exc:
         raise ValueError(str(exc)) from None
-
-    if execution_mode_enum is ExecutionMode.PRIVACY:
-        logger.warning(
-            "execution_mode='privacy' is deprecated. Use execution_mode='hybrid' "
-            "with privacy_enabled=True. Mapping automatically."
-        )
-        execution_mode_enum = ExecutionMode.HYBRID
-        if privacy_enabled is None:
-            privacy_enabled = True
 
     return execution_mode_enum, privacy_enabled
 
@@ -1061,8 +1062,8 @@ def optimize(
         Execution options:
             execution: Grouped execution settings (ExecutionOptions or dict) spanning
                 orchestration, storage, and parallelism.
-            execution_mode: Execution mode ("cloud", "edge_analytics", "privacy",
-                "standard"). Defaults to "edge_analytics".
+            execution_mode: Execution mode ("edge_analytics", "hybrid", "cloud").
+                Only "edge_analytics" is currently supported. Defaults to "edge_analytics".
             local_storage_path: Location for Edge Analytics storage. Falls back
                 to ``TRAIGENT_RESULTS_FOLDER`` or ``~/.traigent/`` when omitted.
             minimal_logging: Toggle for reduced logging noise in Edge mode.

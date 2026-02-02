@@ -16,47 +16,64 @@ from traigent.utils.validation import Validators, validate_or_raise
 class ExecutionMode(str, Enum):
     """Execution modes for Traigent optimization.
 
-    Each mode provides different trade-offs between privacy, performance, and features:
-
     - EDGE_ANALYTICS: Optimization and LLM calls execute on the client.
-      Non-sensitive telemetry syncs to the backend when available for analytics; runs continue
-      if the backend is unreachable, but insights remain local.
-    - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
-    - STANDARD: Cloud orchestration with data sharing for balanced performance.
-    - CLOUD: Full SaaS execution where optimization and trials run in the cloud.
+      Non-sensitive telemetry syncs to the backend when available for analytics.
+      This is the only currently supported mode in the open-source SDK.
+    - HYBRID: Client-side execution with backend orchestration (not yet supported).
+    - CLOUD: Full SaaS execution where optimization runs in the cloud (not yet supported).
     """
 
     EDGE_ANALYTICS = "edge_analytics"
-    PRIVACY = "privacy"  # Back-compat alias; prefer HYBRID + privacy_enabled
     HYBRID = "hybrid"
-    STANDARD = "standard"
     CLOUD = "cloud"
+
+
+_CLOUD_NOT_SUPPORTED_MSG = "'{mode}' not yet supported. Use 'edge_analytics'."
+
+_INVALID_MODE_MSG = "No such mode '{mode}'. Use 'edge_analytics'."
 
 
 def resolve_execution_mode(
     mode: ExecutionMode | str | None,
     *,
-    default: ExecutionMode = ExecutionMode.CLOUD,
+    default: ExecutionMode = ExecutionMode.EDGE_ANALYTICS,
 ) -> ExecutionMode:
-    """Normalize user-provided execution mode values into an ExecutionMode enum."""
+    """Normalize user-provided execution mode values into an ExecutionMode enum.
+
+    Raises:
+        ConfigurationError: If mode is cloud/hybrid (not yet supported) or
+            an invalid/unknown mode string.
+        TypeError: If mode is not a string or ExecutionMode.
+    """
+    from traigent.utils.exceptions import ConfigurationError
 
     if mode is None:
         return default
     if isinstance(mode, ExecutionMode):
-        return mode
-    if isinstance(mode, str):
+        resolved = mode
+    elif isinstance(mode, str):
         normalized = mode.strip().lower()
         if not normalized:
             return default
+
         try:
-            return ExecutionMode(normalized)
-        except ValueError as exc:  # pragma: no cover - defensive
-            raise ValueError(
-                f"execution_mode must be one of {[m.value for m in ExecutionMode]}, got '{mode}'"
-            ) from exc
-    raise TypeError(
-        f"execution_mode must be a string or ExecutionMode, got {type(mode).__name__}"
-    )
+            resolved = ExecutionMode(normalized)
+        except ValueError:
+            # Any invalid mode (including old privacy/standard) gets same error
+            # Use .with_traceback(None) for clean user-facing error
+            err = ConfigurationError(_INVALID_MODE_MSG.format(mode=mode))
+            raise err.with_traceback(None) from None
+    else:
+        raise TypeError(
+            f"execution_mode must be a string or ExecutionMode, "
+            f"got {type(mode).__name__}"
+        )
+
+    # Raise ConfigurationError for unsupported modes
+    if resolved in {ExecutionMode.CLOUD, ExecutionMode.HYBRID}:
+        raise ConfigurationError(_CLOUD_NOT_SUPPORTED_MSG.format(mode=resolved.value))
+
+    return resolved
 
 
 class InjectionMode(str, Enum):
@@ -144,13 +161,7 @@ class TraigentConfig:
     custom_params: dict[str, Any] = field(default_factory=dict)
 
     # Execution mode and storage configuration
-    execution_mode: Literal[
-        "edge_analytics",
-        "privacy",
-        "hybrid",
-        "standard",
-        "cloud",
-    ] = "edge_analytics"
+    execution_mode: Literal["edge_analytics", "hybrid", "cloud"] = "edge_analytics"
     local_storage_path: str | None = None
     minimal_logging: bool = True
     auto_sync: bool = False  # Auto-sync to cloud when API key available
@@ -200,12 +211,8 @@ class TraigentConfig:
                 validate_or_raise(result)
 
         # Validate execution mode using Enum helper
+        # resolve_execution_mode raises ConfigurationError for unsupported modes
         mode_enum = resolve_execution_mode(self.execution_mode)
-        if mode_enum is ExecutionMode.PRIVACY:
-            # Map legacy 'privacy' to 'hybrid' + privacy_enabled=True
-            mode_enum = ExecutionMode.HYBRID
-            self.privacy_enabled = True
-
         self.execution_mode = mode_enum.value
 
         # Handle local storage path
@@ -225,7 +232,7 @@ class TraigentConfig:
 
         # Define default values to exclude
         defaults = {
-            "execution_mode": "cloud",
+            "execution_mode": "edge_analytics",
             "minimal_logging": True,
             "auto_sync": False,
             "privacy_enabled": False,
@@ -389,10 +396,7 @@ class TraigentConfig:
 
     def is_cloud_mode(self) -> bool:
         """Check if configuration is set to cloud mode."""
-        return self.execution_mode_enum in {
-            ExecutionMode.CLOUD,
-            ExecutionMode.STANDARD,
-        }
+        return self.execution_mode_enum is ExecutionMode.CLOUD
 
     def is_privacy_enabled(self) -> bool:
         """Whether privacy mode is enabled (content never logged or transmitted)."""
@@ -437,12 +441,8 @@ class TraigentConfig:
             if not isinstance(value, list):
                 raise TypeError("stop_sequences must be a list of strings")
         elif key == "execution_mode" and value is not None:
+            # resolve_execution_mode raises ConfigurationError for unsupported modes
             resolved_mode = resolve_execution_mode(value)
-            if resolved_mode is ExecutionMode.PRIVACY:
-                # Promote legacy alias to hybrid and enable privacy
-                object.__setattr__(self, "privacy_enabled", True)
-                object.__setattr__(self, "_privacy_enforced_by_execution_mode", True)
-                resolved_mode = ExecutionMode.HYBRID
             value = resolved_mode.value
         elif key == "local_storage_path" and value:
             value = str(Path(value).expanduser().resolve())

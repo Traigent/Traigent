@@ -238,17 +238,17 @@ class TestOptimizationScenarios(DecoratorTestBase):
         assert hasattr(test_func, "_constraints") or True  # Depends on implementation
 
     def test_cloud_execution_mode(self):
-        """Test optimization when execution_mode is cloud."""
+        """Test that execution_mode='cloud' raises ConfigurationError."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        @optimize(
-            configuration_space={"model": ["gpt-3.5", "gpt-4"]}, execution_mode="cloud"
-        )
-        def test_func(text: str) -> str:
-            return f"Commercial response: {text}"
+        with pytest.raises(ConfigurationError, match="not yet supported"):
 
-        # Should enable cloud features
-        result = test_func("test")
-        assert "Commercial response" in result
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                execution_mode="cloud",
+            )
+            def test_func(text: str) -> str:
+                return f"Commercial response: {text}"
 
     def test_cache_enabled_optimization(self):
         """Test optimization with caching enabled."""

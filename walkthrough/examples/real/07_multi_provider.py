@@ -15,23 +15,27 @@ Usage (run from repo root):
     # Set at least one API key (set all three to test all providers)
     export OPENAI_API_KEY="your-openai-key"        # For GPT models
     export ANTHROPIC_API_KEY="your-anthropic-key"  # For Claude models
-    export GOOGLE_API_KEY="your-google-key"        # For Gemini models (free tier!)
+    export GOOGLE_API_KEY="your-google-key"        # For Gemini models
 
     .venv/bin/python walkthrough/examples/real/07_multi_provider.py
 
 Note: This example validates API keys using Traigent's core provider validation
-and skips any invalid providers. Gemini offers a generous free tier!
+and skips any invalid providers.
 """
 
 import asyncio
-import logging
 import os
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Track errors per model to avoid spamming the console
+_error_counts: Counter[str] = Counter()
+_MAX_ERRORS_PER_MODEL = 1  # Only show first error per model
 
 import traigent
 from traigent import TraigentConfig
@@ -47,7 +51,6 @@ from utils.helpers import (
     print_estimated_time,
     print_optimization_config,
     print_results_table,
-    setup_example_logger,
 )
 from utils.scoring import token_match_score
 
@@ -55,7 +58,6 @@ from utils.scoring import token_match_score
 # Environment Setup
 # -----------------------------------------------------------------------------
 configure_logging()
-logger = setup_example_logger("07_multi_provider")
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
@@ -70,10 +72,10 @@ traigent.initialize(
 
 # Models organized by provider
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
-ANTHROPIC_MODELS = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
-GOOGLE_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
+ANTHROPIC_MODELS = ["claude-sonnet-4-20250514"]
+GOOGLE_MODELS = ["gemini-2.0-flash", "gemini-1.5-pro-latest"]
 
-# All models we want to potentially use
+# All models we want to potentially use (5 models × 2 temperatures = 10 trials)
 ALL_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GOOGLE_MODELS
 
 # Validate all providers using core validation
@@ -136,8 +138,10 @@ def create_llm_client(model: str, temperature: float) -> Any:
         raise ValueError(f"Unknown provider for model: {model}")
 
 
+# Use 10-question dataset for ~100 API calls (5 models × 2 temps × 10 examples)
+# For more thorough evaluation, use "simple_questions.jsonl" (20 examples, ~200 calls)
 @traigent.optimize(
-    eval_dataset=str(DATASETS / "simple_questions.jsonl"),
+    eval_dataset=str(DATASETS / "simple_questions_10.jsonl"),
     objectives=OBJECTIVES,
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
@@ -170,8 +174,24 @@ def answer_with_any_provider(question: str) -> str:
         )
         return str(response.content)
     except Exception as exc:
-        logger.warning("LLM call failed (%s): %s: %s", model, type(exc).__name__, exc)
-        return f"Error: {type(exc).__name__}: {exc}"
+        _error_counts[model] += 1
+        if _error_counts[model] <= _MAX_ERRORS_PER_MODEL:
+            # Extract concise error message
+            err_msg = str(exc)
+            # Simplify common verbose errors
+            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                short_msg = "Rate limit exceeded (429)"
+            elif "404" in err_msg or "NOT_FOUND" in err_msg:
+                short_msg = "Model not found (404)"
+            elif "401" in err_msg or "unauthorized" in err_msg.lower():
+                short_msg = "Authentication failed (401)"
+            else:
+                # Take first 80 chars of message
+                short_msg = err_msg[:80] + "..." if len(err_msg) > 80 else err_msg
+            print(f"  [!] {model}: {short_msg}")
+        elif _error_counts[model] == _MAX_ERRORS_PER_MODEL + 1:
+            print(f"  [!] {model}: (suppressing further errors)")
+        return f"Error: {type(exc).__name__}"
 
 
 async def main() -> None:
@@ -187,14 +207,13 @@ async def main() -> None:
         print("Set at least one of these environment variables:")
         print("  export OPENAI_API_KEY='your-key'")
         print("  export ANTHROPIC_API_KEY='your-key'")
-        print("  export GOOGLE_API_KEY='your-key'  # Free tier available!")
-        print("\nTip: Try Gemini first - it has a generous free tier.")
+        print("  export GOOGLE_API_KEY='your-key'")
         sys.exit(1)
 
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
-        dataset_size=20,
+        dataset_size=10,  # Matches simple_questions_10.jsonl
         task_type="simple_qa",
         num_trials=len(CONFIG_SPACE["model"]) * len(CONFIG_SPACE["temperature"]),
     )
@@ -203,7 +222,7 @@ async def main() -> None:
 
     # Calculate total trials dynamically based on configuration space
     # This ensures grid search covers all combinations: models × temperatures
-    # Example: 6 models × 2 temperatures = 12 total trials
+    # Example: 5 models × 2 temperatures = 10 total trials
     total_trials = len(CONFIG_SPACE["model"]) * len(CONFIG_SPACE["temperature"])
 
     record_runtime = os.getenv("TRAIGENT_RECORD_RUNTIME", "").lower() in (
@@ -215,8 +234,8 @@ async def main() -> None:
     results = await answer_with_any_provider.optimize(
         algorithm="grid",
         max_trials=total_trials,  # Covers all config combinations for grid search
-        parallel_trials=PARALLEL_TRIALS,
-        timeout=600,  # 10 min for 12 trials
+        parallel_config={"trial_concurrency": PARALLEL_TRIALS},
+        timeout=600,  # 10 min for 10 trials
         show_progress=True,
         random_seed=42,
     )
@@ -242,9 +261,7 @@ async def main() -> None:
         print(f"  Latency: {results.best_metrics.get('latency', 0):.3f}s")
 
     print("\n" + "-" * 55)
-    print("Summary: Traigent optimized across all available providers")
-    print(f"and found {best_provider.capitalize()}'s {best_model} to be the best")
-    print("configuration for this task and dataset.")
+    print("Optimization complete.")
 
 
 if __name__ == "__main__":

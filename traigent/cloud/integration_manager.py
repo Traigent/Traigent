@@ -45,20 +45,17 @@ class IntegrationMode(Enum):
     """Integration execution modes."""
 
     EDGE_ANALYTICS = "edge_analytics"  # Client-side execution with local orchestration
-    PRIVACY = (
-        "privacy"  # Client-side execution, backend orchestration, privacy-preserving
+    HYBRID = (
+        "hybrid"  # Client-side execution with backend orchestration (not yet supported)
     )
-    STANDARD = (
-        "standard"  # Client-side execution, backend orchestration, full data sharing
-    )
-    CLOUD = "cloud"  # Full cloud execution
+    CLOUD = "cloud"  # Full cloud execution (not yet supported)
 
 
 @dataclass
 class IntegrationConfig:
     """Configuration for SDK-Backend integration."""
 
-    mode: IntegrationMode = IntegrationMode.PRIVACY
+    mode: IntegrationMode = IntegrationMode.EDGE_ANALYTICS
     backend_base_url: str | None = (
         None  # Will be set from BackendConfig if not provided
     )
@@ -212,21 +209,17 @@ class IntegrationManager:
 
             self._integration_stats["total_integrations"] += 1
 
-            if mode == IntegrationMode.PRIVACY:
-                result = await self._start_privacy_integration(
-                    optimization_request, integration_id
-                )
-            elif mode == IntegrationMode.EDGE_ANALYTICS:
+            if mode == IntegrationMode.EDGE_ANALYTICS:
                 result = await self._start_edge_analytics_integration(
                     optimization_request, integration_id
                 )
-            elif mode == IntegrationMode.STANDARD:
-                result = await self._start_standard_integration(
-                    optimization_request, integration_id
-                )
-            elif mode == IntegrationMode.CLOUD:
-                result = await self._start_cloud_integration(
-                    optimization_request, integration_id
+            elif mode in {IntegrationMode.HYBRID, IntegrationMode.CLOUD}:
+                # Cloud and Hybrid modes are not yet supported
+                from traigent.utils.exceptions import ConfigurationError
+
+                raise ConfigurationError(
+                    f"integration mode '{mode.value}' is not yet supported. "
+                    "Use mode='edge_analytics' for local optimization."
                 )
             else:
                 raise ValueError(f"Unsupported integration mode: {mode}") from None

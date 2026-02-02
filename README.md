@@ -75,7 +75,7 @@ Optimization only runs with an evaluation set. Evaluation datasets are JSONL wit
 
 Traigent tracks cost and latency automatically; accuracy comes from your evaluator or dataset.
 LLM-as-a-judge is a common way to score accuracy when exact matching is not enough.
-Install LiteLLM with `pip install litellm` and set provider API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.).
+Install LiteLLM with `pip install litellm` and set provider API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.).
 See the [Evaluation Guide](docs/guides/evaluation.md) and [Complete Function Specification](docs/api-reference/complete-function-specification.md) for metrics and optimization parameters.
 
 ---
@@ -110,7 +110,7 @@ Requirements: Python 3.11–3.13 on Linux, macOS, or Windows.
 | `[core]` | Basic functionality (default) | Minimal install |
 | `[analytics]` | Analytics and visualization | View optimization results |
 | `[bayesian]` | Bayesian optimization | Advanced optimization algorithms |
-| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic |
+| `[integrations]` | Framework integrations | LangChain, OpenAI, Anthropic, Google Gemini |
 | `[playground]` | Interactive UI | Streamlit control center |
 | `[examples]` | Example dependencies | Run all demo scripts |
 | `[dev]` | Development tools | pytest, black, ruff, mypy |

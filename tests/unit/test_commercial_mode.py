@@ -61,22 +61,20 @@ class TestCloudExecutionDecorator:
         assert test_function.execution_mode == "edge_analytics"
 
     def test_decorator_execution_mode_parameter_passing(self):
-        """Test that execution_mode parameter is properly passed through."""
+        """Test that execution_mode='cloud' raises ConfigurationError."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        @traigent.optimize(
-            eval_dataset=None,
-            objectives=["accuracy"],
-            configuration_space={"param": [1, 2, 3]},
-            execution_mode="cloud",
-            injection_mode="context",
-        )
-        def test_function(input_text: str) -> str:
-            return f"processed: {input_text}"
+        with pytest.raises(ConfigurationError, match="not yet supported"):
 
-        # Check that all parameters are set correctly
-        assert test_function.execution_mode == "cloud"
-        assert test_function.injection_mode == "context"
-        assert test_function.objectives == ["accuracy"]
+            @traigent.optimize(
+                eval_dataset=None,
+                objectives=["accuracy"],
+                configuration_space={"param": [1, 2, 3]},
+                execution_mode="cloud",
+                injection_mode="context",
+            )
+            def test_function(input_text: str) -> str:
+                return f"processed: {input_text}"
 
 
 class TestOptimizedFunctionCloudMode:

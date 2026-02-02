@@ -30,22 +30,25 @@ class TestConfigurationBuilder:
     def test_resolve_execution_mode_default(self):
         """Test execution mode resolution with default values."""
         # Mock global config with execution mode
-        self.builder.global_config = {"execution_mode": "privacy"}
+        self.builder.global_config = {"execution_mode": "edge_analytics"}
 
         with patch(
-            "traigent.api.config_builder.get_optimize_default", return_value="cloud"
+            "traigent.api.config_builder.get_optimize_default",
+            return_value="edge_analytics",
         ):
-            result = self.builder._resolve_execution_mode("cloud", "cloud")
-            assert result == "privacy"  # Should use global config
+            result = self.builder._resolve_execution_mode(
+                "edge_analytics", "edge_analytics"
+            )
+            assert result == "edge_analytics"  # Should use global config
 
     def test_resolve_execution_mode_explicit(self):
         """Test execution mode resolution with explicit values."""
-        self.builder.global_config = {"execution_mode": "privacy"}
+        self.builder.global_config = {"execution_mode": "edge_analytics"}
 
         result = self.builder._resolve_execution_mode(
             "edge_analytics", "edge_analytics"
         )
-        assert result == "privacy"  # Matches global config when value equals default
+        assert result == "edge_analytics"
 
     def test_resolve_injection_mode_parameter_valid(self):
         """Test injection mode resolution for parameter mode."""

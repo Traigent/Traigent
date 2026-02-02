@@ -69,7 +69,7 @@ def results_match_score(output: str, expected: str, config: dict | None = None, 
     scoring_function=results_match_score,
     configuration_space=CONFIG_SPACE,
     injection_mode="context",  # default, added explicitly for clarity
-    execution_mode="edge_analytics",
+    execution_mode="bla",
     mock_mode_config=MOCK_MODE_CONFIG,
 )
 def answer_question(question: str) -> str:

@@ -355,13 +355,11 @@ class TestApplyConfigSettings:
 
     @patch("traigent.api.functions.logger")
     def test_apply_config_settings_execution_mode(self, mock_logger):
-        """Test _apply_config_settings with execution_mode."""
-        config = TraigentConfig(execution_mode="cloud")
+        """Test _apply_config_settings with cloud mode raises ConfigurationError."""
+        from traigent.utils.exceptions import ConfigurationError
 
-        _apply_config_settings(config)
-
-        assert _GLOBAL_CONFIG["execution_mode"] == "cloud"
-        assert _GLOBAL_CONFIG["default_storage_backend"] == "cloud"
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            TraigentConfig(execution_mode="cloud")
 
     @patch("traigent.api.functions.logger")
     def test_apply_config_settings_edge_analytics(self, mock_logger):

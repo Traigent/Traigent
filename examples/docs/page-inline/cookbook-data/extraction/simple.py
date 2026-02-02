@@ -87,7 +87,8 @@ if __name__ == "__main__":
             extract_fields.set_config(res.best_config)
             print("Best config:", res.best_config)
             print(
-                "Test:", extract_fields("Invoice: Globex Corp billed $2500 on 2024-06-10.")
+                "Test:",
+                extract_fields("Invoice: Globex Corp billed $2500 on 2024-06-10."),
             )
 
         asyncio.run(_main())

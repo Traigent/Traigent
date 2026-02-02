@@ -52,6 +52,66 @@ _PROVIDER_PATTERNS: dict[str, re.Pattern[str]] = {
 # Also accept provider/model and provider:model formats (LiteLLM compatibility)
 _LITELLM_PREFIX_PATTERN = re.compile(r"^([a-z]+)[:/](.+)$")
 
+# Known valid models per provider (as of Jan 2026)
+# Used to warn users about potentially invalid model names before API calls
+# Note: This list may not be exhaustive; unknown models get a warning, not an error
+_KNOWN_MODELS: dict[str, frozenset[str]] = {
+    "openai": frozenset(
+        {
+            "gpt-3.5-turbo",
+            "gpt-4",
+            "gpt-4-turbo",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1-nano",
+            "gpt-5-nano",
+            "gpt-5.1",
+            "gpt-5.2",
+            "o1-mini",
+            "o1-preview",
+            "o3-mini",
+        }
+    ),
+    "anthropic": frozenset(
+        {
+            "claude-sonnet-4-20250514",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229",
+            "claude-3-haiku-20240307",
+        }
+    ),
+    "google": frozenset(
+        {
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-pro-latest",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+            "gemini-pro",
+        }
+    ),
+    "mistral": frozenset(
+        {
+            "mistral-small-latest",
+            "mistral-medium-latest",
+            "mistral-large-latest",
+            "codestral-latest",
+            "open-mistral-7b",
+            "open-mixtral-8x7b",
+        }
+    ),
+    "cohere": frozenset(
+        {
+            "command",
+            "command-light",
+            "command-r",
+            "command-r-plus",
+        }
+    ),
+}
+
 # Default validation timeout in seconds
 _DEFAULT_VALIDATION_TIMEOUT = 5.0
 
@@ -147,6 +207,34 @@ def _run_with_timeout(func: Callable[[], T], timeout: float, provider: str) -> T
             ) from None
 
 
+def validate_model_names(
+    models: list[str], provider: str
+) -> tuple[list[str], list[str]]:
+    """Validate model names against known models list.
+
+    Args:
+        models: List of model names to validate.
+        provider: Provider name to check against.
+
+    Returns:
+        Tuple of (valid_models, unknown_models).
+        Unknown models are not necessarily invalid - just not in our known list.
+    """
+    known = _KNOWN_MODELS.get(provider, frozenset())
+    if not known:
+        # No known models list for this provider - assume all valid
+        return models, []
+
+    valid = []
+    unknown = []
+    for model in models:
+        if model in known:
+            valid.append(model)
+        else:
+            unknown.append(model)
+    return valid, unknown
+
+
 @dataclass
 class ProviderStatus:
     """Status of a provider validation check.
@@ -155,7 +243,8 @@ class ProviderStatus:
         provider: Provider name (e.g., "openai", "anthropic", "google").
         valid: Whether the provider is available and key is valid.
         message: Human-readable status message.
-        models: List of models associated with this provider (optional).
+        models: List of valid models associated with this provider (optional).
+        unknown_models: List of models not in known list (may still work).
         error_type: Type of error if validation failed (optional).
     """
 
@@ -163,6 +252,7 @@ class ProviderStatus:
     valid: bool
     message: str
     models: list[str] | None = None
+    unknown_models: list[str] | None = None
     error_type: str | None = None
 
 
@@ -216,6 +306,33 @@ class ProviderValidator:
         with self._cache_lock:
             self._validated_cache[cache_key] = "valid"
 
+    def _group_models_by_provider(
+        self, models: Sequence[str]
+    ) -> tuple[dict[str, list[str]], list[str]]:
+        """Group models by provider and identify unknown providers."""
+        providers: dict[str, list[str]] = {}
+        unknown: list[str] = []
+
+        for model in models:
+            provider = get_provider_for_model(model)
+            if provider:
+                providers.setdefault(provider, []).append(model)
+            else:
+                unknown.append(model)
+
+        return providers, unknown
+
+    def _warn_unknown_models(self, unknown_models: list[str], provider: str) -> None:
+        """Log warnings for models not in known list."""
+        for model in unknown_models:
+            logger.warning(
+                "Model '%s' not in known %s models list. "
+                "It may be deprecated, a typo, or a new model. "
+                "API calls may fail with 404.",
+                model,
+                provider,
+            )
+
     def validate_all(self, models: Sequence[str]) -> dict[str, ProviderStatus]:
         """Validate all providers needed for the given models.
 
@@ -225,33 +342,33 @@ class ProviderValidator:
         Returns:
             Dict mapping provider name to ProviderStatus.
         """
-        # Extract unique providers from model list
-        providers_to_validate: dict[str, list[str]] = {}
-        unknown_models: list[str] = []
+        providers_to_validate, unknown_provider_models = self._group_models_by_provider(
+            models
+        )
 
-        for model in models:
-            provider = get_provider_for_model(model)
-            if provider:
-                if provider not in providers_to_validate:
-                    providers_to_validate[provider] = []
-                providers_to_validate[provider].append(model)
-            else:
-                unknown_models.append(model)
+        # Warn about models with unknown providers
+        for model in unknown_provider_models:
+            logger.warning(
+                "Unknown model '%s' - provider not recognized. "
+                "Skipping provider validation for this model.",
+                model,
+            )
 
-        # Warn about unknown models
-        if unknown_models:
-            for model in unknown_models:
-                logger.warning(
-                    "Unknown model '%s' - provider not recognized. "
-                    "Skipping provider validation for this model.",
-                    model,
-                )
-
-        # Validate each provider
+        # Validate each provider and check model names
         results: dict[str, ProviderStatus] = {}
         for provider, provider_models in providers_to_validate.items():
             status = self._validate_provider(provider)
-            status.models = provider_models
+
+            # Validate model names against known list
+            valid_models, unknown_models = validate_model_names(
+                provider_models, provider
+            )
+            status.models = valid_models or provider_models
+            status.unknown_models = unknown_models or None
+
+            if unknown_models:
+                self._warn_unknown_models(unknown_models, provider)
+
             results[provider] = status
 
         return results
@@ -692,14 +809,24 @@ def print_provider_status(results: dict[str, ProviderStatus]) -> None:
                Models: gpt-4o-mini, gpt-4o
           [--] Anthropic: Set ANTHROPIC_API_KEY
           [--] Google: Invalid key (AuthenticationError)
+          [!!] Unknown models (may fail): claude-3-5-sonnet-20241022
     """
     print("\nProvider Status:")
+    unknown_all: list[str] = []
+
     for provider, status in sorted(results.items()):
         symbol = "[OK]" if status.valid else "[--]"
         print(f"  {symbol} {provider.capitalize()}: {status.message}")
         if status.valid and status.models:
             models_str = ", ".join(status.models)
             print(f"       Models: {models_str}")
+        if status.unknown_models:
+            unknown_all.extend(status.unknown_models)
+
+    # Show warning for unknown models at the end
+    if unknown_all:
+        print(f"  [!!] Unknown models (may fail): {', '.join(unknown_all)}")
+        print("       These models are not in known list - check for typos")
 
 
 def get_failed_providers(

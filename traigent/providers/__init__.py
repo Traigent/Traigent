@@ -10,6 +10,7 @@ from traigent.providers.validation import (
     get_failed_providers,
     get_provider_for_model,
     print_provider_status,
+    validate_model_names,
     validate_providers,
 )
 
@@ -19,5 +20,6 @@ __all__ = [
     "get_failed_providers",
     "get_provider_for_model",
     "print_provider_status",
+    "validate_model_names",
     "validate_providers",
 ]

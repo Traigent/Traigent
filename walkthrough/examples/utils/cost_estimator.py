@@ -6,26 +6,30 @@ from typing import Any
 # Approximate costs per 1K tokens (as of Jan 2026)
 # Synced with mock_answers.py MOCK_MODEL_COSTS
 MODEL_COSTS = {
-    # OpenAI models
+    # --- OpenAI models ---
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
     "gpt-4o": {"input": 0.0025, "output": 0.01},
-    "gpt-4": {"input": 0.03, "output": 0.06},
+    "gpt-4": {"input": 0.03, "output": 0.06},  # Legacy (8k context)
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},   # Released Apr 2025
-    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},    # Released Aug 2025
-    "gpt-5.1": {"input": 0.002, "output": 0.008},          # Released Nov 2025
-    "gpt-5.2": {"input": 0.003, "output": 0.012},          # Released Dec 2025
-    # Anthropic models
-    "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
+    # Future/Hypothetical Models (2026 Context)
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Released Apr 2025
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Released Aug 2025
+    "gpt-5.1": {"input": 0.002, "output": 0.008},  # Released Nov 2025
+    "gpt-5.2": {"input": 0.003, "output": 0.012},  # Released Dec 2025
+    # --- Anthropic models ---
+    # Corrected: 3.5 Haiku pricing ($0.80/$4.00 per 1M tokens)
+    "claude-3-5-haiku-20241022": {"input": 0.0008, "output": 0.004},
+    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
-    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
-    # Google Gemini models (Standard tier <= 128k context)
-    # Note: Prices double if context length > 128k tokens
+    "claude-sonnet-4-20250514": {"input": 0.003, "output": 0.015},
+    # --- Google Gemini models ---
+    # Standard tier prices (Prompts <= 128k tokens)
+    # Note: Costs double if prompts > 128k tokens
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
     "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
-    "gemini-2.0-flash-exp": {"input": 0.000075, "output": 0.0003},  # Often free in AI Studio
+    "gemini-2.0-flash-exp": {"input": 0.000075, "output": 0.0003},
 }
 
 # Updated Average token estimates

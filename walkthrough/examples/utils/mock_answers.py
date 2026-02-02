@@ -52,9 +52,10 @@ MOCK_MODEL_ACCURACY = {
     "gpt-5.2": 0.93,            # Released Dec 2025, best accuracy
     # Anthropic models
     "claude-3-opus-20240229": 0.92,
-    "claude-3-5-sonnet-20241022": 0.88,
+    "claude-sonnet-4-20250514": 0.88,
+    "claude-3-5-sonnet-20241022": 0.87,
     "claude-3-sonnet-20240229": 0.85,
-    "claude-3-haiku-20240307": 0.78,
+    "claude-3-5-haiku-20241022": 0.78,
     # Google Gemini models
     "gemini-1.5-flash": 0.80,         # Fast and capable
     "gemini-1.5-pro": 0.89,           # High accuracy model
@@ -72,10 +73,12 @@ MOCK_MODEL_COSTS = {
     "gpt-5.2": {"input": 0.003, "output": 0.012},         # Released Dec 2025
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
-    "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
+    # Corrected: 3.5 Haiku pricing ($0.80/$4.00 per 1M tokens)
+    "claude-3-5-haiku-20241022": {"input": 0.0008, "output": 0.004},
+    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
-    "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    "claude-sonnet-4-20250514": {"input": 0.003, "output": 0.015},
     # Google Gemini models (Standard tier <= 128k context)
     # Note: Prices double if context length > 128k tokens
     "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
@@ -105,10 +108,11 @@ MOCK_MODEL_LATENCY = {
     "gpt-5.1": 0.5,           # Released Nov 2025, improved reasoning
     "gpt-5.2": 0.6,           # Released Dec 2025, complex reasoning model
     # Anthropic Models
-    "claude-3-5-sonnet-20241022": 0.9,  # Slower TTFT than GPT-4o (~1.0s avg)
+    "claude-sonnet-4-20250514": 0.9,  # Slower TTFT than GPT-4o (~1.0s avg)
+    "claude-3-5-sonnet-20241022": 0.85,  # Similar to Sonnet 4
     "claude-3-sonnet-20240229": 0.8,
-    "claude-3-opus-20240229": 1.8,      # Heavy thinker, very slow start
-    "claude-3-haiku-20240307": 0.3,     # Very fast
+    "claude-3-opus-20240229": 1.8,  # Heavy thinker, very slow start
+    "claude-3-5-haiku-20241022": 0.3,  # Very fast
     # Google Gemini Models
     "gemini-1.5-flash": 0.2,            # Very fast, optimized for speed
     "gemini-1.5-pro": 0.5,              # Balanced speed and quality

@@ -64,16 +64,16 @@ examples/
 
 ## Examples Overview
 
-| #  | Example          | Description                                | Injection Mode | Dataset          | Evaluation Method          |
-|----|------------------|--------------------------------------------|----------------|------------------|----------------------------|
-| 01 | Simple           | Basic model and temperature tuning         | Context        | simple_questions | Exact Match                |
-| 02 | Zero Code Change | Seamless mode intercepts hardcoded values  | Seamless       | simple_questions | Exact Match                |
-| 03 | Parameter Mode   | Explicit configuration control             | Parameter      | simple_questions | Exact Match                |
-| 04 | Multi-Objective  | Balance accuracy, cost, and latency        | Context        | classification   | Exact Match                |
-| 05 | RAG              | Optimize retrieval + parallel eval         | Context        | rag_questions    | Semantic Similarity        |
-| 06 | Custom Evaluator | LLM-as-Judge for code generation           | Context        | code_gen         | LLM-as-Judge (GPT-4o-mini) |
-| 07 | Multi-Provider   | Use any LLM vendor (OpenAI, Claude, Gemini)| Context        | simple_questions | Exact Match                |
-| 08 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions | Exact Match                |
+| #  | Example          | Description                                | Injection Mode | Dataset             | Evaluation Method          |
+|----|------------------|--------------------------------------------|----------------|---------------------|----------------------------|
+| 01 | Simple           | Basic model and temperature tuning         | Context        | simple_questions    | Exact Match                |
+| 02 | Zero Code Change | Seamless mode intercepts hardcoded values  | Seamless       | simple_questions    | Exact Match                |
+| 03 | Parameter Mode   | Explicit configuration control             | Parameter      | simple_questions    | Exact Match                |
+| 04 | Multi-Objective  | Balance accuracy, cost, and latency        | Context        | classification      | Exact Match                |
+| 05 | RAG              | Optimize retrieval + parallel eval         | Context        | rag_questions       | Semantic Similarity        |
+| 06 | Custom Evaluator | LLM-as-Judge for code generation           | Context        | code_gen            | LLM-as-Judge (GPT-4o-mini) |
+| 07 | Multi-Provider   | Use any LLM vendor (OpenAI, Claude, Gemini)| Context        | simple_questions_10 | Exact Match                |
+| 08 | Privacy Modes    | Local-only privacy-first execution         | Context        | simple_questions    | Exact Match                |
 
 Injection modes are explained in depth here: [Injection Modes Guide](../../docs/user-guide/injection_modes.md).
 
@@ -85,20 +85,22 @@ Quick notes for new users:
 - **04 Multi-Objective**: Trade off accuracy, cost, and latency.
 - **05 RAG**: Retrieval + generation tuning. `k` is the number of documents to retrieve; `retrieval_method` is `similarity` (vector embeddings) or `keyword` (text matching). You implement the retrieval logic in your function; Traigent finds the optimal parameter combination. This example enables parallel eval by default; disable with `TRAIGENT_PARALLEL=0`.
 - **06 Custom Evaluator**: LLM-as-judge scoring for code generation.
-- **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Gemini offers a free tier - great for testing! This example validates keys before running and skips invalid providers (set `TRAIGENT_VALIDATE_KEYS=0` to skip validation).
+- **07 Multi-Provider**: Use any LLM vendor (OpenAI, Anthropic Claude, Google Gemini) in the same optimization. Set the relevant API keys and Traigent finds the best model across providers. Uses a 10-example dataset (~100 API calls); switch to `simple_questions.jsonl` for more thorough evaluation (~200 calls).
 - **08 Privacy Modes**: Local-only privacy-first run for now (no cloud/hybrid required).
 
 ## Datasets
 
 Each dataset contains **20 examples** with varying difficulty levels to ensure different model configurations show measurable differences.
 
-### simple_questions.jsonl
+### simple_questions.jsonl (and simple_questions_10.jsonl)
 
 General knowledge Q&A with three difficulty tiers:
 
 - **Easy (10)**: Factual questions with single-word answers (e.g., "What is 2+2?", "Capital of France?")
 - **Medium (5)**: Questions requiring brief explanations (e.g., "What causes tides?")
 - **Hard (5)**: Complex questions needing nuanced reasoning (e.g., "Explain opportunity cost with an example")
+
+The `_10` variant contains 10 balanced examples (5 easy, 3 medium, 2 hard) for faster runs with fewer API calls.
 
 **Evaluation**: Exact match against expected output (case-insensitive word containment; stopwords ignored; numeric tokens must match exactly; >=80% of expected tokens required; simple prefix matching for word variants)
 
