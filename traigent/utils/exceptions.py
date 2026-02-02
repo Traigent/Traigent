@@ -20,6 +20,39 @@ class ConfigurationError(TraigentError):
     """Error in optimization configuration."""
 
 
+class ProviderValidationError(ConfigurationError):
+    """Raised when provider API key validation fails.
+
+    This error is raised when one or more provider API keys are invalid,
+    missing, or when the provider SDK is not installed. Validation happens
+    before optimization runs to fail fast and avoid wasted API costs.
+
+    Attributes:
+        failed_providers: List of (provider, error_type) tuples that failed.
+        details: Dict with additional error context.
+
+    Example:
+        >>> from traigent.providers import validate_providers
+        >>> results = validate_providers(["gpt-4o-mini", "claude-3-haiku-20240307"])
+        >>> # If validation fails, ProviderValidationError is raised with:
+        >>> # - List of failed providers and error types
+        >>> # - Instructions for fixing the issue
+
+    To skip provider validation:
+        - Set TRAIGENT_SKIP_PROVIDER_VALIDATION=true in environment
+        - Or use validate_providers=False in the @traigent.optimize decorator
+    """
+
+    def __init__(
+        self,
+        message: str,
+        failed_providers: list[tuple[str, str]] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.failed_providers = failed_providers or []
+
+
 class ValidationError(TraigentError):
     """Error in input validation."""
 

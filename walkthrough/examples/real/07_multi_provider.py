@@ -9,6 +9,7 @@ Key concepts:
 - Define a configuration space that includes models from multiple providers
 - Use conditional logic in your function to call the appropriate provider
 - Traigent optimizes across all providers equally using your scoring function
+- Uses core provider validation (traigent.providers) to check API keys
 
 Usage (run from repo root):
     # Set at least one API key (set all three to test all providers)
@@ -18,15 +19,15 @@ Usage (run from repo root):
 
     .venv/bin/python walkthrough/examples/real/07_multi_provider.py
 
-Note: This example validates API keys before running and skips any invalid providers.
-To skip validation, set TRAIGENT_VALIDATE_KEYS=0.
-Gemini offers a generous free tier - great for testing without API costs!
+Note: This example validates API keys using Traigent's core provider validation
+and skips any invalid providers. Gemini offers a generous free tier!
 """
 
 import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import traigent
 from traigent import TraigentConfig
+from traigent.providers import (
+    get_provider_for_model,
+    print_provider_status,
+    validate_providers,
+)
 
 from utils.helpers import (
     configure_logging,
@@ -59,90 +65,25 @@ traigent.initialize(
 
 # -----------------------------------------------------------------------------
 # Provider Detection - Check which API keys are available and valid
+# Uses Traigent core provider validation (traigent.providers.validation)
 # -----------------------------------------------------------------------------
-VALIDATE_KEYS = os.getenv("TRAIGENT_VALIDATE_KEYS", "1").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-_NOT_VALIDATED_NOTE = "Key set (not validated)"
 
 # Models organized by provider
 OPENAI_MODELS = ["gpt-4o-mini", "gpt-4o"]
 ANTHROPIC_MODELS = ["claude-3-haiku-20240307", "claude-3-5-sonnet-20241022"]
 GOOGLE_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro"]
 
-def _validate_openai_key() -> tuple[bool, str]:
-    key = os.getenv("OPENAI_API_KEY")
-    if not key:
-        return False, "Set OPENAI_API_KEY"
-    if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE
-    try:
-        from openai import OpenAI
+# All models we want to potentially use
+ALL_MODELS = OPENAI_MODELS + ANTHROPIC_MODELS + GOOGLE_MODELS
 
-        OpenAI(api_key=key).models.list()
-        return True, "Available"
-    except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})"
+# Validate all providers using core validation
+PROVIDER_STATUS = validate_providers(ALL_MODELS)
 
-
-def _validate_anthropic_key() -> tuple[bool, str]:
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        return False, "Set ANTHROPIC_API_KEY"
-    if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE
-    try:
-        from anthropic import Anthropic
-
-        Anthropic(api_key=key).messages.count_tokens(
-            model=ANTHROPIC_MODELS[0],
-            messages=[{"role": "user", "content": "ping"}],
-        )
-        return True, "Available"
-    except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})"
-
-
-def _validate_google_key() -> tuple[bool, str]:
-    key = os.getenv("GOOGLE_API_KEY")
-    if not key:
-        return False, "Set GOOGLE_API_KEY"
-    if not VALIDATE_KEYS:
-        return True, _NOT_VALIDATED_NOTE
-    try:
-        import google.generativeai as genai
-
-        genai.configure(api_key=key)
-        list(genai.list_models())
-        return True, "Available"
-    except Exception as exc:
-        return False, f"Invalid key ({type(exc).__name__})"
-
-
-OPENAI_AVAILABLE, OPENAI_STATUS = _validate_openai_key()
-ANTHROPIC_AVAILABLE, ANTHROPIC_STATUS = _validate_anthropic_key()
-GOOGLE_AVAILABLE, GOOGLE_STATUS = _validate_google_key()
-
-# Build available models list based on which API keys are set and valid
+# Build available models list based on which providers are valid
 AVAILABLE_MODELS: list[str] = []
-PROVIDER_MAP: dict[str, str] = {}
-
-if OPENAI_AVAILABLE:
-    AVAILABLE_MODELS.extend(OPENAI_MODELS)
-    for model in OPENAI_MODELS:
-        PROVIDER_MAP[model] = "openai"
-
-if ANTHROPIC_AVAILABLE:
-    AVAILABLE_MODELS.extend(ANTHROPIC_MODELS)
-    for model in ANTHROPIC_MODELS:
-        PROVIDER_MAP[model] = "anthropic"
-
-if GOOGLE_AVAILABLE:
-    AVAILABLE_MODELS.extend(GOOGLE_MODELS)
-    for model in GOOGLE_MODELS:
-        PROVIDER_MAP[model] = "google"
+for provider, status in PROVIDER_STATUS.items():
+    if status.valid and status.models:
+        AVAILABLE_MODELS.extend(status.models)
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -150,23 +91,15 @@ if GOOGLE_AVAILABLE:
 DATASETS = Path(__file__).parent.parent / "datasets"
 OBJECTIVES = ["accuracy", "cost", "latency"]
 
+# Parallel trials - Traigent uses LangChain which enables automatic token tracking
+# across parallel execution via the LangChain interceptor (keyed by example_id)
+PARALLEL_TRIALS = 4
+
 # Configuration space - only includes models for available providers
 CONFIG_SPACE = {
     "model": AVAILABLE_MODELS if AVAILABLE_MODELS else ["gpt-4o-mini"],
     "temperature": [0.1, 0.5],
 }
-
-
-def get_provider_for_model(model_name: str) -> str:
-    """Return the provider name for a given model.
-
-    Args:
-        model_name: The model identifier (e.g., 'gpt-4o-mini', 'claude-3-haiku')
-
-    Returns:
-        Provider name: 'openai', 'anthropic', or 'google'
-    """
-    return PROVIDER_MAP.get(model_name, "openai")
 
 
 def create_llm_client(model: str, temperature: float) -> Any:
@@ -210,6 +143,10 @@ def create_llm_client(model: str, temperature: float) -> Any:
     configuration_space=CONFIG_SPACE,
     injection_mode="context",
     execution_mode="edge_analytics",
+    # Skip core validation - this example validates upfront and filters invalid
+    # providers for graceful degradation (run with available providers only).
+    # Core validation would fail-fast on any invalid provider instead.
+    validate_providers=False,
 )
 def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.
@@ -237,46 +174,13 @@ def answer_with_any_provider(question: str) -> str:
         return f"Error: {type(exc).__name__}: {exc}"
 
 
-def print_provider_status() -> None:
-    """Print which providers are available based on API keys."""
-    print("\nProvider Status:")
-    if VALIDATE_KEYS:
-        print("  (validated with a lightweight request per provider)")
-    status_lines = [
-        (
-            "OpenAI",
-            OPENAI_AVAILABLE,
-            OPENAI_STATUS,
-            ", ".join(OPENAI_MODELS),
-        ),
-        (
-            "Anthropic",
-            ANTHROPIC_AVAILABLE,
-            ANTHROPIC_STATUS,
-            ", ".join(ANTHROPIC_MODELS),
-        ),
-        (
-            "Google",
-            GOOGLE_AVAILABLE,
-            GOOGLE_STATUS,
-            ", ".join(GOOGLE_MODELS) + " (free tier!)",
-        ),
-    ]
-
-    for provider, available, status, models in status_lines:
-        symbol = "[OK]" if available else "[--]"
-        print(f"  {symbol} {provider}: {status}")
-        if available:
-            print(f"       Models: {models}")
-
-
 async def main() -> None:
     """Run the multi-provider optimization example."""
     print("Traigent Example 7: Multi-Provider LLM Support")
     print("=" * 55)
     print("This example makes LLM API calls to any available provider.")
 
-    print_provider_status()
+    print_provider_status(PROVIDER_STATUS)
 
     if not AVAILABLE_MODELS:
         print("\nERROR: No API keys found!")
@@ -297,7 +201,9 @@ async def main() -> None:
 
     print_estimated_time("07_multi_provider.py")
 
-    # Calculate total trials based on configuration space
+    # Calculate total trials dynamically based on configuration space
+    # This ensures grid search covers all combinations: models × temperatures
+    # Example: 6 models × 2 temperatures = 12 total trials
     total_trials = len(CONFIG_SPACE["model"]) * len(CONFIG_SPACE["temperature"])
 
     record_runtime = os.getenv("TRAIGENT_RECORD_RUNTIME", "").lower() in (
@@ -308,8 +214,9 @@ async def main() -> None:
     start_time = time.perf_counter() if record_runtime else 0.0
     results = await answer_with_any_provider.optimize(
         algorithm="grid",
-        max_trials=total_trials,
-        timeout=240,
+        max_trials=total_trials,  # Covers all config combinations for grid search
+        parallel_trials=PARALLEL_TRIALS,
+        timeout=600,  # 10 min for 12 trials
         show_progress=True,
         random_seed=42,
     )
