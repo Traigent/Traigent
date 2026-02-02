@@ -1,0 +1,667 @@
+"""Hybrid API evaluator for external agentic service optimization.
+
+Provides evaluation via external HTTP or MCP endpoints, enabling
+optimization of any agentic service that implements the Traigent
+hybrid API protocol.
+"""
+
+# Traceability: HYBRID-MODE-OPTIMIZATION EVALUATOR-INTEGRATION
+
+from __future__ import annotations
+
+import time
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Literal
+
+from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
+from traigent.hybrid import (
+    AgentLifecycleManager,
+    BatchOptions,
+    ConfigSpaceDiscovery,
+    HybridEvaluateRequest,
+    HybridExecuteRequest,
+    HybridTransport,
+    ServiceCapabilities,
+    TransportError,
+    create_transport,
+)
+from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.cloud.production_mcp_client import (
+        MCPServerConfig,
+        ProductionMCPClient,
+    )
+    from traigent.core.sample_budget import SampleBudgetLease
+
+logger = get_logger(__name__)
+
+
+@dataclass
+class HybridExampleResult:
+    """Result for a single example in hybrid evaluation.
+
+    Attributes:
+        input_id: Identifier for the input example
+        actual_output: Output produced by the agent
+        expected_output: Expected output (from dataset)
+        metrics: Per-example quality metrics
+        cost_usd: Cost for this example
+        latency_ms: Latency for this example
+        error: Error message if failed
+    """
+
+    input_id: str
+    actual_output: Any = None
+    expected_output: Any = None
+    metrics: dict[str, float] = field(default_factory=dict)
+    cost_usd: float = 0.0
+    latency_ms: float = 0.0
+    error: str | None = None
+
+    @property
+    def success(self) -> bool:
+        """Whether this example was processed successfully."""
+        return self.error is None
+
+
+class HybridAPIEvaluator(BaseEvaluator):
+    """Evaluator that executes trials via external API endpoints.
+
+    This evaluator bridges the Traigent optimization loop with external
+    agentic services, supporting both HTTP REST and MCP transports.
+
+    Key features:
+        - Batch execution with configurable batch size
+        - Two-phase evaluation (execute → evaluate) or combined mode
+        - Keep-alive management for stateful agents
+        - Auto-discovery of configuration space from external service
+        - Cost tracking from operational metrics
+
+    Example:
+        evaluator = HybridAPIEvaluator(
+            api_endpoint="http://agent-service:8080",
+            capability_id="financial_qa",
+            batch_size=10,
+        )
+
+        result = await evaluator.evaluate(
+            func=lambda: None,  # Not used in hybrid mode
+            config={"temperature": 0.7, "model": "gpt-4"},
+            dataset=my_dataset,
+        )
+    """
+
+    def __init__(
+        self,
+        # Transport options (one required)
+        api_endpoint: str | None = None,
+        transport: HybridTransport | None = None,
+        transport_type: Literal["http", "mcp", "auto"] = "auto",
+        # MCP options
+        mcp_client: ProductionMCPClient | None = None,
+        mcp_config: MCPServerConfig | None = None,
+        # Capability options
+        capability_id: str | None = None,
+        auto_discover_tvars: bool = True,
+        # Execution options
+        batch_size: int = 1,
+        batch_parallelism: int = 1,
+        keep_alive: bool = True,
+        heartbeat_interval: float = 30.0,
+        timeout: float = 300.0,
+        # Auth options
+        auth_header: str | None = None,
+        # Base evaluator options
+        **kwargs: Any,
+    ) -> None:
+        """Initialize HybridAPIEvaluator.
+
+        Args:
+            api_endpoint: Base URL for HTTP transport.
+            transport: Pre-configured HybridTransport instance.
+            transport_type: Transport type ("http", "mcp", "auto").
+
+            mcp_client: Existing MCP client for MCP transport.
+            mcp_config: MCP server config for MCP transport.
+
+            capability_id: Identifier for the agent capability.
+                Auto-discovered if not provided.
+            auto_discover_tvars: Whether to auto-discover config space.
+
+            batch_size: Number of examples per execute request (1-N).
+            batch_parallelism: Concurrent executions within batch.
+            keep_alive: Enable keep-alive for stateful agents.
+            heartbeat_interval: Seconds between heartbeats.
+            timeout: Request timeout in seconds.
+
+            auth_header: Authorization header for HTTP transport.
+
+            **kwargs: Additional args passed to BaseEvaluator.
+        """
+        super().__init__(**kwargs)
+
+        # Store configuration
+        self._api_endpoint = api_endpoint
+        self._transport_type = transport_type
+        self._mcp_client = mcp_client
+        self._mcp_config = mcp_config
+        self._auth_header = auth_header
+        self._timeout = timeout
+
+        self._capability_id = capability_id
+        self._auto_discover = auto_discover_tvars
+        self._batch_size = max(1, batch_size)
+        self._batch_parallelism = max(1, batch_parallelism)
+        self._keep_alive_enabled = keep_alive
+        self._heartbeat_interval = heartbeat_interval
+
+        # Initialize transport (may be provided or created on demand)
+        self._transport: HybridTransport | None = transport
+        self._owns_transport = transport is None
+
+        # Lazy-initialized components
+        self._lifecycle_manager: AgentLifecycleManager | None = None
+        self._discovery: ConfigSpaceDiscovery | None = None
+        self._capabilities: ServiceCapabilities | None = None
+        self._session_id: str | None = None
+
+    @property
+    def lifecycle_manager(self) -> AgentLifecycleManager | None:
+        """Get the lifecycle manager (for orchestrator cleanup)."""
+        return self._lifecycle_manager
+
+    @property
+    def capability_id(self) -> str | None:
+        """Get the capability ID (may be auto-discovered)."""
+        return self._capability_id
+
+    async def _get_transport(self) -> HybridTransport:
+        """Get or create the transport."""
+        if self._transport is None:
+            self._transport = create_transport(
+                transport_type=self._transport_type,
+                base_url=self._api_endpoint,
+                auth_header=self._auth_header,
+                timeout=self._timeout,
+                mcp_client=self._mcp_client,
+                mcp_config=self._mcp_config,
+            )
+            self._owns_transport = True
+
+        return self._transport
+
+    async def _get_capabilities(self) -> ServiceCapabilities:
+        """Get service capabilities."""
+        if self._capabilities is None:
+            transport = await self._get_transport()
+            self._capabilities = await transport.capabilities()
+        return self._capabilities
+
+    async def discover_config_space(self) -> dict[str, Any]:
+        """Fetch TVARs from external service and normalize.
+
+        Returns:
+            Configuration space dictionary for Traigent optimizer.
+
+        Raises:
+            TransportError: If discovery fails.
+        """
+        transport = await self._get_transport()
+
+        if self._discovery is None:
+            self._discovery = ConfigSpaceDiscovery(transport)
+
+        config_space = await self._discovery.fetch_and_normalize()
+
+        # Update capability_id if not set
+        if self._capability_id is None:
+            self._capability_id = self._discovery.get_capability_id()
+
+        return config_space
+
+    async def _ensure_lifecycle_manager(self) -> None:
+        """Ensure lifecycle manager is initialized if keep-alive enabled."""
+        if not self._keep_alive_enabled:
+            return
+
+        caps = await self._get_capabilities()
+        if not caps.supports_keep_alive:
+            logger.debug("External service does not support keep-alive")
+            return
+
+        if self._lifecycle_manager is None:
+            transport = await self._get_transport()
+            self._lifecycle_manager = AgentLifecycleManager(
+                transport=transport,
+                heartbeat_interval=self._heartbeat_interval,
+            )
+            self._session_id = self._lifecycle_manager.create_session()
+            await self._lifecycle_manager.register(self._session_id)
+            logger.info(f"Started lifecycle management for session {self._session_id}")
+
+    async def evaluate(
+        self,
+        func: Callable[..., Any],
+        config: dict[str, Any],
+        dataset: Dataset,
+        *,
+        sample_lease: SampleBudgetLease | None = None,
+        progress_callback: Callable[[int, dict[str, Any]], Any] | None = None,
+    ) -> EvaluationResult:
+        """Execute trial via external API with batching support.
+
+        Args:
+            func: Function to evaluate (not used in hybrid mode).
+            config: Configuration parameters (TVAR values).
+            dataset: Evaluation dataset.
+            sample_lease: Optional sample budget lease.
+            progress_callback: Optional progress callback.
+
+        Returns:
+            EvaluationResult with metrics and outputs.
+
+        Raises:
+            EvaluationError: If evaluation fails.
+        """
+        start_time = time.time()
+        transport = await self._get_transport()
+        caps = await self._get_capabilities()
+
+        # Initialize lifecycle manager if needed
+        await self._ensure_lifecycle_manager()
+
+        # Prepare examples
+        examples = list(dataset)
+        total_examples = len(examples)
+
+        # Apply sample budget limits
+        if sample_lease is not None:
+            available = sample_lease.remaining()
+            if available < total_examples:
+                examples = examples[:available]
+                logger.debug(
+                    f"Sample budget limited examples to {len(examples)}/{total_examples}"
+                )
+
+        if not examples:
+            return EvaluationResult(
+                config=config,
+                example_results=[],
+                aggregated_metrics={},
+                total_examples=0,
+                successful_examples=0,
+                duration=0.0,
+                sample_budget_exhausted=sample_lease is not None
+                and sample_lease.exhausted(),
+            )
+
+        # Process in batches
+        example_results: list[HybridExampleResult] = []
+        total_cost = 0.0
+
+        for batch_start in range(0, len(examples), self._batch_size):
+            batch_end = min(batch_start + self._batch_size, len(examples))
+            batch = examples[batch_start:batch_end]
+
+            # Consume from sample lease
+            if sample_lease is not None:
+                if not sample_lease.consume(len(batch)):
+                    logger.warning("Sample budget exhausted during batch processing")
+                    break
+
+            # Execute batch
+            batch_results = await self._execute_batch(transport, caps, config, batch)
+            example_results.extend(batch_results)
+
+            # Track cost
+            batch_cost = sum(r.cost_usd for r in batch_results)
+            total_cost += batch_cost
+
+            # Progress callback
+            if progress_callback is not None:
+                try:
+                    progress_callback(
+                        len(example_results),
+                        {
+                            "batch_size": len(batch),
+                            "total_cost": total_cost,
+                            "successful": sum(1 for r in example_results if r.success),
+                        },
+                    )
+                except Exception as e:
+                    logger.warning(f"Progress callback error: {e}")
+
+        # Compute aggregated metrics
+        duration = time.time() - start_time
+        aggregated_metrics = self._compute_aggregated_metrics(
+            example_results, total_cost
+        )
+
+        return EvaluationResult(
+            config=config,
+            example_results=example_results,
+            aggregated_metrics=aggregated_metrics,
+            total_examples=len(example_results),
+            successful_examples=sum(1 for r in example_results if r.success),
+            duration=duration,
+            sample_budget_exhausted=sample_lease is not None
+            and sample_lease.exhausted(),
+            examples_consumed=len(example_results),
+        )
+
+    async def _execute_batch(
+        self,
+        transport: HybridTransport,
+        caps: ServiceCapabilities,
+        config: dict[str, Any],
+        batch: list[Any],
+    ) -> list[HybridExampleResult]:
+        """Execute a batch of examples.
+
+        Args:
+            transport: Transport to use.
+            caps: Service capabilities.
+            config: Configuration for this trial.
+            batch: Batch of examples to process.
+
+        Returns:
+            List of results for each example.
+        """
+        # Prepare inputs
+        inputs = []
+        for i, example in enumerate(batch):
+            input_data = self._extract_input(example)
+            input_id = input_data.get("input_id", f"ex_{i}")
+            inputs.append(
+                {
+                    "input_id": input_id,
+                    "data": input_data,
+                }
+            )
+
+        # Build execute request
+        request = HybridExecuteRequest(
+            capability_id=self._capability_id or "default",
+            config=config,
+            inputs=inputs,
+            session_id=self._session_id,
+            batch_options=BatchOptions(
+                parallelism=self._batch_parallelism,
+            ),
+            timeout_ms=int(self._timeout * 1000),
+        )
+
+        try:
+            # Execute
+            execute_response = await transport.execute(request)
+
+            # Update session ID if returned
+            if execute_response.session_id:
+                if self._session_id != execute_response.session_id:
+                    self._session_id = execute_response.session_id
+                    if self._lifecycle_manager:
+                        await self._lifecycle_manager.register(self._session_id)
+
+            # Check if combined mode (quality metrics included)
+            if execute_response.quality_metrics:
+                # Combined mode - use quality metrics directly
+                return self._process_combined_response(batch, inputs, execute_response)
+            elif caps.supports_evaluate:
+                # Two-phase mode - need separate evaluate call
+                return await self._evaluate_outputs(
+                    transport, batch, inputs, execute_response
+                )
+            else:
+                # No evaluation - return outputs only
+                return self._process_execute_only_response(
+                    batch, inputs, execute_response
+                )
+
+        except TransportError as e:
+            logger.error(f"Batch execution failed: {e}")
+            # Return error results for all examples
+            return [
+                HybridExampleResult(
+                    input_id=inp["input_id"],
+                    expected_output=self._extract_expected(batch[i]),
+                    error=str(e),
+                )
+                for i, inp in enumerate(inputs)
+            ]
+
+    def _extract_input(self, example: Any) -> dict[str, Any]:
+        """Extract input data from dataset example."""
+        if isinstance(example, dict):
+            # Check for common input key patterns
+            for key in ["input", "question", "query", "text", "data"]:
+                if key in example:
+                    return {
+                        "input": example[key],
+                        **{k: v for k, v in example.items() if k != key},
+                    }
+            return example
+        return {"input": example}
+
+    def _extract_expected(self, example: Any) -> Any:
+        """Extract expected output from dataset example."""
+        if isinstance(example, dict):
+            for key in ["expected_output", "output", "answer", "target", "label"]:
+                if key in example:
+                    return example[key]
+        return None
+
+    def _process_combined_response(
+        self,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        response: Any,  # HybridExecuteResponse
+    ) -> list[HybridExampleResult]:
+        """Process response in combined mode (quality metrics included)."""
+        results: list[HybridExampleResult] = []
+
+        for i, inp in enumerate(inputs):
+            input_id = inp["input_id"]
+            expected = self._extract_expected(batch[i])
+
+            # Find matching output
+            output_data = None
+            per_example_metrics: dict[str, float] = {}
+
+            for out in response.outputs:
+                if out.get("input_id") == input_id:
+                    output_data = out.get("output")
+                    per_example_metrics = out.get("metrics", {})
+                    break
+
+            # Get operational metrics
+            cost = response.operational_metrics.get("cost_usd", 0.0) / len(inputs)
+            latency = response.operational_metrics.get("latency_ms", 0.0)
+
+            results.append(
+                HybridExampleResult(
+                    input_id=input_id,
+                    actual_output=output_data,
+                    expected_output=expected,
+                    metrics=per_example_metrics,
+                    cost_usd=cost,
+                    latency_ms=latency,
+                )
+            )
+
+        return results
+
+    async def _evaluate_outputs(
+        self,
+        transport: HybridTransport,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        execute_response: Any,  # HybridExecuteResponse
+    ) -> list[HybridExampleResult]:
+        """Call evaluate endpoint for quality metrics."""
+        # Build evaluations with output + target pairs
+        evaluations = []
+        for i, inp in enumerate(inputs):
+            input_id = inp["input_id"]
+            expected = self._extract_expected(batch[i])
+
+            # Find matching output
+            output_data = None
+            for out in execute_response.outputs:
+                if out.get("input_id") == input_id:
+                    output_data = out.get("output")
+                    break
+
+            evaluations.append(
+                {
+                    "input_id": input_id,
+                    "output": output_data,
+                    "target": expected,
+                }
+            )
+
+        # Call evaluate
+        eval_request = HybridEvaluateRequest(
+            capability_id=self._capability_id or "default",
+            execution_id=execute_response.execution_id,
+            evaluations=evaluations,
+            session_id=self._session_id,
+        )
+
+        try:
+            eval_response = await transport.evaluate(eval_request)
+
+            # Merge execute and evaluate results
+            results: list[HybridExampleResult] = []
+            for i, inp in enumerate(inputs):
+                input_id = inp["input_id"]
+                expected = self._extract_expected(batch[i])
+
+                # Find output from execute
+                output_data = None
+                for out in execute_response.outputs:
+                    if out.get("input_id") == input_id:
+                        output_data = out.get("output")
+                        break
+
+                # Find metrics from evaluate
+                per_example_metrics: dict[str, float] = {}
+                for result in eval_response.results:
+                    if result.get("input_id") == input_id:
+                        per_example_metrics = result.get("metrics", {})
+                        break
+
+                # Operational metrics per example
+                cost = execute_response.get_total_cost() / len(inputs)
+                latency = execute_response.operational_metrics.get("latency_ms", 0.0)
+
+                results.append(
+                    HybridExampleResult(
+                        input_id=input_id,
+                        actual_output=output_data,
+                        expected_output=expected,
+                        metrics=per_example_metrics,
+                        cost_usd=cost,
+                        latency_ms=latency,
+                    )
+                )
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"Evaluate call failed, using execute-only: {e}")
+            return self._process_execute_only_response(batch, inputs, execute_response)
+
+    def _process_execute_only_response(
+        self,
+        batch: list[Any],
+        inputs: list[dict[str, Any]],
+        response: Any,  # HybridExecuteResponse
+    ) -> list[HybridExampleResult]:
+        """Process response when no evaluation is available."""
+        results: list[HybridExampleResult] = []
+
+        for i, inp in enumerate(inputs):
+            input_id = inp["input_id"]
+            expected = self._extract_expected(batch[i])
+
+            # Find matching output
+            output_data = None
+            for out in response.outputs:
+                if out.get("input_id") == input_id:
+                    output_data = out.get("output")
+                    break
+
+            cost = response.get_total_cost() / len(inputs)
+            latency = response.operational_metrics.get("latency_ms", 0.0)
+
+            results.append(
+                HybridExampleResult(
+                    input_id=input_id,
+                    actual_output=output_data,
+                    expected_output=expected,
+                    metrics={},  # No quality metrics
+                    cost_usd=cost,
+                    latency_ms=latency,
+                )
+            )
+
+        return results
+
+    def _compute_aggregated_metrics(
+        self,
+        results: list[HybridExampleResult],
+        total_cost: float,
+    ) -> dict[str, float]:
+        """Compute aggregated metrics from example results."""
+        if not results:
+            return {}
+
+        aggregated: dict[str, float] = {
+            "cost": total_cost,
+            "success_rate": sum(1 for r in results if r.success) / len(results),
+        }
+
+        # Aggregate per-example metrics
+        metric_sums: dict[str, float] = {}
+        metric_counts: dict[str, int] = {}
+
+        for result in results:
+            for metric_name, value in result.metrics.items():
+                if metric_name not in metric_sums:
+                    metric_sums[metric_name] = 0.0
+                    metric_counts[metric_name] = 0
+                metric_sums[metric_name] += value
+                metric_counts[metric_name] += 1
+
+        # Compute means
+        for metric_name, total in metric_sums.items():
+            count = metric_counts[metric_name]
+            if count > 0:
+                aggregated[metric_name] = total / count
+
+        # Average latency
+        latencies = [r.latency_ms for r in results if r.latency_ms > 0]
+        if latencies:
+            aggregated["latency"] = sum(latencies) / len(latencies)
+
+        return aggregated
+
+    async def close(self) -> None:
+        """Close evaluator and release resources."""
+        if self._lifecycle_manager is not None:
+            await self._lifecycle_manager.release()
+            self._lifecycle_manager = None
+
+        if self._transport is not None and self._owns_transport:
+            await self._transport.close()
+            self._transport = None
+
+    async def __aenter__(self) -> HybridAPIEvaluator:
+        """Async context manager entry."""
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        """Async context manager exit."""
+        await self.close()

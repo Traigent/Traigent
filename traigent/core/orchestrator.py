@@ -436,6 +436,12 @@ class OptimizationOrchestrator:
         if hasattr(self.evaluator, "execution_mode"):
             self.evaluator.execution_mode = self.traigent_config.execution_mode
 
+        # Register hybrid lifecycle manager for cleanup if present
+        # (HybridAPIEvaluator exposes lifecycle_manager property)
+        self._hybrid_lifecycle_manager = getattr(
+            self.evaluator, "lifecycle_manager", None
+        )
+
     def _initialize_backend_client(self) -> BackendIntegratedClient | None:
         """Initialize backend client if cloud features are available.
 
@@ -817,6 +823,22 @@ class OptimizationOrchestrator:
                 await result
         except Exception as exc:
             logger.debug("Backend client cleanup failed: %s", exc)
+
+    async def _cleanup_hybrid_lifecycle(self) -> None:
+        """Release hybrid API lifecycle manager if one was registered."""
+        lifecycle_manager = getattr(self, "_hybrid_lifecycle_manager", None)
+        if lifecycle_manager is None:
+            return
+
+        try:
+            releaser = getattr(lifecycle_manager, "release", None)
+            if releaser:
+                result = releaser()
+                if inspect.isawaitable(result):
+                    await result
+                logger.debug("Hybrid lifecycle manager released")
+        except Exception as exc:
+            logger.debug("Hybrid lifecycle cleanup failed: %s", exc)
 
     def _get_progress_info(self, current_trial: int) -> ProgressInfo:
         """Create progress information for callbacks."""
@@ -2088,6 +2110,7 @@ class OptimizationOrchestrator:
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             await self._cleanup_backend_client()
+            await self._cleanup_hybrid_lifecycle()
 
     def _abandon_optuna_trial(
         self,
