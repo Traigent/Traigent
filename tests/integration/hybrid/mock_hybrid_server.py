@@ -28,6 +28,9 @@ class MockServerConfig:
     # Batch limits
     max_batch_size: int = 100
 
+    # Privacy-preserving mode
+    privacy_preserving: bool = False
+
 
 @dataclass
 class MockHybridServer:
@@ -36,6 +39,9 @@ class MockHybridServer:
     This class simulates an external agent service that implements
     the Traigent hybrid protocol. Used for integration testing without
     requiring an actual external service.
+
+    Supports both standard mode (full content) and privacy-preserving mode
+    (only IDs transmitted, content stored locally).
     """
 
     config: MockServerConfig = field(default_factory=MockServerConfig)
@@ -47,6 +53,14 @@ class MockHybridServer:
     received_configs: list[dict[str, Any]] = field(default_factory=list)
     active_sessions: set[str] = field(default_factory=set)
 
+    # Privacy-preserving mode: local data storage
+    # Maps input_id -> input data
+    _input_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Maps output_id -> output data
+    _output_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Maps target_id -> target data
+    _target_storage: dict[str, dict[str, Any]] = field(default_factory=dict)
+
     def reset(self) -> None:
         """Reset server state for test isolation."""
         self.execute_call_count = 0
@@ -54,6 +68,29 @@ class MockHybridServer:
         self.keep_alive_call_count = 0
         self.received_configs = []
         self.active_sessions = set()
+        self._input_storage = {}
+        self._output_storage = {}
+        self._target_storage = {}
+
+    def store_input(self, input_id: str, data: dict[str, Any]) -> None:
+        """Store input data locally (for privacy-preserving mode)."""
+        self._input_storage[input_id] = data
+
+    def store_target(self, target_id: str, data: dict[str, Any]) -> None:
+        """Store target data locally (for privacy-preserving mode)."""
+        self._target_storage[target_id] = data
+
+    def get_input(self, input_id: str) -> dict[str, Any]:
+        """Retrieve locally-stored input data by ID."""
+        return self._input_storage.get(input_id, {})
+
+    def get_output(self, output_id: str) -> dict[str, Any]:
+        """Retrieve locally-stored output data by ID."""
+        return self._output_storage.get(output_id, {})
+
+    def get_target(self, target_id: str) -> dict[str, Any]:
+        """Retrieve locally-stored target data by ID."""
+        return self._target_storage.get(target_id, {})
 
     def get_capabilities(self) -> dict[str, Any]:
         """Return service capabilities."""
@@ -156,7 +193,14 @@ class MockHybridServer:
 
         for inp in inputs:
             input_id = inp.get("input_id", str(uuid.uuid4()))
-            data = inp.get("data", {})
+
+            # Privacy-preserving mode: look up data locally by input_id
+            # Standard mode: use data from request
+            if "data" in inp:
+                data = inp["data"]
+            else:
+                # Privacy-preserving: look up locally-stored input
+                data = self.get_input(input_id)
 
             # Simulate output based on config
             output = self._simulate_output(config, data)
@@ -177,14 +221,23 @@ class MockHybridServer:
             total_cost += cost
             total_latency += latency
 
-            outputs.append(
-                {
-                    "input_id": input_id,
-                    "output": output,
-                    "cost_usd": cost,
-                    "latency_ms": latency,
-                }
-            )
+            # Build output item
+            output_item: dict[str, Any] = {
+                "input_id": input_id,
+                "cost_usd": cost,
+                "latency_ms": latency,
+            }
+
+            if self.config.privacy_preserving:
+                # Privacy-preserving mode: store output locally and return only ID
+                output_id = f"out_{input_id}_{session_id or 'default'}"
+                self._output_storage[output_id] = output
+                output_item["output_id"] = output_id
+            else:
+                # Standard mode: include full output content
+                output_item["output"] = output
+
+            outputs.append(output_item)
 
         response = {
             "request_id": request_id,
@@ -268,8 +321,22 @@ class MockHybridServer:
 
         for eval_item in evaluations:
             input_id = eval_item.get("input_id", str(uuid.uuid4()))
-            output = eval_item.get("output", {})
-            target = eval_item.get("target", {})
+
+            # Privacy-preserving mode: look up output and target by ID
+            # Standard mode: use data from request
+            if "output" in eval_item:
+                output = eval_item["output"]
+            elif "output_id" in eval_item:
+                output = self.get_output(eval_item["output_id"])
+            else:
+                output = {}
+
+            if "target" in eval_item:
+                target = eval_item["target"]
+            elif "target_id" in eval_item:
+                target = self.get_target(eval_item["target_id"])
+            else:
+                target = {}
 
             # Compute mock accuracy based on output quality
             quality = output.get("quality_score", 0.5)

@@ -589,3 +589,313 @@ class TestHybridModeCapabilities:
 
         assert health.status == "healthy"
         assert health.version == "1.0.0-mock"
+
+
+class TestHybridModePrivacyPreserving:
+    """Integration tests for privacy-preserving mode.
+
+    Tests that the API correctly handles:
+    - Execute with only input_id (no data content)
+    - Execute returning output_id instead of output content
+    - Evaluate with output_id and target_id instead of content
+    - Mixed mode (some content, some IDs)
+    """
+
+    @pytest.fixture
+    def privacy_server(self) -> MockHybridServer:
+        """Create mock server in privacy-preserving mode."""
+        config = MockServerConfig(privacy_preserving=True)
+        return MockHybridServer(config=config)
+
+    @pytest.fixture
+    def privacy_transport(
+        self, privacy_server: MockHybridServer
+    ) -> MockHTTPTransport:
+        """Create mock transport for privacy mode."""
+        return MockHTTPTransport(privacy_server)
+
+    @pytest.mark.asyncio
+    async def test_execute_privacy_mode_input_id_only(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test execute with only input_id - data looked up locally."""
+        # Pre-store input data on server (simulates client-side storage)
+        privacy_server.store_input("ex_1", {"query": "What is AI?"})
+        privacy_server.store_input("ex_2", {"query": "What is ML?"})
+
+        # Request with only input_ids, no data
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.3},
+            inputs=[
+                {"input_id": "ex_1"},  # No data field
+                {"input_id": "ex_2"},  # No data field
+            ],
+        )
+
+        response = await privacy_transport.execute(request)
+
+        assert response.status == "completed"
+        assert len(response.outputs) == 2
+
+        # In privacy mode, outputs should have output_id, not output content
+        for out in response.outputs:
+            assert "output_id" in out
+            assert "output" not in out
+            assert out["input_id"] in ["ex_1", "ex_2"]
+
+    @pytest.mark.asyncio
+    async def test_execute_privacy_mode_returns_output_id(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that privacy mode returns output_id instead of output content."""
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
+            session_id="session_123",
+        )
+
+        response = await privacy_transport.execute(request)
+
+        assert response.status == "completed"
+        output = response.outputs[0]
+
+        # Should have output_id, not output
+        assert "output_id" in output
+        assert "output" not in output
+        assert output["output_id"] == "out_ex_1_session_123"
+
+        # Output should be stored locally on server
+        stored_output = privacy_server.get_output(output["output_id"])
+        assert "quality_score" in stored_output
+        assert "response" in stored_output
+
+    @pytest.mark.asyncio
+    async def test_evaluate_privacy_mode_with_ids(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test evaluate using output_id and target_id instead of content."""
+        # Pre-store output and target data on server
+        privacy_server._output_storage["out_ex_1"] = {
+            "quality_score": 0.9,
+            "response": "AI is artificial intelligence",
+        }
+        privacy_server.store_target("target_ex_1", {"expected": "AI is..."})
+
+        privacy_server._output_storage["out_ex_2"] = {
+            "quality_score": 0.7,
+            "response": "ML is machine learning",
+        }
+        privacy_server.store_target("target_ex_2", {"expected": "ML is..."})
+
+        # Request with only IDs, no content
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output_id": "out_ex_1",  # ID instead of content
+                    "target_id": "target_ex_1",  # ID instead of content
+                },
+                {
+                    "input_id": "ex_2",
+                    "output_id": "out_ex_2",
+                    "target_id": "target_ex_2",
+                },
+            ],
+        )
+
+        response = await privacy_transport.evaluate(request)
+
+        assert response.status == "completed"
+        assert len(response.results) == 2
+        assert "accuracy" in response.aggregate_metrics
+
+        # Verify metrics are computed correctly from stored data
+        for result in response.results:
+            assert "accuracy" in result["metrics"]
+            assert "relevance" in result["metrics"]
+
+    @pytest.mark.asyncio
+    async def test_standard_mode_includes_full_content(
+        self,
+    ) -> None:
+        """Test that standard mode (non-privacy) includes full content."""
+        config = MockServerConfig(privacy_preserving=False)
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "balanced"},
+            inputs=[{"input_id": "ex_1", "data": {"query": "test question"}}],
+        )
+
+        response = await transport.execute(request)
+
+        assert response.status == "completed"
+        output = response.outputs[0]
+
+        # Standard mode: should have output content, not output_id
+        assert "output" in output
+        assert "output_id" not in output
+        assert "response" in output["output"]
+        assert "quality_score" in output["output"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_mode_evaluate(
+        self,
+    ) -> None:
+        """Test mixed mode: some content, some IDs in same request."""
+        config = MockServerConfig(privacy_preserving=False)
+        server = MockHybridServer(config=config)
+        transport = MockHTTPTransport(server)
+
+        # Pre-store one target, provide other inline
+        server.store_target("target_ex_2", {"expected": "Machine learning..."})
+
+        request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output": {"quality_score": 0.9, "response": "answer 1"},
+                    "target": {"expected": "correct answer"},  # Full content
+                },
+                {
+                    "input_id": "ex_2",
+                    "output": {"quality_score": 0.7, "response": "answer 2"},
+                    "target_id": "target_ex_2",  # ID reference
+                },
+            ],
+        )
+
+        response = await transport.evaluate(request)
+
+        assert response.status == "completed"
+        assert len(response.results) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_then_evaluate_privacy_flow(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test complete privacy-preserving workflow: execute then evaluate."""
+        session_id = "privacy_session_001"
+
+        # Pre-store input data
+        privacy_server.store_input("ex_1", {"query": "What is 2+2?"})
+        privacy_server.store_input("ex_2", {"query": "Capital of France?"})
+
+        # Pre-store target data
+        privacy_server.store_target("target_ex_1", {"expected": "4"})
+        privacy_server.store_target("target_ex_2", {"expected": "Paris"})
+
+        # Phase 1: Execute with only input_ids
+        exec_request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate", "temperature": 0.2},
+            inputs=[
+                {"input_id": "ex_1"},
+                {"input_id": "ex_2"},
+            ],
+            session_id=session_id,
+        )
+        exec_response = await privacy_transport.execute(exec_request)
+
+        assert exec_response.status == "completed"
+        assert len(exec_response.outputs) == 2
+
+        # Collect output_ids from response
+        output_ids = {
+            out["input_id"]: out["output_id"] for out in exec_response.outputs
+        }
+
+        # Phase 2: Evaluate with output_ids and target_ids
+        eval_request = HybridEvaluateRequest(
+            capability_id="mock_test_agent",
+            execution_id=exec_response.execution_id,
+            evaluations=[
+                {
+                    "input_id": "ex_1",
+                    "output_id": output_ids["ex_1"],
+                    "target_id": "target_ex_1",
+                },
+                {
+                    "input_id": "ex_2",
+                    "output_id": output_ids["ex_2"],
+                    "target_id": "target_ex_2",
+                },
+            ],
+            session_id=session_id,
+        )
+        eval_response = await privacy_transport.evaluate(eval_request)
+
+        assert eval_response.status == "completed"
+        assert privacy_server.execute_call_count == 1
+        assert privacy_server.evaluate_call_count == 1
+
+        # Verify quality metrics are computed
+        assert "accuracy" in eval_response.aggregate_metrics
+        assert eval_response.aggregate_metrics["accuracy"]["n"] == 2
+
+    @pytest.mark.asyncio
+    async def test_privacy_mode_cost_tracking(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that cost tracking works correctly in privacy mode."""
+        privacy_server.store_input("ex_1", {"query": "test 1"})
+        privacy_server.store_input("ex_2", {"query": "test 2"})
+
+        request = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},  # 2x cost
+            inputs=[
+                {"input_id": "ex_1"},
+                {"input_id": "ex_2"},
+            ],
+        )
+
+        response = await privacy_transport.execute(request)
+
+        # Costs should still be tracked even in privacy mode
+        assert response.operational_metrics["total_cost_usd"] > 0
+
+        for output in response.outputs:
+            assert "cost_usd" in output
+            assert output["cost_usd"] > 0
+
+    @pytest.mark.asyncio
+    async def test_privacy_mode_session_scoped_outputs(
+        self, privacy_transport: MockHTTPTransport, privacy_server: MockHybridServer
+    ) -> None:
+        """Test that output_ids are scoped to sessions to prevent collisions."""
+        # Same input_id but different sessions
+        request1 = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "fast"},
+            inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
+            session_id="session_A",
+        )
+
+        request2 = HybridExecuteRequest(
+            capability_id="mock_test_agent",
+            config={"model": "accurate"},
+            inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
+            session_id="session_B",
+        )
+
+        response1 = await privacy_transport.execute(request1)
+        response2 = await privacy_transport.execute(request2)
+
+        output_id_1 = response1.outputs[0]["output_id"]
+        output_id_2 = response2.outputs[0]["output_id"]
+
+        # Output IDs should be different due to session scoping
+        assert output_id_1 != output_id_2
+        assert "session_A" in output_id_1
+        assert "session_B" in output_id_2
+
+        # Both outputs should be stored separately
+        assert privacy_server.get_output(output_id_1) != {}
+        assert privacy_server.get_output(output_id_2) != {}
