@@ -6,6 +6,7 @@
 -r requirements-bayesian.txt
 -r requirements-integrations.txt
 -r requirements-security.txt
+-r requirements-hybrid.txt
 
 # Visualization
 matplotlib>=3.5.0
