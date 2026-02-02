@@ -77,12 +77,12 @@ class TraigentClient:
         Args:
             api_key: API key for backend
             backend_url: Backend URL (defaults to centralized config)
-            execution_mode: 'auto', 'hybrid', 'cloud', 'edge_analytics'
+            execution_mode: 'auto' or 'edge_analytics' (only edge_analytics is supported)
             agent_builder: Agent builder instance for local execution
 
         Note:
-            Cloud module is only required for 'hybrid', 'standard', and 'cloud' modes.
-            Edge analytics mode works without cloud dependencies installed.
+            Only 'edge_analytics' mode is currently supported in the open-source SDK.
+            Cloud and hybrid modes will raise ConfigurationError.
         """
         from traigent.config.backend_config import BackendConfig
 
@@ -155,7 +155,8 @@ class TraigentClient:
             )
 
         # Determine execution strategy
-        if self.execution_mode == ExecutionMode.STANDARD:
+        # Note: cloud/hybrid modes will have raised ConfigurationError in __init__
+        if self.execution_mode == ExecutionMode.HYBRID:
             return await self._optimize_hybrid(
                 function,
                 dataset,
@@ -176,7 +177,7 @@ class TraigentClient:
                 config_defaults,
             )
         else:
-            # Edge Analytics mode
+            # Edge Analytics mode (the only supported mode)
             return await self._optimize_local(
                 function,
                 dataset,
@@ -532,44 +533,25 @@ class TraigentClient:
         }
 
     def _determine_execution_mode(self, requested_mode: str) -> ExecutionMode:
-        """Determine actual execution mode based on environment.
+        """Determine actual execution mode based on user request.
 
         Args:
-            requested_mode: User requested mode
+            requested_mode: User requested mode ('auto' or specific mode)
 
         Returns:
             Actual execution mode to use
-        """
-        if requested_mode != "auto":
-            # Map string values to ExecutionMode enum
-            mode_map = {
-                "edge_analytics": ExecutionMode.EDGE_ANALYTICS,
-                "privacy": ExecutionMode.PRIVACY,
-                "standard": ExecutionMode.STANDARD,
-                "cloud": ExecutionMode.CLOUD,
-            }
-            if requested_mode in mode_map:
-                return mode_map[requested_mode]
-            # Try to construct directly if it's already an enum value
-            return ExecutionMode(requested_mode)
 
-        # Auto-detection logic
-        if os.environ.get("TRAIGENT_FORCE_LOCAL"):
+        Raises:
+            ConfigurationError: If mode is invalid or unsupported
+        """
+        from traigent.config.types import resolve_execution_mode
+
+        if requested_mode == "auto":
+            # Auto-detection: default to edge_analytics (the only supported mode)
             return ExecutionMode.EDGE_ANALYTICS
-        elif os.environ.get("TRAIGENT_FORCE_HYBRID"):
-            return ExecutionMode.STANDARD
-        elif os.environ.get("TRAIGENT_FORCE_CLOUD"):
-            return ExecutionMode.CLOUD
-        else:
-            # Default based on privacy requirements
-            if self._check_privacy_requirements():
-                return ExecutionMode.STANDARD
-            else:
-                # Check if we have API key for SaaS
-                if self._explicit_api_key:
-                    return ExecutionMode.CLOUD
-                else:
-                    return ExecutionMode.EDGE_ANALYTICS
+
+        # Use central validation for explicit mode requests
+        return resolve_execution_mode(requested_mode)
 
     def _check_privacy_requirements(self) -> bool:
         """Check if privacy requirements mandate standard mode.

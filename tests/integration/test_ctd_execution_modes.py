@@ -435,9 +435,9 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     if combo.get("has_api_key"):
         api_key = TEST_KEY_PREFIX + ("x" * 12)
 
-    from traigent.traigent_client import TraigentClient as OptiGenClient
+    from traigent.traigent_client import TraigentClient
 
-    client = OptiGenClient(
+    client = TraigentClient(
         execution_mode=combo.get("explicit_mode", "auto"), api_key=api_key
     )
     assert (

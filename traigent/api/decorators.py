@@ -729,11 +729,11 @@ def _resolve_injection_mode_enum(
 
     if injection_mode == "decorator":
         warnings.warn(
-            "injection_mode='decorator' is deprecated. Use 'attribute' instead.",
+            "injection_mode='decorator' is deprecated. Use 'context' instead.",
             DeprecationWarning,
             stacklevel=4,
         )
-        return InjectionMode.ATTRIBUTE
+        return InjectionMode.CONTEXT
 
     try:
         return InjectionMode(injection_mode)

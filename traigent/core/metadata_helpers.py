@@ -183,7 +183,6 @@ def _add_measures_to_metadata(
 
     include_full_measures = not privacy_on and mode_enum in {
         ExecutionMode.EDGE_ANALYTICS,
-        ExecutionMode.STANDARD,
         ExecutionMode.HYBRID,
     }
 
@@ -283,9 +282,7 @@ def build_backend_metadata(
     mode_enum = traigent_config.execution_mode_enum
     _add_summary_stats(trial_metadata, trial_result, mode_enum)
 
-    privacy_on = getattr(traigent_config, "privacy_enabled", False) or (
-        mode_enum is ExecutionMode.PRIVACY
-    )
+    privacy_on = getattr(traigent_config, "privacy_enabled", False)
     example_results = trial_result.metadata.get("example_results")
 
     _add_measures_to_metadata(

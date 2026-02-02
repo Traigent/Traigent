@@ -117,9 +117,7 @@ def test_execution_mode_accepts_valid_values(mode):
     assert config.execution_mode == expected
 
 
-@given(
-    st.sampled_from(["cloud", "hybrid", ExecutionMode.CLOUD, ExecutionMode.HYBRID])
-)
+@given(st.sampled_from(["cloud", "hybrid", ExecutionMode.CLOUD, ExecutionMode.HYBRID]))
 def test_execution_mode_rejects_unsupported_modes(mode):
     """Property: cloud and hybrid modes raise ConfigurationError (not yet supported)."""
     with pytest.raises(ConfigurationError, match="not yet supported"):
