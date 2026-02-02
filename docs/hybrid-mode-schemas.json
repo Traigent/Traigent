@@ -1,0 +1,539 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://traigent.ai/schemas/hybrid-mode/v1.0.0",
+  "title": "Traigent Hybrid Mode API Schemas",
+  "description": "JSON Schema definitions for Traigent Hybrid Mode API DTOs",
+  "definitions": {
+    "ServiceCapabilities": {
+      "type": "object",
+      "title": "ServiceCapabilities",
+      "description": "Service capabilities discovered via handshake",
+      "required": ["version"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "description": "API version",
+          "examples": ["1.0"]
+        },
+        "supports_evaluate": {
+          "type": "boolean",
+          "description": "Whether separate evaluate endpoint is available",
+          "default": true
+        },
+        "supports_keep_alive": {
+          "type": "boolean",
+          "description": "Whether keep-alive heartbeat is supported",
+          "default": false
+        },
+        "supports_streaming": {
+          "type": "boolean",
+          "description": "Whether streaming responses are supported",
+          "default": false
+        },
+        "max_batch_size": {
+          "type": "integer",
+          "description": "Maximum inputs per execute request",
+          "default": 100,
+          "minimum": 1
+        },
+        "max_payload_bytes": {
+          "type": ["integer", "null"],
+          "description": "Maximum request payload size (null = unlimited)"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TunableDefinition": {
+      "type": "object",
+      "title": "TunableDefinition",
+      "description": "Tunable variable definition following TVL 0.9 specification",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Variable name (must be valid Python identifier)",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "type": {
+          "type": "string",
+          "description": "Variable type",
+          "enum": ["bool", "int", "float", "str", "enum"]
+        },
+        "domain": {
+          "$ref": "#/definitions/TunableDomain"
+        },
+        "default": {
+          "description": "Default value (type depends on tunable type)"
+        },
+        "agent": {
+          "type": "string",
+          "description": "Agent name for multi-agent grouping"
+        },
+        "is_tool": {
+          "type": "boolean",
+          "description": "True if this tunable configures an MCP tool",
+          "default": false
+        },
+        "constraints": {
+          "type": "array",
+          "description": "Conditional constraints",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "TunableDomain": {
+      "type": "object",
+      "title": "TunableDomain",
+      "description": "Domain specification for tunable variable",
+      "properties": {
+        "values": {
+          "type": "array",
+          "description": "Allowed values (for enum and str types)",
+          "items": {}
+        },
+        "range": {
+          "type": "array",
+          "description": "[min, max] range (for int and float types)",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "resolution": {
+          "type": "number",
+          "description": "Step size for float types"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConfigSpaceResponse": {
+      "type": "object",
+      "title": "ConfigSpaceResponse",
+      "description": "Response from config-space discovery endpoint",
+      "required": ["schema_version", "capability_id", "tunables"],
+      "properties": {
+        "schema_version": {
+          "type": "string",
+          "description": "TVL schema version",
+          "examples": ["0.9"]
+        },
+        "capability_id": {
+          "type": "string",
+          "description": "Identifier for the capability"
+        },
+        "tunables": {
+          "type": "array",
+          "description": "List of tunable variable definitions",
+          "items": {
+            "$ref": "#/definitions/TunableDefinition"
+          }
+        },
+        "tvars": {
+          "type": "array",
+          "description": "Alias for tunables (backward compatibility)",
+          "items": {
+            "$ref": "#/definitions/TunableDefinition"
+          }
+        },
+        "constraints": {
+          "type": "object",
+          "description": "Structural and behavioral constraints",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "BatchOptions": {
+      "type": "object",
+      "title": "BatchOptions",
+      "description": "Options for batch execution control",
+      "properties": {
+        "parallelism": {
+          "type": "integer",
+          "description": "Maximum concurrent executions within batch",
+          "default": 1,
+          "minimum": 1
+        },
+        "fail_fast": {
+          "type": "boolean",
+          "description": "Stop batch on first failure",
+          "default": false
+        },
+        "timeout_per_item_ms": {
+          "type": "integer",
+          "description": "Per-item timeout (0 = use request timeout)",
+          "default": 0,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "InputItem": {
+      "type": "object",
+      "title": "InputItem",
+      "description": "Single input item for execution",
+      "required": ["input_id", "data"],
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "description": "Unique identifier for this input"
+        },
+        "data": {
+          "type": "object",
+          "description": "Input data (structure defined by your agent)",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExecuteRequest": {
+      "type": "object",
+      "title": "ExecuteRequest",
+      "description": "Request to execute agent with configuration on inputs",
+      "required": ["capability_id", "config", "inputs"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Idempotency key for retry safety"
+        },
+        "capability_id": {
+          "type": "string",
+          "description": "Identifier for the agent capability to invoke"
+        },
+        "config": {
+          "type": "object",
+          "description": "Configuration parameters (tunable values)",
+          "additionalProperties": true
+        },
+        "inputs": {
+          "type": "array",
+          "description": "List of input examples to process",
+          "items": {
+            "$ref": "#/definitions/InputItem"
+          },
+          "minItems": 1
+        },
+        "session_id": {
+          "type": ["string", "null"],
+          "description": "Session ID for stateful agents"
+        },
+        "batch_options": {
+          "$ref": "#/definitions/BatchOptions"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Request timeout in milliseconds",
+          "default": 30000,
+          "minimum": 1000
+        }
+      },
+      "additionalProperties": false
+    },
+    "OutputItem": {
+      "type": "object",
+      "title": "OutputItem",
+      "description": "Output for a single input",
+      "required": ["input_id", "output"],
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "description": "Matching input identifier"
+        },
+        "output": {
+          "type": "object",
+          "description": "Agent output (structure defined by your agent)",
+          "additionalProperties": true
+        },
+        "cost_usd": {
+          "type": "number",
+          "description": "Cost for this input in USD"
+        },
+        "latency_ms": {
+          "type": "number",
+          "description": "Latency for this input in milliseconds"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OperationalMetrics": {
+      "type": "object",
+      "title": "OperationalMetrics",
+      "description": "Aggregate operational metrics from execution",
+      "required": ["total_cost_usd"],
+      "properties": {
+        "total_cost_usd": {
+          "type": "number",
+          "description": "Total cost in USD"
+        },
+        "cost_usd": {
+          "type": "number",
+          "description": "Alias for total_cost_usd"
+        },
+        "latency_ms": {
+          "type": "number",
+          "description": "Total latency in milliseconds"
+        },
+        "tokens_used": {
+          "type": "integer",
+          "description": "Total tokens consumed"
+        },
+        "tokens_input": {
+          "type": "integer",
+          "description": "Input tokens"
+        },
+        "tokens_output": {
+          "type": "integer",
+          "description": "Output tokens"
+        },
+        "cache_hits": {
+          "type": "integer",
+          "description": "Number of cache hits"
+        },
+        "retry_count": {
+          "type": "integer",
+          "description": "Number of retries"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ExecutionError": {
+      "type": ["object", "null"],
+      "title": "ExecutionError",
+      "description": "Execution error details",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Error code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Error message"
+        },
+        "failed_inputs": {
+          "type": "array",
+          "description": "List of failed input IDs",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ExecuteResponse": {
+      "type": "object",
+      "title": "ExecuteResponse",
+      "description": "Response from agent execution",
+      "required": ["request_id", "execution_id", "status", "outputs", "operational_metrics"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Echoed request ID for correlation"
+        },
+        "execution_id": {
+          "type": "string",
+          "description": "Unique ID for this execution (used in evaluate)"
+        },
+        "status": {
+          "type": "string",
+          "description": "Execution status",
+          "enum": ["completed", "partial", "failed"]
+        },
+        "outputs": {
+          "type": "array",
+          "description": "Per-input results",
+          "items": {
+            "$ref": "#/definitions/OutputItem"
+          }
+        },
+        "operational_metrics": {
+          "$ref": "#/definitions/OperationalMetrics"
+        },
+        "quality_metrics": {
+          "type": ["object", "null"],
+          "description": "Quality metrics if using combined mode",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "session_id": {
+          "type": ["string", "null"],
+          "description": "Session ID for stateful agents"
+        },
+        "error": {
+          "$ref": "#/definitions/ExecutionError"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvaluationItem": {
+      "type": "object",
+      "title": "EvaluationItem",
+      "description": "Single evaluation item with output and target",
+      "required": ["input_id", "output", "target"],
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "description": "Matching input identifier"
+        },
+        "output": {
+          "type": "object",
+          "description": "Agent output to evaluate",
+          "additionalProperties": true
+        },
+        "target": {
+          "type": "object",
+          "description": "Expected/reference output",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvaluateRequest": {
+      "type": "object",
+      "title": "EvaluateRequest",
+      "description": "Request to evaluate outputs against targets",
+      "required": ["capability_id"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Idempotency key for retry safety"
+        },
+        "capability_id": {
+          "type": "string",
+          "description": "Identifier for the evaluation capability"
+        },
+        "execution_id": {
+          "type": ["string", "null"],
+          "description": "Reference to previous execute (for caching)"
+        },
+        "evaluations": {
+          "type": "array",
+          "description": "List of output+target pairs to evaluate",
+          "items": {
+            "$ref": "#/definitions/EvaluationItem"
+          }
+        },
+        "config": {
+          "type": ["object", "null"],
+          "description": "Optional config for evaluation parameters",
+          "additionalProperties": true
+        },
+        "session_id": {
+          "type": ["string", "null"],
+          "description": "Session ID for stateful agents"
+        }
+      },
+      "additionalProperties": false
+    },
+    "AggregateMetricStats": {
+      "type": "object",
+      "title": "AggregateMetricStats",
+      "description": "Aggregated statistics for a metric",
+      "required": ["mean", "std", "n"],
+      "properties": {
+        "mean": {
+          "type": "number",
+          "description": "Mean value across all examples"
+        },
+        "std": {
+          "type": "number",
+          "description": "Standard deviation"
+        },
+        "n": {
+          "type": "integer",
+          "description": "Number of examples"
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvaluationResult": {
+      "type": "object",
+      "title": "EvaluationResult",
+      "description": "Evaluation result for a single example",
+      "required": ["input_id", "metrics"],
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "description": "Matching input identifier"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Quality metrics for this example",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "EvaluateResponse": {
+      "type": "object",
+      "title": "EvaluateResponse",
+      "description": "Response from evaluation",
+      "required": ["request_id", "status", "results", "aggregate_metrics"],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "description": "Echoed request ID"
+        },
+        "status": {
+          "type": "string",
+          "description": "Evaluation status",
+          "enum": ["completed", "partial", "failed"]
+        },
+        "results": {
+          "type": "array",
+          "description": "Per-example evaluation results",
+          "items": {
+            "$ref": "#/definitions/EvaluationResult"
+          }
+        },
+        "aggregate_metrics": {
+          "type": "object",
+          "description": "Aggregated statistics per metric",
+          "additionalProperties": {
+            "$ref": "#/definitions/AggregateMetricStats"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HealthCheckResponse": {
+      "type": "object",
+      "title": "HealthCheckResponse",
+      "description": "Response from health check endpoint",
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "description": "Health status",
+          "enum": ["healthy", "degraded", "unhealthy"]
+        },
+        "version": {
+          "type": "string",
+          "description": "Service version"
+        },
+        "uptime_seconds": {
+          "type": "number",
+          "description": "Service uptime in seconds"
+        },
+        "details": {
+          "type": "object",
+          "description": "Additional health details",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
