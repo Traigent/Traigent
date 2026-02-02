@@ -2,6 +2,7 @@
 """By Goal - Speed & Latency (LLM Calculator)
 Target response_time; same calculator, different decorator.
 """
+
 import json
 import os
 import sys
@@ -20,6 +21,9 @@ for _depth in range(1, 7):
     except IndexError:
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

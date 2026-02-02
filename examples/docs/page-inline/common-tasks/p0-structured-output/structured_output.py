@@ -3,10 +3,14 @@
 
 Optimizes basic JSON extraction; accuracy = valid JSON with required keys.
 """
+
 import json
 import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

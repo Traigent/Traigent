@@ -5,6 +5,9 @@ import importlib.util
 import os
 import sys
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 # Colors for output
 RED = "\033[0;31m"
 GREEN = "\033[0;32m"

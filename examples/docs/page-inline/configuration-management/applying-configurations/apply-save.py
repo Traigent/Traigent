@@ -79,7 +79,6 @@ def apply_saved_config(path: Path) -> Callable[[F], F]:
     },
     eval_dataset="customer_support.jsonl",
     objectives=["cost", "accuracy"],
-    save_config=str(CONFIG_PATH),
 )
 def customer_support_agent(query: str) -> str:
     """Handle a support query using parameters injected by Traigent."""
@@ -93,7 +92,7 @@ def customer_support_agent(query: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
     prompt = f"Customer query: {query}"
     response = llm.invoke(prompt)
@@ -113,12 +112,22 @@ def production_support_agent(query: str) -> str:
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": max_tokens},
+        max_tokens=max_tokens,
     )
     response = llm.invoke(f"Customer query: {query}")
     return getattr(response, "content", str(response))
 
 
 if __name__ == "__main__":
-    print(customer_support_agent("How do I reset my password?"))
-    print(production_support_agent("How quickly can I upgrade my plan?"))
+    import asyncio
+
+    async def optimize_and_save() -> None:
+        results = await customer_support_agent.optimize(
+            algorithm="random",
+            max_trials=10,
+            random_seed=42,
+        )
+        CONFIG_PATH.write_text(json.dumps(results.best_config, indent=2))
+
+    asyncio.run(optimize_and_save())
+    print(production_support_agent("How do I reset my password?"))

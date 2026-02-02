@@ -1,3 +1,20 @@
 {"input": {"text": "The quick brown fox jumps over the lazy dog."}, "output": "Quick fox jumps over lazy dog."}
 {"input": {"text": "To be or not to be, that is the question."}, "output": "Debates whether to exist or not."}
 {"input": {"text": "All that glitters is not gold."}, "output": "Shiny things are not always valuable."}
+{"input": {"text": "A journey of a thousand miles begins with a single step."}, "output": "Long journeys start with small steps."}
+{"input": {"text": "Knowledge is power."}, "output": "Information gives advantage."}
+{"input": {"text": "Actions speak louder than words."}, "output": "Behavior matters more than talk."}
+{"input": {"text": "The early bird catches the worm."}, "output": "Being early has advantages."}
+{"input": {"text": "Practice makes perfect."}, "output": "Repetition improves skill."}
+{"input": {"text": "When in Rome, do as the Romans do."}, "output": "Adapt to local customs."}
+{"input": {"text": "Two heads are better than one."}, "output": "Collaboration improves outcomes."}
+{"input": {"text": "The pen is mightier than the sword."}, "output": "Words have more power than force."}
+{"input": {"text": "Better late than never."}, "output": "Delayed action beats inaction."}
+{"input": {"text": "Rome was not built in a day."}, "output": "Great things take time."}
+{"input": {"text": "Every cloud has a silver lining."}, "output": "Bad situations have positives."}
+{"input": {"text": "Time heals all wounds."}, "output": "Pain diminishes over time."}
+{"input": {"text": "Do not put all your eggs in one basket."}, "output": "Diversify your options."}
+{"input": {"text": "The grass is always greener on the other side."}, "output": "Others seem to have it better."}
+{"input": {"text": "Where there is smoke, there is fire."}, "output": "Signs indicate underlying issues."}
+{"input": {"text": "A picture is worth a thousand words."}, "output": "Visuals convey complex ideas."}
+{"input": {"text": "Curiosity killed the cat."}, "output": "Excessive questioning has risks."}

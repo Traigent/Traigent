@@ -2,22 +2,56 @@
 """Example 6: Custom Evaluator with LLM-as-Judge - AI-powered code quality assessment.
 
 This example demonstrates using an LLM as a judge to evaluate code generation quality.
-The judge evaluates correctness, style, and documentation using a detailed rubric.
+The judge evaluates correctness, code quality, and documentation using a detailed rubric.
 
-Usage:
+Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"
-    python 06_custom_evaluator.py
+    .venv/bin/python walkthrough/examples/real/06_custom_evaluator.py
 """
 
 import asyncio
 import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_openai import ChatOpenAI
 
 import traigent
 
+from utils.helpers import (
+    configure_logging,
+    print_cost_estimate,
+    print_estimated_time,
+    print_optimization_config,
+    print_results_table,
+    require_openai_key,
+    sanitize_traigent_api_key,
+)
+
+require_openai_key("06_custom_evaluator.py")
+sanitize_traigent_api_key()
+configure_logging()
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+traigent.initialize(execution_mode="edge_analytics")
+
+# Dataset path relative to this file
+DATASETS = Path(__file__).parent.parent / "datasets"
+OBJECTIVES = ["accuracy", "cost"]
+CONFIG_SPACE = {
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.0, 0.2, 0.5],
+    "style": ["verbose", "concise", "documented"],
+}
+
 # LLM Judge for code evaluation - uses a smaller, cheaper model
 _judge_llm = None
+_DATASET_WARNING_FILTER_ADDED = False
 
 
 def get_judge_llm() -> ChatOpenAI:
@@ -26,6 +60,23 @@ def get_judge_llm() -> ChatOpenAI:
     if _judge_llm is None:
         _judge_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     return _judge_llm
+
+
+def _suppress_code_gen_warning() -> None:
+    global _DATASET_WARNING_FILTER_ADDED
+    if _DATASET_WARNING_FILTER_ADDED:
+        return
+    base_logger = logging.getLogger("traigent.evaluators.base")
+
+    class _Filter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            message = record.getMessage()
+            if "code_gen.jsonl" in message and "has no expected outputs" in message:
+                return False
+            return True
+
+    base_logger.addFilter(_Filter())
+    _DATASET_WARNING_FILTER_ADDED = True
 
 
 LLM_JUDGE_PROMPT = """You are an expert code reviewer evaluating Python code quality.
@@ -39,29 +90,29 @@ The code was generated for this task: {task}
 ```
 
 ## Evaluation Rubric
-Score the code on these criteria (0.0 to 1.0 each):
+Score each criterion from 0.0 to 1.0 and apply weights:
 
-1. **Correctness (40%)**: Does the code correctly solve the task?
-   - 1.0: Fully correct, handles edge cases
-   - 0.7: Mostly correct, minor issues
-   - 0.4: Partially correct, has bugs
-   - 0.0: Incorrect or doesn't compile
+1. **Correctness (40%)**: Does the code solve the task correctly?
+   - 1.0: Correct output for typical + edge cases
+   - 0.7: Mostly correct, minor mistakes or missed edge cases
+   - 0.4: Partially correct, important bugs present
+   - 0.0: Incorrect or does not run
 
-2. **Code Quality (30%)**: Is the code well-structured and Pythonic?
-   - 1.0: Clean, efficient, follows best practices
-   - 0.7: Good structure, minor improvements possible
-   - 0.4: Works but poorly structured
-   - 0.0: Messy, hard to understand
+2. **Code Quality (30%)**: Is the code clear, structured, and Pythonic?
+   - 1.0: Clean structure, readable naming, idiomatic Python
+   - 0.7: Generally good, small improvements possible
+   - 0.4: Works but messy or hard to follow
+   - 0.0: Unstructured or very hard to read
 
-3. **Documentation (30%)**: Is the code well-documented?
-   - 1.0: Has docstring, clear comments, type hints
-   - 0.7: Has docstring or good comments
-   - 0.4: Minimal documentation
+3. **Documentation (30%)**: Is the code explained for a junior reader?
+   - 1.0: Docstring + helpful comments (and optional type hints)
+   - 0.7: Docstring or helpful comments present
+   - 0.4: Minimal or unclear documentation
    - 0.0: No documentation
 
 ## Response Format
-Respond with ONLY a JSON object (no markdown, no explanation):
-{{"correctness": <score>, "quality": <score>, "documentation": <score>, "reasoning": "<brief explanation>"}}
+Respond with ONLY a JSON object (no markdown, no extra text):
+{{"correctness": <score>, "quality": <score>, "documentation": <score>, "reasoning": "<1-2 sentences>"}}
 """
 
 
@@ -103,14 +154,11 @@ def llm_code_evaluator(output: str, expected: str, **kwargs) -> float:
 
 
 @traigent.optimize(
-    eval_dataset="./code_gen.jsonl",
-    objectives=["accuracy", "cost"],
-    custom_evaluator=llm_code_evaluator,
-    configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
-        "temperature": [0.0, 0.2, 0.5],
-        "style": ["verbose", "concise", "documented"],
-    },
+    eval_dataset=str(DATASETS / "code_gen.jsonl"),
+    objectives=OBJECTIVES,
+    scoring_function=llm_code_evaluator,
+    configuration_space=CONFIG_SPACE,
+    injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
 )
 def generate_code(task: str) -> str:
@@ -138,19 +186,40 @@ Requirements:
 
 Return ONLY the Python code, no explanations."""
 
-    response = llm.invoke(prompt)
-    return str(response.content)
+    try:
+        response = llm.invoke(prompt)
+        return str(response.content)
+    except Exception as exc:
+        print(f"LLM call failed: {type(exc).__name__}: {exc}")
+        return f"Error: {type(exc).__name__}: {exc}"
 
 
 async def main() -> None:
     print("Traigent Example 6: LLM-as-Judge Custom Evaluator")
     print("=" * 55)
     print("Using GPT-4o-mini as a judge to evaluate code quality.")
-    print("Scoring: Correctness (40%), Quality (30%), Docs (30%).\n")
+    print("Scoring: Correctness (40%), Quality (30%), Documentation (30%).")
+    print_optimization_config(OBJECTIVES, CONFIG_SPACE)
+    print_cost_estimate(
+        models=CONFIG_SPACE["model"],
+        dataset_size=20,
+        task_type="code_generation",
+        num_trials=10,
+    )
 
-    results = await generate_code.optimize(algorithm="random", max_trials=10, random_seed=42)
+    _suppress_code_gen_warning()
 
-    print("\nBest Code Generation Config:")
+    print_estimated_time("06_custom_evaluator.py")
+    results = await generate_code.optimize(
+        algorithm="random",
+        max_trials=10,
+        show_progress=True,
+        random_seed=42,
+    )
+
+    print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
+
+    print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
     print(f"  Style: {results.best_config.get('style')}")

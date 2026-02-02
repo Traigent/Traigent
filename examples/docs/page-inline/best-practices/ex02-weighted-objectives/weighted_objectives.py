@@ -3,6 +3,7 @@
 
 Demonstrates setting objective weights to reflect priorities.
 """
+
 from __future__ import annotations
 
 import json
@@ -23,7 +24,10 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     from langchain_openai import ChatOpenAI  # type: ignore

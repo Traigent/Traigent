@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Row-driven example runner for Traigent scenarios.
 
-Usage:
-    python examples/run_template.py --row 3
+Usage (from repo root):
+    .venv/bin/python examples/templates/run_template.py --row 3
 
 Reads examples/datasets/matrices/test_matrix.csv and executes the specified row configuration.
 Prints best config/score, aggregated table (service modes), and raw per-sample table.
@@ -24,7 +24,10 @@ from typing import Any
 # Add parent directory to path to ensure traigent can be imported
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from traigent.utils.logging import setup_logging
+from traigent.utils.logging import setup_logging  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Canonical answers and prompt template (reuse from core/hello-world)
 _HELLO_WORLD_ROOT = Path(__file__).parent.parent / "core" / "hello-world"
@@ -358,7 +361,9 @@ def _define_target(
         if api_key.startswith("sk-proj-") or api_key.startswith("sk-"):
             if not api_key.startswith("sk-ant-"):
                 print("\n" + "=" * 70)
-                print("⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!")
+                print(
+                    "⚠️  CRITICAL WARNING: Invalid Anthropic API key format detected!"
+                )
                 print("=" * 70)
                 print(f"Your API key starts with: {api_key[:10]}...")
                 print("This appears to be an OpenAI key, not an Anthropic key!")
