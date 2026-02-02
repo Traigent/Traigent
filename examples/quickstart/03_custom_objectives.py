@@ -5,13 +5,13 @@ Traigent Quickstart Example 3: Custom Objectives
 This example shows how to define custom objective weights and orientations.
 Based on the README.md custom objectives example.
 
-Run with:
-    export TRAIGENT_MOCK_LLM=true
-    python examples/quickstart/03_custom_objectives.py
+Run with (from repo root):
+    TRAIGENT_MOCK_LLM=true python examples/quickstart/03_custom_objectives.py
 """
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 # Ensure mock mode for testing without API keys
@@ -22,12 +22,26 @@ os.environ.setdefault(
     "TRAIGENT_RESULTS_FOLDER", str(Path(__file__).parent / ".traigent_results")
 )
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+ROOT_DIR = Path(__file__).resolve().parents[2]
+os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
 
-# Path to dataset
-DATASET_PATH = Path(__file__).resolve().parents[2] / "data" / "qa_samples.jsonl"
+# Allow running from repo root without installation
+try:
+    import traigent
+except ImportError:
+    sys.path.insert(0, str(ROOT_DIR))
+    import traigent
+
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
+# Path to dataset (shared quickstart dataset)
+DATASET_PATH = (
+    Path(__file__).resolve().parents[1] / "datasets" / "quickstart" / "qa_samples.jsonl"
+)
 
 # Define custom objectives with explicit weights and orientations
 custom_objectives = ObjectiveSchema.from_objectives(

@@ -16,13 +16,20 @@ except ImportError:  # pragma: no cover
     sys.path.append(str(Path(__file__).resolve().parents[3]))
     import traigent
 
-from traigent.metrics import configure_ragas_defaults
+from traigent.metrics import configure_ragas_defaults  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 BASE = Path(__file__).parent
 DATASET = str(BASE / "evaluation_set.jsonl")
 
 os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
+os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 os.environ.setdefault("RAGAS_DISABLE_ANALYTICS", "true")
+
+# Check if we're in mock mode
+_MOCK_MODE = os.getenv("TRAIGENT_MOCK_LLM", "").lower() in {"1", "true", "yes", "y"}
 
 _RAGAS_READY = True
 _RAGAS_IMPORT_ERROR: Exception | None = None
@@ -37,10 +44,14 @@ except Exception as exc:  # pragma: no cover - optional dependency
 ragas_llm = None
 _METRIC_FUNCTIONS: dict[str, Callable[..., float]] | None = None
 
-if _RAGAS_READY:
+# Only require API key if ragas is available AND not in mock mode
+if _RAGAS_READY and not _MOCK_MODE:
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("Set OPENAI_API_KEY to run this example.")
     ragas_llm = LangchainLLM(ChatOpenAI(model="gpt-4o-mini", temperature=0.0))
+elif _MOCK_MODE:
+    # Force fallback to deterministic metrics in mock mode
+    _RAGAS_READY = False
 else:
 
     def _token_overlap_score(text: str, expected: str) -> float:

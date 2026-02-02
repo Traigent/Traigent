@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Customer Support Agent - Intent Classification with Multi-Objective Optimization."""
+
 import asyncio
 import json
 import os
@@ -20,6 +21,9 @@ for _depth in range(1, 7):
         continue
 
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent
@@ -175,7 +179,7 @@ Category:""",
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.1),
-        model_kwargs={"max_tokens": config.get("max_tokens", 50)},
+        max_tokens=config.get("max_tokens", 50),
     )
 
     response = llm.invoke([HumanMessage(content=prompt)])

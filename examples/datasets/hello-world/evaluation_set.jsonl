@@ -3,3 +3,18 @@
 {"input": {"question": "What does RAG stand for?"}, "output": "Retrieval Augmented Generation"}
 {"input": {"question": "What is an instruction?"}, "output": "A list of steps"}
 {"input": {"question": "What should never be shared?"}, "output": "A private key"}
+{"input": {"question": "What is a neural network?"}, "output": "Connected processing nodes"}
+{"input": {"question": "What does NLP stand for?"}, "output": "Natural Language Processing"}
+{"input": {"question": "What is deep learning?"}, "output": "Multi-layer neural networks"}
+{"input": {"question": "What is prompt engineering?"}, "output": "Crafting effective inputs"}
+{"input": {"question": "What does LLM stand for?"}, "output": "Large Language Model"}
+{"input": {"question": "What is fine-tuning?"}, "output": "Specialized model training"}
+{"input": {"question": "What is an embedding?"}, "output": "Vector representation"}
+{"input": {"question": "What does API stand for?"}, "output": "Application Programming Interface"}
+{"input": {"question": "What is tokenization?"}, "output": "Text segmentation"}
+{"input": {"question": "What is inference?"}, "output": "Model prediction"}
+{"input": {"question": "What does GPU accelerate?"}, "output": "Parallel computations"}
+{"input": {"question": "What is a transformer?"}, "output": "Attention-based architecture"}
+{"input": {"question": "What is transfer learning?"}, "output": "Reusing pretrained models"}
+{"input": {"question": "What does SDK stand for?"}, "output": "Software Development Kit"}
+{"input": {"question": "What is hyperparameter tuning?"}, "output": "Optimizing model settings"}
