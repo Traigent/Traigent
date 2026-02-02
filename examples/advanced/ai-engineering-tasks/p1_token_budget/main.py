@@ -16,7 +16,7 @@ Key Goals Demonstrated:
 - Optimize context selection for maximum information density
 - Balance cost vs. performance across different budget scenarios
 
-Run with: python main.py
+Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tasks/p1_token_budget/main.py
 """
 
 from __future__ import annotations
@@ -59,6 +59,9 @@ from dataset import (
     get_budget_scenarios,
 )
 from evaluator import calculate_budget_metrics, evaluate_token_budget_task
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 console = Console()
 

@@ -1,3 +1,20 @@
-{"input": {"text": "Invoice: Vendor Acme Corp; Total $300.00 due."}, "output": {"vendor": "Acme Corp", "amount": 300}}
+{"input": {"text": "Invoice: Vendor Acme Corp; Total $300 due."}, "output": {"vendor": "Acme Corp", "amount": 300}}
 {"input": {"text": "Receipt from Globex for $125.50 on 2024-07-01."}, "output": {"vendor": "Globex", "amount": 125.5}}
 {"input": {"text": "MegaCo billed: USD 89"}, "output": {"vendor": "MegaCo", "amount": 89}}
+{"input": {"text": "Payment to Acme Corp: $450"}, "output": {"vendor": "Acme Corp", "amount": 450}}
+{"input": {"text": "Globex Inc sent invoice for USD 275"}, "output": {"vendor": "Globex", "amount": 275}}
+{"input": {"text": "TechFlow subscription renewal: $99.99 monthly"}, "output": {"vendor": "TechFlow", "amount": 99.99}}
+{"input": {"text": "DataSys annual license fee: USD 1200"}, "output": {"vendor": "DataSys", "amount": 1200}}
+{"input": {"text": "CloudNet hosting charges for March: $549.00"}, "output": {"vendor": "CloudNet", "amount": 549.0}}
+{"input": {"text": "SecurePay transaction processing: $75"}, "output": {"vendor": "SecurePay", "amount": 75}}
+{"input": {"text": "Acme Corp office supplies order #4521: $182.45"}, "output": {"vendor": "Acme Corp", "amount": 182.45}}
+{"input": {"text": "Globex consulting services Q2: USD 3500"}, "output": {"vendor": "Globex", "amount": 3500}}
+{"input": {"text": "MegaCo hardware maintenance: $625"}, "output": {"vendor": "MegaCo", "amount": 625}}
+{"input": {"text": "TechFlow API usage charges: $45.80"}, "output": {"vendor": "TechFlow", "amount": 45.8}}
+{"input": {"text": "DataSys support contract: USD 899"}, "output": {"vendor": "DataSys", "amount": 899}}
+{"input": {"text": "CloudNet bandwidth overage: $120.00"}, "output": {"vendor": "CloudNet", "amount": 120.0}}
+{"input": {"text": "SecurePay compliance audit fee: USD 250"}, "output": {"vendor": "SecurePay", "amount": 250}}
+{"input": {"text": "Acme Corp training materials: $350"}, "output": {"vendor": "Acme Corp", "amount": 350}}
+{"input": {"text": "Globex software license upgrade: $799.99"}, "output": {"vendor": "Globex", "amount": 799.99}}
+{"input": {"text": "MegaCo data migration services: USD 1500"}, "output": {"vendor": "MegaCo", "amount": 1500}}
+{"input": {"text": "TechFlow enterprise tier: $2499"}, "output": {"vendor": "TechFlow", "amount": 2499}}

@@ -3,6 +3,7 @@
 
 Generate a short blog intro for a topic. Optimize cost/latency.
 """
+
 import os
 import sys
 from pathlib import Path
@@ -20,6 +21,9 @@ for _depth in range(1, 7):
     except IndexError:
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage, extract_content
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

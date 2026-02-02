@@ -20,7 +20,7 @@ Key Goals Demonstrated:
 - Discover optimal chunk sizes and overlap
 - Smart token budget allocation (CUSTOM IMPLEMENTATION)
 
-Run with: python main.py
+Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tasks/p0_context_engineering/main.py
 """
 
 import asyncio
@@ -68,6 +68,9 @@ from evaluator import (
     evaluate_answer_quality,
     retrieve_context,
 )
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 console = Console()
 

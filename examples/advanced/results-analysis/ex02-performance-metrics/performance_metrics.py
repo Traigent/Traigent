@@ -3,10 +3,14 @@
 
 Demonstrates multi-objective (accuracy, cost, response_time) and results table.
 """
+
 import json
 import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent
@@ -115,9 +119,7 @@ def _contains_accuracy(
     max_trials=10,
 )
 def faq_answer(question: str) -> str:
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.0, model_kwargs={"max_tokens": 150}
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.0, max_tokens=150)
     prompt = f"Answer this customer FAQ briefly and precisely: {question}"
     resp = llm.invoke([HumanMessage(content=prompt)])
     return getattr(resp, "content", str(resp))
