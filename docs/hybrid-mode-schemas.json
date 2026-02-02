@@ -180,16 +180,16 @@
     "InputItem": {
       "type": "object",
       "title": "InputItem",
-      "description": "Single input item for execution",
-      "required": ["input_id", "data"],
+      "description": "Single input item for execution. For privacy-preserving mode, only input_id is required - the service retrieves data locally using the ID.",
+      "required": ["input_id"],
       "properties": {
         "input_id": {
           "type": "string",
-          "description": "Unique identifier for this input"
+          "description": "Unique identifier for this input. In privacy-preserving mode, the service uses this to retrieve locally-stored input data."
         },
         "data": {
           "type": "object",
-          "description": "Input data (structure defined by your agent)",
+          "description": "Input data (optional in privacy-preserving mode). Structure defined by your agent.",
           "additionalProperties": true
         }
       },
@@ -242,8 +242,8 @@
     "OutputItem": {
       "type": "object",
       "title": "OutputItem",
-      "description": "Output for a single input",
-      "required": ["input_id", "output"],
+      "description": "Output for a single input. For privacy-preserving mode, output_id can be returned instead of output content - the service stores output data locally.",
+      "required": ["input_id"],
       "properties": {
         "input_id": {
           "type": "string",
@@ -251,8 +251,12 @@
         },
         "output": {
           "type": "object",
-          "description": "Agent output (structure defined by your agent)",
+          "description": "Agent output (optional in privacy-preserving mode). Structure defined by your agent.",
           "additionalProperties": true
+        },
+        "output_id": {
+          "type": "string",
+          "description": "Unique identifier for this output (privacy-preserving mode). The service stores the actual output data locally and only transmits this ID."
         },
         "cost_usd": {
           "type": "number",
@@ -377,8 +381,8 @@
     "EvaluationItem": {
       "type": "object",
       "title": "EvaluationItem",
-      "description": "Single evaluation item with output and target",
-      "required": ["input_id", "output", "target"],
+      "description": "Single evaluation item with output and target. For privacy-preserving mode, use output_id and target_id instead of content - the service retrieves data locally using session context.",
+      "required": ["input_id"],
       "properties": {
         "input_id": {
           "type": "string",
@@ -386,13 +390,21 @@
         },
         "output": {
           "type": "object",
-          "description": "Agent output to evaluate",
+          "description": "Agent output to evaluate (optional in privacy-preserving mode)",
           "additionalProperties": true
+        },
+        "output_id": {
+          "type": "string",
+          "description": "Reference to output by ID (privacy-preserving mode). The service retrieves output data locally using this ID and the session context."
         },
         "target": {
           "type": "object",
-          "description": "Expected/reference output",
+          "description": "Expected/reference output (optional in privacy-preserving mode)",
           "additionalProperties": true
+        },
+        "target_id": {
+          "type": "string",
+          "description": "Reference to target by ID (privacy-preserving mode). The service retrieves target data locally using this ID."
         }
       },
       "additionalProperties": false
