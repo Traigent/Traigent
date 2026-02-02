@@ -433,6 +433,13 @@ class HybridAPIEvaluator(BaseEvaluator):
 
     def _extract_input(self, example: Any) -> dict[str, Any]:
         """Extract input data from dataset example."""
+        # Handle EvaluationExample dataclass
+        if hasattr(example, "input_data"):
+            input_data = example.input_data
+            if isinstance(input_data, dict):
+                return input_data
+            return {"input": input_data}
+
         if isinstance(example, dict):
             # Check for common input key patterns
             for key in ["input", "question", "query", "text", "data"]:
@@ -446,6 +453,10 @@ class HybridAPIEvaluator(BaseEvaluator):
 
     def _extract_expected(self, example: Any) -> Any:
         """Extract expected output from dataset example."""
+        # Handle EvaluationExample dataclass
+        if hasattr(example, "expected_output"):
+            return example.expected_output
+
         if isinstance(example, dict):
             for key in ["expected_output", "output", "answer", "target", "label"]:
                 if key in example:
