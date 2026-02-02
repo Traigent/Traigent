@@ -11,6 +11,86 @@ Traigent's Hybrid Mode allows you to optimize any external service by implementi
 3. **Evaluate** outputs against targets
 4. **Optimize** to find the best configuration
 
+## Privacy-Preserving Mode (Default)
+
+Traigent Hybrid Mode is designed with **privacy as the default**. Only configuration values and metrics are observed during optimization - your actual data content is never transmitted to Traigent.
+
+### What Gets Transmitted
+
+| Data Type | Transmitted | Description |
+|-----------|-------------|-------------|
+| Tunable definitions | Yes | Your config-space response |
+| Configuration values | Yes | Tunable values per trial |
+| Operational metrics | Yes | Cost, latency, tokens, etc. |
+| Quality metrics | Yes | Accuracy, relevance, etc. |
+| Input data content | **No** | Only input IDs |
+| Output data content | **No** | Only output IDs |
+| Target data content | **No** | Only target IDs |
+
+### How to Implement Privacy-Preserving Mode
+
+**Execute endpoint**: Return `output_id` instead of `output` content:
+
+```python
+@app.route("/traigent/v1/execute", methods=["POST"])
+def execute():
+    outputs = []
+    for inp in inputs:
+        result = process_input(inp["input_id"])  # Look up by ID locally
+        output_id = generate_output_id(inp["input_id"], session_id)
+        store_output_locally(output_id, result)  # Store locally
+
+        outputs.append({
+            "input_id": inp["input_id"],
+            "output_id": output_id,  # Only transmit ID, not content
+            "cost_usd": 0.005,
+        })
+
+    return jsonify({...})
+```
+
+**Evaluate endpoint**: Accept `output_id` and `target_id` instead of content:
+
+```python
+@app.route("/traigent/v1/evaluate", methods=["POST"])
+def evaluate():
+    results = []
+    for eval_item in evaluations:
+        # Look up data locally using IDs
+        output = get_output_locally(eval_item["output_id"])
+        target = get_target_locally(eval_item["target_id"])
+
+        metrics = compute_metrics(output, target)
+        results.append({
+            "input_id": eval_item["input_id"],
+            "metrics": metrics,
+        })
+
+    return jsonify({...})
+```
+
+### Session and ID Management
+
+For privacy-preserving mode, your service must:
+
+1. **Generate stable input IDs**: These should be consistent across optimization runs
+2. **Scope output IDs to sessions**: Include session_id to prevent collisions between runs
+3. **Store data locally**: Maintain a mapping of IDs to actual content
+
+```python
+def generate_output_id(input_id: str, session_id: str) -> str:
+    return f"out_{input_id}_{session_id}"
+
+# Storage example
+output_storage: dict[str, dict] = {}
+
+def store_output_locally(output_id: str, data: dict):
+    output_storage[output_id] = data
+
+def get_output_locally(output_id: str) -> dict:
+    return output_storage[output_id]
+```
+
 ## Quick Start
 
 ### Option 1: Implement REST API Directly
