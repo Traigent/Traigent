@@ -6,7 +6,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # Find Python - prefer venv, fallback to python3
@@ -149,7 +149,7 @@ case "$MODE" in
     --mock)
         print_header "MOCK"
         echo -e "${GREEN}Mock mode: No API keys needed, instant results${NC}"
-        echo -e "${YELLOW}Info: For real LLM API calls, run the examples under walkthrough/examples/real/${NC}"
+        echo -e "${YELLOW}Info: For real LLM API calls, run the examples under walkthrough/real/${NC}"
         echo ""
 
         export TRAIGENT_MOCK_LLM=true

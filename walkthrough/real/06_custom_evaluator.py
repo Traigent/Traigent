@@ -6,7 +6,7 @@ The judge evaluates correctness, code quality, and documentation using a detaile
 
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"
-    .venv/bin/python walkthrough/examples/real/06_custom_evaluator.py
+    .venv/bin/python walkthrough/real/06_custom_evaluator.py
 """
 
 import asyncio

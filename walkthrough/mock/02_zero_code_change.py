@@ -2,7 +2,7 @@
 """Example 2: Zero Code Change - Seamless mode intercepts hardcoded values.
 
 This mock version uses simplified scoring that returns a configured accuracy
-in mock mode. The real version (walkthrough/examples/real/02_zero_code_change.py)
+in mock mode. The real version (walkthrough/real/02_zero_code_change.py)
 uses fuzzy token matching to handle paraphrased LLM responses.
 """
 

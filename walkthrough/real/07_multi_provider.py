@@ -17,7 +17,7 @@ Usage (run from repo root):
     export ANTHROPIC_API_KEY="your-anthropic-key"  # For Claude models
     export GOOGLE_API_KEY="your-google-key"        # For Gemini models
 
-    .venv/bin/python walkthrough/examples/real/07_multi_provider.py
+    .venv/bin/python walkthrough/real/07_multi_provider.py
 
 Note: This example validates API keys using Traigent's core provider validation
 and skips any invalid providers.

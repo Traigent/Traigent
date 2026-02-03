@@ -416,7 +416,7 @@ def my_function(prompt: str) -> str:
     ...
 ```
 
-Complete Example: See [06_custom_evaluator.py](../../walkthrough/examples/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
+Complete Example: See [06_custom_evaluator.py](../../walkthrough/real/06_custom_evaluator.py) for a full LLM-as-Judge implementation.
 
 #### `injection`
 
@@ -679,4 +679,4 @@ def my_agent(query: str) -> str:
 - [Execution Modes Guide](../guides/execution-modes.md) - Execution mode details
 - [Thread Pool Examples](./thread-pool-examples.md) - Context propagation with threads
 - [Telemetry Documentation](./telemetry.md) - Data collection and privacy
-- [Custom Evaluator Example](../../walkthrough/examples/real/06_custom_evaluator.py) - LLM-as-Judge implementation
+- [Custom Evaluator Example](../../walkthrough/real/06_custom_evaluator.py) - LLM-as-Judge implementation

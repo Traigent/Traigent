@@ -11,7 +11,7 @@ Key concepts:
 - Traigent optimizes across all providers equally using your scoring function
 
 The mock version simulates responses with provider-specific accuracy patterns.
-For real API calls, see walkthrough/examples/real/07_multi_provider.py.
+For real API calls, see walkthrough/real/07_multi_provider.py.
 """
 
 import asyncio
@@ -120,7 +120,7 @@ def answer_with_any_provider(question: str) -> str:
     """Answer a question using the configured LLM provider and model.
 
     In mock mode, returns pre-defined answers with model-specific accuracy.
-    For real API calls, see walkthrough/examples/real/07_multi_provider.py.
+    For real API calls, see walkthrough/real/07_multi_provider.py.
     """
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
@@ -182,7 +182,7 @@ async def main() -> None:
     print("     export OPENAI_API_KEY='your-key'      # For GPT models")
     print("     export ANTHROPIC_API_KEY='your-key'  # For Claude models")
     print("     export GOOGLE_API_KEY='your-key'     # For Gemini models")
-    print("  2. Run: python walkthrough/examples/real/07_multi_provider.py")
+    print("  2. Run: python walkthrough/real/07_multi_provider.py")
 
 
 if __name__ == "__main__":

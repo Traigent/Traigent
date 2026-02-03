@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Example 2: Zero Code Change - Seamless mode intercepts hardcoded values.
+"""Example 8: Privacy Modes - Local-only privacy-first execution (current).
 
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"
-    .venv/bin/python walkthrough/examples/real/02_zero_code_change.py
+    .venv/bin/python walkthrough/real/08_privacy_modes.py
 """
 
 import asyncio
@@ -24,24 +24,21 @@ from utils.helpers import (
     print_optimization_config,
     print_results_table,
     require_openai_key,
-    sanitize_traigent_api_key,
 )
 from utils.scoring import token_match_score
 
-require_openai_key("02_zero_code_change.py")
-sanitize_traigent_api_key()
+require_openai_key("08_privacy_modes.py")
 configure_logging()
 
 os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
 
-traigent.initialize(execution_mode="edge_analytics")
-
 # Dataset path relative to this file
 DATASETS = Path(__file__).parent.parent / "datasets"
-OBJECTIVES = ["accuracy", "cost"]
+RESULTS_DIR = os.getenv("TRAIGENT_RESULTS_FOLDER", "./local_results")
+OBJECTIVES = ["accuracy"]
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
-    "temperature": [0.1, 0.5, 0.9],
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini"],
+    "temperature": [0.1, 0.5],
 }
 
 
@@ -50,15 +47,19 @@ CONFIG_SPACE = {
     objectives=OBJECTIVES,
     scoring_function=token_match_score,
     configuration_space=CONFIG_SPACE,
-    injection_mode="seamless",
+    injection_mode="context",  # default injection mode, added explicitly for clarity
     execution_mode="edge_analytics",
+    local_storage_path=RESULTS_DIR,
 )
-def answer_question(question: str) -> str:
-    """Your existing code - Traigent overrides the hardcoded values below."""
-    # These hardcoded values will be overridden by Traigent!
-    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+def local_mode(question: str) -> str:
+    """Local mode - all data stays on your machine."""
+    config = traigent.get_config()
+    llm = ChatOpenAI(
+        model=config.get("model"),
+        temperature=config.get("temperature"),
+    )
     try:
-        response = llm.invoke(f"Answer: {question}")
+        response = llm.invoke(question)
         return str(response.content)
     except Exception as exc:
         print(f"LLM call failed: {type(exc).__name__}: {exc}")
@@ -66,21 +67,21 @@ def answer_question(question: str) -> str:
 
 
 async def main() -> None:
-    print("Traigent Example 2: Zero Code Change")
+    print("Traigent Example 8: Privacy Modes (local-only for now)")
     print("=" * 50)
-    print("Seamless mode overrides hardcoded LLM parameters.")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
         dataset_size=20,
         task_type="simple_qa",
-        num_trials=10,
+        num_trials=4,
     )
 
-    print_estimated_time("02_zero_code_change.py")
-    results = await answer_question.optimize(
-        algorithm="random",
-        max_trials=10,
+    print("\nLOCAL - All data stays on your machine")
+    print_estimated_time("08_privacy_modes.py")
+    results = await local_mode.optimize(
+        algorithm="grid",
+        max_trials=4,
         show_progress=True,
         random_seed=42,
     )
@@ -90,10 +91,10 @@ async def main() -> None:
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
-    print("\nPerformance:")
-    print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
-    print(f"  Cost: ${results.best_metrics.get('cost', 0):.6f}")
-    print("\nYour original code stayed exactly the same!")
+    print("\nLocal Storage:")
+    print(f"  Results stored in: {RESULTS_DIR}")
+    print("  Look inside: sessions/ and experiments/ for saved runs")
+    print("\nThis walkthrough focuses on privacy-first local execution.")
 
 
 if __name__ == "__main__":

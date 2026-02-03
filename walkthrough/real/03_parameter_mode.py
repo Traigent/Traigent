@@ -3,7 +3,7 @@
 
 Usage (run in a terminal from repo root, works without activating venv):
     export OPENAI_API_KEY="your-key"
-    .venv/bin/python walkthrough/examples/real/03_parameter_mode.py
+    .venv/bin/python walkthrough/real/03_parameter_mode.py
 """
 
 import asyncio

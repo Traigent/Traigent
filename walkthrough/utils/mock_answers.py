@@ -1,6 +1,6 @@
 """Shared mock answers for walkthrough examples.
 
-Maps to datasets in walkthrough/examples/datasets/:
+Maps to datasets in walkthrough/datasets/:
 - ANSWERS: simple_questions.jsonl (Easy 10 / Medium 5 / Hard 5)
 - CLASSIFICATION_LABELS: classification.jsonl (Clear 10 / Ambiguous 10)
 - RAG_ANSWERS: rag_questions.jsonl (Simple 10 / Complex 10)
@@ -233,7 +233,7 @@ def configure_mock_notice(example_file: str) -> None:
     print(
         f"MOCK MODE: Running {example_file} with simulated LLM responses. "
         "Results demonstrate the optimization workflow but are not real metrics. "
-        f"For real evaluations, use walkthrough/examples/real/{example_file}."
+        f"For real evaluations, use walkthrough/real/{example_file}."
     )
 
 

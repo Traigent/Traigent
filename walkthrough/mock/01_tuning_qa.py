@@ -2,7 +2,7 @@
 """Example 1: Basic QA Tuning - Model and temperature optimization.
 
 This mock version uses simplified scoring that returns a configured accuracy
-in mock mode. The real version (walkthrough/examples/real/01_tuning_qa.py)
+in mock mode. The real version (walkthrough/real/01_tuning_qa.py)
 uses fuzzy token matching to handle paraphrased LLM responses and achieve 80%+
 accuracy with actual API calls.
 """

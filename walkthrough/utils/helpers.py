@@ -115,7 +115,7 @@ def require_openai_key(example_name: str) -> None:
         raise SystemExit(
             "OPENAI_API_KEY not set. Export it to run real examples: "
             'export OPENAI_API_KEY="your-key". '
-            f"To run without a key, use walkthrough/examples/mock/{example_name}."
+            f"To run without a key, use walkthrough/mock/{example_name}."
         )
 
 
