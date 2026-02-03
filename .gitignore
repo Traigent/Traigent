@@ -413,3 +413,6 @@ presentations/
 
 # Design documentation (local only)
 docs/design/
+
+# Architecture diagrams (generated locally)
+*.mmd

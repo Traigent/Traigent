@@ -15,7 +15,7 @@ Learn Traigent by doing. This walkthrough takes you from zero to optimizing real
 
 ### [examples/](examples/) - Progressive Examples (Start Here)
 
-Seven hands-on examples that build on each other:
+Eight hands-on examples that build on each other:
 
 | Example | What You Learn |
 |---------|----------------|
@@ -25,7 +25,8 @@ Seven hands-on examples that build on each other:
 | 04 Multi-Objective | Trade-off optimization |
 | 05 RAG | Retrieval + parallel eval |
 | 06 Custom Evaluator | LLM-as-Judge scoring |
-| 07 Privacy Modes | Local-only execution |
+| 07 Multi-Provider | Cross-vendor optimization |
+| 08 Privacy Modes | Local-only execution |
 
 Each example has **mock** (no API keys) and **real** (actual LLM calls) variants.
 
@@ -40,21 +41,10 @@ python walkthrough/examples/mock/01_tuning_qa.py
 bash walkthrough/examples/test_all_examples.sh --mock
 ```
 
-### [hotpotQA/](hotpotQA/) - Advanced Multi-Hop QA Demo
+## Benchmarks
 
-A complete case study optimizing a multi-hop question-answering agent on the HotpotQA benchmark. Demonstrates:
-
-- Multi-step reasoning over multiple paragraphs
-- Retrieval depth tuning (`k` parameter)
-- Prompt style optimization (direct vs chain-of-thought)
-- Cross-provider comparison (OpenAI, Anthropic)
-- Pareto frontier analysis (quality vs cost vs latency)
-
-```bash
-cd walkthrough/hotpotQA
-./install.sh    # Setup environment
-./run_demo.sh   # Run optimization (mock mode by default)
-```
+For advanced benchmarks like HotpotQA multi-hop QA optimization, see the
+[TraigentDemo benchmarks](https://github.com/Traigent/TraigentDemo/tree/main/benchmarks).
 
 ## Next Steps
 
