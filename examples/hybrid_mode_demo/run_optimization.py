@@ -220,7 +220,7 @@ async def run_optimization() -> None:
             else:
                 print(f"  {key}: {value}")
 
-        print(f"\nTrials Summary:")
+        print("\nTrials Summary:")
         print(f"  Total trials: {len(results)}")
         print(f"  Best accuracy: {best_accuracy:.4f}")
 
@@ -229,12 +229,12 @@ async def run_optimization() -> None:
         backend_url = os.environ.get("TRAIGENT_API_URL", "http://localhost:5000/api/v1")
 
         if api_key:
-            print(f"\n5. Backend Integration")
+            print("\n5. Backend Integration")
             print(f"   Backend URL: {backend_url}")
             print(f"   API Key: ***{api_key[-4:]}")
-            print(f"\n   To see results in the Traigent frontend, use the full")
-            print(f"   @traigent.optimize decorator with execution_mode='edge_analytics'.")
-            print(f"   This demo shows direct HybridAPIEvaluator usage.")
+            print("\n   To see results in the Traigent frontend, use the full")
+            print("   @traigent.optimize decorator with execution_mode='edge_analytics'.")
+            print("   This demo shows direct HybridAPIEvaluator usage.")
         else:
             print("\nNote: Set TRAIGENT_API_KEY to enable backend integration.")
 
