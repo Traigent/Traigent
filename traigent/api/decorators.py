@@ -723,7 +723,11 @@ class JSRuntimeConfig:
 
     @property
     def is_js_runtime(self) -> bool:
-        """Return True if this is a JS runtime configuration."""
+        """Return True if this is a JS runtime configuration.
+
+        Returns:
+            True if runtime is 'node', False otherwise.
+        """
         return self.runtime == "node"
 
 
