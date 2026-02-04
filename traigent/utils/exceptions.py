@@ -241,11 +241,24 @@ class TraigentTimeoutError(TraigentError):
 
 
 class TrialPrunedError(TraigentError):
-    """Signal that a trial has been pruned early."""
+    """Signal that a trial has been pruned early.
 
-    def __init__(self, message: str = "Trial pruned", step: int | None = None) -> None:
+    Attributes:
+        step: The evaluation step at which pruning occurred.
+        example_results: Partial example results collected before pruning.
+            This allows capturing metrics from examples that were evaluated
+            before the trial was pruned.
+    """
+
+    def __init__(
+        self,
+        message: str = "Trial pruned",
+        step: int | None = None,
+        example_results: list | None = None,
+    ) -> None:
         super().__init__(message)
         self.step = step
+        self.example_results = example_results or []
 
 
 class FeatureNotAvailableError(TraigentError):
