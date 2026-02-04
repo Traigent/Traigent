@@ -608,9 +608,7 @@ class TestHybridModePrivacyPreserving:
         return MockHybridServer(config=config)
 
     @pytest.fixture
-    def privacy_transport(
-        self, privacy_server: MockHybridServer
-    ) -> MockHTTPTransport:
+    def privacy_transport(self, privacy_server: MockHybridServer) -> MockHTTPTransport:
         """Create mock transport for privacy mode."""
         return MockHTTPTransport(privacy_server)
 
