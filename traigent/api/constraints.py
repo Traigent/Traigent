@@ -67,6 +67,61 @@ _IMPLICATION_REQUIRES_WHEN_THEN = (
 
 
 # =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class ConstraintScopeError(ValueError):
+    """Raised when a constraint references a TVAR not in the ConfigSpace scope.
+
+    This error indicates that a constraint uses a ParameterRange (TVAR) that
+    was not registered in the @traigent.optimize decorator's configuration space.
+
+    Example:
+        >>> BUDGET = Range(1.0, 100.0)
+        >>> MODEL = Choices(["a", "b", "c"])
+        >>>
+        >>> @traigent.optimize(model=MODEL)  # Only MODEL in scope
+        ... def experiment(config):
+        ...     pass
+        >>>
+        >>> # This constraint references BUDGET which is NOT in scope
+        >>> constraint = when(BUDGET.lte(10)).then(MODEL.is_in(["a"]))
+        >>> # Raises: ConstraintScopeError
+
+    Attributes:
+        tvar: The out-of-scope ParameterRange
+        available_tvars: List of TVAR names that are in scope
+        message: Human-readable error message with fix hints
+    """
+
+    def __init__(
+        self,
+        tvar: ParameterRange,
+        available_tvars: list[str] | None = None,
+        constraint_description: str | None = None,
+    ):
+        self.tvar = tvar
+        self.available_tvars = available_tvars or []
+        self.constraint_description = constraint_description
+
+        # Build informative error message
+        tvar_name = getattr(tvar, "name", None) or repr(tvar)
+        available_str = ", ".join(f"'{n}'" for n in self.available_tvars) or "(none)"
+
+        message = (
+            f"Constraint references TVAR '{tvar_name}' which is not in the "
+            f"@traigent.optimize parameter scope.\n"
+            f"Available TVARs: [{available_str}]\n"
+            f"Hint: Add '{tvar_name}' to @traigent.optimize or remove this constraint."
+        )
+        if constraint_description:
+            message = f"{constraint_description}\n{message}"
+
+        super().__init__(message)
+
+
+# =============================================================================
 # Boolean Expression Base Class
 # =============================================================================
 
@@ -282,10 +337,27 @@ class Condition(BoolExpr):
 
         Returns:
             True if the condition is satisfied
+
+        Raises:
+            ConstraintScopeError: If this condition's TVAR is not in the
+                var_names mapping (i.e., not registered in ConfigSpace).
+            KeyError: If the parameter name is not in the config dict.
         """
         var_name = var_names.get(id(self.tvar))
-        if var_name is None or var_name not in config:
-            return True  # Missing value - constraint doesn't apply
+        if var_name is None:
+            # TVAR not in ConfigSpace - this is a constraint scope error
+            available_tvars = list(var_names.values())
+            raise ConstraintScopeError(
+                tvar=self.tvar,
+                available_tvars=available_tvars,
+                constraint_description=self.explain(),
+            )
+        if var_name not in config:
+            # Parameter missing from config - sampler or setup bug
+            raise KeyError(
+                f"Parameter '{var_name}' missing from config. "
+                f"Config keys: {list(config.keys())}"
+            )
         return self.evaluate(config[var_name])
 
     def evaluate(self, value: Any) -> bool:
@@ -711,6 +783,9 @@ class Constraint:
                     UserWarning,
                     stacklevel=2,
                 )
+        else:
+            # var_names provided (from ConfigSpace) - validate scope early
+            self._validate_scope(var_names)
 
         # Capture var_names in closure
         captured_var_names = dict(var_names)
@@ -761,6 +836,54 @@ class Constraint:
             self._collect_from_expr(
                 expr.condition, f"~{path}", var_names, missing_names
             )
+
+    def _validate_scope(self, var_names: dict[int, str]) -> None:
+        """Validate that all TVARs in this constraint are in the var_names scope.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to config key names.
+
+        Raises:
+            ConstraintScopeError: If any TVAR in this constraint is not in
+                the var_names mapping.
+        """
+        out_of_scope: list[tuple[str, ParameterRange]] = []
+        # Check expr or when/then based on which is set (use 'is not None' to avoid BoolExpr.__bool__)
+        if self.expr is not None:
+            self._check_scope_expr(self.expr, "expr", var_names, out_of_scope)
+        else:
+            self._check_scope_expr(self.when, "when", var_names, out_of_scope)
+        if self.then is not None:
+            self._check_scope_expr(self.then, "then", var_names, out_of_scope)
+
+        if out_of_scope:
+            # Report first out-of-scope TVAR with helpful error
+            path, tvar = out_of_scope[0]
+            available_tvars = list(var_names.values())
+            raise ConstraintScopeError(
+                tvar=tvar,
+                available_tvars=available_tvars,
+                constraint_description=f"In constraint '{path}': {self.explain()}",
+            )
+
+    def _check_scope_expr(
+        self,
+        expr: BoolExpr | None,
+        path: str,
+        var_names: dict[int, str],
+        out_of_scope: list[tuple[str, ParameterRange]],
+    ) -> None:
+        """Recursively check that all TVARs in an expression are in scope."""
+        if expr is None:
+            return
+        if isinstance(expr, Condition):
+            if id(expr.tvar) not in var_names:
+                out_of_scope.append((path, expr.tvar))
+        elif isinstance(expr, (AndCondition, OrCondition)):
+            for i, sub in enumerate(expr.conditions):
+                self._check_scope_expr(sub, f"{path}[{i}]", var_names, out_of_scope)
+        elif isinstance(expr, NotCondition):
+            self._check_scope_expr(expr.condition, f"~{path}", var_names, out_of_scope)
 
 
 # =============================================================================
@@ -1201,6 +1324,7 @@ __all__ = [
     "Condition",
     "Constraint",
     "ConstraintConflict",
+    "ConstraintScopeError",
     "NotCondition",
     "OperatorType",
     "OrCondition",
