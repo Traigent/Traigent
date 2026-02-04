@@ -9,10 +9,10 @@ Tests that the protocol DTOs correctly handle:
 import pytest
 
 from traigent.hybrid.protocol import (
-    HybridExecuteRequest,
-    HybridExecuteResponse,
     HybridEvaluateRequest,
     HybridEvaluateResponse,
+    HybridExecuteRequest,
+    HybridExecuteResponse,
 )
 
 
@@ -242,7 +242,9 @@ class TestSessionIdScoping:
         """Test that session_id is included in evaluate request."""
         request = HybridEvaluateRequest(
             capability_id="test_agent",
-            evaluations=[{"input_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}],
+            evaluations=[
+                {"input_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}
+            ],
             session_id="session_abc123",
         )
 
@@ -282,23 +284,27 @@ class TestPrivacyModeDocumentation:
     def test_output_item_flexible_fields(self) -> None:
         """Verify OutputItem accepts both output and output_id."""
         # With output content
-        response1 = HybridExecuteResponse.from_dict({
-            "request_id": "r1",
-            "execution_id": "e1",
-            "status": "completed",
-            "outputs": [{"input_id": "ex_1", "output": {"data": "content"}}],
-            "operational_metrics": {},
-        })
+        response1 = HybridExecuteResponse.from_dict(
+            {
+                "request_id": "r1",
+                "execution_id": "e1",
+                "status": "completed",
+                "outputs": [{"input_id": "ex_1", "output": {"data": "content"}}],
+                "operational_metrics": {},
+            }
+        )
         assert "output" in response1.outputs[0]
 
         # With output_id
-        response2 = HybridExecuteResponse.from_dict({
-            "request_id": "r2",
-            "execution_id": "e2",
-            "status": "completed",
-            "outputs": [{"input_id": "ex_1", "output_id": "out_123"}],
-            "operational_metrics": {},
-        })
+        response2 = HybridExecuteResponse.from_dict(
+            {
+                "request_id": "r2",
+                "execution_id": "e2",
+                "status": "completed",
+                "outputs": [{"input_id": "ex_1", "output_id": "out_123"}],
+                "operational_metrics": {},
+            }
+        )
         assert "output_id" in response2.outputs[0]
 
     def test_evaluation_item_flexible_fields(self) -> None:
