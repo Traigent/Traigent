@@ -60,7 +60,23 @@ class OptunaTrialPayload:
 
 
 class OptunaBaseOptimizer(BaseOptimizer):
-    """Base implementation shared across specific Optuna optimizers."""
+    """Base implementation shared across specific Optuna optimizers.
+
+    This class provides a common foundation for all Optuna-backed optimizers,
+    handling study creation, trial synchronization, checkpointing, and telemetry.
+
+    Subclasses (TPE, Random, CMA-ES, NSGA-II, Grid) differ primarily in their
+    default sampler strategy.
+
+    Example:
+        >>> optimizer = OptunaTPEOptimizer(
+        ...     config_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": (0.0, 1.0)},
+        ...     objectives=["accuracy"],
+        ...     max_trials=50,
+        ...     random_seed=42,
+        ... )
+        >>> config = optimizer.suggest_next_trial([])
+    """
 
     sampler: optuna.samplers.BaseSampler | None = None
     # Sampler class to use when random_seed is provided (allows seeded reproducibility)
@@ -83,6 +99,33 @@ class OptunaBaseOptimizer(BaseOptimizer):
         random_seed: int | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize an Optuna-backed optimizer.
+
+        Args:
+            config_space: Dictionary defining parameter search space.
+                Supports lists (categorical), tuples (continuous ranges),
+                and dicts with type/low/high/choices keys.
+            objectives: List of objective names to optimize (e.g., ["accuracy"]).
+            max_trials: Maximum number of trials before stopping. Default 100.
+            directions: Optimization directions per objective ("minimize" or "maximize").
+                If None, inferred from objective names (e.g., "cost" → minimize,
+                "accuracy" → maximize).
+            storage: Optuna storage URL for persistence (e.g., "sqlite:///study.db").
+                If None, uses in-memory storage.
+            study_name: Name for the Optuna study. Required if using persistent storage
+                with ``load_if_exists=True``.
+            pruner: Optuna pruner for early stopping of unpromising trials.
+                Default: CeilingPruner for single-objective, SuccessiveHalvingPruner
+                for multi-objective.
+            sampler: Custom Optuna sampler. If None, uses the subclass default
+                (e.g., TPESampler for OptunaTPEOptimizer).
+            checkpoint_manager: Optional manager for saving/restoring optimizer state.
+            metrics_emitter: Optional emitter for telemetry events.
+            mock_mode: If True, enqueue deterministic configs for testing.
+            random_seed: Seed for reproducible sampling. When provided, creates
+                a seeded instance of the sampler.
+            **kwargs: Additional arguments passed to BaseOptimizer.
+        """
         ensure_optuna_available()
 
         self.max_trials = max_trials
@@ -667,7 +710,18 @@ class OptunaNSGAIIOptimizer(OptunaBaseOptimizer):
 
 
 class OptunaGridOptimizer(OptunaBaseOptimizer):
-    """Grid search implemented through Optuna's GridSampler."""
+    """Grid search implemented through Optuna's GridSampler.
+
+    Unlike the native GridSearchOptimizer, this uses Optuna's GridSampler which
+    automatically discretizes continuous parameters into bins.
+
+    Example:
+        >>> optimizer = OptunaGridOptimizer(
+        ...     config_space={"model": ["a", "b"], "temperature": (0.0, 1.0)},
+        ...     objectives=["accuracy"],
+        ...     n_bins=5,  # temperature becomes [0.0, 0.25, 0.5, 0.75, 1.0]
+        ... )
+    """
 
     def __init__(
         self,
@@ -677,6 +731,17 @@ class OptunaGridOptimizer(OptunaBaseOptimizer):
         n_bins: int = 10,
         **kwargs: Any,
     ) -> None:
+        """Initialize Optuna-backed grid search optimizer.
+
+        Args:
+            config_space: Dictionary defining parameter search space.
+                Continuous ranges (tuples) are automatically discretized.
+            objectives: List of objective names to optimize.
+            n_bins: Number of bins for discretizing continuous parameters.
+                Default 10. Higher values = finer grid but more trials.
+            **kwargs: Additional arguments passed to OptunaBaseOptimizer
+                (e.g., ``max_trials``, ``random_seed``, ``storage``).
+        """
         from traigent.optimizers.optuna_utils import discretize_for_grid
 
         ensure_optuna_available()

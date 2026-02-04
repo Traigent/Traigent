@@ -328,7 +328,7 @@
         "tests/unit/evaluators/test_metrics.py",
         "tests/unit/evaluators/test_metrics_tracker.py",
         "tests/unit/evaluators/test_ragas_integration.py",
-        "tests/unit/evaluators/test_tokencost_integration.py",
+        "tests/unit/evaluators/test_litellm_integration.py",
         "tests/unit/examples/test_constrained_generators.py",
         "tests/unit/examples/test_problem_classifier.py",
         "tests/unit/examples/test_problem_types.py",

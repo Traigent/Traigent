@@ -660,7 +660,13 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "supports_continuous": False,
                 "supports_categorical": True,
                 "deterministic": True,
-                "parameters": {"description": "No additional parameters"},
+                "parameters": {
+                    "parameter_order": (
+                        "Map parameter names to numeric priorities. Lower values "
+                        "vary slowest; higher values vary fastest."
+                    ),
+                    "order": "Alias for parameter_order.",
+                },
                 "best_for": "Small parameter spaces, exhaustive evaluation",
             }
 

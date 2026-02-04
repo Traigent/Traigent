@@ -22,13 +22,25 @@ class RandomSearchOptimizer(BaseOptimizer):
     Randomly samples parameters from the configuration space. Good baseline
     algorithm that works well for both categorical and continuous parameters.
 
+    For discrete-only config spaces, automatically detects when all unique
+    configurations have been tried and stops early.
+
     Example:
         >>> config_space = {
-        ...     "model": ["gpt-4o-mini", "GPT-4o"],
+        ...     "model": ["gpt-4o-mini", "gpt-4o"],
         ...     "temperature": (0.0, 1.0)
         ... }
         >>> optimizer = RandomSearchOptimizer(config_space, ["accuracy"])
         >>> config = optimizer.suggest_next_trial([])
+
+        With reproducible seed:
+
+        >>> optimizer = RandomSearchOptimizer(
+        ...     config_space,
+        ...     ["accuracy"],
+        ...     random_seed=42,
+        ...     max_trials=50,
+        ... )
     """
 
     def __init__(
@@ -43,12 +55,15 @@ class RandomSearchOptimizer(BaseOptimizer):
         """Initialize random search optimizer.
 
         Args:
-            config_space: Dictionary defining parameter search space
-            objectives: List of objective names to optimize
-            max_trials: Maximum number of trials to run
-            random_seed: Random seed for reproducibility
-            context: Optional TraigentConfig for accessing global configuration
-            **kwargs: Additional configuration
+            config_space: Dictionary defining parameter search space.
+                Supports lists (categorical) and tuples (continuous ranges).
+            objectives: List of objective names to optimize.
+            max_trials: Maximum number of trials to run. Default 100.
+            random_seed: Random seed for reproducibility. If provided, the same
+                sequence of configurations will be generated across runs.
+            context: Optional TraigentConfig for accessing global configuration.
+            **kwargs: Additional arguments passed to BaseOptimizer
+                (e.g., ``objective_weights``).
         """
         super().__init__(config_space, objectives, context, **kwargs)
 

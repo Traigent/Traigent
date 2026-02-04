@@ -204,6 +204,8 @@ async def optimize(
 | `cost_approved` | Skip cost approval prompt. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
+| `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
+| `order` | Alias for `parameter_order` (grid search only). |
 
 Unknown keys are forwarded to the optimizer and may raise errors when unsupported.
 

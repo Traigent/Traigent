@@ -845,16 +845,16 @@ class TestCostEstimation:
         cost_upper = handler._fallback_cost_estimate("GPT-4O", 1000, 500)
         assert cost_lower == cost_upper
 
-    def test_estimate_cost_with_tokencost_available(self, handler):
-        """Test _estimate_cost when tokencost is available and works."""
-        # tokencost IS available in test env, so this tests the happy path
-        # For gpt-4o, tokencost should return a valid cost
+    def test_estimate_cost_with_litellm_available(self, handler):
+        """Test _estimate_cost when litellm is available and works."""
+        # litellm IS available in test env, so this tests the happy path
+        # For gpt-4o, litellm should return a valid cost
         cost = handler._estimate_cost("gpt-4o", 1000, 500)
         assert cost > 0, "Should return non-zero cost for known model"
 
     def test_estimate_cost_falls_back_for_unknown_model(self, handler):
-        """Test _estimate_cost falls back for unknown model (tokencost returns 0)."""
-        # Use a model name tokencost doesn't know - forces fallback path
+        """Test _estimate_cost falls back for unknown model (litellm returns 0)."""
+        # Use a model name litellm doesn't know - forces fallback path
         cost = handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
         # Should fall back to hardcoded default estimates
         expected = (1000 * 1.0 + 500 * 3.0) / 1_000_000
