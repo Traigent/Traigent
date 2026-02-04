@@ -807,6 +807,21 @@ class LocalEvaluator(BaseEvaluator):
                     },
                 )
 
+            # Inject response_time_ms if provided
+            try:
+                if "response_time_ms" in usage:
+                    response_time = usage["response_time_ms"]
+                    if response_time < 0:
+                        logger.warning(
+                            f"Negative response_time_ms clamped: {response_time} → 0.0"
+                        )
+                    metrics.response.response_time_ms = max(0.0, float(response_time))
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject response_time_ms: {e}",
+                    extra={"response_time_ms": usage.get("response_time_ms")},
+                )
+
         # Inject cost with validation
         try:
             total_cost = meta["total_cost"]

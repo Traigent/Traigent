@@ -248,6 +248,15 @@ None
 screenshot.png
 optimization_result.json
 
+# Database files (MLflow, test, cache)
+*.db
+mlflow.db
+test_concurrent.db
+
+# DSPy cache directories
+.dspy_cache/
+**/.dspy_cache/
+
 # IDE specific
 .benchmarks/
 .claude/

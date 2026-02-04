@@ -31,10 +31,12 @@ class UsageMetadata(TypedDict):
     Attributes:
         input_tokens: Number of input tokens consumed
         output_tokens: Number of output tokens generated
+        response_time_ms: Response time in milliseconds (optional)
     """
 
     input_tokens: int
     output_tokens: int
+    response_time_ms: NotRequired[float]
 
 
 class TraigentMetadata(TypedDict):
@@ -92,6 +94,10 @@ def is_traigent_metadata(obj: Any) -> TypeGuard[TraigentMetadata]:
                 return False
         if "output_tokens" in usage:
             if not isinstance(usage["output_tokens"], int):
+                return False
+        # Validate response_time_ms if present (optional, float)
+        if "response_time_ms" in usage:
+            if not isinstance(usage["response_time_ms"], (int, float)):
                 return False
 
     return True

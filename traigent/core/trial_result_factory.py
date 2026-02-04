@@ -109,7 +109,11 @@ def build_pruned_result(
     progress_state: dict[str, Any] | None,
     optuna_trial_id: int | None,
 ) -> TrialResult:
-    """Create a pruned :class:`TrialResult` instance."""
+    """Create a pruned :class:`TrialResult` instance.
+
+    Captures partial example results from the TrialPrunedError if available,
+    ensuring that metrics from evaluated examples are preserved for pruned trials.
+    """
 
     metadata: dict[str, Any] = {
         "pruned": True,
@@ -118,8 +122,31 @@ def build_pruned_result(
     if optuna_trial_id is not None:
         metadata["optuna_trial_id"] = optuna_trial_id
 
+    # Include partial example_results from the pruned trial
+    # These are captured by the evaluator before raising TrialPrunedError
+    if prune_error.example_results:
+        metadata["example_results"] = prune_error.example_results
+        logger.info(
+            "📊 Captured %d partial example results for pruned trial %s",
+            len(prune_error.example_results),
+            trial_id,
+        )
+    else:
+        logger.warning(
+            "⚠️ No example_results in TrialPrunedError for pruned trial %s (step=%s)",
+            trial_id,
+            prune_error.step,
+        )
+
     metrics: dict[str, float] = {}
     if progress_state:
+        logger.info(
+            "📊 Pruned trial %s progress_state: evaluated=%s, total=%s, correct_sum=%s",
+            trial_id,
+            progress_state.get("evaluated"),
+            progress_state.get("total_examples"),
+            progress_state.get("correct_sum"),
+        )
         evaluated = int(progress_state.get("evaluated", 0))
         total_examples = int(progress_state.get("total_examples", 0))
         if total_examples > 0:
@@ -129,6 +156,8 @@ def build_pruned_result(
             correct_sum = float(progress_state.get("correct_sum", 0.0))
             metrics["accuracy"] = correct_sum / evaluated
             metadata["examples_attempted"] = evaluated
+            # Also add to metrics for backend submission
+            metrics["examples_attempted"] = float(evaluated)
 
         total_cost_value = progress_state.get("total_cost")
         if total_cost_value is not None:
