@@ -27,7 +27,7 @@ def print_response(name: str, response):
     print(f"  {name}")
     print("=" * 60)
     print(f"Status: {response.status_code}")
-    print(f"Response:")
+    print("Response:")
     print(json.dumps(response.json(), indent=2))
 
 

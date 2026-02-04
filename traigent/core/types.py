@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from traigent.api.types import OptimizationStatus, Trial, TrialResult, TrialStatus
@@ -31,7 +31,7 @@ __all__ = [
 ]
 
 
-class ParameterType(str, Enum):
+class ParameterType(StrEnum):
     """Types of parameters supported in optimization configuration spaces."""
 
     FLOAT = "float"
