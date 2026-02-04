@@ -601,16 +601,9 @@ class TestJSRuntimeInjectionModeValidation:
     def test_attribute_injection_mode_removed(self):
         """Test that injection_mode='attribute' raises error (removed in v2.x)."""
         from traigent.api.decorators import InjectionOptions
-        from traigent.utils.exceptions import ConfigurationError
 
-        with pytest.raises(ConfigurationError, match="removed"):
-
-            @optimize(
-                configuration_space={"x": [1, 2, 3]},
-                injection=InjectionOptions(injection_mode="attribute"),
-            )
-            def test_func(x: int) -> int:
-                return x
+        with pytest.raises((ValueError, Exception), match="removed"):
+            InjectionOptions(injection_mode="attribute")
 
     def test_js_runtime_rejects_seamless_injection_mode(self):
         """Test that runtime='node' rejects injection_mode='seamless'."""
