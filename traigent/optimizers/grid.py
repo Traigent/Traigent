@@ -22,13 +22,46 @@ class GridSearchOptimizer(BaseOptimizer):
     Systematically evaluates all combinations of parameters in the configuration
     space. Best for small parameter spaces where exhaustive search is feasible.
 
+    Parameter Iteration Order:
+        By default, parameters are sorted alphabetically, except 'model' which is
+        placed last (rightmost) so it varies fastest. This allows quick comparison
+        of different models with limited trial budgets.
+
+        Use ``parameter_order`` to customize which parameters vary fastest/slowest.
+        In ``itertools.product``, the **rightmost** parameter varies **fastest**.
+
+        - Lower priority number → earlier position (leftmost) → varies **slowest**
+        - Higher priority number → later position (rightmost) → varies **fastest**
+        - Parameters without explicit priority default to infinity (sorted last)
+
     Example:
+        Basic usage:
+
         >>> config_space = {
-        ...     "model": ["gpt-4o-mini", "GPT-4o"],
+        ...     "model": ["gpt-4o-mini", "gpt-4o"],
         ...     "temperature": [0.0, 0.5, 1.0]
         ... }
         >>> optimizer = GridSearchOptimizer(config_space, ["accuracy"])
         >>> config = optimizer.suggest_next_trial([])
+
+        Custom parameter order (temperature varies fastest):
+
+        >>> optimizer = GridSearchOptimizer(
+        ...     config_space,
+        ...     ["accuracy"],
+        ...     parameter_order={"model": 0, "temperature": 1}
+        ... )
+        >>> # Trial 1: model=gpt-4o-mini, temp=0.0
+        >>> # Trial 2: model=gpt-4o-mini, temp=0.5
+        >>> # Trial 3: model=gpt-4o-mini, temp=1.0
+        >>> # Trial 4: model=gpt-4o, temp=0.0  (model changes after all temps)
+
+        Via optimize() call:
+
+        >>> result = await func.optimize(
+        ...     algorithm="grid",
+        ...     parameter_order={"model": 0, "strategy": 1, "temperature": 2}
+        ... )
     """
 
     def __init__(
@@ -42,11 +75,26 @@ class GridSearchOptimizer(BaseOptimizer):
         """Initialize grid search optimizer.
 
         Args:
-            config_space: Dictionary defining parameter search space
+            config_space: Dictionary defining parameter search space.
+                Values must be lists (categorical) or single values (fixed).
+                Continuous ranges (tuples) are not supported.
             objectives: List of objective names to optimize
             context: Optional TraigentConfig for accessing global configuration
             objective_weights: Optional weights for each objective
-            **kwargs: Additional configuration (unused for grid search)
+            **kwargs: Additional configuration options:
+
+                parameter_order (dict[str, int | float], optional):
+                    Control which parameters vary fastest during grid enumeration.
+                    Maps parameter names to numeric priorities. Lower priority
+                    means the parameter appears earlier (leftmost) in iteration
+                    order and thus varies **slowest**. Higher priority means
+                    the parameter appears later (rightmost) and varies **fastest**.
+
+                    Example: ``{"model": 0, "temperature": 1}`` makes model vary
+                    slowest and temperature vary fastest.
+
+                order (dict[str, int | float], optional):
+                    Alias for ``parameter_order``.
         """
         order_spec = kwargs.get("parameter_order")
         if order_spec is None:

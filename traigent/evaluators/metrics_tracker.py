@@ -28,8 +28,8 @@ try:
     )
 except Exception:
     _TOKENCOST_AVAILABLE = False
-    calculate_prompt_cost = None
-    calculate_completion_cost = None
+    calculate_prompt_cost = None  # type: ignore[assignment]
+    calculate_completion_cost = None  # type: ignore[assignment]
 
 TOKENCOST_AVAILABLE = _TOKENCOST_AVAILABLE
 
@@ -1044,7 +1044,7 @@ class CostCalculator:
         if backward_compatible:
             metrics.cost.total_cost = metrics.cost.input_cost + metrics.cost.output_cost
             self.logger.debug(
-                f"Cost calculated using legacy tokencost functions for {model_name}: ${metrics.cost.total_cost:.6f}"
+                f"Cost calculated using legacy litellm functions for {model_name}: ${metrics.cost.total_cost:.6f}"
             )
             return True
 
