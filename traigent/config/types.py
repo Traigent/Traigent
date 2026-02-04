@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 from traigent.utils.validation import Validators, validate_or_raise
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Execution modes for Traigent optimization.
 
     Each mode provides different trade-offs between privacy, performance, and features:
@@ -62,7 +62,7 @@ def resolve_execution_mode(
     )
 
 
-class InjectionMode(str, Enum):
+class InjectionMode(StrEnum):
     """Configuration injection modes for Traigent optimization.
 
     Each mode provides a different way to inject configuration into optimized functions:
