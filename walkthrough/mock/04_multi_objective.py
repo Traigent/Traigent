@@ -35,7 +35,7 @@ DATASETS = Path(__file__).parent.parent / "datasets"
 SIMULATED_BEST = {
     "model": "gpt-4o",
     "temperature": 0.0,
-    "use_cot": True,
+    "instructions": "CoT",
     "accuracy": 0.95,
     "cost": 0.000150,  # Simulated cost per evaluation (realistic for gpt-4o)
     "latency": 0.065,  # Simulated latency in seconds
@@ -47,8 +47,9 @@ MOCK_MODE_CONFIG = {
 }
 CONFIG_SPACE = {
     "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "prompt": ["v1", "v2"],
     "temperature": [0.0, 0.3],
-    "use_cot": [True, False],
+    "instructions": ["CoT", "direct"],
 }
 
 OBJECTIVES = ObjectiveSchema.from_objectives([
@@ -63,7 +64,8 @@ def mock_accuracy_score(output: str, expected: str, config: dict | None = None, 
     if os.getenv("TRAIGENT_MOCK_LLM", "").lower() in ("1", "true", "yes"):
         model = config.get("model", DEFAULT_MOCK_MODEL) if config else DEFAULT_MOCK_MODEL
         temperature = config.get("temperature") if config else None
-        use_cot = config.get("use_cot") if config else None
+        instructions = config.get("instructions") if config else None
+        use_cot = instructions == "CoT" if instructions else None
         return get_mock_accuracy(model, "classification", temperature, use_cot)
     if output is None or expected is None:
         return 0.0
@@ -83,7 +85,7 @@ def classify_text(text: str) -> str:
     """Text classification with multiple objectives."""
     config = traigent.get_config()
     model = config.get("model", DEFAULT_MOCK_MODEL)
-    use_cot = config.get("use_cot", False)
+    instructions = config.get("instructions", "direct")
 
     set_mock_model(model)
 
@@ -92,7 +94,7 @@ def classify_text(text: str) -> str:
         time.sleep(0.05)
     else:
         time.sleep(0.02)
-    if use_cot:
+    if instructions == "CoT":
         time.sleep(0.01)
     return CLASSIFICATION_LABELS.get(normalize_text(text), "neutral")
 
@@ -113,7 +115,7 @@ async def main() -> None:
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
-    print(f"  Chain-of-Thought: {results.best_config.get('use_cot')}")
+    print(f"  Instructions: {results.best_config.get('instructions')}")
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")

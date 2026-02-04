@@ -2335,9 +2335,16 @@ class OptimizationOrchestrator:
             return False
         if force:
             return True
+        # Adaptive interval: for small trial counts, show every trial
+        # For larger counts, show every ~10% of progress or every 10 trials
+        max_trials = self.max_trials or 100
+        if max_trials <= 20:
+            interval = 1  # Show every trial for small runs
+        else:
+            interval = max(1, min(PROGRESS_LOG_INTERVAL, max_trials // 10))
         return (
             trial_count == 1
-            or trial_count % PROGRESS_LOG_INTERVAL == 0
+            or trial_count % interval == 0
             or is_new_best
             or is_final
             or is_early_stop

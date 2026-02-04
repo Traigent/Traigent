@@ -41,6 +41,15 @@ except ImportError:
     calculate_completion_cost = None
     TOKENCOST_AVAILABLE = False
 
+# Custom pricing for models not yet in tokencost (per 1K tokens)
+# GPT-5 series released in 2025-2026
+CUSTOM_MODEL_PRICING = {
+    "gpt-5.2": {"input": 0.003, "output": 0.012},  # Dec 2025 flagship
+    "gpt-5.1": {"input": 0.002, "output": 0.008},  # Nov 2025 stability release
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},  # Aug 2025 ultra-fast
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},  # Apr 2025 cost-optimized
+}
+
 # Model scoring constants for fuzzy matching preference
 # Used in _calculate_model_score to prioritize model selection
 LATEST_MODEL_PRIORITY = (9999, 12, 31, 99)  # "latest" models get highest priority
@@ -100,6 +109,11 @@ class CostCalculator:
         "gpt4": "gpt-4o",
         "gpt3.5": "gpt-3.5-turbo",
         "gpt-4o-mini": "gpt-4o-mini",  # GPT-4o mini model for cost-effective usage
+        # GPT-5 series (2025-2026 releases)
+        "gpt-5.2": "gpt-5.2",  # Dec 2025 flagship for coding/agentic tasks
+        "gpt-5.1": "gpt-5.1",  # Nov 2025 stability release with Instant/Thinking modes
+        "gpt-5-nano": "gpt-5-nano",  # Aug 2025 ultra-fast tier
+        "gpt-4.1-nano": "gpt-4.1-nano",  # Apr 2025 cost-optimized tier
         # Common alternative spellings
         "claude3-haiku": "claude-3-haiku-20240307",
         "claude3-sonnet": "claude-3-sonnet-20240229",
@@ -431,6 +445,22 @@ class CostCalculator:
                         f"Direct token cost calculation for {model}: "
                         f"input={input_tokens}*{input_cost_per_token:.10f}=${input_cost:.8f}, "
                         f"output={output_tokens}*{output_cost_per_token:.10f}=${output_cost:.8f}"
+                    )
+
+                return input_cost, output_cost
+
+            # Fallback to custom pricing for models not in tokencost (e.g., GPT-5 series)
+            if model in CUSTOM_MODEL_PRICING:
+                pricing = CUSTOM_MODEL_PRICING[model]
+                # Custom pricing is per 1K tokens, convert to per-token
+                input_cost = input_tokens * (pricing["input"] / 1000)
+                output_cost = output_tokens * (pricing["output"] / 1000)
+
+                if self.logger:
+                    self.logger.debug(
+                        f"Custom pricing for {model}: "
+                        f"input={input_tokens}*{pricing['input']/1000:.10f}=${input_cost:.8f}, "
+                        f"output={output_tokens}*{pricing['output']/1000:.10f}=${output_cost:.8f}"
                     )
 
                 return input_cost, output_cost

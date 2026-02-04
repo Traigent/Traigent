@@ -74,7 +74,15 @@ _KNOWN_MODELS: dict[str, frozenset[str]] = {
     ),
     "anthropic": frozenset(
         {
+            # Claude 4 series (2025)
             "claude-sonnet-4-20250514",
+            "claude-opus-4-20250514",
+            # Claude 3.7 series (2025)
+            "claude-3-7-sonnet-20250219",
+            # Claude 3.5 series (2024)
+            "claude-3-5-sonnet-20241022",
+            "claude-3-5-haiku-20241022",
+            # Claude 3 series (2024)
             "claude-3-opus-20240229",
             "claude-3-sonnet-20240229",
             "claude-3-haiku-20240307",

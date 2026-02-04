@@ -23,7 +23,7 @@ EXAMPLE_ESTIMATED_TIMES: dict[str, int] = {
     "01_tuning_qa.py": 94,           # ~1m 34s
     "02_zero_code_change.py": 78,    # ~1m 18s
     "03_parameter_mode.py": 76,      # ~1m 16s
-    "04_multi_objective.py": 63,     # ~1m 3s
+    "04_multi_objective.py": 300,    # ~5m 0s (48 combinations, 6 models)
     "05_rag_parallel.py": 55,        # ~0m 55s
     "06_custom_evaluator.py": 73,    # ~1m 13s
     "07_multi_provider.py": 120,     # ~2m 0s (tests multiple providers)
@@ -324,6 +324,7 @@ def _build_table_row(
     best_per_objective: dict[str, int],
     is_overall_best: bool,
     mock_metrics: dict[str, float] | None = None,
+    trailing_params: list[str] | None = None,
 ) -> list[str]:
     """Build a single table row string."""
     C = _Colors
@@ -352,6 +353,12 @@ def _build_table_row(
         else:
             cell = f"{formatted:^{col_widths[metric]}}"
         row_parts.append(cell)
+
+    # Trailing config values (shown after metrics)
+    if trailing_params:
+        for param in trailing_params:
+            val = _format_config_value(config.get(param, "?"))
+            row_parts.append(f"{val:^{col_widths[param]}}")
 
     return row_parts
 
@@ -409,7 +416,10 @@ def print_results_table(
     sample_metrics = getattr(trials[0], "metrics", {})
     metric_info = [(n, o) for n, o in objective_info if n in sample_metrics]
     metric_names = [n for n, _ in metric_info]
+
+    # All config params shown in order from config_space
     param_names = list(config_space.keys())
+    trailing_params = []  # No trailing params - all shown in config_space order
 
     # Calculate mock costs and latencies for each trial (for mock mode)
     mock_costs: list[float] = []
@@ -461,8 +471,17 @@ def print_results_table(
     else:
         best_per_objective = _find_best_per_objective(trials, metric_info)
 
-    best_trial = _find_best_trial(trials, metric_names)
-    best_config = getattr(best_trial, "config", {})
+    # Use proper weighted scoring from OptimizationResult
+    # Note: In mock mode, trial.metrics may have cost=0 and similar latency for all
+    # trials, so weighted scoring may favor accuracy. The displayed costs/latencies
+    # are estimates for visualization only.
+    try:
+        weighted_result = results.calculate_weighted_scores(objective_schema=objectives)
+        best_config = weighted_result.get("best_weighted_config", {})
+    except Exception:
+        # Fallback to simple accuracy-based selection
+        best_trial = _find_best_trial(trials, metric_names)
+        best_config = getattr(best_trial, "config", {})
 
     # Calculate column widths (use mock costs for width calculation if in mock mode)
     col_widths: dict[str, int] = {"#": 4}
@@ -483,8 +502,16 @@ def print_results_table(
                 for t in trials
             )
         col_widths[metric] = max(len(metric), max_len) + 1
+    # Calculate column widths for trailing params (shown after metrics)
+    for param in trailing_params:
+        max_len = max(
+            len(_format_config_value(getattr(t, "config", {}).get(param, "?")))
+            for t in trials
+        )
+        col_widths[param] = max(len(param), max_len) + 1
 
-    all_cols = ["#"] + param_names + metric_names
+    # Add trailing params after metrics
+    all_cols = ["#"] + param_names + metric_names + trailing_params
     total_width = sum(col_widths[c] for c in all_cols) + len(all_cols) * 3 - 1
 
     # Box drawing characters
@@ -506,6 +533,8 @@ def print_results_table(
     header_parts = [f"{C.BOLD}{'#':^{col_widths['#']}}{C.RESET}"]
     header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in param_names)
     header_parts.extend(f"{C.YELLOW}{m:^{col_widths[m]}}{C.RESET}" for m in metric_names)
+    # Trailing params after metrics (cyan like other config params)
+    header_parts.extend(f"{C.CYAN}{p:^{col_widths[p]}}{C.RESET}" for p in trailing_params)
     print(f"{V} " + f" {V} ".join(header_parts) + f" {V}")
 
     # Separator
@@ -525,7 +554,7 @@ def print_results_table(
 
         row_parts = _build_table_row(
             trial, i, param_names, metric_names, col_widths, best_per_objective,
-            is_overall_best, mock_metrics if mock_metrics else None
+            is_overall_best, mock_metrics if mock_metrics else None, trailing_params
         )
         print(f"{V} " + f" {V} ".join(row_parts) + f" {V}")
 

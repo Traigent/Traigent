@@ -41,14 +41,15 @@ traigent.initialize(execution_mode="edge_analytics")
 DATASETS = Path(__file__).parent.parent / "datasets"
 
 OBJECTIVES = ObjectiveSchema.from_objectives([
-    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.5),
-    ObjectiveDefinition("cost", orientation="minimize", weight=0.3),
-    ObjectiveDefinition("latency", orientation="minimize", weight=0.2),
+    ObjectiveDefinition("accuracy", orientation="maximize", weight=0.3),
+    ObjectiveDefinition("cost", orientation="minimize", weight=0.2),
+    ObjectiveDefinition("latency", orientation="minimize", weight=0.5),
 ])
 CONFIG_SPACE = {
-    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+    "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-5.2", "gpt-5-nano", "gpt-5.1"],
+    "prompt": ["v1", "v2"],
     "temperature": [0.0, 0.3],
-    "use_cot": [True, False],
+    "instructions": ["CoT", "direct"],
 }
 
 _LABEL_PATTERN = re.compile(r"\b(positive|negative|neutral)\b", re.IGNORECASE)
@@ -80,14 +81,19 @@ def classify_text(text: str) -> str:
         temperature=config.get("temperature"),
     )
 
-    if config.get("use_cot"):
-        prompt = f"""Think step by step to classify sentiment.
-Text: {text}
-Answer with ONLY one word: positive, negative, or neutral."""
+    instructions = config.get("instructions", "direct")
+    prompt_ver = config.get("prompt", "v1")
+
+    # v1: minimal, v2: explicit role
+    if prompt_ver == "v2":
+        base = f"You are a sentiment classifier.\nText: {text}\nLabel:"
+    else:  # v1
+        base = f"Classify sentiment:\nText: {text}\nLabel:"
+
+    if instructions == "CoT":
+        prompt = f"Think step by step.\n{base}"
     else:
-        prompt = f"""Classify sentiment for this text:
-Text: {text}
-Answer with ONLY one word: positive, negative, or neutral."""
+        prompt = base
 
     try:
         response = llm.invoke(prompt)
@@ -100,7 +106,7 @@ Answer with ONLY one word: positive, negative, or neutral."""
 async def main() -> None:
     print("Traigent Example 4: Multi-Objective Optimization")
     print("=" * 50)
-    print("Balancing accuracy (50%), cost (30%), latency (20%).")
+    print("Balancing accuracy (30%), cost (20%), latency (50%).")
     print_optimization_config(OBJECTIVES, CONFIG_SPACE)
     print_cost_estimate(
         models=CONFIG_SPACE["model"],
@@ -115,6 +121,7 @@ async def main() -> None:
         max_trials=10,
         show_progress=True,
         random_seed=42,
+        timeout=300,  # 5 minute timeout
     )
 
     print_results_table(results, CONFIG_SPACE, OBJECTIVES, is_mock=False)
@@ -122,7 +129,7 @@ async def main() -> None:
     print("\nBest Configuration Found:")
     print(f"  Model: {results.best_config.get('model')}")
     print(f"  Temperature: {results.best_config.get('temperature')}")
-    print(f"  Chain-of-Thought: {results.best_config.get('use_cot')}")
+    print(f"  Instructions: {results.best_config.get('instructions')}")
 
     print("\nPerformance:")
     print(f"  Accuracy: {results.best_metrics.get('accuracy', 0):.2%}")
