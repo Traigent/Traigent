@@ -877,7 +877,9 @@ class TestInvalidConstraintSignatures:
         # rejected, so we expect 0 trials to complete.
         if hasattr(result, "trials"):
             # Invalid constraint signature leads to 0 trials (all configs rejected)
-            assert len(result.trials) == 0, "Invalid constraint should reject all configs"
+            assert (
+                len(result.trials) == 0
+            ), "Invalid constraint should reject all configs"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
