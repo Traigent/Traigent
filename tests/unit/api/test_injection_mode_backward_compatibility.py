@@ -43,6 +43,9 @@ class TestInjectionModeBackwardCompatibility:
         assert InjectionMode.PARAMETER.value == "parameter"
         assert InjectionMode.SEAMLESS.value == "seamless"
 
+        # ATTRIBUTE was removed - ensure it doesn't exist
+        assert not hasattr(InjectionMode, "ATTRIBUTE")
+
         # Ensure 'attribute' is not in the enum
         with pytest.raises(ValueError):
             InjectionMode("attribute")
@@ -80,7 +83,7 @@ class TestInjectionModeBackwardCompatibility:
             injection_mode=InjectionMode.PARAMETER,
             config_param="config",
         )
-        def param_func(x: str, config) -> str:
+        def param_func(x: str, config=None) -> str:
             return x
 
         # Seamless mode
@@ -96,3 +99,16 @@ class TestInjectionModeBackwardCompatibility:
             isinstance(f, OptimizedFunction)
             for f in [context_func, param_func, seamless_func]
         )
+
+    def test_invalid_injection_mode_raises_error(self):
+        """Test that invalid injection modes raise appropriate errors."""
+        from traigent.utils.exceptions import ConfigurationError
+
+        with pytest.raises((ValueError, KeyError, ConfigurationError)):
+
+            @optimize(
+                configuration_space={"model": ["gpt-3.5", "gpt-4"]},
+                injection_mode="attribute",  # Removed mode
+            )
+            def test_func(text: str) -> str:
+                return text

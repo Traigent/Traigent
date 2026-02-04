@@ -80,6 +80,7 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import (
     OptimizationError,
 )
@@ -1556,6 +1557,25 @@ class OptimizationOrchestrator:
             logger.debug("No workflow spans to submit")
             return
 
+        # Skip trace submission when running in offline mode or with mock sessions
+        # Mock IDs (mock_session_, mock_exp_, mock_run_, mock-session-) don't exist
+        # in the backend database, so trace ingestion would fail with 404
+        if is_backend_offline():
+            logger.debug("Skipping workflow trace submission: backend is offline")
+            self._collected_spans = []
+            return
+
+        # Check if session_id is a mock ID (created when backend was unavailable)
+        if session_id and (
+            session_id.startswith("mock_session_")
+            or session_id.startswith("mock-session-")
+        ):
+            logger.debug(
+                f"Skipping workflow trace submission: mock session '{session_id}'"
+            )
+            self._collected_spans = []
+            return
+
         try:
             # Get trace_id from first span (all spans share same trace)
             trace_id = self._collected_spans[0].trace_id
@@ -1636,6 +1656,15 @@ class OptimizationOrchestrator:
         experiment_id = self._get_experiment_id_from_session(session_id)
         if not experiment_id:
             logger.debug("Cannot create workflow graph: no experiment_id available")
+            return None
+
+        # Skip graph creation for mock experiment IDs (they don't exist in backend)
+        if experiment_id.startswith("mock_exp_") or experiment_id.startswith(
+            "mock-exp-"
+        ):
+            logger.debug(
+                f"Cannot create workflow graph: mock experiment_id '{experiment_id}'"
+            )
             return None
 
         # Get experiment_run_id for linking
