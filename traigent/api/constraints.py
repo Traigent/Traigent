@@ -101,6 +101,13 @@ class ConstraintScopeError(ValueError):
         available_tvars: list[str] | None = None,
         constraint_description: str | None = None,
     ):
+        """Initialize ConstraintScopeError for an out-of-scope TVAR reference.
+
+        Args:
+            tvar: The parameter range that is out of scope.
+            available_tvars: List of valid TVAR names in the current scope.
+            constraint_description: Optional description of the constraint that triggered the error.
+        """
         self.tvar = tvar
         self.available_tvars = available_tvars or []
         self.constraint_description = constraint_description
