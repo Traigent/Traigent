@@ -16,7 +16,7 @@ os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
 # Check API key early
 if not os.getenv("ANTHROPIC_API_KEY"):
     print("ERROR: ANTHROPIC_API_KEY not set. Export it first:")
-    print("  export ANTHROPIC_API_KEY='your-key-here'")
+    print("  export ANTHROPIC_API_KEY='your-key-here'")  # pragma: allowlist secret
     sys.exit(1)
 
 MOCK = False  # Set to True for mock mode without API calls
@@ -190,7 +190,9 @@ def _print_results(result: OptimizationResult) -> None:
 
     # Fallback: use duration column if avg_response_time is NaN
     if "duration" in df_raw.columns:
-        df_raw["avg_response_time"] = df_raw["avg_response_time"].fillna(df_raw["duration"])
+        df_raw["avg_response_time"] = df_raw["avg_response_time"].fillna(
+            df_raw["duration"]
+        )
 
     config_cols = ["max_tokens", "temperature", "style"]
 
@@ -309,10 +311,26 @@ def summarize_keyword(text: str) -> str:
     raw = str(response.content).strip().lower()
     # Match all 20 dataset categories
     categories = [
-        "budget", "decision", "timeline", "security", "reporting", "hiring",
-        "feedback", "deployment", "documentation", "collaboration", "performance",
-        "training", "compliance", "infrastructure", "design", "technical debt",
-        "marketing", "contract", "quality", "migration"
+        "budget",
+        "decision",
+        "timeline",
+        "security",
+        "reporting",
+        "hiring",
+        "feedback",
+        "deployment",
+        "documentation",
+        "collaboration",
+        "performance",
+        "training",
+        "compliance",
+        "infrastructure",
+        "design",
+        "technical debt",
+        "marketing",
+        "contract",
+        "quality",
+        "migration",
     ]
     for k in categories:
         if k in raw:

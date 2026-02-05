@@ -183,15 +183,19 @@ async def run_optimization() -> None:
             cost = metrics.get("cost", 0)
             latency = metrics.get("latency", 0)
 
-            print(f"   Results: accuracy={accuracy:.3f}, cost=${cost:.4f}, latency={latency:.1f}ms")
+            print(
+                f"   Results: accuracy={accuracy:.3f}, cost=${cost:.4f}, latency={latency:.1f}ms"
+            )
 
-            results.append({
-                "trial": i + 1,
-                "config": config,
-                "metrics": metrics,
-                "successful": eval_result.successful_examples,
-                "total": eval_result.total_examples,
-            })
+            results.append(
+                {
+                    "trial": i + 1,
+                    "config": config,
+                    "metrics": metrics,
+                    "successful": eval_result.successful_examples,
+                    "total": eval_result.total_examples,
+                }
+            )
 
             # Track best
             if accuracy > best_accuracy:
@@ -233,7 +237,9 @@ async def run_optimization() -> None:
             print(f"   Backend URL: {backend_url}")
             print(f"   API Key: ***{api_key[-4:]}")
             print("\n   To see results in the Traigent frontend, use the full")
-            print("   @traigent.optimize decorator with execution_mode='edge_analytics'.")
+            print(
+                "   @traigent.optimize decorator with execution_mode='edge_analytics'."
+            )
             print("   This demo shows direct HybridAPIEvaluator usage.")
         else:
             print("\nNote: Set TRAIGENT_API_KEY to enable backend integration.")
