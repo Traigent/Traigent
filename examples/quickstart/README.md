@@ -1,6 +1,6 @@
 # Traigent Quickstart Examples
 
-This directory contains the exact examples from the main README.md, ready to run.
+These quickstart scripts are ready to run.
 
 ## Prerequisites
 

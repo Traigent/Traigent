@@ -16,7 +16,7 @@ Key Goals Demonstrated:
 - Provide clear error recovery paths
 - Enable model-agnostic tool descriptions
 
-Run with: python main.py
+Run with (from repo root): .venv/bin/python examples/advanced/ai-engineering-tasks/p1_function_calling/main.py
 """
 
 import asyncio
@@ -55,6 +55,9 @@ from function_config import (
     create_function_config,
     get_baseline_configs,
 )
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 console = Console()
 

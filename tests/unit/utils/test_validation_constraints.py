@@ -948,32 +948,37 @@ class TestConvenienceConstraints:
         assert constraint.name == "model_cost"
         assert constraint.max_resource == 0.1
 
-        # Test with different models
+        # Test with different models - using per-token pricing from litellm
+        # gpt-4o-mini with 1000 tokens is very low cost (~$0.000128)
         assert (
             constraint.validate({"model": "gpt-4o-mini", "max_tokens": 1000}) is True
         )  # Low cost
+        # gpt-4o with very high token count to exceed $0.1 limit
+        # At ~$0.00425 per 2000 tokens, we need ~47k tokens to exceed $0.1
         assert (
-            constraint.validate({"model": "GPT-4o", "max_tokens": 2000}) is False
-        )  # High cost
+            constraint.validate({"model": "gpt-4o", "max_tokens": 50000}) is False
+        )  # High cost with many tokens
 
     def test_model_cost_constraint_custom_limit(self):
         """Test model cost constraint with custom cost limit."""
-        constraint = model_cost_constraint(max_cost_per_1k_tokens=0.01)
+        constraint = model_cost_constraint(max_cost_per_1k_tokens=0.001)
 
-        assert constraint.max_resource == 0.01
+        assert constraint.max_resource == 0.001
 
-        # Even mini model exceeds very low limit
+        # gpt-4o-mini at 10000 tokens costs ~$0.00128, which exceeds $0.001
         assert (
             constraint.validate({"model": "gpt-4o-mini", "max_tokens": 10000}) is False
         )
 
     def test_model_cost_constraint_unknown_model(self):
-        """Test model cost constraint with unknown model."""
+        """Test model cost constraint with unknown model fails (conservative fallback)."""
         constraint = model_cost_constraint()
 
-        # Unknown model should use default cost (gpt-4o-mini rate)
+        # Unknown model should FAIL cost constraint (returns float("inf"))
+        # This is the conservative approach: if we can't determine pricing,
+        # we don't let potentially expensive models slip through silently.
         assert (
-            constraint.validate({"model": "unknown-model", "max_tokens": 1000}) is True
+            constraint.validate({"model": "unknown-model", "max_tokens": 1000}) is False
         )
 
     def test_fast_model_low_temp_constraint(self):

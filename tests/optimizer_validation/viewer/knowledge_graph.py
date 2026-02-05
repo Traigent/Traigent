@@ -39,7 +39,7 @@ UNRESOLVED = object()
 # Core values that SHOULD be tested - used for coverage gap detection
 CORE_DIMENSIONS = {
     "InjectionMode": {
-        "values": ["context", "parameter", "attribute", "seamless"],
+        "values": ["context", "parameter", "seamless"],
         "description": "How config values are passed to the function",
     },
     "ExecutionMode": {
@@ -94,7 +94,6 @@ DIMENSIONS = {
         "values": [
             "context",
             "parameter",
-            "attribute",
             "seamless",
             # Edge cases (validation/error handling tests)
             "none",
@@ -906,8 +905,6 @@ class TestParser:
             dimensions["InjectionMode"] = "seamless"
         elif "parameter" in combined_text and "injection" in combined_text:
             dimensions["InjectionMode"] = "parameter"
-        elif "attribute" in combined_text and "injection" in combined_text:
-            dimensions["InjectionMode"] = "attribute"
         elif "context" in combined_text:
             dimensions["InjectionMode"] = "context"
 

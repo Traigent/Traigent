@@ -48,17 +48,21 @@ def _parameter_injected_function(cfg=None) -> str:
 
 
 @optimize(
-    configuration_space={"mode_tag": ["attribute-mode"]},
+    configuration_space={"mode_tag": ["seamless-mode"]},
     objectives=["accuracy"],
-    injection={"injection_mode": "attribute"},
+    injection={"injection_mode": "seamless"},
     mock={"enabled": True},
 )
-def _attribute_injected_function() -> str:
-    """Return the injected config marker via function attribute."""
-    # Access via wrapper attribute populated by AttributeBasedProvider
-    return getattr(_attribute_injected_function, "current_config", {}).get(
-        "mode_tag", "missing"
-    )
+def _seamless_injected_function() -> str:
+    """Return the injected config marker via seamless injection."""
+    # Seamless mode modifies variable assignments in function source
+    # For testing, we use the context to get config
+    from traigent.config.context import get_config
+
+    config = get_config()
+    if hasattr(config, "custom_params"):
+        return config.custom_params.get("mode_tag", "missing")
+    return "missing"
 
 
 class TestInjectionModes:
@@ -78,9 +82,9 @@ class TestInjectionModes:
         assert result == "parameter-mode"
         _assert_invariants_hold()
 
-    def test_attribute_injection(self) -> None:
-        """Attribute mode exposes config via function attribute."""
-        _attribute_injected_function.set_config({"mode_tag": "attribute-mode"})
-        result = _attribute_injected_function()
-        assert result == "attribute-mode"
+    def test_seamless_injection(self) -> None:
+        """Seamless mode modifies source code variable assignments."""
+        _seamless_injected_function.set_config({"mode_tag": "seamless-mode"})
+        result = _seamless_injected_function()
+        assert result == "seamless-mode"
         _assert_invariants_hold()

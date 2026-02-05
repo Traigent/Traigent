@@ -285,35 +285,45 @@ def llm_judge_evaluator(output: str, expected: str) -> float:
 ### Grid Search
 Best for small search spaces with discrete parameters.
 ```python
-results = function.optimize(algorithm="grid", exhaustive=True)
+results = await function.optimize(
+    algorithm="grid",
+    max_trials=50,
+    parameter_order={"model": 0, "temperature": 1},
+)
 ```
 
 ### Random Search
 Efficient for large search spaces.
 ```python
-results = function.optimize(algorithm="random", num_trials=50)
+results = await function.optimize(
+    algorithm="random",
+    max_trials=50,
+    random_seed=42,
+)
 ```
 
 ### Bayesian Optimization
 Smart exploration for expensive evaluations.
 ```python
-results = function.optimize(
+results = await function.optimize(
     algorithm="bayesian",
-    acquisition_function="ei",  # Expected Improvement
-    num_initial_points=10
+    acquisition_function="expected_improvement",
+    initial_random_samples=10,
 )
 ```
 
 ### Custom Algorithm
 ```python
-from traigent.algorithms import CustomOptimizer
+from traigent.optimizers import register_optimizer
+from my_project.optimizers import CustomOptimizer
 
-optimizer = CustomOptimizer(
-    strategy="genetic",
+register_optimizer("genetic", CustomOptimizer)
+
+results = await function.optimize(
+    algorithm="genetic",
     population_size=20,
-    generations=10
+    generations=10,
 )
-results = function.optimize(optimizer=optimizer)
 ```
 
 ## Result Analysis Patterns
@@ -428,7 +438,7 @@ def optimized_openai(text: str) -> str:
         messages=[{"role": "user", "content": text}],
         temperature=config["temperature"]
     )
-    return response.choices[0].message.content
+    return str(response.choices[0].message.content)
 ```
 
 ### With Custom Frameworks

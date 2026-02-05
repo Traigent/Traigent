@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from traigent.utils.logging import get_logger
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-class DriftSeverity(str, Enum):
+class DriftSeverity(StrEnum):
     """Severity level for spec drift issues."""
 
     ERROR = "error"

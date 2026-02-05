@@ -488,7 +488,7 @@ class TestOpenAIAgentExecutor:
         # Convert to float for comparison if cost is Decimal
         if isinstance(cost, Decimal):
             cost = float(cost)
-        # The actual cost from tokencost library
+        # The actual cost from litellm library
         expected = 0.0011
         assert abs(cost - expected) < 0.0001
 
@@ -497,7 +497,7 @@ class TestOpenAIAgentExecutor:
         # Convert to float for comparison if cost is Decimal
         if isinstance(cost, Decimal):
             cost = float(cost)
-        # The actual cost from tokencost library
+        # The actual cost from litellm library
         expected = 0.0025
         assert abs(cost - expected) < 0.0001
 

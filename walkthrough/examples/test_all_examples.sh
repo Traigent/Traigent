@@ -32,25 +32,27 @@ NC='\033[0m' # No Color
 # Default to mock mode
 MODE="${1:---mock}"
 
-# Example definitions with cost estimates (for real mode)
+# Example definitions
 declare -A EXAMPLES=(
-    ["01_simple.py"]="Simple Optimization|grid|10 trials x 20 examples|~\$0.15"
-    ["02_zero_code_change.py"]="Zero Code Change (Seamless)|random|10 trials x 20 examples|~\$0.20"
-    ["03_parameter_mode.py"]="Parameter Mode|random|10 trials x 20 examples|~\$0.25"
-    ["04_multi_objective.py"]="Multi-Objective|random|10 trials x 20 examples|~\$0.30"
-    ["05_rag.py"]="RAG Optimization|random|10 trials x 20 examples|~\$0.40"
-    ["06_custom_evaluator.py"]="LLM-as-Judge|random|10 trials x 20 examples|~\$0.80"
-    ["07_privacy_modes.py"]="Privacy Modes|mixed|20 trials x 20 examples|~\$0.50"
+    ["01_tuning_qa.py"]="Basic QA Tuning|grid|10 trials x 20 examples|~0m 6s|~1m 34s"
+    ["02_zero_code_change.py"]="Zero Code Change (Seamless)|random|10 trials x 20 examples|~0m 4s|~1m 18s"
+    ["03_parameter_mode.py"]="Parameter Mode|random|10 trials x 20 examples|~0m 5s|~1m 16s"
+    ["04_multi_objective.py"]="Multi-Objective|random|10 trials x 20 examples|~0m 11s|~1m 3s"
+    ["05_rag_parallel.py"]="RAG Optimization (parallel eval)|random|10 trials x 20 examples|~0m 5s|~0m 55s"
+    ["06_custom_evaluator.py"]="LLM-as-Judge|random|10 trials x 20 examples|~0m 4s|~1m 13s"
+    ["07_multi_provider.py"]="Multi-Provider (OpenAI/Claude/Gemini)|grid|12 trials x 20 examples|~0m 6s|~2m 0s"
+    ["08_privacy_modes.py"]="Privacy Modes (local-only)|mixed|20 trials x 20 examples|~0m 5s|~1m 44s"
 )
 
 EXAMPLE_ORDER=(
-    "01_simple.py"
+    "01_tuning_qa.py"
     "02_zero_code_change.py"
     "03_parameter_mode.py"
     "04_multi_objective.py"
-    "05_rag.py"
+    "05_rag_parallel.py"
     "06_custom_evaluator.py"
-    "07_privacy_modes.py"
+    "07_multi_provider.py"
+    "08_privacy_modes.py"
 )
 
 print_header() {
@@ -64,14 +66,16 @@ print_header() {
 print_example_info() {
     local example=$1
     local info="${EXAMPLES[$example]}"
-    IFS='|' read -r name algo details cost <<< "$info"
+    IFS='|' read -r name algo details mock_eta real_eta <<< "$info"
 
     echo -e "${BLUE}Example:${NC} $example"
     echo -e "${BLUE}Description:${NC} $name"
     echo -e "${BLUE}Algorithm:${NC} $algo"
     echo -e "${BLUE}Scope:${NC} $details"
-    if [ "$MODE" == "--real" ]; then
-        echo -e "${YELLOW}Estimated Cost:${NC} $cost"
+    if [ "$MODE" == "--mock" ]; then
+        echo -e "${BLUE}Estimated time:${NC} $mock_eta (mock)"
+    else
+        echo -e "${BLUE}Estimated time:${NC} $real_eta (real)"
     fi
 }
 
@@ -88,13 +92,17 @@ confirm_example() {
     echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    read -p "Run this example? [y/N/q(quit)] " -n 1 -r
+    read -p "Run this example? [Y=run / N=skip / Q=quit] " -n 1 -r
     echo ""
 
     case $REPLY in
         [Yy]) return 0 ;;
+        [Nn]) return 1 ;;
         [Qq]) echo -e "${YELLOW}Exiting...${NC}"; exit 0 ;;
-        *) return 1 ;;
+        *)
+            echo -e "${YELLOW}Skipping (input was '${REPLY}'). Use Y to run, N to skip, Q to quit.${NC}"
+            return 1
+            ;;
     esac
 }
 
@@ -105,21 +113,27 @@ run_example() {
 
     echo -e "${BLUE}Running:${NC} $dir/$example"
     echo ""
-
     if [ -f "$dir/$example" ]; then
         # Run from the example directory so relative paths work
         pushd "$dir" > /dev/null
-        timeout "$timeout_secs" "$PYTHON" "$example" 2>&1
+        # Avoid double-prompting under timeout for real Example 01; shell confirm happens first.
+        if [ "$MODE" == "--real" ] && [ "$example" == "01_tuning_qa.py" ]; then
+            TRAIGENT_REQUIRE_CONFIRM=false timeout "$timeout_secs" "$PYTHON" "$example" 2>&1
+        else
+            timeout "$timeout_secs" "$PYTHON" "$example" 2>&1
+        fi
         local exit_code=${PIPESTATUS[0]}
         popd > /dev/null
 
         echo ""
         if [ $exit_code -eq 0 ]; then
-            echo -e "${GREEN}✅ $example - PASSED${NC}"
+            if [ "$MODE" != "--mock" ]; then
+                echo -e "${GREEN}✅ $example - PASSED${NC}"
+            fi
             return 0
         elif [ $exit_code -eq 124 ]; then
-            echo -e "${YELLOW}⚠️  $example - TIMEOUT (may still be working)${NC}"
-            return 0
+            echo -e "${RED}❌ $example - TIMEOUT${NC}"
+            return 1
         else
             echo -e "${RED}❌ $example - FAILED (exit code: $exit_code)${NC}"
             return 1
@@ -130,34 +144,23 @@ run_example() {
     fi
 }
 
-calculate_total_cost() {
-    echo ""
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-    echo -e "${YELLOW}  REAL MODE - Cost Estimate Summary${NC}"
-    echo -e "${YELLOW}═══════════════════════════════════════════════════════════${NC}"
-    echo ""
-    echo "  Example                      | Est. Cost"
-    echo "  -----------------------------|----------"
-    for example in "${EXAMPLE_ORDER[@]}"; do
-        local info="${EXAMPLES[$example]}"
-        IFS='|' read -r name algo details cost <<< "$info"
-        printf "  %-29s | %s\n" "$example" "$cost"
-    done
-    echo "  -----------------------------|----------"
-    echo -e "  ${YELLOW}Total Estimated:${NC}              | ~\$2.60"
-    echo ""
-    echo -e "${RED}WARNING: Real mode makes actual API calls and incurs costs!${NC}"
-    echo ""
-}
-
 # Main execution
 case "$MODE" in
     --mock)
         print_header "MOCK"
         echo -e "${GREEN}Mock mode: No API keys needed, instant results${NC}"
+        echo -e "${YELLOW}Info: For real LLM API calls, run the examples under walkthrough/examples/real/${NC}"
         echo ""
 
         export TRAIGENT_MOCK_LLM=true
+        export TRAIGENT_OFFLINE_MODE=true
+        export TRAIGENT_PAUSE_ON_ERROR=false
+        export TRAIGENT_BATCH_MODE=true  # Skip estimated time in Python (shell shows it)
+        : "${TRAIGENT_RESULTS_FOLDER:=$SCRIPT_DIR/.traigent_local}"
+        export TRAIGENT_RESULTS_FOLDER
+        export JOBLIB_TEMP_FOLDER="$TRAIGENT_RESULTS_FOLDER/joblib"
+        mkdir -p "$JOBLIB_TEMP_FOLDER"
+        export TRAIGENT_DATASET_ROOT="$SCRIPT_DIR"
         EXAMPLE_DIR="mock"
         TIMEOUT=60
 
@@ -181,7 +184,7 @@ case "$MODE" in
 
     --real)
         print_header "REAL"
-        echo -e "${RED}Real mode: Requires OPENAI_API_KEY, makes actual API calls${NC}"
+        echo "Real mode: makes actual API calls (requires OPENAI_API_KEY for these examples)"
         echo ""
 
         # Check for API key
@@ -197,24 +200,27 @@ case "$MODE" in
             echo ""
             echo "Set it via environment variable or create real/.env with:"
             echo "  OPENAI_API_KEY=your-key-here"
-            echo "  TRAIGENT_COST_APPROVED=true"
-            echo "  TRAIGENT_RUN_COST_LIMIT=10"
+            echo "  # Optional safety controls (not required to run):"
+            echo "  TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
+            echo "  TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
+            echo ""
+            echo "If you're not using real/.env, export in your terminal:"
+            echo "  export OPENAI_API_KEY=your-key-here"
+            echo "  # Optional safety controls (not required to run):"
+            echo "  export TRAIGENT_COST_APPROVED=true   # skips cost confirmation prompts"
+            echo "  export TRAIGENT_RUN_COST_LIMIT=10    # soft spend cap in USD"
             exit 1
         fi
 
-        # Show cost summary and get approval
-        calculate_total_cost
-
-        read -p "Do you want to proceed with REAL mode? This will incur API costs. [y/N] " -n 1 -r
-        echo ""
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            echo -e "${YELLOW}Aborted. Use --mock for cost-free testing.${NC}"
-            exit 0
+        # Optional safety controls (skip prompts + set a soft spend cap)
+        if [ -z "${TRAIGENT_COST_APPROVED:-}" ]; then
+            export TRAIGENT_COST_APPROVED=true
         fi
-
-        # Set cost approval
-        export TRAIGENT_COST_APPROVED=true
         export TRAIGENT_RUN_COST_LIMIT=${TRAIGENT_RUN_COST_LIMIT:-10}
+        export TRAIGENT_BATCH_MODE=true  # Skip estimated time in Python (shell shows it)
+        : "${TRAIGENT_RESULTS_FOLDER:=$SCRIPT_DIR/.traigent_local}"
+        export TRAIGENT_RESULTS_FOLDER
+        export TRAIGENT_DATASET_ROOT="$SCRIPT_DIR"
 
         EXAMPLE_DIR="real"
         TIMEOUT=300  # 5 minutes for real API calls
@@ -249,6 +255,13 @@ esac
 
 # Summary
 echo ""
+if [ "$MODE" == "--mock" ]; then
+    if [ $failed -eq 0 ]; then
+        exit 0
+    fi
+    exit 1
+fi
+
 echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
 echo -e "${CYAN}  Summary${NC}"
 echo -e "${CYAN}═══════════════════════════════════════════════════════════${NC}"
@@ -260,7 +273,10 @@ if [ "$MODE" == "--real" ]; then
 fi
 echo ""
 
-if [ $failed -eq 0 ]; then
+if [ $failed -eq 0 ] && [ $skipped -gt 0 ]; then
+    echo -e "${YELLOW}No failures, but ${skipped} example(s) were skipped.${NC}"
+    exit 0
+elif [ $failed -eq 0 ]; then
     echo -e "${GREEN}All examples completed successfully!${NC}"
     exit 0
 else

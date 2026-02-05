@@ -11,8 +11,13 @@ from typing import Any, cast
 
 try:
     import mlflow
-    import mlflow.pytorch
     import mlflow.sklearn
+
+    # pytorch import is optional - may fail with torch issues
+    try:
+        import mlflow.pytorch  # noqa: F401
+    except (ImportError, RuntimeError):
+        pass  # pytorch autologging not available
 
     MLFLOW_AVAILABLE = True
 except ImportError:

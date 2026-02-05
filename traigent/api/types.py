@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
 
 
-class OptimizationStatus(str, Enum):
+class OptimizationStatus(StrEnum):
     """Status of an optimization run."""
 
     NOT_STARTED = "not_started"
@@ -36,7 +36,7 @@ class OptimizationStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class TrialStatus(str, Enum):
+class TrialStatus(StrEnum):
     """Status of a single trial."""
 
     NOT_STARTED = "not_started"

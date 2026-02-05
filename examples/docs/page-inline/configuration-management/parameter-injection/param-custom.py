@@ -64,7 +64,7 @@ def adaptive_chat_bot(user_message: str) -> str:
     llm = ChatOpenAI(
         model=model_map.get(model_key, "gpt-4o-mini"),
         temperature=temperature,
-        model_kwargs={"max_tokens": length_map.get(length_key, 300)},
+        max_tokens=length_map.get(length_key, 300),
     )
 
     # Build prompt with optimized tone

@@ -1,3 +1,20 @@
 {"input": {"question": "What does RAG do?"}, "output": "Retrieval Augmented Generation"}
 {"input": {"question": "What kind of tasks does AI enable?"}, "output": "Artificial Intelligence"}
 {"input": {"question": "What items were updated in the project?"}, "output": "timeline"}
+{"input": {"question": "What is vector search used for?"}, "output": "semantic similarity"}
+{"input": {"question": "What approach improves LLM accuracy with external data?"}, "output": "RAG"}
+{"input": {"question": "How are document chunks indexed?"}, "output": "embeddings"}
+{"input": {"question": "What determines chunk overlap?"}, "output": "context preservation"}
+{"input": {"question": "What metric measures retrieval quality?"}, "output": "relevance score"}
+{"input": {"question": "How does chunking handle long documents?"}, "output": "splits into segments"}
+{"input": {"question": "What stores the vector representations?"}, "output": "vector database"}
+{"input": {"question": "What algorithm finds similar chunks?"}, "output": "nearest neighbor"}
+{"input": {"question": "How are chunks ranked for relevance?"}, "output": "similarity scoring"}
+{"input": {"question": "What preprocessing improves chunk quality?"}, "output": "text cleaning"}
+{"input": {"question": "How does context window affect chunking?"}, "output": "size limits"}
+{"input": {"question": "What maintains coherence between chunks?"}, "output": "overlap"}
+{"input": {"question": "How are metadata fields used in retrieval?"}, "output": "filtering"}
+{"input": {"question": "What technique combines multiple chunks?"}, "output": "reranking"}
+{"input": {"question": "How does semantic search differ from keyword search?"}, "output": "meaning-based matching"}
+{"input": {"question": "What optimizes retrieval latency?"}, "output": "indexing strategies"}
+{"input": {"question": "How are irrelevant chunks filtered out?"}, "output": "threshold filtering"}
