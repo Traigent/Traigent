@@ -338,33 +338,34 @@ class Condition(BoolExpr):
     ) -> bool:
         """Evaluate against a configuration.
 
+        Uses id-based lookup first, then falls back to name-based lookup
+        to support cross-boundary scenarios (pickle, deepcopy, cross-space).
+        Returns False (fail-closed) when the parameter cannot be resolved
+        or is missing from the config.
+
         Args:
             config: The configuration dict with parameter values
             var_names: Mapping from ParameterRange id() to config key.
 
         Returns:
-            True if the condition is satisfied
-
-        Raises:
-            ConstraintScopeError: If this condition's TVAR is not in the
-                var_names mapping (i.e., not registered in ConfigSpace).
-            KeyError: If the parameter name is not in the config dict.
+            True if the condition is satisfied, False if not satisfied
+            or if the parameter is missing from the config (fail-closed).
         """
         var_name = var_names.get(id(self.tvar))
         if var_name is None:
-            # TVAR not in ConfigSpace - this is a constraint scope error
-            available_tvars = list(var_names.values())
-            raise ConstraintScopeError(
-                tvar=self.tvar,
-                available_tvars=available_tvars,
-                constraint_description=self.explain(),
-            )
+            # id() lookup failed — try name-based fallback for cross-boundary
+            # scenarios (pickle round-trip, deepcopy, cross-ConfigSpace eval)
+            if self.tvar.name:
+                # Check if the tvar name exists in var_names values
+                if self.tvar.name in var_names.values():
+                    var_name = self.tvar.name
+            if var_name is None:
+                # Cannot resolve variable — fail-closed
+                return False
         if var_name not in config:
-            # Parameter missing from config - sampler or setup bug
-            raise KeyError(
-                f"Parameter '{var_name}' missing from config. "
-                f"Config keys: {list(config.keys())}"
-            )
+            # Parameter missing from config — fail-closed rather than
+            # silently satisfying the constraint
+            return False
         return self.evaluate(config[var_name])
 
     def evaluate(self, value: Any) -> bool:
@@ -885,7 +886,9 @@ class Constraint:
             return
         if isinstance(expr, Condition):
             if id(expr.tvar) not in var_names:
-                out_of_scope.append((path, expr.tvar))
+                # Name-based fallback for cross-boundary scenarios
+                if not (expr.tvar.name and expr.tvar.name in var_names.values()):
+                    out_of_scope.append((path, expr.tvar))
         elif isinstance(expr, (AndCondition, OrCondition)):
             for i, sub in enumerate(expr.conditions):
                 self._check_scope_expr(sub, f"{path}[{i}]", var_names, out_of_scope)
