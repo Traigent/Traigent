@@ -55,6 +55,7 @@ from traigent.core.orchestrator_helpers import (
     allocate_parallel_ceilings,
     constraint_requires_metrics,
     normalize_parallel_trials,
+    pre_trial_validate_config,
     prepare_evaluation_config,
     prepare_objectives,
     validate_constructor_arguments,
@@ -778,6 +779,13 @@ class OptimizationOrchestrator:
             self._incumbent_config_hash = config_hash
 
     def _remaining_sample_budget(self) -> float:
+        """Return remaining sample budget.
+
+        Note: reads ``_consumed_examples`` which is mutated under
+        ``_state_lock``.  Callers in the optimisation loop already
+        serialise via the loop structure, but any new call-site that
+        runs concurrently **must** hold ``self._state_lock`` first.
+        """
         if self._sample_budget_manager is not None:
             return float(self._sample_budget_manager.remaining())
         if self._max_total_examples is None:
@@ -978,6 +986,10 @@ class OptimizationOrchestrator:
 
             self._notify_optimizer_of_result(trial_result, optuna_trial_id)
 
+            # Track consumed examples inside lock to prevent race conditions
+            # on _consumed_examples during parallel trial execution
+            self._register_examples_attempted(trial_result)
+
         if self.backend_client and session_id:
             await self.backend_session_manager.submit_trial(
                 trial_result=trial_result,
@@ -1007,8 +1019,6 @@ class OptimizationOrchestrator:
 
         if should_log:
             self._log_progress(new_count)
-
-        self._register_examples_attempted(trial_result)
 
         return new_count
 
@@ -1055,11 +1065,17 @@ class OptimizationOrchestrator:
             return []
 
     def _generate_sequential_configs(self, count: int) -> list[dict[str, Any]]:
-        """Generate configs sequentially from the optimizer."""
+        """Generate configs sequentially from the optimizer.
+
+        Validates each config against pre-trial constraints
+        (``config_space.validate``) before including it, to avoid
+        wasting budget on configurations that violate structural
+        constraints.
+        """
         configs: list[dict[str, Any]] = []
         for _ in range(count):
             try:
-                configs.append(self.optimizer.suggest_next_trial(self._trials))
+                config = self.optimizer.suggest_next_trial(self._trials)
             except OptimizationError:
                 break
             except (ValueError, TypeError, KeyError, AttributeError) as e:
@@ -1067,6 +1083,11 @@ class OptimizationOrchestrator:
                     "Optimizer failed to suggest trial during batch generation: %s", e
                 )
                 break
+            # Pre-trial constraint validation — reject before execution
+            if not pre_trial_validate_config(config, self._constraints_pre_eval):
+                logger.debug("Config rejected by pre-trial constraints: %s", config)
+                continue
+            configs.append(config)
         return configs
 
     async def _generate_parallel_configs(
