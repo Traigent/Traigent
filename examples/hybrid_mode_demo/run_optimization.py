@@ -117,7 +117,7 @@ def generate_configurations(config_space: dict) -> list[dict]:
     # Generate full grid (should be manageable: 3*2*2*2 = 24)
     configs = []
     for combo in itertools.product(*values):
-        configs.append(dict(zip(keys, combo)))
+        configs.append(dict(zip(keys, combo, strict=True)))
 
     # Limit to 12 for demo
     return configs[:12]

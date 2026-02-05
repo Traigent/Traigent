@@ -1498,9 +1498,9 @@ class BaseEvaluator(ABC):
         """
         ordered_indices = sorted(example_results_by_index.keys())
         return [
-            example_results_by_index[i]
+            result
             for i in ordered_indices
-            if example_results_by_index[i] is not None
+            if (result := example_results_by_index[i]) is not None
         ]
 
     def _collect_ordered_results(

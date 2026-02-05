@@ -293,7 +293,6 @@ source = ["traigent"]
 omit = [
     "*/tests/*",
     "*/test_*",
-    "*/__init__.py",
     "*/demos/*",
     "*/docs/*",
 ]
