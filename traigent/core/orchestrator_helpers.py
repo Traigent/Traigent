@@ -311,6 +311,34 @@ def enforce_constraints(
             )
 
 
+def pre_trial_validate_config(
+    config: dict[str, Any],
+    constraints: list[Callable[[dict[str, Any]], bool]],
+) -> bool:
+    """Validate a config against pre-trial constraints before execution.
+
+    Returns True if the config satisfies all constraints, False otherwise.
+    This prevents wasting budget on configurations that violate structural
+    constraints by checking them before expensive trial execution.
+
+    Args:
+        config: Configuration dict to validate.
+        constraints: Pre-evaluation constraint callables.
+
+    Returns:
+        True if all constraints are satisfied, False otherwise.
+    """
+    if not constraints:
+        return True
+    for constraint in constraints:
+        try:
+            if not constraint(config):
+                return False
+        except Exception:
+            return False
+    return True
+
+
 def extract_cost_from_results(
     eval_result: Any,
     progress_state: dict[str, Any] | None,
