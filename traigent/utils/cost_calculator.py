@@ -43,7 +43,7 @@ try:
     import litellm
 
     LITELLM_AVAILABLE = True
-except ImportError:
+except (ImportError, KeyError):
     litellm = None  # type: ignore[assignment]
     LITELLM_AVAILABLE = False
 
