@@ -9,6 +9,7 @@ ensuring sessions remain active during optimization runs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -165,10 +166,8 @@ class AgentLifecycleManager:
                 await asyncio.wait_for(self._heartbeat_task, timeout=2.0)
             except TimeoutError:
                 self._heartbeat_task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._heartbeat_task
-                except asyncio.CancelledError:
-                    pass
 
             self._heartbeat_task = None
             logger.debug("Stopped heartbeat background task")
@@ -196,7 +195,7 @@ class AgentLifecycleManager:
 
             except asyncio.CancelledError:
                 logger.debug("Heartbeat loop cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in heartbeat loop: {e}")
                 # Continue running despite errors
