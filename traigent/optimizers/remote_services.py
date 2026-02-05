@@ -14,7 +14,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, cast
 
 from traigent.api.types import TrialResult
@@ -26,7 +26,7 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-class ServiceStatus(str, Enum):
+class ServiceStatus(StrEnum):
     """Status of a remote service connection."""
 
     DISCONNECTED = "disconnected"
@@ -36,7 +36,7 @@ class ServiceStatus(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-class OptimizationSessionStatus(str, Enum):
+class OptimizationSessionStatus(StrEnum):
     """Status of an optimization session."""
 
     INITIALIZING = "initializing"

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "traigent"
-version = "0.9.0"
+version = "0.10.0"
 authors = [
     {name = "Traigent Team", email = "opensource@traigent.ai"},
 ]
@@ -46,7 +46,7 @@ dependencies = [
     "claude-code-sdk>=0.0.14",
     "mcp>=1.23.0",  # CVE-2025-66416 fix (claude-code-sdk dependency)
     "backoff>=2.2.0",
-    "tokencost>=0.1.0",
+    "litellm>=1.0.0",
     "rank-bm25",
     # Required by core optimizer modules
     "optuna>=4.5.0",
@@ -79,6 +79,7 @@ integrations = [
     "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
     "openai>=1.0.0",
     "anthropic>=0.18.0",
+    "groq>=0.9.0",  # Groq cloud inference
     "rank_bm25>=0.2.2",
     "mlflow>=3.8.1",
     "wandb>=0.15.0",
@@ -112,6 +113,11 @@ security = [
 visualization = [
     "matplotlib>=3.5.0",
     "plotly>=5.0.0",
+]
+
+# Hybrid mode - external agentic service optimization via REST API
+hybrid = [
+    "httpx[http2]>=0.24.0",
 ]
 
 # Testing dependencies
@@ -176,12 +182,12 @@ cloud = [
 
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing]"
+    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)
 enterprise = [
-    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud]",
+    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,ml,cloud,hybrid]",
 ]
 
 [project.urls]
@@ -275,7 +281,7 @@ module = [
     "numpy.*",
     "pandas.*",
     "matplotlib.*",
-    "tokencost.*",
+    "litellm.*",
     "redis.*"
 ]
 ignore_missing_imports = true
@@ -287,7 +293,6 @@ source = ["traigent"]
 omit = [
     "*/tests/*",
     "*/test_*",
-    "*/__init__.py",
     "*/demos/*",
     "*/docs/*",
 ]

@@ -22,6 +22,9 @@ for _depth in range(1, 7):
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
@@ -137,7 +140,7 @@ def intelligent_assistant(query: str) -> str:
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.7),
-        model_kwargs={"max_tokens": config.get("max_tokens", 200)},
+        max_tokens=config.get("max_tokens", 200),
         top_p=config.get("top_p", 0.9),
     )
 

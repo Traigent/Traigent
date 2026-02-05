@@ -67,6 +67,29 @@ class BayesianOptimizer(BaseOptimizer):
         random_seed: int | None = None,
         **kwargs: Any,
     ) -> None:
+        """Initialize Bayesian optimizer with Gaussian Process regression.
+
+        Args:
+            config_space: Dictionary defining parameter search space.
+                Supports continuous ranges (tuples), categorical (lists),
+                and fixed values.
+            objectives: List of objective names to optimize. Currently uses
+                the first objective for GP modeling.
+            acquisition_function: Strategy for selecting next trial.
+                "expected_improvement" (default): Balance exploration/exploitation.
+                "upper_confidence_bound": More exploration-focused.
+            initial_random_samples: Number of random trials before starting
+                Bayesian optimization. Default 5.
+            xi: Exploration parameter for Expected Improvement. Higher values
+                encourage more exploration. Default 0.01.
+            kappa: Exploration parameter for Upper Confidence Bound. Higher
+                values mean more exploration. Default 2.576 (99% CI).
+            random_seed: Seed for reproducibility of GP fitting and sampling.
+            **kwargs: Additional arguments passed to BaseOptimizer.
+
+        Raises:
+            OptimizationError: If scikit-learn/scipy not installed.
+        """
         if not SKLEARN_AVAILABLE:
             raise OptimizationError(
                 "Bayesian optimization requires scikit-learn and scipy. "

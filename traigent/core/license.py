@@ -25,7 +25,7 @@ import os
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class LicenseFeature(str, Enum):
+class LicenseFeature(StrEnum):
     """Features that require a license for full functionality."""
 
     PARALLEL_EXECUTION = "parallel_execution"
@@ -44,7 +44,7 @@ class LicenseFeature(str, Enum):
     CLOUD_EXECUTION = "cloud_execution"
 
 
-class LicenseTier(str, Enum):
+class LicenseTier(StrEnum):
     """License tiers with different feature access."""
 
     FREE = "free"

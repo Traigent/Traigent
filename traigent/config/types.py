@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
 
 from traigent.utils.validation import Validators, validate_or_raise
 
 
-class ExecutionMode(str, Enum):
+class ExecutionMode(StrEnum):
     """Execution modes for Traigent optimization.
 
     Each mode provides different trade-offs between privacy, performance, and features:
@@ -24,6 +24,8 @@ class ExecutionMode(str, Enum):
     - PRIVACY: Legacy alias for hybrid mode with strict privacy toggles (no input/output sent).
     - STANDARD: Cloud orchestration with data sharing for balanced performance.
     - CLOUD: Full SaaS execution where optimization and trials run in the cloud.
+    - HYBRID_API: External API-based optimization where trials execute via HTTP endpoints.
+      Enables optimization of any agentic service that implements the Traigent API contract.
     """
 
     EDGE_ANALYTICS = "edge_analytics"
@@ -31,6 +33,7 @@ class ExecutionMode(str, Enum):
     HYBRID = "hybrid"
     STANDARD = "standard"
     CLOUD = "cloud"
+    HYBRID_API = "hybrid_api"
 
 
 def resolve_execution_mode(
@@ -59,7 +62,7 @@ def resolve_execution_mode(
     )
 
 
-class InjectionMode(str, Enum):
+class InjectionMode(StrEnum):
     """Configuration injection modes for Traigent optimization.
 
     Each mode provides a different way to inject configuration into optimized functions:
@@ -150,6 +153,7 @@ class TraigentConfig:
         "hybrid",
         "standard",
         "cloud",
+        "hybrid_api",
     ] = "edge_analytics"
     local_storage_path: str | None = None
     minimal_logging: bool = True

@@ -4,12 +4,16 @@
 Adapted from docs: demonstrates hybrid-style configuration.
 Runs locally (mock-friendly) for this example extraction.
 """
+
 from __future__ import annotations
 
 import json
 import os
 import sys
 from pathlib import Path
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent

@@ -99,13 +99,13 @@ class TestCostCalculatorInitialization:
         calculator = CostCalculator(enable_caching=False)
         assert calculator.enable_caching is False
 
-    @patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False)
-    def test_calculator_init_tokencost_unavailable_warning(self) -> None:
-        """Test warning is logged when tokencost is unavailable."""
+    @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
+    def test_calculator_init_litellm_unavailable_warning(self) -> None:
+        """Test warning is logged when litellm is unavailable."""
         mock_logger = MagicMock()
         CostCalculator(logger=mock_logger)  # noqa: F841
         mock_logger.warning.assert_called_once()
-        assert "tokencost not available" in str(mock_logger.warning.call_args)
+        assert "litellm not available" in str(mock_logger.warning.call_args)
 
 
 class TestCostCalculatorModelMapping:
@@ -175,10 +175,10 @@ class TestCostCalculatorFuzzyMatching:
         """Create calculator with mock logger."""
         return CostCalculator(logger=MagicMock())
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_fuzzy_match_direct_match(self, calculator: CostCalculator) -> None:
-        """Test fuzzy match finds direct match in tokencost."""
-        # Use a model that should exist in tokencost
+        """Test fuzzy match finds direct match in litellm."""
+        # Use a model that should exist in litellm
         result = calculator._fuzzy_match_model("gpt-4o")
         assert result == "gpt-4o"
 
@@ -196,7 +196,7 @@ class TestCostCalculatorFuzzyMatching:
         calculator._fuzzy_match_cache["test-model"] = "cached-result"
         # Result won't match cache since caching is disabled
         result = calculator._fuzzy_match_model("test-model")
-        # Since tokencost may not be available and no exact match, should return None
+        # Since litellm may not be available and no exact match, should return None
         assert result is None or isinstance(result, str)
 
     def test_fuzzy_match_short_model_name(self, calculator: CostCalculator) -> None:
@@ -204,30 +204,28 @@ class TestCostCalculatorFuzzyMatching:
         result = calculator._perform_fuzzy_match("gpt")
         assert result is None
 
-    @patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False)
-    def test_fuzzy_match_tokencost_unavailable(
-        self, calculator: CostCalculator
-    ) -> None:
-        """Test fuzzy match returns None when tokencost unavailable."""
+    @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
+    def test_fuzzy_match_litellm_unavailable(self, calculator: CostCalculator) -> None:
+        """Test fuzzy match returns None when litellm unavailable."""
         result = calculator._perform_fuzzy_match("some-model")
         assert result is None
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_perform_fuzzy_match_single_match(
         self, calculator_with_logger: CostCalculator
     ) -> None:
         """Test fuzzy match with single matching model."""
-        # This will depend on tokencost having models, so we'll use a real example
+        # This will depend on litellm having models, so we'll use a real example
         result = calculator_with_logger._perform_fuzzy_match("gpt-4o-mini")
         assert result is not None
         assert isinstance(result, str)
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_perform_fuzzy_match_multiple_matches(
         self, calculator_with_logger: CostCalculator
     ) -> None:
         """Test fuzzy match selects best from multiple matches."""
-        # "gpt-4" should match multiple models in tokencost
+        # "gpt-4" should match multiple models in litellm
         result = calculator_with_logger._perform_fuzzy_match("gpt-4o")
         assert result is not None
         # Should select the best match based on scoring
@@ -382,16 +380,16 @@ class TestCostCalculation:
         """Create calculator with mock logger."""
         return CostCalculator(logger=MagicMock())
 
-    @patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False)
-    def test_calculate_cost_tokencost_unavailable(
+    @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
+    def test_calculate_cost_litellm_unavailable(
         self, calculator: CostCalculator
     ) -> None:
-        """Test cost calculation when tokencost is unavailable."""
+        """Test cost calculation when litellm is unavailable."""
         result = calculator.calculate_cost(
             prompt="test", response="response", model_name="gpt-4o"
         )
         assert result.total_cost == 0.0
-        assert result.calculation_method == "tokencost_unavailable"
+        assert result.calculation_method == "litellm_unavailable"
 
     def test_calculate_cost_no_model_name(self, calculator: CostCalculator) -> None:
         """Test cost calculation without model name."""
@@ -399,20 +397,20 @@ class TestCostCalculation:
         assert result.total_cost == 0.0
         assert result.calculation_method == "no_model_name"
 
-    def test_calculate_cost_model_not_found(
+    def test_calculate_cost_unknown_model_returns_zero(
         self, calculator_with_logger: CostCalculator
     ) -> None:
-        """Test cost calculation with unmappable model name."""
-        # Use a completely invalid model name that won't match anything
+        """Test cost calculation with unknown model name returns zero cost."""
+        # Use a completely invalid model name that won't match anything in litellm
+        # The new implementation with fallback pricing still attempts calculation
         result = calculator_with_logger.calculate_cost(
             prompt="test", response="response", model_name="xyz123nonexistent"
         )
+        # Unknown models return 0 cost but calculation still proceeds
         assert result.total_cost == 0.0
-        assert result.calculation_method == "model_not_found"
-        # Should have logged a warning
-        assert calculator_with_logger.logger.warning.called
+        assert result.calculation_method == "prompt_and_response"
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_calculate_cost_prompt_and_response(
         self, calculator: CostCalculator
     ) -> None:
@@ -425,7 +423,7 @@ class TestCostCalculation:
         assert result.input_cost >= 0.0
         assert result.output_cost >= 0.0
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_calculate_cost_token_counts(self, calculator: CostCalculator) -> None:
         """Test cost calculation with token counts."""
         result = calculator.calculate_cost(
@@ -439,7 +437,7 @@ class TestCostCalculation:
         assert result.input_tokens > 0
         assert result.output_tokens > 0
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_calculate_cost_response_only(self, calculator: CostCalculator) -> None:
         """Test cost calculation with response only."""
         result = calculator.calculate_cost(
@@ -486,7 +484,7 @@ class TestSafeCostCalculation:
         """Create calculator with mock logger."""
         return CostCalculator(logger=MagicMock())
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_safe_calculate_prompt_cost_success(
         self, calculator: CostCalculator
     ) -> None:
@@ -495,7 +493,7 @@ class TestSafeCostCalculation:
         assert isinstance(cost, float)
         assert cost >= 0.0
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_safe_calculate_completion_cost_success(
         self, calculator: CostCalculator
     ) -> None:
@@ -550,7 +548,7 @@ class TestCalculateFromTokens:
         """Create calculator with mock logger."""
         return CostCalculator(logger=MagicMock())
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_calculate_from_tokens_direct_pricing(
         self, calculator_with_logger: CostCalculator
     ) -> None:
@@ -570,8 +568,8 @@ class TestCalculateFromTokens:
     ) -> None:
         """Test token-based calculation handles exceptions."""
         with (
-            patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True),
-            patch("traigent.utils.cost_calculator.tokencost.TOKEN_COSTS", {}),
+            patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", True),
+            patch("traigent.utils.cost_calculator.litellm.model_cost", {}),
         ):
             input_cost, output_cost = calculator_with_logger._calculate_from_tokens(
                 input_tokens=100, output_tokens=50, model="invalid-model"
@@ -589,18 +587,18 @@ class TestUtilityMethods:
         """Create test calculator instance."""
         return CostCalculator()
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_get_available_models(self, calculator: CostCalculator) -> None:
         """Test getting list of available models."""
         models = calculator.get_available_models()
         assert isinstance(models, list)
         assert len(models) > 0
 
-    @patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False)
-    def test_get_available_models_tokencost_unavailable(
+    @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
+    def test_get_available_models_litellm_unavailable(
         self, calculator: CostCalculator
     ) -> None:
-        """Test getting available models when tokencost unavailable."""
+        """Test getting available models when litellm unavailable."""
         models = calculator.get_available_models()
         assert models == []
 
@@ -613,7 +611,7 @@ class TestUtilityMethods:
         calculator.clear_cache()
         assert len(calculator._fuzzy_match_cache) == 0
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_name_exact_match(self, calculator: CostCalculator) -> None:
         """Test model name validation with exact match."""
         result = calculator.validate_model_name("claude-3-haiku")
@@ -624,7 +622,7 @@ class TestUtilityMethods:
         assert result["family_match"] is False
         assert result["not_found"] is False
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_name_family_match(self, calculator: CostCalculator) -> None:
         """Test model name validation with family match."""
         result = calculator.validate_model_name("claude-3")
@@ -634,28 +632,28 @@ class TestUtilityMethods:
         assert result["family_match"] is True
         assert result["not_found"] is False
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_name_not_found(self, calculator: CostCalculator) -> None:
         """Test model name validation with model not found."""
         result = calculator.validate_model_name("nonexistent-model-xyz123")
         assert result["original"] == "nonexistent-model-xyz123"
         assert result["not_found"] is True
 
-    @patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", False)
-    def test_validate_model_name_tokencost_unavailable(
+    @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
+    def test_validate_model_name_litellm_unavailable(
         self, calculator: CostCalculator
     ) -> None:
-        """Test model name validation when tokencost unavailable."""
+        """Test model name validation when litellm unavailable."""
         result = calculator.validate_model_name("gpt-4o")
         assert result["available"] is False
         assert "error" in result
-        assert "tokencost library not available" in result["error"]
+        assert "litellm library not available" in result["error"]
 
 
 class TestConvenienceFunctions:
     """Tests for convenience functions."""
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_calculate_llm_cost_function(self) -> None:
         """Test convenience function for cost calculation."""
         result = calculate_llm_cost(
@@ -664,7 +662,7 @@ class TestConvenienceFunctions:
         assert isinstance(result, CostBreakdown)
         assert result.model_used == "gpt-4o-mini"
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_support_function(self) -> None:
         """Test convenience function for model validation."""
         result = validate_model_support("claude-3-haiku")
@@ -806,18 +804,18 @@ class TestAdditionalLoggerCoverage:
         mock_logger.debug.assert_called()
         assert "Cached fuzzy match" in str(mock_logger.debug.call_args)
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
-    def test_fuzzy_match_direct_tokencost_with_logger(self) -> None:
-        """Test direct tokencost match logging when logger present."""
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
+    def test_fuzzy_match_direct_litellm_with_logger(self) -> None:
+        """Test direct litellm match logging when logger present."""
         mock_logger = MagicMock()
         calculator = CostCalculator(logger=mock_logger)
-        # Use a model that should exist in tokencost
+        # Use a model that should exist in litellm
         result = calculator._fuzzy_match_model("gpt-4o-mini")
         assert result == "gpt-4o-mini"
         # Should log direct match
         assert mock_logger.debug.called
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_perform_fuzzy_match_single_with_logger(self) -> None:
         """Test single fuzzy match logging when logger present."""
         mock_logger = MagicMock()
@@ -825,7 +823,7 @@ class TestAdditionalLoggerCoverage:
         # Mock to return exactly one match
         with patch.object(calculator, "_is_semantic_match", return_value=True):
             with patch(
-                "traigent.utils.cost_calculator.tokencost.TOKEN_COSTS",
+                "traigent.utils.cost_calculator.litellm.model_cost",
                 {"model-match": {}},
             ):
                 result = calculator._perform_fuzzy_match("model")
@@ -833,27 +831,19 @@ class TestAdditionalLoggerCoverage:
                 # Should log info about single match
                 mock_logger.info.assert_called()
 
-    def test_calculate_from_tokens_exception_with_logger(self) -> None:
-        """Test token calculation exception logging."""
+    def test_calculate_from_tokens_fallback_for_unknown_model(self) -> None:
+        """Test token calculation uses fallback for unknown models."""
         mock_logger = MagicMock()
         calculator = CostCalculator(logger=mock_logger)
-        # Force an exception by mocking TOKENCOST_AVAILABLE
-        with (
-            patch("traigent.utils.cost_calculator.TOKENCOST_AVAILABLE", True),
-            patch(
-                "traigent.utils.cost_calculator.tokencost.TOKEN_COSTS",
-                side_effect=Exception("Test error"),
-            ),
-        ):
-            input_cost, output_cost = calculator._calculate_from_tokens(
-                100, 50, "test-model"
-            )
-            assert input_cost == 0.0
-            assert output_cost == 0.0
-            # Should have logged the error
-            assert mock_logger.debug.called
+        # Use an unknown model that's not in litellm or fallback pricing
+        input_cost, output_cost = calculator._calculate_from_tokens(
+            100, 50, "completely-unknown-model-xyz123"
+        )
+        # Fallback returns 0 for unknown models
+        assert input_cost == 0.0
+        assert output_cost == 0.0
 
-    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="tokencost not available")
+    @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_name_fuzzy_match_path(self) -> None:
         """Test validate_model_name with fuzzy match result."""
         calculator = CostCalculator()
@@ -874,38 +864,38 @@ class TestSemanticMatchingEdgeCases:
         """Create test calculator instance."""
         return CostCalculator()
 
-    def test_is_semantic_match_gpt_in_user_not_in_tokencost(
+    def test_is_semantic_match_gpt_in_user_not_in_litellm(
         self, calculator: CostCalculator
     ) -> None:
-        """Test semantic match rejects when gpt in user but not in tokencost."""
+        """Test semantic match rejects when gpt in user but not in litellm."""
         result = calculator._is_semantic_match("gpt-custom", "custom-model-xyz")
         assert result is False
 
-    def test_is_semantic_match_claude_in_user_not_in_tokencost(
+    def test_is_semantic_match_claude_in_user_not_in_litellm(
         self, calculator: CostCalculator
     ) -> None:
-        """Test semantic match rejects when claude in user but not in tokencost."""
+        """Test semantic match rejects when claude in user but not in litellm."""
         result = calculator._is_semantic_match("claude-custom", "custom-model-xyz")
         assert result is False
 
-    def test_is_semantic_match_gpt4_versus_gpt3_tokencost(
+    def test_is_semantic_match_gpt4_versus_gpt3_litellm(
         self, calculator: CostCalculator
     ) -> None:
-        """Test semantic match rejects gpt-4 user with gpt-3 tokencost."""
+        """Test semantic match rejects gpt-4 user with gpt-3 litellm."""
         result = calculator._is_semantic_match("gpt-4-new", "gpt-3.5-turbo-new")
         assert result is False
 
-    def test_is_semantic_match_gpt3_versus_gpt4_tokencost(
+    def test_is_semantic_match_gpt3_versus_gpt4_litellm(
         self, calculator: CostCalculator
     ) -> None:
-        """Test semantic match rejects gpt-3 user with gpt-4 tokencost."""
+        """Test semantic match rejects gpt-3 user with gpt-4 litellm."""
         result = calculator._is_semantic_match("gpt-3.5-custom", "gpt-4-turbo-custom")
         assert result is False
 
-    def test_is_semantic_match_claude3_versus_claude2_tokencost(
+    def test_is_semantic_match_claude3_versus_claude2_litellm(
         self, calculator: CostCalculator
     ) -> None:
-        """Test semantic match rejects claude-3 user with claude-2 tokencost."""
+        """Test semantic match rejects claude-3 user with claude-2 litellm."""
         result = calculator._is_semantic_match("claude-3-new", "claude-2.1-new")
         assert result is False
 

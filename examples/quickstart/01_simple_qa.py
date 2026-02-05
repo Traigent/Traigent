@@ -2,15 +2,13 @@
 """
 Traigent Quickstart Example 1: Simple Q&A Agent
 
-This is the exact example from the main README.md, configured to work out of the box.
-
-Run with:
-    export TRAIGENT_MOCK_LLM=true
-    python examples/quickstart/01_simple_qa.py
+Run with (from repo root):
+    TRAIGENT_MOCK_LLM=true python examples/quickstart/01_simple_qa.py
 """
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 
 # Ensure mock mode for testing without API keys
@@ -21,8 +19,20 @@ os.environ.setdefault(
     "TRAIGENT_RESULTS_FOLDER", str(Path(__file__).parent / ".traigent_results")
 )
 
-import traigent
-from traigent.api.decorators import EvaluationOptions, ExecutionOptions
+ROOT_DIR = Path(__file__).resolve().parents[2]
+os.environ.setdefault("TRAIGENT_DATASET_ROOT", str(ROOT_DIR))
+
+# Allow running from repo root without installation
+try:
+    import traigent
+except ImportError:
+    sys.path.insert(0, str(ROOT_DIR))
+    import traigent
+
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Path to dataset (relative to this file)
 DATASET_PATH = (

@@ -454,8 +454,8 @@ class TestPerNodeMetrics:
 class TestCostEstimation:
     """Test cost estimation functionality."""
 
-    def test_cost_estimation_with_tokencost(self):
-        """Verify cost estimation with tokencost library."""
+    def test_cost_estimation_with_litellm(self):
+        """Verify cost estimation with litellm library."""
         handler = TraigentHandler()
 
         run_id = str(uuid4())
@@ -476,7 +476,7 @@ class TestCostEstimation:
         handler.on_llm_end(mock, run_id=run_id)
 
         metrics = handler.get_metrics()
-        # Cost should be > 0 (exact value depends on tokencost)
+        # Cost should be > 0 (exact value depends on litellm)
         assert metrics.total_cost >= 0
 
     def test_cost_estimation_fallback(self):
@@ -502,5 +502,5 @@ class TestCostEstimation:
         handler.on_llm_end(mock, run_id=run_id)
 
         metrics = handler.get_metrics()
-        # Should have some cost (either from tokencost or fallback)
+        # Should have some cost (either from litellm or fallback)
         assert metrics.total_cost >= 0  # Cost estimation may vary, just verify it runs
