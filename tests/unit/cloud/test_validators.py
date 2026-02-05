@@ -155,6 +155,84 @@ class TestValidateMeasureResults:
         measure = {"delta": -5, "change": -0.15}
         assert validate_measure_results(measure) is True
 
+    def test_nested_format_with_example_id_and_metrics(self) -> None:
+        """Test nested format with example_id and metrics."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": {"accuracy": 0.95, "latency": 100},
+        }
+        assert validate_measure_results(measure) is True
+
+    def test_nested_format_with_null_example_id(self) -> None:
+        """Test nested format with null example_id."""
+        measure = {
+            "example_id": None,
+            "metrics": {"accuracy": 0.95},
+        }
+        assert validate_measure_results(measure) is True
+
+    def test_nested_format_with_empty_metrics(self) -> None:
+        """Test nested format with empty metrics dict."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": {},
+        }
+        assert validate_measure_results(measure) is True
+
+    def test_nested_format_with_mixed_metric_types(self) -> None:
+        """Test nested format with mixed metric value types."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": {
+                "accuracy": 0.95,
+                "model": "gpt-4",
+                "tokens": 150,
+                "error": None,
+            },
+        }
+        assert validate_measure_results(measure) is True
+
+    def test_nested_format_invalid_example_id_type_raises_error(self) -> None:
+        """Test that non-string example_id raises ValueError."""
+        measure = {
+            "example_id": 123,
+            "metrics": {"accuracy": 0.95},
+        }
+        with pytest.raises(ValueError, match="example_id must be a string"):
+            validate_measure_results(measure)
+
+    def test_nested_format_metrics_not_dict_raises_error(self) -> None:
+        """Test that non-dict metrics raises ValueError."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": [0.95, 100],
+        }
+        with pytest.raises(
+            ValueError, match="metrics must be a dict, got <class 'list'>"
+        ):
+            validate_measure_results(measure)
+
+    def test_nested_format_invalid_metric_key_raises_error(self) -> None:
+        """Test that invalid metric key in nested format raises ValueError."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": {"invalid-key": 0.95},
+        }
+        with pytest.raises(ValueError, match="Invalid metric key 'invalid-key'"):
+            validate_measure_results(measure)
+
+    def test_nested_format_invalid_metric_value_type_raises_error(self) -> None:
+        """Test that invalid metric value type in nested format raises ValueError."""
+        measure = {
+            "example_id": "example_1",
+            "metrics": {"metrics": [1, 2, 3]},
+        }
+        with pytest.raises(
+            ValueError,
+            match="Metric value for 'metrics' must be number, string, or null",
+        ):
+            validate_measure_results(measure)
+
 
 class TestValidateMeasuresArray:
     """Tests for validate_measures_array function."""

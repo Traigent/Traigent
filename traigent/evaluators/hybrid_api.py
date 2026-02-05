@@ -278,7 +278,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Apply sample budget limits
         if sample_lease is not None:
-            available = sample_lease.remaining()
+            available = int(sample_lease.remaining())
             if available < total_examples:
                 examples = examples[:available]
                 logger.debug(
@@ -294,7 +294,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                 successful_examples=0,
                 duration=0.0,
                 sample_budget_exhausted=sample_lease is not None
-                and sample_lease.exhausted(),
+                and sample_lease.exhausted,
             )
 
         # Process in batches
@@ -307,7 +307,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Consume from sample lease
             if sample_lease is not None:
-                if not sample_lease.consume(len(batch)):
+                if not sample_lease.try_take(len(batch)):
                     logger.warning("Sample budget exhausted during batch processing")
                     break
 
@@ -346,8 +346,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             total_examples=len(example_results),
             successful_examples=sum(1 for r in example_results if r.success),
             duration=duration,
-            sample_budget_exhausted=sample_lease is not None
-            and sample_lease.exhausted(),
+            sample_budget_exhausted=sample_lease is not None and sample_lease.exhausted,
             examples_consumed=len(example_results),
         )
 

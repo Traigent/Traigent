@@ -38,14 +38,15 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          # Run core tests and utils tests to ensure coverage for all changed code
-          pytest tests/unit/core/ tests/unit/api/ tests/unit/tvl/ tests/unit/utils/ \
+          # Run unit tests to ensure coverage for all changed code
+          pytest tests/unit/ \
             --cov=traigent \
             --cov-report=xml \
             --cov-report=term \
             -q \
             --timeout=30 \
             --ignore=tests/unit/core/test_constraints_enforced.py \
+            --ignore=tests/unit/evaluators/test_litellm_integration.py \
             || true
         timeout-minutes: 10  # Step-level timeout for tests
         env:
