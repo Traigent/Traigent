@@ -83,7 +83,10 @@ def test_execute():
             "use_cache": True,
         },
         "inputs": [
-            {"input_id": "ex_001", "data": {"query": "What is artificial intelligence?"}},
+            {
+                "input_id": "ex_001",
+                "data": {"query": "What is artificial intelligence?"},
+            },
             {"input_id": "ex_002", "data": {"query": "Explain machine learning"}},
         ],
     }
@@ -132,13 +135,21 @@ def test_evaluate(execution_id: str):
         "evaluations": [
             {
                 "input_id": "ex_001",
-                "output": {"response": "AI is artificial intelligence that simulates human thinking"},
-                "target": {"expected": "Artificial Intelligence is the simulation of human intelligence"},
+                "output": {
+                    "response": "AI is artificial intelligence that simulates human thinking"
+                },
+                "target": {
+                    "expected": "Artificial Intelligence is the simulation of human intelligence"
+                },
             },
             {
                 "input_id": "ex_002",
-                "output": {"response": "ML is a subset of AI using statistical methods"},
-                "target": {"expected": "Machine Learning is a type of AI that learns from data"},
+                "output": {
+                    "response": "ML is a subset of AI using statistical methods"
+                },
+                "target": {
+                    "expected": "Machine Learning is a type of AI that learns from data"
+                },
             },
         ],
     }
