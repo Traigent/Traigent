@@ -528,12 +528,12 @@ class TestCompoundConditions:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_missing_param_in_config_raises_keyerror(self) -> None:
-        """Test evaluation with missing parameter in config raises KeyError.
+    def test_missing_param_in_config_returns_false(self) -> None:
+        """Test evaluation with missing parameter returns False (fail-closed).
 
         If a TVAR is properly registered (in var_names) but the config doesn't
-        contain the parameter, this is a bug in the sampler or test setup.
-        The constraint system should fail loudly rather than silently succeed.
+        contain the parameter, the constraint should fail-closed (return
+        False) rather than silently succeed.
         """
         temp = Range(0.0, 2.0, name="temperature")
         constraint = require(temp.gte(0.1))
@@ -541,11 +541,9 @@ class TestEdgeCases:
         # temp is in var_names, but config is missing "temp"
         var_names = {id(temp): "temp"}
 
-        # Should raise KeyError because param missing from config
-        with pytest.raises(KeyError) as exc_info:
-            constraint.evaluate({"other": 0.5}, var_names)
-
-        assert "temp" in str(exc_info.value)
+        # Should return False (fail-closed) because param missing from config
+        result = constraint.evaluate({"other": 0.5}, var_names)
+        assert result is False
 
     def test_constraint_with_none_tvar_name(self) -> None:
         """Test constraint with unnamed tvar uses fallback."""
@@ -1488,10 +1486,12 @@ class TestConstraintScopeError:
     3. Error messages include helpful hints for fixing the issue
     """
 
-    def test_evaluate_config_raises_on_out_of_scope_tvar(self) -> None:
-        """Test that evaluate_config raises ConstraintScopeError for out-of-scope TVAR."""
-        from traigent.api.constraints import ConstraintScopeError
+    def test_evaluate_config_fails_closed_on_out_of_scope_tvar(self) -> None:
+        """Test that evaluate_config returns False for out-of-scope TVAR.
 
+        When a TVAR is not in var_names and its name is also not in
+        var_names values, the constraint fails closed (returns False).
+        """
         # Define two TVARs
         budget = Range(1.0, 100.0, name="budget")
         model = Choices(["a", "b", "c"], name="model")
@@ -1503,18 +1503,15 @@ class TestConstraintScopeError:
         var_names = {id(model): "model"}
         config = {"model": "a"}
 
-        # Should raise ConstraintScopeError because budget is not in scope
-        with pytest.raises(ConstraintScopeError) as exc_info:
-            condition.evaluate_config(config, var_names)
+        # Should return False (fail-closed) because budget is not in scope
+        result = condition.evaluate_config(config, var_names)
+        assert result is False
 
-        # Verify error message is helpful
-        error_msg = str(exc_info.value)
-        assert "budget" in error_msg.lower()
-        assert "model" in error_msg  # Available TVAR should be mentioned
-        assert "hint" in error_msg.lower()
+    def test_evaluate_config_fails_closed_on_missing_param_in_config(self) -> None:
+        """Test that evaluate_config returns False when param missing from config.
 
-    def test_evaluate_config_raises_on_missing_param_in_config(self) -> None:
-        """Test that evaluate_config raises KeyError when param missing from config."""
+        Fail-closed: missing parameter does not satisfy the constraint.
+        """
         temp = Range(0.0, 2.0, name="temperature")
         condition = temp.lte(0.7)
 
@@ -1522,14 +1519,11 @@ class TestConstraintScopeError:
         var_names = {id(temp): "temperature"}
         config = {"model": "gpt-4"}  # Missing "temperature"
 
-        with pytest.raises(KeyError) as exc_info:
-            condition.evaluate_config(config, var_names)
-
-        assert "temperature" in str(exc_info.value)
+        result = condition.evaluate_config(config, var_names)
+        assert result is False
 
     def test_to_callable_validates_scope_early(self) -> None:
         """Test that to_callable() validates scope when var_names provided."""
-        from traigent.api.constraints import ConstraintScopeError
 
         # Define TVARs
         budget = Range(1.0, 100.0, name="budget")
@@ -1567,10 +1561,12 @@ class TestConstraintScopeError:
         assert fn({"model": "a", "temperature": 1.0}) is False
         assert fn({"model": "b", "temperature": 1.0}) is True
 
-    def test_scope_error_includes_available_tvars(self) -> None:
-        """Test that ConstraintScopeError lists available TVARs."""
-        from traigent.api.constraints import ConstraintScopeError
+    def test_out_of_scope_tvar_returns_false_via_evaluate_config(self) -> None:
+        """Test that evaluate_config returns False for out-of-scope TVAR.
 
+        evaluate_config uses fail-closed semantics: if the TVAR is not
+        in var_names (by id or name), it returns False.
+        """
         # Out of scope TVAR
         out_of_scope = Range(1.0, 100.0, name="out_of_scope_param")
 
@@ -1581,17 +1577,15 @@ class TestConstraintScopeError:
         condition = out_of_scope.lte(10)
         var_names = {id(model): "model", id(temp): "temperature"}
 
-        with pytest.raises(ConstraintScopeError) as exc_info:
-            condition.evaluate_config({"model": "a", "temperature": 0.5}, var_names)
-
-        error_msg = str(exc_info.value)
-        # Both available TVARs should be mentioned
-        assert "model" in error_msg
-        assert "temperature" in error_msg
+        # Should return False (fail-closed) because out_of_scope_param
+        # is not in var_names (neither by id nor by name)
+        result = condition.evaluate_config(
+            {"model": "a", "temperature": 0.5}, var_names
+        )
+        assert result is False
 
     def test_scope_error_with_compound_conditions(self) -> None:
         """Test scope validation with compound conditions (And, Or, Not)."""
-        from traigent.api.constraints import ConstraintScopeError
 
         in_scope = Choices(["a", "b"], name="in_scope")
         out_of_scope = Range(0.0, 1.0, name="out_of_scope")
@@ -1607,7 +1601,6 @@ class TestConstraintScopeError:
 
     def test_config_space_integration(self) -> None:
         """Test that ConfigSpace properly validates constraint scope."""
-        from traigent.api.constraints import ConstraintScopeError
 
         # TVAR in config space
         model = Choices(["a", "b", "c"], name="model")
