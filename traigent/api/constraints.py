@@ -10,19 +10,23 @@ which are then combined into Constraint objects.
 
 Supports three syntax styles for constraints:
 
-1. Functional (canonical, explicit):
-    >>> implies(model.equals("gpt-4"), temp.lte(0.7))
+1. Functional (canonical, explicit)::
 
-2. Operator-based (concise, formula-like):
-    >>> model.equals("gpt-4") >> temp.lte(0.7)
+    implies(model.equals("gpt-4"), temp.lte(0.7))
 
-3. Fluent (readable):
-    >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
+2. Operator-based (concise, formula-like)::
+
+    model.equals("gpt-4") >> temp.lte(0.7)
+
+3. Fluent (readable)::
+
+    when(model.equals("gpt-4")).then(temp.lte(0.7))
 
 OPERATOR PRECEDENCE WARNING:
     Python precedence: ~ > << >> > & > ^ > |
     This means: a & b >> c  evaluates as  a & (b >> c), NOT (a & b) >> c
-    Always use parentheses for clarity:
+    Always use parentheses for clarity::
+
         (model.equals("gpt-4") & temp.lte(0.7)) >> max_tokens.gte(1000)
 
 Example:
@@ -45,7 +49,7 @@ Example:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -60,6 +64,68 @@ OperatorType = Literal["==", "!=", ">", ">=", "<", "<=", "in", "not_in", "in_ran
 _IMPLICATION_REQUIRES_WHEN_THEN = (
     "Implication constraint requires both 'when' and 'then'"
 )
+
+
+# =============================================================================
+# Exceptions
+# =============================================================================
+
+
+class ConstraintScopeError(ValueError):
+    """Raised when a constraint references a TVAR not in the ConfigSpace scope.
+
+    This error indicates that a constraint uses a ParameterRange (TVAR) that
+    was not registered in the @traigent.optimize decorator's configuration space.
+
+    Example:
+        >>> BUDGET = Range(1.0, 100.0)
+        >>> MODEL = Choices(["a", "b", "c"])
+        >>>
+        >>> @traigent.optimize(model=MODEL)  # Only MODEL in scope
+        ... def experiment(config):
+        ...     pass
+        >>>
+        >>> # This constraint references BUDGET which is NOT in scope
+        >>> constraint = when(BUDGET.lte(10)).then(MODEL.is_in(["a"]))
+        >>> # Raises: ConstraintScopeError
+
+    Attributes:
+        tvar: The out-of-scope ParameterRange
+        available_tvars: List of TVAR names that are in scope
+        message: Human-readable error message with fix hints
+    """
+
+    def __init__(
+        self,
+        tvar: ParameterRange,
+        available_tvars: list[str] | None = None,
+        constraint_description: str | None = None,
+    ):
+        """Initialize ConstraintScopeError for an out-of-scope TVAR reference.
+
+        Args:
+            tvar: The parameter range that is out of scope.
+            available_tvars: List of valid TVAR names in the current scope.
+            constraint_description: Optional description of the constraint that triggered the error.
+        """
+        self.tvar = tvar
+        self.available_tvars = available_tvars or []
+        self.constraint_description = constraint_description
+
+        # Build informative error message
+        tvar_name = getattr(tvar, "name", None) or repr(tvar)
+        available_str = ", ".join(f"'{n}'" for n in self.available_tvars) or "(none)"
+
+        message = (
+            f"Constraint references TVAR '{tvar_name}' which is not in the "
+            f"@traigent.optimize parameter scope.\n"
+            f"Available TVARs: [{available_str}]\n"
+            f"Hint: Add '{tvar_name}' to @traigent.optimize or remove this constraint."
+        )
+        if constraint_description:
+            message = f"{constraint_description}\n{message}"
+
+        super().__init__(message)
 
 
 # =============================================================================
@@ -121,8 +187,9 @@ class BoolExpr(ABC):
     def __rshift__(self, other: BoolExpr) -> Constraint:
         """Implication operator: self >> other means 'self implies other'.
 
-        Example:
-            >>> model.equals("gpt-4") >> temp.lte(0.7)
+        Example::
+
+            model.equals("gpt-4") >> temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -131,8 +198,9 @@ class BoolExpr(ABC):
     def __and__(self, other: BoolExpr) -> AndCondition:
         """Conjunction operator: self & other means 'self and other'.
 
-        Example:
-            >>> model.equals("gpt-4") & temp.lte(0.7)
+        Example::
+
+            model.equals("gpt-4") & temp.lte(0.7)
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -141,8 +209,9 @@ class BoolExpr(ABC):
     def __or__(self, other: BoolExpr) -> OrCondition:
         """Disjunction operator: self | other means 'self or other'.
 
-        Example:
-            >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+        Example::
+
+            model.equals("gpt-4") | model.equals("gpt-3.5")
         """
         if not isinstance(other, BoolExpr):
             return NotImplemented
@@ -151,8 +220,9 @@ class BoolExpr(ABC):
     def __invert__(self) -> NotCondition:
         """Negation operator: ~self means 'not self'.
 
-        Example:
-            >>> ~model.equals("gpt-4")
+        Example::
+
+            ~model.equals("gpt-4")
         """
         return NotCondition(self)
 
@@ -173,8 +243,9 @@ class BoolExpr(ABC):
     def implies(self, other: BoolExpr) -> Constraint:
         """Fluent method for implication: self.implies(other).
 
-        Example:
-            >>> model.equals("gpt-4").implies(temp.lte(0.7))
+        Example::
+
+            model.equals("gpt-4").implies(temp.lte(0.7))
         """
         return Constraint(when=self, then=other)
 
@@ -193,7 +264,7 @@ class BoolExpr(ABC):
             >>> temp = Range(0.0, 2.0, name="temperature")
             >>> cond = temp.lte(0.7)
             >>> cond.explain()
-            "temperature is at most 0.7"
+            'temperature is at most 0.7'
         """
         ...
 
@@ -273,10 +344,27 @@ class Condition(BoolExpr):
 
         Returns:
             True if the condition is satisfied
+
+        Raises:
+            ConstraintScopeError: If this condition's TVAR is not in the
+                var_names mapping (i.e., not registered in ConfigSpace).
+            KeyError: If the parameter name is not in the config dict.
         """
         var_name = var_names.get(id(self.tvar))
-        if var_name is None or var_name not in config:
-            return True  # Missing value - constraint doesn't apply
+        if var_name is None:
+            # TVAR not in ConfigSpace - this is a constraint scope error
+            available_tvars = list(var_names.values())
+            raise ConstraintScopeError(
+                tvar=self.tvar,
+                available_tvars=available_tvars,
+                constraint_description=self.explain(),
+            )
+        if var_name not in config:
+            # Parameter missing from config - sampler or setup bug
+            raise KeyError(
+                f"Parameter '{var_name}' missing from config. "
+                f"Config keys: {list(config.keys())}"
+            )
         return self.evaluate(config[var_name])
 
     def evaluate(self, value: Any) -> bool:
@@ -353,8 +441,9 @@ class Condition(BoolExpr):
 class AndCondition(BoolExpr):
     """Conjunction of multiple conditions (all must be true).
 
-    Example:
-        >>> model.equals("gpt-4") & temp.lte(0.7)
+    Example::
+
+        model.equals("gpt-4") & temp.lte(0.7)
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -400,8 +489,9 @@ class AndCondition(BoolExpr):
 class OrCondition(BoolExpr):
     """Disjunction of multiple conditions (at least one must be true).
 
-    Example:
-        >>> model.equals("gpt-4") | model.equals("gpt-3.5")
+    Example::
+
+        model.equals("gpt-4") | model.equals("gpt-3.5")
     """
 
     conditions: tuple[BoolExpr, ...] = field(default_factory=tuple)
@@ -447,8 +537,9 @@ class OrCondition(BoolExpr):
 class NotCondition(BoolExpr):
     """Negation of a condition.
 
-    Example:
-        >>> ~model.equals("gpt-4")
+    Example::
+
+        ~model.equals("gpt-4")
     """
 
     condition: BoolExpr
@@ -510,6 +601,10 @@ class Constraint:
         id: Optional identifier for the constraint
 
     Example:
+        >>> from traigent import Range, Choices
+        >>> model = Choices(["gpt-4", "gpt-3.5-turbo"])
+        >>> temperature = Range(0.0, 2.0)
+        >>>
         >>> # Implication: if model is gpt-4, temperature must be <= 0.7
         >>> c = Constraint(
         ...     when=model.equals("gpt-4"),
@@ -604,10 +699,10 @@ class Constraint:
         Returns:
             Human-readable explanation of the constraint.
 
-        Example:
-            >>> c = implies(model.equals("gpt-4"), temp.lte(0.7))
-            >>> c.explain()
-            "IF model equals 'gpt-4' THEN temperature is at most 0.7"
+        Example::
+
+            c = implies(model.equals("gpt-4"), temp.lte(0.7))
+            c.explain()  # "IF model equals 'gpt-4' THEN temperature is at most 0.7"
         """
         if self.expr is not None:
             return f"REQUIRE: {self.expr.explain(var_names)}"
@@ -674,7 +769,8 @@ class Constraint:
             >>>
             >>> # Convert to callable for decorator
             >>> constraint_fn = constraint.to_callable()
-            >>> constraint_fn({"model": "gpt-4", "temperature": 0.5})  # True
+            >>> constraint_fn({"model": "gpt-4", "temperature": 0.5})
+            True
         """
         import warnings
 
@@ -694,6 +790,9 @@ class Constraint:
                     UserWarning,
                     stacklevel=2,
                 )
+        else:
+            # var_names provided (from ConfigSpace) - validate scope early
+            self._validate_scope(var_names)
 
         # Capture var_names in closure
         captured_var_names = dict(var_names)
@@ -744,6 +843,54 @@ class Constraint:
             self._collect_from_expr(
                 expr.condition, f"~{path}", var_names, missing_names
             )
+
+    def _validate_scope(self, var_names: dict[int, str]) -> None:
+        """Validate that all TVARs in this constraint are in the var_names scope.
+
+        Args:
+            var_names: Mapping from ParameterRange id() to config key names.
+
+        Raises:
+            ConstraintScopeError: If any TVAR in this constraint is not in
+                the var_names mapping.
+        """
+        out_of_scope: list[tuple[str, ParameterRange]] = []
+        # Check expr or when/then based on which is set (use 'is not None' to avoid BoolExpr.__bool__)
+        if self.expr is not None:
+            self._check_scope_expr(self.expr, "expr", var_names, out_of_scope)
+        else:
+            self._check_scope_expr(self.when, "when", var_names, out_of_scope)
+        if self.then is not None:
+            self._check_scope_expr(self.then, "then", var_names, out_of_scope)
+
+        if out_of_scope:
+            # Report first out-of-scope TVAR with helpful error
+            path, tvar = out_of_scope[0]
+            available_tvars = list(var_names.values())
+            raise ConstraintScopeError(
+                tvar=tvar,
+                available_tvars=available_tvars,
+                constraint_description=f"In constraint '{path}': {self.explain()}",
+            )
+
+    def _check_scope_expr(
+        self,
+        expr: BoolExpr | None,
+        path: str,
+        var_names: dict[int, str],
+        out_of_scope: list[tuple[str, ParameterRange]],
+    ) -> None:
+        """Recursively check that all TVARs in an expression are in scope."""
+        if expr is None:
+            return
+        if isinstance(expr, Condition):
+            if id(expr.tvar) not in var_names:
+                out_of_scope.append((path, expr.tvar))
+        elif isinstance(expr, (AndCondition, OrCondition)):
+            for i, sub in enumerate(expr.conditions):
+                self._check_scope_expr(sub, f"{path}[{i}]", var_names, out_of_scope)
+        elif isinstance(expr, NotCondition):
+            self._check_scope_expr(expr.condition, f"~{path}", var_names, out_of_scope)
 
 
 # =============================================================================
@@ -821,8 +968,9 @@ def require(
 class WhenBuilder:
     """Builder for when(condition).then(consequence) fluent syntax.
 
-    Example:
-        >>> when(model.equals("gpt-4")).then(temp.lte(0.7))
+    Example::
+
+        when(model.equals("gpt-4")).then(temp.lte(0.7))
     """
 
     def __init__(self, condition: BoolExpr) -> None:
@@ -922,7 +1070,7 @@ def constraints_to_callables(
 
 
 def normalize_constraints(
-    constraints: list[Constraint | BoolExpr | Callable[..., Any]] | None,
+    constraints: Sequence[Constraint | BoolExpr | Callable[..., Any]] | None,
     var_names: dict[int, str] | None = None,
 ) -> list[Callable[[dict[str, Any]], bool]]:
     """Normalize mixed Constraint/BoolExpr/Callable list to pure callables.
@@ -1023,6 +1171,8 @@ def check_constraints_conflict(
     constraints: list[Constraint],
     sample_configs: list[dict[str, Any]] | None = None,
     var_names: dict[int, str] | None = None,
+    *,
+    samples_exhaustive: bool = False,
 ) -> ConstraintConflict | None:
     """Check if constraints conflict with each other.
 
@@ -1030,26 +1180,49 @@ def check_constraints_conflict(
     against the constraint set. For comprehensive SAT-based checking,
     consider using z3-solver (MIT license).
 
+    Warning:
+        This function can produce **false positives** when sample_configs is
+        sparse. A conflict is reported if no sample satisfies all constraints,
+        but valid configurations may exist outside the samples.
+
     Args:
         constraints: List of Constraint objects to check.
         sample_configs: Optional list of configs to test. If not provided,
             the function returns None (no conflict detected by default).
+            For reliable conflict detection, provide samples that span
+            the full domain of each constrained variable.
         var_names: Optional mapping from ParameterRange id() to config key.
+        samples_exhaustive: If True, report a conflict when no sample satisfies
+            all constraints. If False (default), return None in this case to
+            avoid false positives from sparse sampling. Set to True only when
+            sample_configs exhaustively covers the parameter space.
 
     Returns:
-        ConstraintConflict if a conflict is detected, None otherwise.
+        ConstraintConflict if a definite conflict is detected, None otherwise.
+        When samples_exhaustive=False, returns None even if all samples fail,
+        since valid configurations may exist outside the samples.
 
     Example:
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>> c1 = require(temp.lte(0.5))
         >>> c2 = require(temp.gte(0.8))
-        >>> # These cannot both be satisfied
+        >>> # These cannot both be satisfied - use exhaustive for definite conflicts
         >>> conflict = check_constraints_conflict(
         ...     [c1, c2],
-        ...     sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}]
+        ...     sample_configs=[{"temperature": 0.3}, {"temperature": 0.9}],
+        ...     samples_exhaustive=True,  # samples cover full domain
         ... )
         >>> if conflict:
         ...     print(conflict)
+
+        >>> # With sparse samples, avoid false positives
+        >>> result = check_constraints_conflict(
+        ...     [c1, c2],
+        ...     sample_configs=[{"temperature": 0.2}],  # sparse, missing 0.3-0.5
+        ...     samples_exhaustive=False,  # default, safe for sparse samples
+        ... )
+        >>> result is None  # No conflict reported (could be false negative)
+        True
     """
     if not constraints or not sample_configs:
         return None
@@ -1061,6 +1234,9 @@ def check_constraints_conflict(
             c._collect_tvars(var_names, [])
 
     # Test each sample config against all constraints
+    # Track all violations per config to report the best diagnostic
+    all_violations: list[tuple[dict[str, Any], list[tuple[Constraint, str]]]] = []
+
     for config in sample_configs:
         violations: list[tuple[Constraint, str]] = []
 
@@ -1070,13 +1246,39 @@ def check_constraints_conflict(
                 explanation = constraint.explain(var_names)
                 violations.append((constraint, explanation))
 
-        # If all constraints violated, we found a conflict scenario
-        if len(violations) == len(constraints) and len(violations) > 1:
-            return ConstraintConflict(
-                constraints=[v[0] for v in violations],
-                config=config,
-                messages=[v[1] for v in violations],
-            )
+        # If this config satisfies all constraints, no conflict
+        if not violations:
+            return None
+
+        all_violations.append((config, violations))
+
+    # No config satisfied all constraints - this may indicate a conflict
+    # But only report if samples_exhaustive=True to avoid false positives
+    if not samples_exhaustive:
+        # Sparse samples: don't report conflict as valid configs may exist
+        # outside the sample set (fix for issue #38)
+        return None
+
+    # Report the config with the most violations for best diagnostics
+    # (for mutually exclusive constraints, each config violates different ones)
+    if all_violations and len(constraints) > 1:
+        # Find the config that violates the most constraints for best diagnostics
+        worst_config, worst_violations = max(all_violations, key=lambda x: len(x[1]))
+
+        # For mutually exclusive constraints, aggregate all violated constraints
+        # across configs to show the full conflict
+        all_violated_constraints: dict[int, tuple[Constraint, str]] = {}
+        for _config, violations in all_violations:
+            for constraint, msg in violations:
+                cid = id(constraint)
+                if cid not in all_violated_constraints:
+                    all_violated_constraints[cid] = (constraint, msg)
+
+        return ConstraintConflict(
+            constraints=[v[0] for v in all_violated_constraints.values()],
+            config=worst_config,
+            messages=[v[1] for v in all_violated_constraints.values()],
+        )
 
     return None
 
@@ -1100,9 +1302,8 @@ def explain_constraint_violation(
         >>> temp = Range(0.0, 2.0, name="temperature")
         >>> c = require(temp.lte(0.5))
         >>> msg = explain_constraint_violation(c, {"temperature": 0.9})
-        >>> print(msg)
-        "Constraint violated: REQUIRE: temperature is at most 0.5
-         Config has temperature=0.9"
+        >>> msg is not None  # Returns explanation for violated constraint
+        True
     """
     if var_names is None:
         var_names = {}
@@ -1130,6 +1331,7 @@ __all__ = [
     "Condition",
     "Constraint",
     "ConstraintConflict",
+    "ConstraintScopeError",
     "NotCondition",
     "OperatorType",
     "OrCondition",

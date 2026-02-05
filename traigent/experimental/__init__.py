@@ -7,10 +7,10 @@ This module is for:
 - Local development and testing
 - Prototyping new features
 - Educational examples
-- Experiments while OptiGen backend is under development
+- Experiments while Traigent backend is under development
 
 DO NOT use these features in production code.
-The real Traigent cloud implementation is proprietary IP in the OptiGen backend.
+The real Traigent cloud implementation is proprietary IP in the Traigent backend.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Reliability FUNC-CLOUD-HYBRID REQ-CLOUD-009 SYNC-CloudHybrid

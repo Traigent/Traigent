@@ -7,6 +7,9 @@ import os
 import sys
 from pathlib import Path
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
@@ -108,7 +111,7 @@ def solve_arithmetic(expression: str) -> str:
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.0),
-        model_kwargs={"max_tokens": config.get("max_tokens", 50)},
+        max_tokens=config.get("max_tokens", 50),
     )
 
     full_prompt = f"{prompt_template}\n\n{expression}"

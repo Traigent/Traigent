@@ -26,7 +26,8 @@ Example:
     >>>
     >>> # Validate a configuration
     >>> result = space.validate({"temperature": 0.5, "max_tokens": 2000, "model": "gpt-4"})
-    >>> print(result.is_valid)  # True
+    >>> result.is_valid
+    True
 """
 
 from __future__ import annotations

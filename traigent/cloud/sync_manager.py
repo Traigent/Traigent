@@ -1,6 +1,6 @@
 """
 Local-to-cloud sync manager for Traigent optimization sessions.
-Handles migration of local data to OptiGen backend when users upgrade.
+Handles migration of local data to Traigent backend when users upgrade.
 """
 
 # Traceability: CONC-Layer-Infra CONC-Quality-Reliability FUNC-CLOUD-HYBRID FUNC-AGENTS REQ-CLOUD-009 REQ-AGNT-013
@@ -29,9 +29,9 @@ logger = get_logger(__name__)
 
 class SyncManager:
     """
-    Manages synchronization of local optimization data to OptiGen backend.
+    Manages synchronization of local optimization data to Traigent backend.
 
-    Converts local session data to OptiGen experiment/experiment_run format
+    Converts local session data to Traigent experiment/experiment_run format
     and handles the upload process with progress tracking.
     """
 
@@ -157,17 +157,17 @@ class SyncManager:
             },
         }
 
-    def convert_session_to_optigen_format(
+    def convert_session_to_traigent_format(
         self, session: OptimizationSession
     ) -> dict[str, Any]:
         """
-        Convert local session to OptiGen experiment format.
+        Convert local session to Traigent experiment format.
 
         Args:
             session: Local optimization session
 
         Returns:
-            Dict in OptiGen experiment/experiment_run format
+            Dict in Traigent experiment/experiment_run format
         """
         # Generate placeholder IDs for required fields
         experiment_id = f"local_import_{session.session_id}"
@@ -249,7 +249,7 @@ class SyncManager:
         }
 
     def _convert_trials_to_results(self, trials: list[Any]) -> list[dict[str, Any]]:
-        """Convert local trials to OptiGen configuration_run format."""
+        """Convert local trials to Traigent configuration_run format."""
         results = []
 
         for trial in trials:
@@ -292,8 +292,8 @@ class SyncManager:
         if not session:
             raise TraigentStorageError(f"Session {session_id} not found") from None
 
-        # Convert to OptiGen format
-        optigen_data = self.convert_session_to_optigen_format(session)
+        # Convert to Traigent format
+        traigent_data = self.convert_session_to_traigent_format(session)
 
         sync_result = {
             "session_id": session_id,
@@ -301,17 +301,17 @@ class SyncManager:
             "status": "success",
             "dry_run": dry_run,
             "data_converted": True,
-            "cloud_experiment_id": optigen_data["experiment"]["id"],
-            "trials_converted": len(optigen_data["experiment_run"]["results"]),
+            "cloud_experiment_id": traigent_data["experiment"]["id"],
+            "trials_converted": len(traigent_data["experiment_run"]["results"]),
             "errors": [],
         }
 
         if dry_run:
             sync_result["preview"] = {
-                "experiment_name": optigen_data["experiment"]["name"],
-                "agent_name": optigen_data["agent"]["name"],
-                "benchmark_name": optigen_data["benchmark"]["name"],
-                "trial_count": len(optigen_data["experiment_run"]["results"]),
+                "experiment_name": traigent_data["experiment"]["name"],
+                "agent_name": traigent_data["agent"]["name"],
+                "benchmark_name": traigent_data["benchmark"]["name"],
+                "trial_count": len(traigent_data["experiment_run"]["results"]),
                 "best_score": session.best_score,
             }
             return sync_result
@@ -328,7 +328,7 @@ class SyncManager:
             total_steps = 4
 
             # Step 1: Create or verify agent
-            agent_result = self._sync_agent(optigen_data["agent"])
+            agent_result = self._sync_agent(traigent_data["agent"])
             if not agent_result["success"]:
                 sync_result["errors"].append(
                     f"Agent sync failed: {agent_result['error']}"
@@ -337,7 +337,7 @@ class SyncManager:
                 successful_steps += 1
 
             # Step 2: Create or verify benchmark
-            benchmark_result = self._sync_benchmark(optigen_data["benchmark"])
+            benchmark_result = self._sync_benchmark(traigent_data["benchmark"])
             if not benchmark_result["success"]:
                 sync_result["errors"].append(
                     f"Benchmark sync failed: {benchmark_result['error']}"
@@ -346,7 +346,7 @@ class SyncManager:
                 successful_steps += 1
 
             # Step 3: Create experiment
-            experiment_result = self._sync_experiment(optigen_data["experiment"])
+            experiment_result = self._sync_experiment(traigent_data["experiment"])
             if not experiment_result["success"]:
                 sync_result["errors"].append(
                     f"Experiment sync failed: {experiment_result['error']}"
@@ -355,7 +355,7 @@ class SyncManager:
                 successful_steps += 1
 
             # Step 4: Create experiment run with results
-            run_result = self._sync_experiment_run(optigen_data["experiment_run"])
+            run_result = self._sync_experiment_run(traigent_data["experiment_run"])
             if not run_result["success"]:
                 sync_result["errors"].append(
                     f"Experiment run sync failed: {run_result['error']}"
@@ -369,7 +369,7 @@ class SyncManager:
             elif successful_steps == total_steps:
                 sync_result["status"] = "success"
                 sync_result["cloud_url"] = (
-                    f"{self.base_url}/experiments/{optigen_data['experiment']['id']}"
+                    f"{self.base_url}/experiments/{traigent_data['experiment']['id']}"
                 )
             else:
                 sync_result["status"] = "partial"  # Some steps succeeded

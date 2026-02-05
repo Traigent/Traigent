@@ -10,22 +10,43 @@ Integrated with unified authentication system for secure credential management.
 from __future__ import annotations
 
 import importlib.util
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from traigent.agents.executor import (
     AgentExecutor,
     CostEstimate,
     PlatformConfigValidationResult,
 )
-from traigent.cloud.auth import (
-    AuthCredentials,
-    AuthMode,
-    get_auth_manager,
-)
-from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
 from traigent.utils.validation import CoreValidators, validate_or_raise
+
+# Cloud auth imports - required at runtime for credential management
+try:
+    from traigent.cloud.auth import (
+        AuthCredentials,
+        AuthMode,
+        get_auth_manager,
+    )
+
+    _CLOUD_AUTH_AVAILABLE = True
+except (
+    ModuleNotFoundError
+) as err:  # pragma: no cover - only runs when cloud not installed
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    missing_module = getattr(err, "name", "") or ""
+    if missing_module == "traigent.cloud" or missing_module.startswith(
+        "traigent.cloud."
+    ):
+        _CLOUD_AUTH_AVAILABLE = False
+        AuthCredentials = None  # type: ignore[misc,assignment]
+        AuthMode = None  # type: ignore[misc,assignment]
+        get_auth_manager = None  # type: ignore[misc,assignment]
+    else:
+        raise  # Re-raise for broken dependencies
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 
@@ -364,8 +385,12 @@ class OpenAIAgentExecutor(AgentExecutor):
     async def _platform_initialize(self) -> None:
         """Initialize OpenAI components with unified auth integration."""
         try:
-            # Initialize unified auth manager
-            self.auth_manager = get_auth_manager()
+            # Initialize unified auth manager (if available)
+            if _CLOUD_AUTH_AVAILABLE and get_auth_manager is not None:
+                self.auth_manager = get_auth_manager()
+            else:
+                self.auth_manager = None
+                logger.debug("Cloud auth not available, using environment credentials")
 
             # Prepare default headers via unified auth (may be empty)
             default_headers = await self._get_authenticated_headers()
@@ -421,16 +446,16 @@ class OpenAIAgentExecutor(AgentExecutor):
                     CoreValidators.validate_string(api_key, "api_key", min_length=1)
                 )
 
+                # Authenticate to validate and enable rate limiting (if auth available)
+                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
+                    return cast(str | None, api_key)
+
                 # Create auth credentials for this API key
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=api_key,
                     metadata={"platform": "openai", "source": "platform_config"},
                 )
-
-                # Authenticate to validate and enable rate limiting
-                if self.auth_manager is None:
-                    return cast(str | None, api_key)
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
@@ -451,14 +476,14 @@ class OpenAIAgentExecutor(AgentExecutor):
                     )
                 )
 
+                if self.auth_manager is None or not _CLOUD_AUTH_AVAILABLE:
+                    return env_api_key
+
                 auth_credentials = AuthCredentials(
                     mode=AuthMode.API_KEY,
                     api_key=env_api_key,
                     metadata={"platform": "openai", "source": "environment"},
                 )
-
-                if self.auth_manager is None:
-                    return env_api_key
 
                 auth_result = await self.auth_manager.authenticate(auth_credentials)
 
@@ -737,7 +762,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
     ) -> CostEstimate:
-        """Estimate execution cost using tokencost library."""
+        """Estimate execution cost using litellm library."""
         config = self._merge_configurations(
             agent_spec.model_parameters or {}, config_overrides
         )
@@ -747,9 +772,12 @@ class OpenAIAgentExecutor(AgentExecutor):
         prompt = self._format_prompt(agent_spec.prompt_template, input_data)
 
         try:
-            from tokencost import calculate_completion_cost, calculate_prompt_cost
+            from traigent.utils.cost_calculator import (
+                calculate_completion_cost,
+                calculate_prompt_cost,
+            )
 
-            # Convert prompt string to message format for tokencost
+            # Convert prompt string to message format for litellm
             prompt_messages = [{"role": "user", "content": prompt}]
 
             # Calculate input cost
@@ -767,7 +795,7 @@ class OpenAIAgentExecutor(AgentExecutor):
                 "estimated_cost": float(total_cost),
                 "estimated_input_cost": float(input_cost),
                 "estimated_output_cost": float(output_cost),
-                "confidence": 0.8,  # Higher confidence with tokencost
+                "confidence": 0.8,  # Higher confidence with litellm
             }
 
         except ImportError:

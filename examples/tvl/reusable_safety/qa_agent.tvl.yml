@@ -1,0 +1,186 @@
+# TVL 0.9 Example: Q&A Agent Specification
+# ==========================================
+#
+# This spec defines a Q&A agent that inherits safety constraints from
+# base_safety.tvl.yml and adds task-specific configuration for
+# information retrieval accuracy.
+#
+# Key Features:
+# - Inherits all 3 safety constraints from base_safety.tvl.yml
+# - Adds accuracy-focused objective (primary metric)
+# - Uses RAGAS faithfulness for accuracy measurement
+# - Evaluated on task-specific Q&A dataset (50 examples)
+#
+# Objectives Focus:
+# - PRIMARY: Accuracy (weighted 3x)
+# - SECONDARY: Latency (weighted 1x)
+
+# Inherit safety constraints and datasets from base spec
+extends: ./base_safety.tvl.yml
+
+tvl:
+  module: "corp.agents.qa"
+  skip_budget_checks: false
+
+metadata:
+  owner: "qa-team@example.com"
+  description: "Q&A Agent for knowledge base queries - accuracy-focused"
+  tags:
+    - qa
+    - accuracy
+    - knowledge-base
+
+# =============================================================================
+# TVARS (Configuration Space)
+# =============================================================================
+# Agent-specific parameters for Q&A task optimization.
+# Note: These ADD to any tvars inherited from base spec.
+
+tvars:
+  - name: model
+    type: enum[str]
+    domain:
+      - "gpt-4o"
+      - "gpt-4o-mini"
+      - "claude-3-5-sonnet-latest"
+      - "claude-3-haiku-20240307"
+    default: "gpt-4o-mini"
+
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 0.7]  # Lower range for factual accuracy
+    default: 0.1
+    unit: "temperature"
+
+  - name: max_tokens
+    type: int
+    domain:
+      range: [256, 2048]
+    default: 1024
+    unit: "tokens"
+
+  - name: retrieval_k
+    type: int
+    domain:
+      set: [3, 5, 7, 10]
+    default: 5
+    description: "Number of documents to retrieve for context"
+
+  - name: chunk_size
+    type: int
+    domain:
+      set: [256, 512, 1024]
+    default: 512
+    description: "Document chunk size for retrieval"
+
+  - name: use_reranking
+    type: bool
+    domain: [true, false]
+    default: true
+    description: "Whether to rerank retrieved documents"
+
+# =============================================================================
+# OBJECTIVES
+# =============================================================================
+# Accuracy-focused objectives for Q&A task.
+# Note: These ADD to any objectives inherited from base spec.
+
+objectives:
+  - name: accuracy
+    direction: maximize
+    weight: 3.0  # Primary objective
+    unit: "score"
+    description: "Answer accuracy measured by RAGAS faithfulness"
+    band:
+      target: [0.85, 0.95]  # Target 85-95% accuracy
+      test: TOST
+      alpha: 0.05
+
+  - name: latency_p95
+    direction: minimize
+    weight: 1.0  # Secondary objective
+    unit: "ms"
+    description: "95th percentile response latency"
+    band:
+      target: [0, 2000]  # Max 2 seconds
+      test: TOST
+      alpha: 0.05
+
+# =============================================================================
+# CONSTRAINTS
+# =============================================================================
+# Task-specific constraints for Q&A.
+# Note: These ADD to safety_constraints inherited from base spec.
+
+constraints:
+  structural:
+    - expr: 'params.temperature <= 0.7'
+      id: qa-temperature-limit
+      error_message: "Q&A requires low temperature for factual responses"
+
+    - expr: 'params.retrieval_k >= 3'
+      id: min-retrieval
+      error_message: "Q&A needs at least 3 documents for context"
+
+# =============================================================================
+# EVALUATION SET
+# =============================================================================
+# Task-specific Q&A dataset for accuracy evaluation.
+
+evaluation_set:
+  dataset: "qa_accuracy"
+  seed: 42
+
+datasets:
+  qa_accuracy:
+    path: "./datasets/qa_accuracy.jsonl"
+    description: "50 Q&A examples for accuracy evaluation with ground truth"
+    size: 50
+    schema:
+      - name: id
+        type: string
+      - name: question
+        type: string
+      - name: context
+        type: string
+        description: "Retrieved documents/context"
+      - name: ground_truth
+        type: string
+        description: "Expected correct answer"
+
+# =============================================================================
+# EXPLORATION
+# =============================================================================
+# Override exploration settings for accuracy-focused optimization.
+
+exploration:
+  strategy: bayesian  # Use Bayesian optimization for efficiency
+  budgets:
+    max_trials: 150  # More trials for accuracy optimization
+    max_spend_usd: 75.0
+    max_wallclock_s: 5400  # 90 minutes
+  parallelism:
+    max_parallel_trials: 4
+  convergence:
+    metric: hypervolume_improvement
+    window: 10
+    threshold: 0.005
+
+# =============================================================================
+# PROMOTION POLICY
+# =============================================================================
+# Require high accuracy for promotion.
+
+promotion_policy:
+  dominance: epsilon_pareto
+  alpha: 0.05
+  min_effect:
+    accuracy: 0.02      # 2% accuracy improvement required
+    latency_p95: 100.0  # 100ms latency improvement
+  adjust: BH
+  tie_breakers:
+    - metric_name: accuracy
+      prefer: higher
+    - metric_name: latency_p95
+      prefer: lower

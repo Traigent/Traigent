@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from traigent.core.objectives import ObjectiveSchema
 
 
-class OptimizationStatus(str, Enum):
+class OptimizationStatus(StrEnum):
     """Status of an optimization run."""
 
     NOT_STARTED = "not_started"
@@ -36,7 +36,7 @@ class OptimizationStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
-class TrialStatus(str, Enum):
+class TrialStatus(StrEnum):
     """Status of a single trial."""
 
     NOT_STARTED = "not_started"
@@ -1084,6 +1084,99 @@ class OptimizationResult:
 
         return total_duration, total_cost, total_examples, trials_per_model
 
+    def analyze(
+        self,
+        objective: str | None = None,
+        *,
+        importance_method: Literal[
+            "variance", "correlation", "permutation"
+        ] = "variance",
+        elimination_threshold: float = 0.05,
+        min_trials_per_value: int = 3,
+        directions: dict[str, Literal["maximize", "minimize"]] | None = None,
+        configuration_space: dict[str, Any] | None = None,
+    ) -> Any:
+        """Analyze this optimization result to get variable insights and elimination suggestions.
+
+        This method provides post-optimization analysis to help understand which
+        parameters matter, which values are dominated, and suggests refinements
+        to the configuration space for future optimization runs.
+
+        Requires the traigent-tuned-variables plugin to be installed for full
+        functionality. Install with: pip install traigent-tuned-variables
+
+        Args:
+            objective: Primary objective to analyze. Defaults to first objective.
+            importance_method: Method for importance calculation:
+                - "variance": Variance-based (default, fast)
+                - "correlation": Correlation-based
+                - "permutation": Permutation-based (more accurate, slower)
+            elimination_threshold: Threshold below which variables are considered
+                unimportant (default: 0.05)
+            min_trials_per_value: Minimum trials per value for reliable statistics
+                (default: 3)
+            directions: Dictionary mapping objective names to "maximize" or "minimize".
+                If not specified, auto-detects based on naming patterns.
+            configuration_space: Explicit configuration space. If not provided,
+                attempts to infer from trial configs.
+
+        Returns:
+            OptimizationAnalysis object containing:
+                - variables: Dict of VariableAnalysis for each parameter
+                - elimination_suggestions: List of suggested eliminations
+                - refined_space: Auto-pruned configuration space for next run
+
+        Raises:
+            ImportError: If traigent-tuned-variables plugin is not installed
+
+        Example::
+
+            result = my_agent.optimize()
+            analysis = result.analyze("accuracy")
+            for var_name, var_analysis in analysis.variables.items():
+                print(f"{var_name}: importance={var_analysis.importance:.3f}")
+            # Get refined space for next optimization
+            refined = analysis.get_refined_space(["accuracy"])
+        """
+        try:
+            from traigent_tuned_variables import VariableAnalyzer
+        except ImportError:
+            raise ImportError(
+                "The analyze() method requires the traigent-tuned-variables plugin. "
+                "Install with: pip install traigent-tuned-variables"
+            ) from None
+
+        # Use first objective if not specified
+        objective_name = objective or (self.objectives[0] if self.objectives else None)
+        if objective_name is None:
+            raise ValueError(
+                "No objective specified and no objectives found in result. "
+                "Please specify an objective to analyze."
+            )
+
+        # Auto-detect directions if not provided
+        if directions is None:
+            directions = {}
+            minimize_patterns = ("cost", "latency", "error", "loss", "time", "duration")
+            for obj in self.objectives:
+                lowered = obj.lower()
+                if any(pattern in lowered for pattern in minimize_patterns):
+                    directions[obj] = "minimize"
+                else:
+                    directions[obj] = "maximize"
+
+        # Create analyzer
+        analyzer = VariableAnalyzer(
+            self,
+            importance_method=importance_method,
+            elimination_threshold=elimination_threshold,
+            min_trials_per_value=min_trials_per_value,
+            directions=directions,
+            configuration_space=configuration_space,
+        )
+
+        return analyzer.analyze(objective_name)
+
     def get_summary(self) -> dict[str, Any]:
         """Compute high-level summary statistics about the optimization run."""
 
@@ -1247,6 +1340,194 @@ class OptimizationJob:
         """Wait for job completion and return results."""
         # Implementation would handle async waiting
         raise NotImplementedError("Background jobs not yet implemented")
+
+
+# =============================================================================
+# Multi-Agent Configuration Types
+# =============================================================================
+
+# Agent type for semantic grouping in multi-agent experiments
+AgentType = Literal["llm", "retriever", "router", "tool", "custom"]
+
+
+@dataclass
+class AgentMeta:
+    """Optional UI metadata for agent visualization.
+
+    Attributes:
+        color: Hex color code for charts and separators (e.g., "#4299E1")
+        icon: Icon identifier for UI display (e.g., "robot", "search")
+        description: Tooltip description for the agent
+    """
+
+    color: str | None = None
+    icon: str | None = None
+    description: str | None = None
+
+
+@dataclass
+class AgentDefinition:
+    """Definition for a single agent within a multi-agent experiment.
+
+    Attributes:
+        display_name: Human-readable name shown in UI (e.g., "Financial Agent")
+        parameter_keys: List of parameter names belonging to this agent
+        measure_ids: List of measure/metric IDs belonging to this agent
+        primary_model: Key of the primary model parameter (for Trade-off Analysis)
+        order: Display order (lower values appear first)
+        agent_type: Semantic type of the agent
+        meta: Optional UI metadata
+    """
+
+    display_name: str
+    parameter_keys: list[str] = field(default_factory=list)
+    measure_ids: list[str] = field(default_factory=list)
+    primary_model: str | None = None
+    order: int | None = None
+    agent_type: AgentType | None = None
+    meta: AgentMeta | None = None
+
+
+@dataclass
+class GlobalConfiguration:
+    """Global (non-agent-specific) parameters and measures.
+
+    Attributes:
+        parameter_keys: Parameters not tied to any specific agent
+        measure_ids: Measures not tied to any specific agent (e.g., total_cost)
+        order: Display order (default: last)
+    """
+
+    parameter_keys: list[str] = field(default_factory=list)
+    measure_ids: list[str] = field(default_factory=list)
+    order: int | None = None
+
+
+@dataclass
+class AgentConfiguration:
+    """Complete agent configuration for a multi-agent experiment.
+
+    This configuration is provided by the SDK in experiment_parameters to
+    explicitly map parameters and measures to agents, replacing fragile
+    label-parsing in the frontend.
+
+    Attributes:
+        version: Schema version for compatibility (currently "1.0")
+        agents: Map of agent_id to AgentDefinition
+        global_config: Configuration for global (non-agent) params/measures
+        auto_inferred: True if SDK auto-generated from naming patterns
+
+    Example:
+        >>> config = AgentConfiguration(
+        ...     agents={
+        ...         "financial": AgentDefinition(
+        ...             display_name="Financial Agent",
+        ...             parameter_keys=["financial_model", "financial_temperature"],
+        ...             measure_ids=["financial_accuracy"],
+        ...         ),
+        ...         "legal": AgentDefinition(
+        ...             display_name="Legal Agent",
+        ...             parameter_keys=["legal_model"],
+        ...             measure_ids=["legal_accuracy"],
+        ...         ),
+        ...     },
+        ...     global_config=GlobalConfiguration(
+        ...         measure_ids=["total_cost", "total_latency"],
+        ...     ),
+        ... )
+        >>> payload = config.to_dict()
+    """
+
+    version: str = "1.0"
+    agents: dict[str, AgentDefinition] = field(default_factory=dict)
+    global_config: GlobalConfiguration | None = None
+    auto_inferred: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization.
+
+        Returns:
+            Dictionary suitable for inclusion in experiment_parameters.
+        """
+        from dataclasses import asdict
+
+        result: dict[str, Any] = {
+            "version": self.version,
+            "auto_inferred": self.auto_inferred,
+            "agents": {},
+        }
+
+        for agent_id, agent in self.agents.items():
+            agent_dict: dict[str, Any] = {
+                "display_name": agent.display_name,
+                "parameter_keys": agent.parameter_keys,
+                "measure_ids": agent.measure_ids,
+            }
+            if agent.primary_model is not None:
+                agent_dict["primary_model"] = agent.primary_model
+            if agent.order is not None:
+                agent_dict["order"] = agent.order
+            if agent.agent_type is not None:
+                agent_dict["agent_type"] = agent.agent_type
+            if agent.meta is not None:
+                agent_dict["meta"] = asdict(agent.meta)
+            result["agents"][agent_id] = agent_dict
+
+        if self.global_config is not None:
+            global_dict: dict[str, Any] = {
+                "parameter_keys": self.global_config.parameter_keys,
+                "measure_ids": self.global_config.measure_ids,
+            }
+            if self.global_config.order is not None:
+                global_dict["order"] = self.global_config.order
+            result["global"] = global_dict
+
+        return result
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AgentConfiguration:
+        """Reconstruct AgentConfiguration from a dictionary.
+
+        Args:
+            data: Dictionary from to_dict() or backend response.
+
+        Returns:
+            AgentConfiguration instance.
+        """
+        agents: dict[str, AgentDefinition] = {}
+        for agent_id, agent_data in data.get("agents", {}).items():
+            meta = None
+            if "meta" in agent_data:
+                meta = AgentMeta(
+                    color=agent_data["meta"].get("color"),
+                    icon=agent_data["meta"].get("icon"),
+                    description=agent_data["meta"].get("description"),
+                )
+            agents[agent_id] = AgentDefinition(
+                display_name=agent_data.get("display_name", agent_id),
+                parameter_keys=agent_data.get("parameter_keys", []),
+                measure_ids=agent_data.get("measure_ids", []),
+                primary_model=agent_data.get("primary_model"),
+                order=agent_data.get("order"),
+                agent_type=agent_data.get("agent_type"),
+                meta=meta,
+            )
+
+        global_config = None
+        global_data = data.get("global")
+        if global_data:
+            global_config = GlobalConfiguration(
+                parameter_keys=global_data.get("parameter_keys", []),
+                measure_ids=global_data.get("measure_ids", []),
+                order=global_data.get("order"),
+            )
+
+        return cls(
+            version=data.get("version", "1.0"),
+            agents=agents,
+            global_config=global_config,
+            auto_inferred=data.get("auto_inferred", False),
+        )
 
 
 # Type aliases for convenience

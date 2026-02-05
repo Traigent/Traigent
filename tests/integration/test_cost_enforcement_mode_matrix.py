@@ -9,7 +9,7 @@ The Alloy model (docs/traceability/alloy/cost_enforcement.als) is intentionally
 mode-agnostic. This is NOT an oversight but a deliberate design decision:
 
 1. **CostEnforcer operates below the mode abstraction layer**: It tracks costs
-   regardless of how configurations are injected (CONTEXT, PARAMETER, ATTRIBUTE)
+   regardless of how configurations are injected (CONTEXT, PARAMETER, SEAMLESS)
    or where optimization runs (EDGE_ANALYTICS, CLOUD, HYBRID, STANDARD).
 
 2. **InjectionMode affects decorator → user function**, NOT orchestrator → CostEnforcer:
@@ -221,7 +221,7 @@ def patch_backend(monkeypatch):
     mock_backend.delete_session.return_value = True
 
     monkeypatch.setattr(
-        "traigent.core.orchestrator.BackendIntegratedClient",
+        "traigent.cloud.backend_client.BackendIntegratedClient",
         lambda *args, **kwargs: mock_backend,
     )
 
@@ -230,7 +230,7 @@ def patch_backend(monkeypatch):
 INJECTION_MODES = [
     InjectionMode.CONTEXT,
     InjectionMode.PARAMETER,
-    InjectionMode.ATTRIBUTE,
+    # ATTRIBUTE was removed in v2.x due to thread-safety issues
     # SEAMLESS requires source code rewriting, skip for unit test
 ]
 
@@ -340,10 +340,10 @@ class TestCostEnforcerModeMatrix:
         [
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.CONTEXT),
             (ExecutionMode.CLOUD, InjectionMode.PARAMETER),
-            (ExecutionMode.HYBRID, InjectionMode.ATTRIBUTE),
+            (ExecutionMode.HYBRID, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
             (ExecutionMode.STANDARD, InjectionMode.CONTEXT),
             (ExecutionMode.EDGE_ANALYTICS, InjectionMode.PARAMETER),
-            (ExecutionMode.CLOUD, InjectionMode.ATTRIBUTE),
+            (ExecutionMode.CLOUD, InjectionMode.CONTEXT),  # ATTRIBUTE removed in v2.x
         ],
     )
     @pytest.mark.asyncio

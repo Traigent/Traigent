@@ -1,40 +1,51 @@
 #!/usr/bin/env python3
 """Cost estimator for Traigent optimization runs."""
 
-from typing import Any, Dict, List
+from typing import Any
 
-# Approximate costs per 1K tokens (as of 2024)
+# Approximate costs per 1K tokens (as of Jan 2026)
+# Synced with mock_answers.py MOCK_MODEL_COSTS
 MODEL_COSTS = {
     # OpenAI models
     "gpt-3.5-turbo": {"input": 0.0005, "output": 0.0015},
     "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-    "gpt-4o": {"input": 0.005, "output": 0.015},
+    "gpt-4o": {"input": 0.0025, "output": 0.01},
     "gpt-4": {"input": 0.03, "output": 0.06},
     "gpt-4-turbo": {"input": 0.01, "output": 0.03},
+    "gpt-4.1-nano": {"input": 0.0001, "output": 0.0004},   # Released Apr 2025
+    "gpt-5-nano": {"input": 0.00008, "output": 0.0003},    # Released Aug 2025
+    "gpt-5.1": {"input": 0.002, "output": 0.008},          # Released Nov 2025
+    "gpt-5.2": {"input": 0.003, "output": 0.012},          # Released Dec 2025
     # Anthropic models
     "claude-3-haiku-20240307": {"input": 0.00025, "output": 0.00125},
     "claude-3-sonnet-20240229": {"input": 0.003, "output": 0.015},
     "claude-3-opus-20240229": {"input": 0.015, "output": 0.075},
     "claude-3-5-sonnet-20241022": {"input": 0.003, "output": 0.015},
+    # Google Gemini models (Standard tier <= 128k context)
+    # Note: Prices double if context length > 128k tokens
+    "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+    "gemini-1.5-pro": {"input": 0.00125, "output": 0.005},
+    "gemini-2.0-flash-exp": {"input": 0.000075, "output": 0.0003},  # Often free in AI Studio
 }
 
-# Average token estimates per interaction
+# Updated Average token estimates
 AVERAGE_TOKENS = {
     "simple_qa": {"input": 50, "output": 30},
     "classification": {"input": 80, "output": 10},
     "generation": {"input": 100, "output": 200},
-    "rag_qa": {"input": 500, "output": 100},
+    # INCREASED: 500 -> 2000 to account for retrieved context chunks
+    "rag_qa": {"input": 2000, "output": 100},
     "code_generation": {"input": 150, "output": 300},
     "summarization": {"input": 1000, "output": 200},
 }
 
 
 def estimate_cost(
-    models: List[str],
+    models: list[str],
     dataset_size: int,
     task_type: str = "simple_qa",
     num_trials: int = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Estimate the cost of running Traigent optimization.
 
@@ -72,8 +83,11 @@ def estimate_cost(
             model_costs[model] = dataset_cost
             total_cost += dataset_cost
         else:
-            # Unknown model - use average
-            model_costs[model] = 0.01 * dataset_size
+            # Unknown model - use conservative estimate (similar to gpt-3.5-turbo)
+            example_cost = (input_tokens / 1000) * 0.0005 + (
+                output_tokens / 1000
+            ) * 0.0015
+            model_costs[model] = example_cost * dataset_size
             total_cost += model_costs[model]
 
     # Scale by number of trials if different from number of models
@@ -98,12 +112,12 @@ def estimate_cost(
         "notes": [
             "Costs are estimates based on average token usage",
             "Actual costs may vary based on prompt complexity",
-            "Prices as of 2024 - check latest pricing",
+            "Prices as of 2026 - check latest pricing",
         ],
     }
 
 
-def format_cost_estimate(estimate: Dict[str, Any]) -> str:
+def format_cost_estimate(estimate: dict[str, Any]) -> str:
     """Format cost estimate for display."""
 
     output = []

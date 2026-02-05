@@ -242,10 +242,14 @@ async def test_privacy_mode_sanitizes_measures():
     assert len(trial_meta["measures"]) == 1
 
     m0 = trial_meta["measures"][0]
+    # Measures now use nested format with example_id and metrics dict
+    assert "example_id" in m0
+    assert "metrics" in m0
+    metrics = m0["metrics"]
     # Privacy: should have score and response_time; may include token/cost metrics
-    assert "score" in m0
-    assert "response_time" in m0
-    # Must not include raw inputs/outputs
+    assert "score" in metrics
+    assert "response_time" in metrics
+    # Must not include raw inputs/outputs in the measure
     forbidden_keys = {"input", "input_data", "expected", "predicted", "actual_output"}
     assert not any(k in m0 for k in forbidden_keys)
     # Ensure raw example_results not transmitted in privacy mode

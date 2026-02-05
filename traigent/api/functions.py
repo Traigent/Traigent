@@ -74,6 +74,7 @@ def configure(
         ...     parallel_workers=4,
         ...     api_keys={"openai": "sk-..."}
         ... )
+        True
     """
     if default_storage_backend is not None:
         _GLOBAL_CONFIG["default_storage_backend"] = default_storage_backend
@@ -183,22 +184,23 @@ def initialize(  # noqa: C901
     Returns:
         True if initialization successful
 
-    Example:
-        >>> # Edge Analytics mode initialization (backend URL from env or config)
-        >>> # Set TRAIGENT_API_KEY environment variable for security
-        >>> config = traigent.TraigentConfig.edge_analytics_mode()
-        >>> traigent.initialize(config=config)
+    Example::
 
-        >>> # Cloud mode with explicit URL
-        >>> traigent.initialize(
-        ...     api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
-        ...     api_url="https://api.traigent.ai"
-        ... )
+        # Edge Analytics mode initialization (backend URL from env or config)
+        # Set TRAIGENT_API_KEY environment variable for security
+        config = traigent.TraigentConfig.edge_analytics_mode()
+        traigent.initialize(config=config)
 
-        >>> # Using environment variables (recommended)
-        >>> # export TRAIGENT_BACKEND_URL="http://localhost:5000"
-        >>> # export TRAIGENT_API_KEY="your-key-here"
-        >>> traigent.initialize()
+        # Cloud mode with explicit URL
+        traigent.initialize(
+            api_key=os.getenv("TRAIGENT_API_KEY"),  # Use env var
+            api_url="https://api.traigent.ai"
+        )
+
+        # Using environment variables (recommended)
+        # export TRAIGENT_BACKEND_URL="http://localhost:5000"
+        # export TRAIGENT_API_KEY="your-key-here"
+        traigent.initialize()
     """
 
     from traigent.config.backend_config import BackendConfig
@@ -319,9 +321,9 @@ def _coerce_config_dict(
 ) -> dict[str, Any]:
     """Normalize config objects to a plain dict and raise on invalid types."""
     if isinstance(config, TraigentConfig):
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
     if isinstance(config, dict):
-        return dict(config)
+        return cast(dict[str, Any], dict(config))
 
     raise OptimizationStateError(
         f"{source} config has invalid type: {type(config).__name__}. "
@@ -337,6 +339,17 @@ def get_config() -> dict[str, Any]:
     This unified accessor works both during optimization trials and after
     applying the best configuration to your function.
 
+    Important - When to use get_config() vs get_trial_config():
+        - **get_config()** (recommended): Works in all contexts - during optimization
+          trials and after calling ``apply_best_config()``. Use this for most cases.
+        - **get_trial_config()**: Strict validation - raises ``OptimizationStateError``
+          if called outside an active trial. Use when you need explicit trial context.
+
+    .. warning::
+        Traigent does NOT automatically inject config into function parameters.
+        Function parameters like ``model: str = "gpt-4"`` will NOT be overridden
+        by Traigent during optimization. Use ``get_config()`` to access trial values.
+
     Returns:
         Dictionary with the currently active configuration.
 
@@ -344,11 +357,12 @@ def get_config() -> dict[str, Any]:
         OptimizationStateError: If no configuration is available (e.g., called
             outside an optimized function without apply_best_config()).
 
-    Example:
-        >>> @traigent.optimize(...)
-        ... def my_func(query: str):
-        ...     cfg = traigent.get_config()  # Works during and after optimization
-        ...     return call_llm(model=cfg["model"])
+    Example::
+
+        @traigent.optimize(configuration_space={"model": ["gpt-3.5", "gpt-4"]})
+        def my_func(query: str):
+            cfg = traigent.get_config()  # Works during trials and after apply_best_config
+            return call_llm(model=cfg["model"])
     """
     trial_ctx = get_trial_context()
     if trial_ctx is not None:
@@ -379,7 +393,7 @@ def get_config() -> dict[str, Any]:
             expected_states=["CONFIG_APPLIED", "UNOPTIMIZED"],
         )
     if isinstance(context_config, TraigentConfig):
-        config_dict = context_config.to_dict()
+        config_dict = cast(dict[str, Any], context_config.to_dict())
         # Check if config has any meaningful values (not just defaults)
         if any(v is not None for k, v in config_dict.items() if k != "execution_mode"):
             return config_dict
@@ -406,18 +420,19 @@ def get_trial_config() -> dict[str, Any]:
     Returns:
         Dictionary with the current trial's configuration parameters.
 
-    Example:
-        >>> @traigent.optimize(
-        ...     configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.8]}
-        ... )
-        ... def my_function(query: str) -> str:
-        ...     config = traigent.get_trial_config()  # Gets trial-specific config
-        ...     return call_llm(model=config["model"], temperature=config["temperature"])
-        ...
-        >>> # Run optimization - get_trial_config() works inside the function
-        >>> result = traigent.optimize(my_function, dataset=my_data)
-        >>> # Access best config via result
-        >>> print(result.best_config)
+    Example::
+
+        @traigent.optimize(
+            configuration_space={"model": ["gpt-3.5", "gpt-4"], "temperature": [0.5, 0.8]}
+        )
+        def my_function(query: str) -> str:
+            config = traigent.get_trial_config()  # Gets trial-specific config
+            return call_llm(model=config["model"], temperature=config["temperature"])
+
+        # Run optimization - get_trial_config() works inside the function
+        result = traigent.optimize(my_function, dataset=my_data)
+        # Access best config via result
+        print(result.best_config)
     """
     # Check if we're in an active trial context
     trial_ctx = get_trial_context()
@@ -487,9 +502,9 @@ def get_current_config() -> dict[str, Any]:
 
     # Convert TraigentConfig to dict if needed
     if isinstance(config, TraigentConfig):
-        return config.to_dict()
+        return cast(dict[str, Any], config.to_dict())
     if isinstance(config, dict):
-        return dict(config)
+        return cast(dict[str, Any], dict(config))
 
     # Fallback for unexpected config types
     # This branch handles edge cases where config is neither TraigentConfig nor dict
@@ -519,14 +534,15 @@ def override_config(
     Returns:
         Configuration override dict for use with .optimize()
 
-    Example:
-        >>> # Override to focus on cost efficiency
-        >>> cost_config = traigent.override_config(
-        ...     objectives=["cost", "accuracy"],
-        ...     configuration_space={"model": ["gpt-4o-mini"]},
-        ...     max_trials=20
-        ... )
-        >>> results = my_agent.optimize(config_override=cost_config)
+    Example::
+
+        # Override to focus on cost efficiency
+        cost_config = traigent.override_config(
+            objectives=["cost", "accuracy"],
+            configuration_space={"model": ["gpt-4o-mini"]},
+            max_trials=20
+        )
+        results = my_agent.optimize(config_override=cost_config)
     """
     override: dict[str, Any] = {}
 
@@ -561,7 +577,7 @@ def override_config(
 
 
 def set_strategy(
-    algorithm: str = "bayesian",
+    algorithm: str = "tpe",
     algorithm_config: dict[str, Any] | None = None,
     parallel_workers: int | None = None,
     resource_limits: dict[str, Any] | None = None,
@@ -569,7 +585,10 @@ def set_strategy(
     """Configure optimization strategy and execution parameters.
 
     Args:
-        algorithm: Optimization algorithm ("bayesian", "grid", "random", "genetic")
+        algorithm: Optimization algorithm ("tpe", "random", "grid", "bayesian").
+            Default is "tpe" (Tree-structured Parzen Estimator) which is always
+            available with Optuna. "bayesian" (Gaussian Process) requires
+            the traigent-advanced-algorithms plugin.
         algorithm_config: Algorithm-specific parameters
         parallel_workers: Number of parallel evaluation workers
         resource_limits: Memory, time, and compute constraints
@@ -577,16 +596,17 @@ def set_strategy(
     Returns:
         StrategyConfig object for use with optimization
 
-    Example:
-        >>> strategy = traigent.set_strategy(
-        ...     algorithm="bayesian",
-        ...     algorithm_config={
-        ...         "acquisition_function": "expected_improvement",
-        ...         "initial_random_samples": 5
-        ...     },
-        ...     parallel_workers=4
-        ... )
-        >>> results = my_agent.optimize(strategy=strategy)
+    Example::
+
+        strategy = traigent.set_strategy(
+            algorithm="tpe",
+            algorithm_config={
+                "n_startup_trials": 10,
+                "multivariate": True
+            },
+            parallel_workers=4
+        )
+        results = my_agent.optimize(strategy=strategy)
     """
     # Validate algorithm
     available_algorithms = get_available_strategies()
@@ -625,8 +645,8 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
 
     Example:
         >>> strategies = traigent.get_available_strategies()
-        >>> print(strategies["bayesian"]["description"])
-        >>> print(strategies["bayesian"]["parameters"])
+        >>> strategies["bayesian"]["description"]
+        'Gaussian Process-based optimization with acquisition functions'
     """
     algorithms = list_optimizers()
 
@@ -640,7 +660,13 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "supports_continuous": False,
                 "supports_categorical": True,
                 "deterministic": True,
-                "parameters": {"description": "No additional parameters"},
+                "parameters": {
+                    "parameter_order": (
+                        "Map parameter names to numeric priorities. Lower values "
+                        "vary slowest; higher values vary fastest."
+                    ),
+                    "order": "Alias for parameter_order.",
+                },
                 "best_for": "Small parameter spaces, exhaustive evaluation",
             }
 
@@ -710,8 +736,8 @@ def get_version_info() -> dict[str, Any]:
 
     Example:
         >>> info = traigent.get_version_info()
-        >>> print(f"Traigent SDK v{info['version']}")
-        >>> print(f"Available algorithms: {info['algorithms']}")
+        >>> 'version' in info
+        True
     """
     import platform
     import sys
@@ -728,21 +754,45 @@ def get_version_info() -> dict[str, Any]:
         except Exception:
             algorithms = []
 
+    # Query plugin registry for available features
+    from traigent.plugins import (
+        FEATURE_ADVANCED_ALGORITHMS,
+        FEATURE_ANALYTICS,
+        FEATURE_CLOUD,
+        FEATURE_MULTI_OBJECTIVE,
+        FEATURE_PARALLEL,
+        FEATURE_SEAMLESS,
+        FEATURE_TRACING,
+        get_plugin_registry,
+    )
+
+    registry = get_plugin_registry()
+
     return {
         "version": __version__,
         "python_version": sys.version,
         "platform": platform.platform(),
         "algorithms": algorithms,
         "features": {
+            # Base features (always available)
             "grid_search": True,
             "random_search": True,
-            "bayesian_optimization": True,  # Available with scikit-learn
-            "multi_objective": True,
+            "tpe_optimization": True,  # TPE is default, always available with Optuna
             "constraint_handling": True,
             "async_evaluation": True,
-            "parallel_evaluation": True,
-            "result_persistence": True,  # Available in Sprint 2
-            "visualization": True,  # Available in Sprint 3
+            "result_persistence": True,
+            # Plugin-provided features (query registry)
+            "bayesian_optimization": (
+                registry.has_feature(FEATURE_ADVANCED_ALGORITHMS)
+                or "bayesian" in algorithms  # Fallback: check if registered
+            ),
+            "multi_objective": registry.has_feature(FEATURE_MULTI_OBJECTIVE) or True,
+            "parallel_evaluation": registry.has_feature(FEATURE_PARALLEL) or True,
+            "seamless_injection": registry.has_feature(FEATURE_SEAMLESS) or True,
+            "cloud_execution": registry.has_feature(FEATURE_CLOUD),
+            "tracing": registry.has_feature(FEATURE_TRACING),
+            "analytics": registry.has_feature(FEATURE_ANALYTICS),
+            "visualization": True,  # Basic visualization in base
         },
         "integrations": {
             "langchain": _check_integration("traigent.integrations.llms.langchain"),
@@ -750,6 +800,7 @@ def get_version_info() -> dict[str, Any]:
             "mlflow": _check_integration("traigent.integrations.observability.mlflow"),
             "wandb": _check_integration("traigent.integrations.observability.wandb"),
         },
+        "plugins": registry.list_plugins(),  # List installed plugins
         "global_config": _GLOBAL_CONFIG.copy(),
     }
 
@@ -770,12 +821,13 @@ def get_optimization_insights(results: OptimizationResult) -> dict[str, Any]:
         - parameter_insights: Analysis of parameter importance and impact
         - recommendations: Actionable recommendations based on analysis
 
-    Example:
-        >>> results = my_function.optimize()
-        >>> insights = traigent.get_optimization_insights(results)
-        >>> print("💡 Top 3 configurations discovered:")
-        >>> for i, config in enumerate(insights['top_configurations'][:3]):
-        ...     print(f"{i+1}. {config['config']} → {config['score']:.2%} accuracy, ${config.get('cost_analysis', {}).get('cost_per_query', 0):.3f}/1K queries")
+    Example::
+
+        results = my_function.optimize()
+        insights = traigent.get_optimization_insights(results)
+        print("Top 3 configurations discovered:")
+        for i, config in enumerate(insights['top_configurations'][:3]):
+            print(f"{i+1}. {config['config']} -> {config['score']:.2%} accuracy")
     """
     return cast(dict[str, Any], _get_optimization_insights(results))
 
@@ -791,3 +843,141 @@ def get_global_parallel_config() -> ParallelConfig:
         coerced = ParallelConfig()
     _GLOBAL_CONFIG["parallel_config"] = coerced
     return coerced
+
+
+def with_usage(
+    text: str,
+    total_cost: float,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    response_time_ms: float | None = None,
+) -> str | dict[str, Any]:
+    """Wrap a response with usage metadata if in optimization mode.
+
+    Returns text directly in production, or a dict with metadata
+    during optimization. The metadata is extracted and injected into
+    metrics after cost calculation.
+
+    Args:
+        text: The actual response content (must be a string)
+        total_cost: Pre-computed cost in USD (REQUIRED - not recalculated from tokens)
+        input_tokens: Number of input tokens consumed (informational, for UI display).
+            If only one token count is provided, the other defaults to 0.
+        output_tokens: Number of output tokens generated (informational, for UI display).
+        response_time_ms: Response time in milliseconds (optional, for latency tracking).
+            If only one token count is provided, the other defaults to 0.
+
+    Returns:
+        In production: text unchanged
+        During optimization: dict with structure:
+            {
+                "text": str,
+                "__traigent_meta__": {
+                    "total_cost": float,
+                    "usage": {  # Optional
+                        "input_tokens": int,
+                        "output_tokens": int
+                    }
+                }
+            }
+
+    Raises:
+        TypeError: If text is not a string or total_cost is not numeric
+
+    Validation:
+        The returned __traigent_meta__ structure is validated at runtime using
+        type guards from traigent.core.meta_types.TraigentMetadata:
+        - text must be string (raises TypeError)
+        - total_cost must be numeric (raises TypeError)
+        - tokens must be integers if provided
+        - negative values are clamped to 0 with warning
+
+    Type Safety:
+        See traigent.core.meta_types.TraigentMetadata for the canonical TypedDict
+        definition. The structure is validated using is_traigent_metadata() type guard.
+
+    Note:
+        - `total_cost` is REQUIRED because cost is not recalculated from tokens
+        - Token counts are informational only (for UI display)
+        - Cost is injected AFTER SDK's cost calculation, overriding any calculated value
+        - Custom metric functions receive the full dict output (including __traigent_meta__)
+        - `__traigent_meta__` is a reserved key. If your function output already contains
+          this key for other purposes, it will be treated as usage metadata.
+
+    Example:
+        @traigent.optimize(...)
+        def my_workflow(question: str):
+            # Accumulate usage from internal LLM calls
+            total_in = total_out = total_cost = 0
+            for step in workflow:
+                response = llm.call(...)
+                total_in += response.usage.prompt_tokens
+                total_out += response.usage.completion_tokens
+                total_cost += calculate_cost(response)  # User must calculate
+
+            return traigent.with_usage(
+                text=answer,
+                total_cost=total_cost,
+                input_tokens=total_in,
+                output_tokens=total_out,
+            )
+
+    Multi-Agent Workflows:
+        For multi-agent workflows with per-agent cost tracking, use the
+        AgentCostBreakdown and WorkflowCostSummary DTOs from traigent.cloud.agent_dtos:
+
+        >>> from traigent import AgentCostBreakdown, WorkflowCostSummary
+        >>> agent1 = AgentCostBreakdown(
+        ...     agent_id="researcher",
+        ...     agent_name="Research Agent",
+        ...     input_tokens=100, output_tokens=50, total_tokens=150,
+        ...     input_cost=0.001, output_cost=0.002, total_cost=0.003,
+        ...     model_used="gpt-4o-mini"
+        ... )
+        >>> workflow = WorkflowCostSummary(
+        ...     workflow_id="workflow-001",
+        ...     workflow_name="Research",
+        ...     agent_breakdowns=[agent1]
+        ... )
+        >>> return traigent.with_usage(
+        ...     text=result,
+        ...     total_cost=workflow.total_cost,
+        ...     input_tokens=workflow.total_input_tokens,
+        ...     output_tokens=workflow.total_output_tokens
+        ... )
+    """
+    # Enforce string type
+    if not isinstance(text, str):
+        raise TypeError(
+            f"with_usage() requires text to be a string, got {type(text).__name__}. "
+            "Convert your response to a string before calling with_usage()."
+        )
+
+    # Only wrap in dict during optimization
+    if get_trial_context() is None:
+        return text
+
+    result: dict[str, Any] = {"text": text}
+
+    # Build metadata - always include total_cost (required)
+    meta: dict[str, Any] = {"total_cost": float(total_cost)}
+
+    # Only include usage metadata if any field is explicitly provided (not None)
+    # This avoids overwriting existing extracted values with zeros
+    if (
+        input_tokens is not None
+        or output_tokens is not None
+        or response_time_ms is not None
+    ):
+        usage: dict[str, int | float] = {}
+        if input_tokens is not None:
+            usage["input_tokens"] = int(input_tokens)
+        if output_tokens is not None:
+            usage["output_tokens"] = int(output_tokens)
+        if response_time_ms is not None:
+            usage["response_time_ms"] = float(response_time_ms)
+        meta["usage"] = usage
+
+    result["__traigent_meta__"] = meta
+
+    return result

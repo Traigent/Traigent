@@ -12,10 +12,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+if TYPE_CHECKING:
+    from traigent.core.meta_types import TraigentMetadata
+
 from traigent.config.types import ExecutionMode, resolve_execution_mode
 from traigent.evaluators.base import BaseEvaluator, Dataset, EvaluationResult
 from traigent.evaluators.metrics_tracker import (
     ExampleMetrics,
+    MetricsCalculator,
     MetricsTracker,
     extract_llm_metrics,
 )
@@ -41,6 +45,92 @@ class PromptInfo:
     response_length: int | None
 
 
+class _AggregatedResponses:
+    """Wrapper that aggregates metrics from multiple LLM responses.
+
+    Used when a single example makes multiple LLM calls (e.g., main response + judge).
+    Provides usage_metadata and response_metadata that sum the individual responses.
+    """
+
+    def __init__(self, responses: list[Any]) -> None:
+        self._responses = responses
+        totals = self._sum_token_usage()
+        self._build_metadata(totals)
+
+    def _extract_tokens_from_response(self, resp: Any) -> tuple[int, int, int]:
+        """Extract (input, output, total) tokens from a single response."""
+        usage = getattr(resp, "usage_metadata", None)
+        if usage:
+            return (
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("total_tokens", 0),
+            )
+
+        resp_meta = getattr(resp, "response_metadata", None)
+        if not resp_meta or not isinstance(resp_meta, dict):
+            return (0, 0, 0)
+
+        token_usage = resp_meta.get("token_usage", {})
+        if not isinstance(token_usage, dict):
+            return (0, 0, 0)
+
+        return (
+            token_usage.get("prompt_tokens", 0),
+            token_usage.get("completion_tokens", 0),
+            token_usage.get("total_tokens", 0),
+        )
+
+    def _sum_token_usage(self) -> tuple[int, int, int]:
+        """Sum up token usage from all responses."""
+        total_input = 0
+        total_output = 0
+        total_tokens = 0
+
+        for resp in self._responses:
+            inp, out, tot = self._extract_tokens_from_response(resp)
+            total_input += inp
+            total_output += out
+            total_tokens += tot
+
+        # Ensure total is at least sum of parts
+        if total_tokens == 0 and (total_input > 0 or total_output > 0):
+            total_tokens = total_input + total_output
+
+        return (total_input, total_output, total_tokens)
+
+    def _build_metadata(self, totals: tuple[int, int, int]) -> None:
+        """Build usage_metadata and response_metadata from totals."""
+        total_input, total_output, total_tokens = totals
+
+        self.usage_metadata = {
+            "input_tokens": total_input,
+            "output_tokens": total_output,
+            "total_tokens": total_tokens,
+        }
+
+        self.response_metadata: dict[str, Any] = {
+            "token_usage": {
+                "prompt_tokens": total_input,
+                "completion_tokens": total_output,
+                "total_tokens": total_tokens,
+            }
+        }
+
+        # Copy model name from first response if available
+        if self._responses:
+            first_meta = getattr(self._responses[0], "response_metadata", None)
+            if first_meta and isinstance(first_meta, dict):
+                for key in ("model", "model_name"):
+                    if key in first_meta:
+                        self.response_metadata[key] = first_meta[key]
+
+        logger.debug(
+            f"Aggregated {len(self._responses)} LLM responses: "
+            f"input={total_input}, output={total_output}, total={total_tokens}"
+        )
+
+
 # Apply LangChain patch on module import
 patch_langchain_for_metadata_capture()
 
@@ -54,9 +144,10 @@ class LocalEvaluator(BaseEvaluator):
     Evaluates functions locally in the current process. Supports both
     synchronous and asynchronous functions with timeout handling.
 
-    Example:
-        >>> evaluator = LocalEvaluator(["accuracy"], timeout=30.0)
-        >>> result = await evaluator.evaluate(my_function, config, dataset)
+    Example::
+
+        evaluator = LocalEvaluator(["accuracy"], timeout=30.0)
+        result = await evaluator.evaluate(my_function, config, dataset)
     """
 
     def __init__(
@@ -207,8 +298,11 @@ class LocalEvaluator(BaseEvaluator):
         Priority:
         1. If output is a dict with 'raw_response', prefer it (SDK object)
         2. Else use captured LangChain response by correlation key
-        3. Else use captured response by index
+        3. Else use captured response by index (with multi-call handling)
         4. Else fall back to output itself
+
+        When there are multiple LLM calls per example (e.g., main response + judge),
+        this method handles the mismatch by computing aggregate metrics.
 
         Args:
             output: The function output
@@ -237,6 +331,26 @@ class LocalEvaluator(BaseEvaluator):
         by_key = get_captured_response_by_key(ex_key)
         if by_key is not None:
             return by_key
+
+        # Handle case where there are more captured responses than outputs
+        # (multiple LLM calls per example, e.g., main response + judge scoring)
+        num_outputs = len(dataset.examples)
+        num_responses = len(all_captured_responses)
+
+        if num_responses > num_outputs and num_outputs > 0:
+            # Calculate how many responses per output (e.g., 2 for main + judge)
+            responses_per_output = num_responses // num_outputs
+            if responses_per_output >= 1:
+                # Get the slice of responses for this example
+                start_idx = example_index * responses_per_output
+                end_idx = start_idx + responses_per_output
+                # Return aggregated metrics wrapper if we have multiple
+                if end_idx <= num_responses and responses_per_output > 1:
+                    return _AggregatedResponses(
+                        all_captured_responses[start_idx:end_idx]
+                    )
+                elif start_idx < num_responses:
+                    return all_captured_responses[start_idx]
 
         # Fall back to index-based or output itself
         if example_index < len(all_captured_responses):
@@ -596,6 +710,150 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
         example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
 
+    def _extract_and_inject_traigent_meta(
+        self, output: Any, metrics: ExampleMetrics
+    ) -> TraigentMetadata | None:
+        """Extract __traigent_meta__ from output and inject into metrics.
+
+        This method runs AFTER cost calculation to allow user-provided costs
+        to override SDK-calculated values (including mock mode zeros).
+
+        Uses type guards from traigent.core.meta_types to validate the
+        __traigent_meta__ structure at runtime.
+
+        Args:
+            output: Raw function output (may be dict with __traigent_meta__).
+            metrics: ExampleMetrics to update with user-provided values.
+
+        Returns:
+            The meta dict if found, None otherwise. Invalid structure logs
+            errors but does not abort evaluation.
+
+        Note:
+            - Type guard validates structure before extraction
+            - Tokens are injected using key-presence checks (explicit zeros override)
+            - Derived metrics (tokens_per_second) are recomputed after injection
+            - Custom metrics receive the raw output dict (including __traigent_meta__)
+        """
+        from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
+
+        if not isinstance(output, dict):
+            return None
+
+        meta = output.get("__traigent_meta__")
+        if meta is None:
+            return None
+
+        # Type guard: Validate structure
+        if not is_traigent_metadata(meta):
+            logger.error(
+                "Invalid __traigent_meta__ structure",
+                extra={
+                    "meta": meta,
+                    "expected_keys": ["total_cost (required)", "usage (optional)"],
+                    "validation": "Type guard failed - structure does not match TraigentMetadata",
+                },
+            )
+            return None
+
+        # Now TypedDict ensures correct structure (mypy knows this)
+        meta = cast(TraigentMetadata, meta)
+        logger.debug(f"Validated __traigent_meta__ with keys: {meta.keys()}")
+
+        # Inject tokens with validation (usage is NotRequired, so check existence)
+        if "usage" in meta:
+            usage = meta["usage"]
+            try:
+                # Use key-presence checks (not truthiness) to allow explicit zeros
+                if "input_tokens" in usage:
+                    input_val = usage["input_tokens"]
+                    if input_val < 0:
+                        logger.warning(
+                            f"Negative input_tokens clamped: {input_val} → 0"
+                        )
+                    metrics.tokens.input_tokens = max(0, input_val)
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject input_tokens despite type guard: {e}",
+                    extra={"usage": usage},
+                )
+
+            try:
+                if "output_tokens" in usage:
+                    output_val = usage["output_tokens"]
+                    if output_val < 0:
+                        logger.warning(
+                            f"Negative output_tokens clamped: {output_val} → 0"
+                        )
+                    metrics.tokens.output_tokens = max(0, output_val)
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject output_tokens despite type guard: {e}",
+                    extra={"usage": usage},
+                )
+
+            # Recompute total_tokens if any token counts were injected
+            try:
+                if "input_tokens" in usage or "output_tokens" in usage:
+                    metrics.tokens.total_tokens = (
+                        metrics.tokens.input_tokens + metrics.tokens.output_tokens
+                    )
+            except Exception as e:
+                logger.error(
+                    f"Failed to compute total_tokens: {e}",
+                    extra={
+                        "input_tokens": metrics.tokens.input_tokens,
+                        "output_tokens": metrics.tokens.output_tokens,
+                    },
+                )
+
+            # Inject response_time_ms if provided
+            try:
+                if "response_time_ms" in usage:
+                    response_time = usage["response_time_ms"]
+                    if response_time < 0:
+                        logger.warning(
+                            f"Negative response_time_ms clamped: {response_time} → 0.0"
+                        )
+                    metrics.response.response_time_ms = max(0.0, float(response_time))
+            except Exception as e:
+                logger.error(
+                    f"Failed to inject response_time_ms: {e}",
+                    extra={"response_time_ms": usage.get("response_time_ms")},
+                )
+
+        # Inject cost with validation
+        try:
+            total_cost = meta["total_cost"]
+            if total_cost < 0:
+                logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
+            metrics.cost.total_cost = max(0.0, float(total_cost))
+        except Exception as e:
+            logger.error(
+                f"Failed to inject total_cost: {e}",
+                extra={"total_cost": meta.get("total_cost")},
+            )
+
+        # Recompute derived metrics after token injection
+        try:
+            # Reset tokens_per_second if tokens are now 0 (avoid stale values)
+            if metrics.tokens.total_tokens == 0:
+                metrics.response.tokens_per_second = 0.0
+            else:
+                MetricsCalculator.calculate_tokens_per_second(metrics)
+        except Exception as e:
+            logger.error(
+                f"Failed to recompute tokens_per_second: {e}",
+                extra={"total_tokens": metrics.tokens.total_tokens},
+            )
+
+        logger.debug(
+            f"Injected cost=${metrics.cost.total_cost:.4f}, "
+            f"tokens={metrics.tokens.total_tokens}"
+        )
+
+        return meta
+
     def _process_single_output(
         self,
         output: Any,
@@ -626,6 +884,10 @@ class LocalEvaluator(BaseEvaluator):
         example_metric = self._extract_llm_metrics_for_output(
             output, index, config, dataset, all_captured_responses
         )
+
+        # META-EXTRACTION-POINT: Extract and inject __traigent_meta__ if present
+        # This MUST happen AFTER extract_llm_metrics returns (so we can override cost)
+        self._extract_and_inject_traigent_meta(output, example_metric)
 
         # Set success status
         example_metric.success = errors[index] is None

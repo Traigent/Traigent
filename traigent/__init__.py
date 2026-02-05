@@ -52,6 +52,7 @@ from traigent.api.constraints import (
     BoolExpr,
     Condition,
     Constraint,
+    ConstraintScopeError,
     NotCondition,
     OrCondition,
     WhenBuilder,
@@ -75,6 +76,7 @@ from traigent.api.functions import (
     initialize,
     override_config,
     set_strategy,
+    with_usage,
 )
 
 # SE-friendly parameter range classes
@@ -107,11 +109,16 @@ from traigent.api.validation_protocol import (
     ValidationResult as ConstraintValidationResult,
 )
 
+# Multi-agent workflow cost tracking (DTO hardening)
+from traigent.cloud.agent_dtos import AgentCostBreakdown, WorkflowCostSummary
+from traigent.cloud.dtos import MeasuresDict
+
 # Thread context helpers
-from traigent.config.context import copy_context_to_thread
+from traigent.config.context import copy_context_to_thread, get_trial_context
 
 # Configuration types
 from traigent.config.types import TraigentConfig
+from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
 # Lifecycle and state management
 from traigent.core.optimized_function import OptimizationState
@@ -132,6 +139,9 @@ from traigent.utils.constraints import (
 # Exceptions and warnings
 from traigent.utils.exceptions import (
     ConfigAccessWarning,
+    DataIntegrityError,
+    DTOSerializationError,
+    MetricExtractionError,
     OptimizationStateError,
     TraigentDeprecationWarning,
     TraigentWarning,
@@ -165,6 +175,7 @@ __all__ = [
     "BoolExpr",
     "Condition",
     "Constraint",
+    "ConstraintScopeError",
     "ConfigSpace",
     "ConstraintValidator",
     "ConstraintViolation",
@@ -188,20 +199,31 @@ __all__ = [
     "get_config",
     "get_current_config",  # Deprecated: use get_trial_config
     "get_trial_config",  # New: use during optimization trials
+    "get_trial_context",  # New: check if in optimization context
     "get_optimization_insights",
     "get_version_info",
     "set_strategy",
+    "with_usage",  # New: wrap multi-agent workflow responses with usage metadata
     # Configuration types
     "TraigentConfig",
     # Lifecycle and state
     "OptimizationState",
     # Thread context helpers
     "copy_context_to_thread",
+    # Multi-agent workflow cost tracking (DTO hardening)
+    "AgentCostBreakdown",
+    "WorkflowCostSummary",
+    "MeasuresDict",
+    "TraigentMetadata",
+    "is_traigent_metadata",
     # Exceptions and warnings
     "TraigentWarning",
     "TraigentDeprecationWarning",
     "OptimizationStateError",
     "ConfigAccessWarning",
+    "DataIntegrityError",
+    "MetricExtractionError",
+    "DTOSerializationError",
     # Sprint 2 features
     "PersistenceManager",
     "ProgressBarCallback",

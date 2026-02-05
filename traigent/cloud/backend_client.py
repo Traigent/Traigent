@@ -1,4 +1,4 @@
-"""Enhanced Traigent Cloud Client with OptiGen Backend Integration (Refactored).
+"""Enhanced Traigent Cloud Client with Backend Integration (Refactored).
 
 This is the refactored version of backend_client.py using modular sub-components
 for better maintainability and adherence to software engineering principles.
@@ -117,7 +117,7 @@ bridge = _bridge
 
 
 class BackendIntegratedClient:
-    """Enhanced cloud client with OptiGen Backend integration (Refactored).
+    """Enhanced cloud client with Traigent Backend integration (Refactored).
 
     This client supports both execution models:
     - Model 1: Privacy-first optimization with client-side execution

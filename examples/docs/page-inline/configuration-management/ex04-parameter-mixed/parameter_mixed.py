@@ -24,6 +24,9 @@ for _depth in range(1, 7):
         continue
 from examples.utils.langchain_compat import ChatOpenAI
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 try:
     import traigent
 except ImportError:  # pragma: no cover - support IDE execution paths
@@ -128,7 +131,7 @@ Generate high-quality content based on the given topic and context."""
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        model_kwargs={"max_tokens": 800},  # Fixed parameter not optimized
+        max_tokens=800,  # Fixed parameter not optimized
     )
 
     # Prepare the user prompt

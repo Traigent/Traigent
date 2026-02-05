@@ -11,28 +11,70 @@ from __future__ import annotations
 
 import time
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from traigent.api.types import TrialResult
-from traigent.cloud.models import (
-    NextTrialRequest,
-    NextTrialResponse,
-    OptimizationFinalizationRequest,
-    OptimizationFinalizationResponse,
-    OptimizationSession,
-    OptimizationSessionStatus,
-    SessionCreationRequest,
-    SessionCreationResponse,
-    TrialResultSubmission,
-    TrialStatus,
-    TrialSuggestion,
-)
 from traigent.config.types import TraigentConfig
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
 
+# Cloud models - required at runtime for this optimizer
+try:
+    from traigent.cloud.models import (
+        NextTrialRequest,
+        NextTrialResponse,
+        OptimizationFinalizationRequest,
+        OptimizationFinalizationResponse,
+        OptimizationSession,
+        OptimizationSessionStatus,
+        SessionCreationRequest,
+        SessionCreationResponse,
+        TrialResultSubmission,
+        TrialStatus,
+        TrialSuggestion,
+    )
+
+    _CLOUD_MODELS_AVAILABLE = True
+except (
+    ModuleNotFoundError
+) as err:  # pragma: no cover - only runs when cloud not installed
+    # Check .name to distinguish missing cloud vs broken transitive dependency
+    missing_module = getattr(err, "name", "") or ""
+    if missing_module == "traigent.cloud" or missing_module.startswith(
+        "traigent.cloud."
+    ):
+        _CLOUD_MODELS_AVAILABLE = False
+    else:
+        raise  # Re-raise for broken dependencies like missing pydantic
+    if TYPE_CHECKING:
+        from traigent.cloud.models import (
+            NextTrialRequest,
+            NextTrialResponse,
+            OptimizationFinalizationRequest,
+            OptimizationFinalizationResponse,
+            OptimizationSession,
+            OptimizationSessionStatus,
+            SessionCreationRequest,
+            SessionCreationResponse,
+            TrialResultSubmission,
+            TrialStatus,
+            TrialSuggestion,
+        )
+
 logger = get_logger(__name__)
+
+
+def _require_cloud_models() -> None:
+    """Raise FeatureNotAvailableError if cloud models are not available."""
+    if not _CLOUD_MODELS_AVAILABLE:
+        from traigent.utils.exceptions import FeatureNotAvailableError
+
+        raise FeatureNotAvailableError(
+            "Interactive optimization with remote guidance",
+            plugin_name="traigent-cloud",
+            install_hint="pip install traigent[cloud]",
+        )
 
 
 class RemoteGuidanceService(Protocol):
@@ -93,7 +135,11 @@ class InteractiveOptimizer(BaseOptimizer):
             optimization_strategy: Strategy for optimization
             context: Optional TraigentConfig for global settings
             **kwargs: Additional optimizer configuration
+
+        Raises:
+            FeatureNotAvailableError: If cloud models are not installed
         """
+        _require_cloud_models()
         super().__init__(config_space, objectives, context, **kwargs)
 
         self.remote_service = remote_service

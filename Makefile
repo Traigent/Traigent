@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -16,8 +16,7 @@ COVERAGE := $(PYTHON) -m coverage
 # Directories
 SRC_DIR := traigent
 TEST_DIR := tests
-EXAMPLES_DIR := examples
-PLAYGROUND_DIR := playground
+# NOTE: examples, playground, paper_experiments moved to TraigentDemo
 
 help:  ## Show this help message
 	@echo "Traigent SDK Development Commands"
@@ -28,8 +27,8 @@ install:  ## Install package in production mode
 	$(PIP) install -e .
 
 install-dev:  ## Install package with all development dependencies
-	$(PIP) install -e ".[dev,integrations,bayesian,docs]"
-	pre-commit install
+	$(PIP) install -e ".[all,dev,dspy,docs]"
+	$(PYTHON) -m pre_commit install
 
 test:  ## Run all tests
 	$(PYTEST) $(TEST_DIR) -v
@@ -87,9 +86,9 @@ lint:  ## Run all linters (ruff, mypy, bandit)
 
 format:  ## Format code with black and isort
 	@echo "Formatting with Black..."
-	$(BLACK) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(BLACK) $(SRC_DIR) $(TEST_DIR)
 	@echo "Sorting imports with isort..."
-	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR) --profile black
+	$(PYTHON) -m isort $(SRC_DIR) $(TEST_DIR) --profile black
 
 security:  ## Run security checks
 	@echo "Running Bandit security scan..."
@@ -115,7 +114,7 @@ optuna-benchmarks:  ## Run Optuna vs baseline benchmark suite
 quality-check:  ## Run all quality checks (lint, format check, tests)
 	@echo "Running quality checks..."
 	$(MAKE) lint
-	$(BLACK) --check $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(BLACK) --check $(SRC_DIR) $(TEST_DIR)
 	$(MAKE) test-coverage
 	$(MAKE) security
 
@@ -136,8 +135,9 @@ update-deps:  ## Update all dependencies to latest versions
 	$(PIP) install --upgrade pip setuptools wheel
 	$(PIP) install --upgrade -e ".[dev,integrations,bayesian,docs]"
 
-dev-server:  ## Run the Streamlit playground UI
-	streamlit run playground/traigent_control_center.py
+dev-server:  ## Run the Streamlit playground UI (moved to TraigentDemo)
+	@echo "NOTE: Playground has been moved to TraigentDemo project"
+	@echo "Run: cd ../TraigentDemo && streamlit run playground/traigent_control_center.py"
 
 docs:  ## Build documentation
 	cd docs && $(MAKE) html
@@ -149,6 +149,24 @@ dev: install-dev install-hooks  ## Complete development setup
 check: quality-check  ## Alias for quality-check
 
 fix: quick-fix  ## Alias for quick-fix
+
+# SonarQube scanning
+sonar-scan:  ## Run SonarQube scan using local config file
+	@if ! command -v sonar-scanner >/dev/null 2>&1; then \
+		echo "Error: sonar-scanner not found. Install from https://docs.sonarqube.org/latest/analyzing-source-code/scanners/sonarscanner/"; \
+		exit 1; \
+	fi
+	@if [ ! -f "sonar-project.local.properties" ]; then \
+		echo "Error: sonar-project.local.properties not found"; \
+		exit 1; \
+	fi
+	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \
+		echo "Error: SONAR_LOCAL_TOKEN not set."; \
+		echo "Create a token at http://localhost:9000 -> My Account -> Security -> Generate Tokens"; \
+		exit 1; \
+	fi
+	sonar-scanner -Dproject.settings=sonar-project.local.properties -Dsonar.token=$$SONAR_LOCAL_TOKEN
+	@echo "Scan complete. View results at: http://localhost:9000/dashboard?id=TraigentSDK"
 
 # Local SonarQube (avoids consuming cloud tokens)
 sonar-local-start:  ## Start local SonarQube server (Docker)

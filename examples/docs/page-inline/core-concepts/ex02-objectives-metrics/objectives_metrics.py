@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Objectives & Metrics - Defining What to Optimize For."""
+
 from __future__ import annotations
 
 import json
@@ -35,7 +36,10 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 # Custom metric function
 # Create dataset file
@@ -178,7 +182,7 @@ def balanced_support_bot(query: str) -> str:
     llm = ChatOpenAI(
         model=config.get("model", "gpt-3.5-turbo"),
         temperature=config.get("temperature", 0.5),
-        model_kwargs={"max_tokens": config.get("max_tokens", 200)},
+        max_tokens=config.get("max_tokens", 200),
     )
 
     prompt = f"As a helpful support agent, answer: {query}"
@@ -194,8 +198,8 @@ def balanced_support_bot(query: str) -> str:
         "response_format": ["brief", "standard", "detailed"],
     },
     eval_dataset=DATASET_FILE,
-    objectives=["cost", "custom:response_quality"],
-    custom_metrics={"response_quality": response_quality_score},
+    objectives=["cost", "response_quality"],
+    metric_functions={"response_quality": response_quality_score},
     constraints=[
         _max_cost_per_call,
         _min_quality_score,

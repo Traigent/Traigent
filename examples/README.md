@@ -35,7 +35,7 @@ The gallery provides:
 
 ## ⚡ Quickstart Examples (Start Here!)
 
-These are the exact examples from the main README, ready to run immediately:
+Run these quickstart examples to get started:
 
 ```bash
 pip install -e ".[examples]"          # Ensure example deps
@@ -65,6 +65,30 @@ Perfect for learning Traigent fundamentals. Each example is self-contained with 
 | **`safety-guardrails`** | Apply content moderation and safety | Safety filters, guardrails, moderation | ~3 min |
 | **`prompt-ab-test`** | A/B test different prompt variants | Prompt comparison, statistical testing | ~3 min |
 
+### What You'll Learn
+
+- **simple-prompt**: The minimal Traigent setup. Shows how to add the `@traigent.optimize` decorator to an existing function and define a configuration space (model, temperature). Great first example.
+
+- **hello-world**: Introduces RAG patterns with parameter injection. Learn how Traigent passes optimized parameters (like `k` for retrieval depth) directly into your function.
+
+- **few-shot-classification**: Optimize few-shot example selection. Traigent finds which examples improve classification accuracy - useful for prompt engineering without manual trial-and-error.
+
+- **multi-objective-tradeoff**: Balance competing objectives (accuracy vs. cost vs. latency). Learn Pareto optimization to find configurations that don't sacrifice one metric for another.
+
+- **token-budget-summarization**: Work within token limits. Shows how to optimize summarization quality while staying under a strict token budget - critical for cost control.
+
+- **structured-output-json**: Generate reliable JSON outputs. Learn schema validation and how Traigent optimizes for both correctness and schema compliance.
+
+- **tool-use-calculator**: Function calling patterns. Traigent optimizes when and how to use tools, finding the right balance between tool calls and direct responses.
+
+- **prompt-style-optimization**: Tune tone and style. Optimize prompt templates for specific audiences or use cases without manually testing variations.
+
+- **chunking-long-context**: Handle documents that exceed context windows. Learn chunking strategies and how Traigent finds optimal chunk sizes and overlap.
+
+- **safety-guardrails**: Content moderation integration. Shows how to optimize for accuracy while maintaining safety constraints - essential for production deployments.
+
+- **prompt-ab-test**: Statistical A/B testing for prompts. Compare prompt variants with statistical significance, not just single-run comparisons.
+
 **Each example includes:**
 
 - ✅ Complete `run.py` with production-quality code (except `multi-objective-tradeoff` which has provider-specific files)
@@ -81,15 +105,30 @@ For users comfortable with Traigent basics who want to explore advanced patterns
 | **`execution-modes/`** | 6 examples | Local patterns plus roadmap-only cloud/hybrid stubs |
 | **`results-analysis/`** | 2 examples | Analyzing and visualizing optimization results |
 | **`ai-engineering-tasks/`** | 5 examples | Common AI engineering challenges (context, few-shot, structured output, safety, token budgets) |
-| **`ragas/`** | RAG evaluation | Specialized RAG metrics and evaluation |
+| **`ragas/`** | 3 examples | Specialized RAG metrics and evaluation |
 | **`metric-registry/`** | Custom metrics | Building and registering custom evaluation metrics |
+
+### Advanced Category Details
+
+- **execution-modes/**: Learn different execution patterns. `edge_analytics` keeps data local while sending anonymized metrics. Useful for understanding privacy-performance tradeoffs.
+
+- **results-analysis/**: Post-optimization analysis. Visualize trial results, compare configurations, and extract insights from completed optimization runs.
+
+- **ai-engineering-tasks/**: Real-world AI engineering patterns. Each example tackles a specific challenge: context window management, few-shot learning, structured outputs, safety, and token budgets.
+
+- **ragas/**: RAG-specific evaluation using the RAGAS framework. Learn to measure faithfulness, answer relevancy, and context precision for retrieval-augmented generation.
+  - `basics/` - Standard RAGAS metrics integration
+  - `column_map/` - Custom column mapping for non-standard datasets
+  - `with_llm/` - LLM-powered evaluation (requires API key in real mode)
+
+- **metric-registry/**: Build custom evaluation metrics. Register domain-specific scorers that integrate seamlessly with Traigent's optimization loop.
 
 ## 🔌 Integration Examples
 
 Production-ready integrations with popular platforms and workflows:
 
-- **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline)
-- **`bedrock/`** - AWS Bedrock integration patterns
+- **`ci-cd/`** - Continuous integration examples (Math Q&A pipeline). Run Traigent optimizations as part of your CI/CD workflow.
+- **`bedrock/`** - AWS Bedrock integration patterns. Use Traigent with Amazon's managed LLM service.
 - **More coming soon:** LangChain, OpenAI SDK, Azure OpenAI, Google Vertex AI
 
 ## 📊 Working With Datasets
@@ -125,22 +164,70 @@ examples/
 
 **Available datasets:**
 
-- `data/qa_samples.jsonl` - Q&A samples for README examples
-- `simple-prompt/` - Basic summarization examples
-- `hello-world/` - Simple Q&A examples
-- `few-shot-classification/` - Classification with examples
-- `multi-objective-tradeoff/` - Multi-objective test cases
-- `token-budget-summarization/` - Summarization tasks
-- `structured-output-json/` - JSON schema validation
-- `tool-use-calculator/` - Calculator function calls
-- `prompt-style-optimization/` - Style variations
-- `chunking-long-context/` - Long documents
-- `safety-guardrails/` - Safety test cases
-- `prompt-ab-test/` - A/B test variants
+| Dataset | Size | Difficulty Tiers | Evaluation |
+| ------- | ---- | ---------------- | ---------- |
+| `simple-prompt/` | 10 | Mixed | Exact match |
+| `hello-world/` | 15 | Easy/Medium/Hard | Exact match |
+| `few-shot-classification/` | 20 | Clear/Ambiguous | Exact match |
+| `multi-objective-tradeoff/` | 15 | Mixed | Multi-metric |
+| `token-budget-summarization/` | 10 | Short/Long docs | Token + quality |
+| `structured-output-json/` | 12 | Simple/Complex schemas | Schema validation |
+| `tool-use-calculator/` | 15 | Basic/Multi-step | Exact match |
+| `prompt-style-optimization/` | 10 | Formal/Casual | Style scoring |
+| `chunking-long-context/` | 8 | Medium/Long docs | Semantic similarity |
+| `safety-guardrails/` | 20 | Safe/Harmful inputs | Safety + accuracy |
+| `prompt-ab-test/` | 15 | Mixed | Statistical comparison |
+
+### Why Difficulty Tiers Matter
+
+Datasets include varying difficulty so that:
+
+- Different model configurations show measurable differences
+- Optimization has room for meaningful improvement
+- Edge cases test robustness (e.g., ambiguous classifications, boundary inputs)
+
+### Evaluation Methods
+
+- **Exact match**: Case-insensitive token comparison (80% threshold)
+- **Semantic similarity**: Key concept presence checking
+- **Schema validation**: JSON structure and type compliance
+- **Multi-metric**: Weighted combination of accuracy, cost, latency
 
 **Matrix files:** Test specifications and CTD matrices are in `datasets/matrices/`.
 
 ## 🏃 Running Examples
+
+### Test Script (Run Examples by Category)
+
+Use `test_all_examples.sh` to run examples by category:
+
+```bash
+cd examples
+
+# Run examples by category (mock mode, no API keys)
+./test_all_examples.sh core        # Run 10 core examples
+./test_all_examples.sh ragas       # Run 3 RAGAS examples
+./test_all_examples.sh docs        # Run 2 docs examples
+./test_all_examples.sh walkthrough # Run 8 walkthrough examples
+./test_all_examples.sh all         # Run all categories (23 examples)
+
+# Run with real API keys
+./test_all_examples.sh --real core
+./test_all_examples.sh --real all
+
+# Show help
+./test_all_examples.sh --help
+```
+
+**Categories:**
+
+| Category | Examples | Description |
+| -------- | -------- | ----------- |
+| `core` | 10 | Main Traigent feature demonstrations |
+| `ragas` | 3 | RAGAS evaluation integration |
+| `docs` | 2 | Documentation inline examples |
+| `walkthrough` | 8 | Tutorial walkthrough examples |
+| `all` | 23 | Run all categories |
 
 ### Quick Start (No API Keys!)
 

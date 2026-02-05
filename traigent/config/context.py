@@ -39,11 +39,11 @@ def get_config() -> TraigentConfig | dict[str, Any]:
     Returns:
         Current configuration (TraigentConfig or dict)
 
-    Example:
-        >>> set_config({"model": "GPT-4o", "temperature": 0.7})
-        >>> config = get_config()
-        >>> print(config)
-        {'model': 'gpt-4', 'temperature': 0.7}
+    Example::
+
+        set_config({"model": "GPT-4o", "temperature": 0.7})
+        config = get_config()
+        print(config)  # {'model': 'GPT-4o', 'temperature': 0.7}
     """
     try:
         config = config_context.get()
@@ -149,10 +149,11 @@ class ConfigurationSpaceContext:
 class ConfigurationContext:
     """Context manager for temporary configuration changes.
 
-    Example:
-        >>> with ConfigurationContext({"model": "GPT-4o"}):
-        ...     config = get_config()  # Returns {"model": "GPT-4o"}
-        >>> config = get_config()  # Returns previous configuration
+    Example::
+
+        with ConfigurationContext({"model": "GPT-4o"}):
+            config = get_config()  # Returns {"model": "GPT-4o"}
+        config = get_config()  # Returns previous configuration
     """
 
     def __init__(self, config: TraigentConfig | dict[str, Any]) -> None:
@@ -202,11 +203,11 @@ def merge_with_context(
     Returns:
         Merged configuration where context values take precedence
 
-    Example:
-        >>> set_config({"model": "gpt-4o-mini", "temperature": 0.5})
-        >>> merged = merge_with_context({"temperature": 0.8, "max_tokens": 1000})
-        >>> print(merged)
-        {'model': 'gpt-4o-mini', 'temperature': 0.5, 'max_tokens': 1000}
+    Example::
+
+        set_config({"model": "gpt-4o-mini", "temperature": 0.5})
+        merged = merge_with_context({"temperature": 0.8, "max_tokens": 1000})
+        # merged = {'model': 'gpt-4o-mini', 'temperature': 0.5, 'max_tokens': 1000}
     """
     context_config = get_config()
 
@@ -255,19 +256,20 @@ class ContextSnapshot:
     Python's contextvars don't automatically propagate to ThreadPoolExecutor
     workers. This class captures all context for manual propagation.
 
-    Example:
-        >>> import concurrent.futures
-        >>>
-        >>> def worker_func(snapshot, data):
-        ...     # Restore all context in worker thread
-        ...     with snapshot.restore():
-        ...         config = traigent.get_trial_config()
-        ...         return process(data, config)
-        >>>
-        >>> # Capture context before submitting to executor
-        >>> snapshot = copy_context_to_thread()
-        >>> with concurrent.futures.ThreadPoolExecutor() as executor:
-        ...     futures = [executor.submit(worker_func, snapshot, d) for d in data]
+    Example::
+
+        import concurrent.futures
+
+        def worker_func(snapshot, data):
+            # Restore all context in worker thread
+            with snapshot.restore():
+                config = traigent.get_trial_config()
+                return process(data, config)
+
+        # Capture context before submitting to executor
+        snapshot = copy_context_to_thread()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(worker_func, snapshot, d) for d in data]
     """
 
     def __init__(
@@ -375,19 +377,20 @@ def copy_context_to_thread() -> ContextSnapshot:
     Returns:
         ContextSnapshot containing all current context variables.
 
-    Example:
-        >>> import concurrent.futures
-        >>>
-        >>> def worker_func(snapshot, data):
-        ...     # Restore all context in worker thread
-        ...     with snapshot.restore():
-        ...         config = traigent.get_trial_config()
-        ...         return process(data, config)
-        >>>
-        >>> # Capture context before submitting to executor
-        >>> snapshot = copy_context_to_thread()
-        >>> with concurrent.futures.ThreadPoolExecutor() as executor:
-        ...     futures = [executor.submit(worker_func, snapshot, d) for d in data]
+    Example::
+
+        import concurrent.futures
+
+        def worker_func(snapshot, data):
+            # Restore all context in worker thread
+            with snapshot.restore():
+                config = traigent.get_trial_config()
+                return process(data, config)
+
+        # Capture context before submitting to executor
+        snapshot = copy_context_to_thread()
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            futures = [executor.submit(worker_func, snapshot, d) for d in data]
 
     Note:
         Traigent's built-in parallel evaluator already handles context

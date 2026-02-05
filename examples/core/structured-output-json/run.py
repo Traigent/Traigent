@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-"""Structured JSON extraction with custom metric (json_score)."""
+"""
+Structured JSON extraction with custom validation.
+
+Demonstrates how to use Traigent to optimize JSON field extraction from
+unstructured text. Uses a custom json_score metric to validate parsing
+accuracy and field matching.
+
+Run with: TRAIGENT_MOCK_LLM=true python examples/core/structured-output-json/run.py
+"""
 
 from __future__ import annotations
 
@@ -33,14 +41,15 @@ except ImportError:  # pragma: no cover - support IDE execution paths
             continue
     traigent = importlib.import_module("traigent")
 
-from traigent.api.types import OptimizationResult
+from traigent.api.types import OptimizationResult  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 DATA_ROOT = Path(__file__).resolve().parents[2] / "datasets" / "structured-output-json"
 if MOCK:
-    try:
-        traigent.initialize(execution_mode="edge_analytics")
-    except Exception:
-        pass
+    # Initialize with local-only mode for mock runs
+    traigent.initialize(execution_mode="edge_analytics")
 DATASET = str(DATA_ROOT / "evaluation_set.jsonl")
 PROMPT_PATH = BASE / "prompt.txt"
 
@@ -155,7 +164,7 @@ def _print_results(result: OptimizationResult) -> None:
         print(df_raw.to_string(index=False))
 
 
-def json_score_metric(output: str, expected: dict, _llm_metrics: dict | None) -> float:
+def json_score_metric(output: str, expected: dict, **_: object) -> float:
     try:
         obj = json.loads(output)
     except Exception:
@@ -194,19 +203,28 @@ def extract_fields(
 
         vendor = None
         amount = None
-        # Simple heuristics
-        if "Acme" in text:
-            vendor = "Acme Corp"
-        elif "Globex" in text:
-            vendor = "Globex"
-        elif "MegaCo" in text:
-            vendor = "MegaCo"
+        # Vendor extraction heuristics
+        vendor_patterns = {
+            "Acme": "Acme Corp",
+            "Globex": "Globex",
+            "MegaCo": "MegaCo",
+            "TechFlow": "TechFlow",
+            "DataSys": "DataSys",
+            "CloudNet": "CloudNet",
+            "SecurePay": "SecurePay",
+        }
+        for pattern, vendor_name in vendor_patterns.items():
+            if pattern in text:
+                vendor = vendor_name
+                break
 
         amount_match = re.search(
             r"\$\s*([0-9]+(?:\.[0-9]+)?)|USD\s*([0-9]+(?:\.[0-9]+)?)", text
         )
         if amount_match:
-            amount = float(amount_match.group(1) or amount_match.group(2))
+            amt_str = amount_match.group(1) or amount_match.group(2)
+            # Preserve int vs float to match expected values exactly
+            amount = float(amt_str) if "." in amt_str else int(amt_str)
         obj = {"vendor": vendor or "Unknown", "amount": amount or 0}
         return json.dumps(obj)
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
@@ -222,12 +240,35 @@ def extract_fields(
 
 
 if __name__ == "__main__":
-    print("Struggling to get clean, valid JSON back from messy text?")
+    import time
+
+    print("=" * 60)
+    print("Structured JSON Extraction Example")
+    print("=" * 60)
+    print("\nObjective: json_score (maximize)")
+    print("Configuration space:")
+    print("  - temperature: 0.0, 0.2")
+    print("  - format_hint: strict_json, relaxed_json")
+    print("  - schema_rigidity: strict, lenient")
+    print("Total configurations: 8 (2 x 2 x 2)")
+    print(
+        f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+    )
+    print("-" * 60)
 
     async def main() -> None:
-        trials = 9 if not MOCK else 4
-        r = await extract_fields.optimize(algorithm="grid", max_trials=trials)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
+        start_time = time.time()
+        trials = 9 if not MOCK else 8  # 8 covers all config combinations
+        result = await extract_fields.optimize(algorithm="grid", max_trials=trials)
+        elapsed = time.time() - start_time
+
+        print("\n" + "=" * 60)
+        print("OPTIMIZATION COMPLETE")
+        print("=" * 60)
+        print(f"Best config: {result.best_config}")
+        print(f"Best score: {result.best_score:.2f}")
+        print(f"Total trials: {len(result.trials)}")
+        print(f"Runtime: {elapsed:.2f}s")
+        _print_results(result)
 
     asyncio.run(main())

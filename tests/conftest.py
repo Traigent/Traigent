@@ -8,6 +8,13 @@ This module provides:
 - Performance testing utilities
 """
 
+# CRITICAL: Set LITELLM_LOCAL_MODEL_COST_MAP BEFORE any imports that might
+# trigger litellm loading. This prevents network calls to api.litellm.ai
+# during tests and uses bundled pricing data instead.
+import os
+
+os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
 import asyncio
 import functools
 import json

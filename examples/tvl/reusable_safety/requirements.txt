@@ -1,0 +1,14 @@
+# Real LLM Demo Dependencies
+# Install with: pip install -r requirements.txt
+
+# LiteLLM for unified LLM API (Groq, OpenAI, Anthropic, etc.)
+litellm>=1.30.0
+
+# HuggingFace transformers for local toxicity classifier
+transformers>=4.35.0
+
+# PyTorch (required by transformers for inference)
+torch>=2.0.0
+
+# python-dotenv for loading .env files
+python-dotenv>=1.0.0

@@ -12,11 +12,13 @@ import asyncio
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from traigent.cloud.models import AgentSpecification
 from traigent.utils.exceptions import AgentExecutionError
 from traigent.utils.logging import get_logger
+
+if TYPE_CHECKING:
+    from traigent.cloud.models import AgentSpecification
 
 logger = get_logger(__name__)
 

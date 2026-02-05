@@ -11,7 +11,7 @@ Key concepts:
 - Pareto front: The set of non-dominated solutions.
 - Epsilon-Pareto: Requires improvement of at least epsilon to dominate.
 
-Run with: python analyze_tradeoffs.py
+Run with (from repo root): .venv/bin/python examples/tvl/tutorials/03_multi_objective/analyze_tradeoffs.py
 """
 
 import random

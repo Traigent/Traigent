@@ -106,11 +106,12 @@ class ContextBasedProvider(ConfigurationProvider):
     This provider uses Python's contextvars to inject configuration,
     allowing functions to access configuration through get_config().
 
-    Example:
-        >>> @traigent.optimize(injection_mode="context")
-        ... def my_function(query: str) -> str:
-        ...     config = get_config()
-        ...     return f"Using model: {config.get('model')}"
+    Example::
+
+        @traigent.optimize(injection_mode="context")
+        def my_function(query: str) -> str:
+            config = get_config()
+            return f"Using model: {config.get('model')}"
 
     Thread Safety and Limitations:
         - **Thread Isolation**: Each thread maintains its own configuration context.
@@ -133,12 +134,12 @@ class ContextBasedProvider(ConfigurationProvider):
     Common Pitfalls:
         - **Thread Pools**: When using thread pools (e.g., ThreadPoolExecutor),
           each worker thread starts with an empty context. You must explicitly
-          set configuration in each thread:
+          set configuration in each thread::
 
-          >>> with ConfigurationContext(config):
-          ...     # This config is NOT automatically available in thread pool workers
-          ...     with ThreadPoolExecutor() as executor:
-          ...         future = executor.submit(my_function)  # Won't have config
+              with ConfigurationContext(config):
+                  # This config is NOT automatically available in thread pool workers
+                  with ThreadPoolExecutor() as executor:
+                      future = executor.submit(my_function)  # Won't have config
 
           Solution: Pass configuration explicitly or use run_in_executor with
           proper context copying.
@@ -204,13 +205,14 @@ class ParameterBasedProvider(ConfigurationProvider):
     This provider adds configuration as an explicit parameter to the function,
     providing type safety and clear dependency injection.
 
-    Example:
-        >>> @traigent.optimize(
-        ...     injection_mode="parameter",
-        ...     config_param="config"
-        ... )
-        ... def my_function(query: str, config: TraigentConfig) -> str:
-        ...     return f"Using model: {config.model}"
+    Example::
+
+        @traigent.optimize(
+            injection_mode="parameter",
+            config_param="config"
+        )
+        def my_function(query: str, config: TraigentConfig) -> str:
+            return f"Using model: {config.model}"
     """
 
     def __init__(self, default_param_name: str = "config") -> None:
@@ -275,104 +277,6 @@ class ParameterBasedProvider(ConfigurationProvider):
         """Check if function has config parameter."""
         sig = inspect.signature(func)
         return self.default_param_name in sig.parameters
-
-
-class AttributeBasedProvider(ConfigurationProvider):
-    """Provider that stores configuration as function attribute.
-
-    This provider attaches configuration to the function object,
-    allowing access through function attributes. Configuration is set
-    on both the wrapper and original function to support accessing
-    config from inside the function body.
-
-    Example:
-        >>> @traigent.optimize(injection_mode="attribute")
-        ... def my_function(query: str) -> str:
-        ...     config = my_function.current_config
-        ...     return f"Using model: {config['model']}"
-    """
-
-    def __init__(self, attribute_name: str = "current_config") -> None:
-        """Initialize attribute-based provider.
-
-        Args:
-            attribute_name: Attribute name for storing configuration.
-                Defaults to "current_config" for backward compatibility.
-        """
-        self.attribute_name = attribute_name
-        # Track wrappers and originals for cleanup
-        self._wrappers: list[Callable[..., Any]] = []
-        self._originals: list[Callable[..., Any]] = []
-
-    def inject_config(
-        self,
-        func: Callable[..., Any],
-        config: dict[str, Any],
-        config_param: str | None = None,
-    ) -> Callable[..., Any]:
-        """Inject configuration as function attribute.
-
-        Configuration is set on the wrapper only, not the original function.
-        This avoids polluting the original function with unexpected attributes.
-
-        To access config inside your function, use traigent.get_config() which
-        works both during optimization trials and after apply_best_config().
-        For post-optimization access, you can also use func.current_config.
-        """
-
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Store current config on wrapper only (not original)
-            setattr(wrapper, self.attribute_name, config)
-            with ConfigurationContext(config):
-                return func(*args, **kwargs)
-
-        # For async functions
-        if inspect.iscoroutinefunction(func):
-
-            @wraps(func)
-            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-                # Set config on wrapper only (not original)
-                setattr(async_wrapper, self.attribute_name, config)
-                with ConfigurationContext(config):
-                    return await func(*args, **kwargs)
-
-            # Set initial config on wrapper for immediate visibility after inject_config()
-            # The inner setattr ensures config stays up-to-date on each call
-            setattr(async_wrapper, self.attribute_name, config)
-            self._wrappers.append(async_wrapper)
-            self._originals.append(func)
-            return async_wrapper
-
-        # Set initial config on wrapper for immediate visibility after inject_config()
-        # The inner setattr ensures config stays up-to-date on each call
-        setattr(wrapper, self.attribute_name, config)
-        self._wrappers.append(wrapper)
-        self._originals.append(func)
-        return wrapper
-
-    def extract_config(self, func: Callable[..., Any]) -> dict[str, Any] | None:
-        """Extract configuration from function attribute."""
-        return getattr(func, self.attribute_name, None)
-
-    def supports_function(self, func: Callable[..., Any]) -> bool:
-        """Attribute injection works with any function."""
-        return True
-
-    def cleanup(self) -> None:
-        """Clean up configuration attributes from tracked wrappers.
-
-        Note: We only clean wrappers, not originals, since we no longer
-        set attributes on original functions (to avoid pollution).
-        """
-        for wrapper in self._wrappers:
-            if hasattr(wrapper, self.attribute_name):
-                try:
-                    delattr(wrapper, self.attribute_name)
-                except AttributeError:
-                    pass  # Already removed
-        self._wrappers.clear()
-        self._originals.clear()
 
 
 class SeamlessParameterProvider(ConfigurationProvider):
@@ -974,21 +878,27 @@ class SeamlessParameterProvider(ConfigurationProvider):
             }
 
 
-# Provider registry
+# Provider registry - base injection modes always available
 _PROVIDERS: dict[str, type[ConfigurationProvider]] = {
     "context": ContextBasedProvider,
     "parameter": ParameterBasedProvider,
-    "attribute": AttributeBasedProvider,
-    "seamless": SeamlessParameterProvider,
 }
+
+# Seamless provider is included in base for now, but will move to traigent-seamless plugin
+# TODO: When extracting to plugin, use:
+#   try:
+#       from traigent_seamless import SeamlessParameterProvider
+#       _PROVIDERS["seamless"] = SeamlessParameterProvider
+#   except ImportError:
+#       pass  # Seamless not available - get_provider will raise FeatureNotAvailableError
+_PROVIDERS["seamless"] = SeamlessParameterProvider
 
 
 def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
     """Get configuration provider by injection mode.
 
     Args:
-        injection_mode: One of "context", "parameter", "attribute", "seamless"
-                       ("decorator" is deprecated but still supported)
+        injection_mode: One of "context", "parameter", "seamless"
         **kwargs: Additional arguments for provider initialization
 
     Returns:
@@ -996,12 +906,30 @@ def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
 
     Raises:
         ConfigurationError: If injection mode is not supported
+        FeatureNotAvailableError: If seamless mode requested but plugin not installed
     """
-    # Handle backward compatibility
-    if injection_mode == "decorator":
-        injection_mode = "attribute"
+    # Handle removed injection modes with helpful migration message
+    if injection_mode in ("attribute", "decorator"):
+        raise ConfigurationError(
+            f"injection_mode='{injection_mode}' has been removed in v2.x.\n\n"
+            "Migration guide:\n"
+            '  Before: @traigent.optimize(injection_mode="attribute")\n'
+            "          config = my_func.current_config\n\n"
+            '  After:  @traigent.optimize(injection_mode="context")\n'
+            "          config = traigent.get_config()\n\n"
+            'For zero code changes, use injection_mode="seamless" instead.'
+        )
 
     if injection_mode not in _PROVIDERS:
+        # Provide helpful error for seamless mode when plugin not installed
+        if injection_mode == "seamless":
+            from traigent.utils.exceptions import FeatureNotAvailableError
+
+            raise FeatureNotAvailableError(
+                "Seamless injection mode",
+                plugin_name="traigent-seamless",
+                install_hint="pip install traigent-seamless",
+            )
         raise ConfigurationError(
             f"Unknown injection mode: {injection_mode}. "
             f"Available modes: {list(_PROVIDERS.keys())}"
@@ -1015,10 +943,5 @@ def get_provider(injection_mode: str, **kwargs: Any) -> ConfigurationProvider:
             kwargs.get("config_param") or "config"
         )  # Default to "config" if None or missing
         return ParameterBasedProvider(default_param_name=config_param)
-    elif injection_mode == "attribute":
-        attribute_name = kwargs.get(
-            "attribute_name", "current_config"
-        )  # Default attribute name
-        return AttributeBasedProvider(attribute_name=attribute_name)
     else:
         return provider_class()

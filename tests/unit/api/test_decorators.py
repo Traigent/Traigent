@@ -161,8 +161,7 @@ class TestOptimizeDecorator:
     def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
         """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
         spec_path = tmp_path / "evalset.tvl.yml"
-        spec_path.write_text(
-            """tvl:
+        spec_path.write_text("""tvl:
   module: test.evalset
 tvl_version: "0.9"
 evaluation_set:
@@ -174,8 +173,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-"""
-        )
+""")
 
         @optimize(tvl_spec=spec_path)
         def tvl_wrapped(question: str) -> str:
@@ -187,8 +185,7 @@ objectives:
     def test_decorator_does_not_override_explicit_eval_dataset(self, tmp_path):
         """Explicit eval_dataset beats evaluation_set in a TVL spec."""
         spec_path = tmp_path / "evalset_override.tvl.yml"
-        spec_path.write_text(
-            """tvl:
+        spec_path.write_text("""tvl:
   module: test.evalset.override
 tvl_version: "0.9"
 evaluation_set:
@@ -200,8 +197,7 @@ tvars:
 objectives:
   - name: accuracy
     direction: maximize
-"""
-        )
+""")
 
         @optimize(tvl_spec=spec_path, eval_dataset="user.jsonl")
         def tvl_wrapped(question: str) -> str:
@@ -346,12 +342,12 @@ class TestOptimizedFunctionIntegration:
 
         assert isinstance(func_param, OptimizedFunction)
 
-        # Decorator injection
-        @optimize(injection_mode="attribute", configuration_space={"x": [1, 2, 3]})
-        def func_decorator(x):
+        # Seamless injection (attribute mode was removed in v2.x)
+        @optimize(injection_mode="seamless", configuration_space={"x": [1, 2, 3]})
+        def func_seamless(x):
             return x
 
-        assert isinstance(func_decorator, OptimizedFunction)
+        assert isinstance(func_seamless, OptimizedFunction)
 
     def test_framework_override_configuration(self):
         """Test framework override configuration."""
@@ -583,3 +579,112 @@ class TestConstraintNormalization:
             )
             def func_with_bad_evaluator(x: int) -> int:
                 return x * 2
+
+
+class TestJSRuntimeInjectionModeValidation:
+    """Test suite for JS runtime injection mode validation."""
+
+    def test_js_runtime_rejects_context_injection_mode(self):
+        """Test that runtime='node' rejects injection_mode='context'."""
+        from traigent.api.decorators import ExecutionOptions, InjectionOptions
+
+        with pytest.raises(ValueError, match="not compatible with runtime='node'"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                injection=InjectionOptions(injection_mode="context"),
+                execution=ExecutionOptions(runtime="node", js_module="./test.js"),
+            )
+            def js_func(x: int) -> int:
+                return x
+
+    def test_attribute_injection_mode_removed(self):
+        """Test that injection_mode='attribute' raises error (removed in v2.x)."""
+        from traigent.api.decorators import InjectionOptions
+
+        with pytest.raises((ValueError, Exception), match="removed"):
+            InjectionOptions(injection_mode="attribute")
+
+    def test_js_runtime_rejects_seamless_injection_mode(self):
+        """Test that runtime='node' rejects injection_mode='seamless'."""
+        from traigent.api.decorators import ExecutionOptions, InjectionOptions
+
+        with pytest.raises(ValueError, match="not compatible with runtime='node'"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                injection=InjectionOptions(injection_mode="seamless"),
+                execution=ExecutionOptions(runtime="node", js_module="./test.js"),
+            )
+            def js_func(x: int) -> int:
+                return x
+
+    def test_js_runtime_accepts_parameter_injection_mode(self):
+        """Test that runtime='node' accepts injection_mode='parameter'."""
+        from traigent.api.decorators import ExecutionOptions, InjectionOptions
+
+        # Should not raise - function has config parameter for parameter mode
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            injection=InjectionOptions(injection_mode="parameter"),
+            execution=ExecutionOptions(runtime="node", js_module="./test.js"),
+        )
+        def js_func(x: int, config=None) -> int:
+            return x
+
+        assert isinstance(js_func, OptimizedFunction)
+
+    def test_js_runtime_requires_js_module(self):
+        """Test that runtime='node' requires js_module to be specified."""
+        from traigent.api.decorators import ExecutionOptions
+
+        with pytest.raises(ValueError, match="js_module is required"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                execution=ExecutionOptions(runtime="node"),
+            )
+            def js_func(x: int) -> int:
+                return x
+
+    def test_invalid_runtime_rejected(self):
+        """Test that invalid runtime values are rejected."""
+        from traigent.api.decorators import ExecutionOptions
+
+        with pytest.raises(ValueError, match="Invalid runtime"):
+
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                execution=ExecutionOptions(runtime="invalid"),
+            )
+            def func(x: int) -> int:
+                return x
+
+    def test_python_runtime_allows_all_injection_modes(self):
+        """Test that runtime='python' allows all valid injection modes."""
+        from traigent.api.decorators import ExecutionOptions, InjectionOptions
+
+        # Test non-parameter modes (don't require special function signature)
+        # Note: "attribute" was removed in v2.x
+        for mode in ["context", "seamless"]:
+            # Should not raise for Python runtime
+            @optimize(
+                configuration_space={"x": [1, 2, 3]},
+                injection=InjectionOptions(injection_mode=mode),
+                execution=ExecutionOptions(runtime="python"),
+            )
+            def py_func(x: int) -> int:
+                return x
+
+            assert isinstance(py_func, OptimizedFunction)
+
+        # Test parameter mode (requires config parameter)
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            injection=InjectionOptions(injection_mode="parameter"),
+            execution=ExecutionOptions(runtime="python"),
+        )
+        def py_func_with_config(x: int, config=None) -> int:
+            return x
+
+        assert isinstance(py_func_with_config, OptimizedFunction)

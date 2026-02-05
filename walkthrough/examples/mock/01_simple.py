@@ -2,14 +2,18 @@
 """Example 1: Simple Optimization - Basic model and temperature tuning."""
 
 import asyncio
+from pathlib import Path
 
 import traigent
 
 traigent.initialize(execution_mode="edge_analytics")
 
+# Get the directory containing this script
+SCRIPT_DIR = Path(__file__).parent
+
 
 @traigent.optimize(
-    eval_dataset="./simple_questions.jsonl",
+    eval_dataset=str(SCRIPT_DIR / "simple_questions.jsonl"),
     objectives=["accuracy", "cost"],
     configuration_space={
         "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o", "gpt-4.1-nano"],

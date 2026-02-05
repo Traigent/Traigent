@@ -11,7 +11,7 @@ Key concepts:
 - BandTarget: Defines the target band (low/high or center/tolerance)
 - BandedObjectiveSpec: Evaluates samples against a band
 
-Run with: python tost_demo.py
+Run with (from repo root): .venv/bin/python examples/tvl/tutorials/05_statistical_testing/tost_demo.py
 """
 
 import random

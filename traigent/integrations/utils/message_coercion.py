@@ -33,13 +33,13 @@ def coerce_messages(
 
     Examples:
         >>> coerce_messages("Hello")
-        [{"role": "user", "content": "Hello"}]
+        [{'role': 'user', 'content': 'Hello'}]
 
         >>> coerce_messages(["Hello", "World"])
-        [{"role": "user", "content": "Hello"}, {"role": "user", "content": "World"}]
+        [{'role': 'user', 'content': 'Hello'}, {'role': 'user', 'content': 'World'}]
 
         >>> coerce_messages([{"role": "assistant", "content": "Hi"}])
-        [{"role": "assistant", "content": "Hi"}]
+        [{'role': 'assistant', 'content': 'Hi'}]
     """
     if messages is None:
         return []

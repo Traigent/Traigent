@@ -98,8 +98,6 @@ def my_agent(question: str) -> str:
 | `privacy_enabled` | `bool \| None` | `None` | Redacts prompts/responses from telemetry and logs. |
 | `max_total_examples` | `int \| None` | `None` | Global sample budget across all trials (budget guardrail). |
 | `samples_include_pruned` | `bool` | `True` | Whether pruned trials count toward the sample budget. |
-| `reps_per_trial` | `int` | `1` | Number of repeated evaluations per configuration to stabilize noisy metrics. |
-| `reps_aggregation` | `str` | `"mean"` | Aggregation strategy for repeated metrics (`"mean"`, `"median"`, `"min"`, `"max"`). |
 
 **Legacy Compatibility**
 
@@ -206,6 +204,8 @@ async def optimize(
 | `cost_approved` | Skip cost approval prompt. |
 | `budget_limit` / `budget_metric` / `budget_include_pruned` | Configure budget-based early stopping. |
 | `plateau_window` / `plateau_epsilon` | Configure plateau detection stop conditions. |
+| `parameter_order` | Grid search only: mapping of parameter names to numeric priorities. Lower values vary slowest; higher values vary fastest. |
+| `order` | Alias for `parameter_order` (grid search only). |
 
 Unknown keys are forwarded to the optimizer and may raise errors when unsupported.
 

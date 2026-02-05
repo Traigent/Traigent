@@ -317,3 +317,65 @@ def sanitize_filename(filename: str, max_length: int = 255) -> str:
         sanitized = sanitized[:max_length]
 
     return sanitized
+
+
+# Sensitive system paths that should not be accessed via user-provided paths
+_SENSITIVE_PATHS = frozenset(
+    [
+        "/etc",
+        "/proc",
+        "/sys",
+        "/dev",
+        "/boot",
+        "/root",
+        "/var/log",
+        "/var/run",
+    ]
+)
+
+
+def validate_user_path(path: str | Path, for_write: bool = False) -> Path:
+    """Validate a user-provided path for safe file operations.
+
+    This function validates paths that come from user input (API parameters,
+    config files, etc.) to prevent file inclusion attacks while still allowing
+    users to specify legitimate paths.
+
+    Args:
+        path: The user-provided path to validate
+        for_write: If True, also validates the path is suitable for writing
+
+    Returns:
+        Resolved, validated path
+
+    Raises:
+        PathTraversalError: If path contains null bytes or points to sensitive locations
+        ValueError: If path is empty or invalid
+    """
+    if not path:
+        raise ValueError("Path cannot be empty")
+
+    path_str = str(path)
+
+    # Check for null bytes (could be used to bypass checks)
+    if "\x00" in path_str:
+        raise PathTraversalError("Path contains null bytes")
+
+    # Resolve to absolute path (handles .., symlinks, etc.)
+    resolved = Path(path).expanduser().resolve()
+
+    # Check if path starts with any sensitive system directory
+    resolved_str = str(resolved)
+    for sensitive in _SENSITIVE_PATHS:
+        if resolved_str == sensitive or resolved_str.startswith(sensitive + "/"):
+            raise PathTraversalError(
+                f"Access to sensitive system path denied: {sensitive}"
+            )
+
+    # For write operations, ensure parent directory is writable
+    if for_write:
+        parent = resolved.parent
+        if parent.exists() and not parent.is_dir():
+            raise ValueError(f"Parent path is not a directory: {parent}")
+
+    return resolved

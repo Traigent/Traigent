@@ -10,36 +10,246 @@ Traigent is a Python SDK for zero-code LLM optimization using decorators (`@trai
 - **Execution Modes**: `edge_analytics` (local + analytics), `mock` (testing), `cloud` (production).
 - **Security**: `traigent/security/` handles JWT validation and encryption. **Never bypass auth in production code.**
 
-## 🚨 CRITICAL: Pre-Edit Checklist (READ BEFORE WRITING ANY CODE)
+## 📋 Claude Plans & IP Protection (CRITICAL)
 
-Before writing ANY value in code, STOP and ask:
-- [ ] Is this value already defined as a constant somewhere? → Use it
-- [ ] If not, should it be a constant? (YES if used in prints/logs/multiple places)
-- [ ] Am I hardcoding something that should reference a variable? → NEVER do this
+**Implementation plans contain proprietary IP and MUST NOT be committed to version control.**
 
-**Constants First Rule**: When adding a new configurable value, create the constant in config.py FIRST, then use it everywhere. Never write a literal value "temporarily" - it's never temporary.
+### Storage Location
+- All Claude Code implementation plans are stored in `~/.claude/plans/` (user home directory)
+- This directory is already excluded by `.gitignore` (line 253: `.claude/`)
+- **NEVER** create plan files inside the repository directory structure
+- **NEVER** commit plan files or reference them in committed code
+
+### Plan Naming Convention
+- Plans use auto-generated names like `async-sprouting-summit.md`, `bold-crimson-valley.md`
+- Store plan path references only in conversation context, never in files
+
+### When Creating Plans
+When you create implementation plans using EnterPlanMode/ExitPlanMode:
+1. Plans are automatically written to `~/.claude/plans/`
+2. Verify the path starts with `/home/` or `~/` (outside repo)
+3. If accidentally created in repo, immediately move to `~/.claude/plans/`
+
+## ⚙️ Concurrency & Shared Resources (CRITICAL)
+
+**Traigent uses dependency injection, multi-threading, and shared resource guardrails. ALL changes must consider these patterns.**
+
+### Dependency Injection Pattern
+- `OptimizedFunction` receives injected dependencies: `TraigentConfig`, `BudgetGuardrail`, `CloudClient`, etc.
+- **NEVER** instantiate shared resources directly inside functions
+- **ALWAYS** accept dependencies as parameters or use factory patterns
+- Example: `OptimizationOrchestrator` injects budget guardrail into trial executor
 
 ```python
-# ❌ BAD - hardcoding then "planning to fix later"
-print(f"Max trials: 10")  # WRONG - even temporarily
+# ✅ CORRECT - Dependency injection
+def run_trial(config: dict, budget_guardrail: BudgetGuardrail) -> TrialResult:
+    budget_guardrail.check_before_trial()
+    # ... trial logic
 
-# ❌ BAD - hardcoding in multiple places
-max_trials=10,  # in decorator
-TqdmProgressCallback(total_trials=10)  # in run_poc.py
-print(f"Max trials: 10")  # in print statement
+# ❌ WRONG - Direct instantiation creates multiple instances
+def run_trial(config: dict) -> TrialResult:
+    budget_guardrail = BudgetGuardrail()  # BREAKS shared state!
+    budget_guardrail.check_before_trial()
+```
 
-# ✅ GOOD - create constant FIRST, then use it everywhere
-# Step 1: Add to config.py
-MAX_TRIALS = 10
+### Multi-Threading Considerations
+- Parallel trial execution uses `ThreadPoolExecutor` (see `traigent/core/orchestrator.py`)
+- **All shared resources MUST be thread-safe** (use locks, thread-local storage, or immutable data)
+- Budget guardrails use threading locks to prevent race conditions
+- Example thread-safe patterns:
+  - `BudgetGuardrail` uses `threading.Lock()` for spend tracking
+  - Trial results are collected in thread-safe queues
+  - Configuration sampling uses immutable config snapshots
 
-# Step 2: Use the constant everywhere
-max_trials=MAX_TRIALS,
-TqdmProgressCallback(total_trials=MAX_TRIALS)
-print(f"Max trials: {MAX_TRIALS}")
+```python
+# ✅ CORRECT - Thread-safe shared state
+class BudgetGuardrail:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._spent = 0.0
+
+    def add_cost(self, cost: float):
+        with self._lock:
+            self._spent += cost
+
+# ❌ WRONG - Race condition
+class BudgetGuardrail:
+    def __init__(self):
+        self._spent = 0.0
+
+    def add_cost(self, cost: float):
+        self._spent += cost  # Multiple threads can corrupt this!
+```
+
+### Budget Guardrail Integration
+When adding features that consume resources (LLM calls, API requests):
+1. **Always check budget before execution**: Call `budget_guardrail.check_before_trial()` or similar
+2. **Track costs after execution**: Call `budget_guardrail.add_cost(trial_cost)`
+3. **Handle budget exceeded**: Raise `BudgetExceededError` and stop gracefully
+4. **Thread-safety**: Never bypass locks or create duplicate guardrail instances
+
+Key files:
+- `traigent/core/budget.py` - Budget guardrail implementation
+- `traigent/core/orchestrator.py` - Budget integration in optimization loop
+- `traigent/core/trial_lifecycle.py` - Cost tracking per trial
+
+### Resource Injection Checklist
+Before implementing ANY new feature that:
+- Makes LLM/API calls
+- Executes user functions
+- Runs in parallel trials
+- Shares state across trials
+
+**Ask yourself:**
+1. ✅ Does this respect the injected budget guardrail?
+2. ✅ Is this thread-safe for parallel execution?
+3. ✅ Am I using dependency injection (not creating new instances)?
+4. ✅ Do I handle budget exceeded gracefully?
+
+## 🔄 Cross-Project Communication: TraigentSchema DTOs (CRITICAL)
+
+**We own the SDK (Traigent), Frontend (FE), and Backend (BE). Use TraigentSchema DTOs for ALL cross-project data exchange.**
+
+### TraigentSchema DTOs
+Located in `traigent/cloud/dtos.py`, these DTOs define the canonical data contracts between SDK ↔ Backend ↔ Frontend:
+
+**Core DTOs:**
+- `ExperimentDTO` - Experiment definition and configuration
+- `ExperimentRunDTO` - Optimization run lifecycle and results
+- `ConfigurationRunDTO` - Individual trial/configuration results
+- `InfrastructureDTO` - Compute infrastructure metadata
+- `ConfigurationsDTO` - Experiment configurations wrapper
+- `MeasuresDict` - Type-safe measures dictionary with validation
+
+**Why Use DTOs:**
+1. **Type Safety**: Enforced validation (Python identifiers, numeric types, max keys)
+2. **Schema Compliance**: Validates against `optigen_schemas` (if installed)
+3. **Privacy Modes**: Built-in support for Edge Analytics (privacy-preserving defaults)
+4. **Backward Compatibility**: Handles schema evolution across SDK/BE/FE versions
+5. **Single Source of Truth**: Same DTOs used by SDK, Backend API, and Frontend API client
+
+### When to Use TraigentSchema DTOs
+
+**✅ ALWAYS use DTOs for:**
+- SDK → Backend API submissions (experiments, trials, results)
+- Backend → Frontend responses (experiment lists, run details, analytics)
+- Frontend → Backend requests (filters, updates, actions)
+- Any new feature that crosses SDK/BE/FE boundaries
+
+**❌ NEVER:**
+- Serialize raw Python objects (dicts, dataclasses) without DTO conversion
+- Create ad-hoc JSON schemas that bypass DTOs
+- Modify DTO fields without updating all 3 projects (SDK, BE, FE)
+
+### DTO Usage Pattern
+
+```python
+# ✅ CORRECT - Use DTOs for SDK → Backend
+from traigent.cloud.dtos import ExperimentRunDTO, ConfigurationRunDTO
+
+# Create DTO with validation
+experiment_run = ExperimentRunDTO(
+    id=run_id,
+    experiment_id=experiment_id,
+    status="running",
+    summary_stats={"accuracy": 0.95},
+    metadata={"dataset_size": 100}
+)
+
+# Validate against schema (if optigen_schemas installed)
+experiment_run.validate()  # Raises DTOSerializationError if invalid
+
+# Convert to dict for API submission
+payload = experiment_run.to_dict()
+response = await cloud_client.submit_experiment_run(payload)
+
+# ❌ WRONG - Ad-hoc dict without validation
+payload = {
+    "id": run_id,
+    "experiment_id": experiment_id,
+    "status": "running",  # Typo: should be "not_started", "running", "completed", etc.
+    "metrics": {"accuracy": 0.95},  # Wrong key: should be "summary_stats"
+}
+response = await cloud_client.submit_experiment_run(payload)  # May fail silently
+```
+
+### MeasuresDict Validation
+
+The `MeasuresDict` class enforces:
+- **Max 50 keys** (prevent unbounded memory)
+- **Python identifier keys** (e.g., `accuracy_score`, not `accuracy-score`)
+- **Numeric values only** (int, float, None) - non-numeric logged as warnings (Phase 0)
+
+```python
+from traigent.cloud.dtos import MeasuresDict
+
+# ✅ CORRECT
+measures = MeasuresDict({
+    "accuracy": 0.95,
+    "latency_ms": 120.5,
+    "cost_usd": 0.002,
+})
+
+# ❌ WRONG - Invalid key pattern (hyphen not allowed)
+measures = MeasuresDict({
+    "accuracy-score": 0.95,  # Raises ValueError: must match ^[a-zA-Z_][a-zA-Z0-9_]*$
+})
+
+# ⚠️ WARNING - Non-numeric value (allowed in Phase 0, rejected in v2.0)
+measures = MeasuresDict({
+    "model_name": "gpt-4",  # Logs warning: use metadata instead
+})
+```
+
+### Adding New Cross-Project Features
+
+When implementing features that span SDK/BE/FE (like example scoring):
+
+1. **Check existing DTOs first**: Can you extend `ExperimentRunDTO.metadata` or `ConfigurationRunDTO.measures`?
+2. **If new DTO needed**: Create in `traigent/cloud/dtos.py` with validation
+3. **Backend models**: Create SQLAlchemy models that map to DTO structure
+4. **Backend API**: Use DTOs in request/response schemas (FastAPI/Pydantic)
+5. **Frontend client**: Generate TypeScript types from DTO schemas
+6. **Validate end-to-end**: Ensure SDK DTO → Backend model → Frontend type consistency
+
+**Example: Adding Example Scoring (from plan)**
+- SDK computes content scores → add to `ConfigurationRunDTO.measures` (via `MeasuresDict`)
+- Backend stores scores → `ExampleScore` model matches DTO structure
+- Backend API returns scores → serialize to DTO format
+- Frontend displays scores → TypeScript types generated from DTO schemas
+
+### DTO Files to Know
+
+**SDK:**
+- [traigent/cloud/dtos.py](traigent/cloud/dtos.py) - All DTO definitions
+
+**Backend (TraigentBackend):**
+- `src/models/` - SQLAlchemy models (map to DTOs)
+- `src/routes/` - FastAPI endpoints (use Pydantic models based on DTOs)
+- `src/schemas/` - Pydantic request/response schemas
+
+**Frontend:**
+- `src/types/` - TypeScript types (generated from DTOs/API schemas)
+- `src/api/` - API client methods (consume DTO-based endpoints)
+
+### Schema Validation (Optional)
+
+Install `optigen_schemas` for strict validation:
+```bash
+pip install 'traigent[validation]'
+```
+
+Control strictness with environment variable:
+```bash
+# Strict (default): Raise exceptions on validation failure
+export TRAIGENT_STRICT_VALIDATION=true
+
+# Lenient: Log warnings only (for development)
+export TRAIGENT_STRICT_VALIDATION=false
 ```
 
 ## 🛠️ Development Workflow
-- **Setup**: `make install-dev` (installs with `[dev,integrations,analytics,security]`).
+- **Setup**: `make install-dev` (installs with `[all,dev,dspy,docs]` - all optional dependencies).
 - **Testing**: `TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest tests/` (Critical: Use mock mode to avoid API costs).
   - **Markers**: `pytest -m "unit"`, `pytest -m "integration"`, `pytest -m "security"`.
 - **Linting**: `make lint` (runs Ruff, MyPy, Bandit). `make format` (Black, Isort).
@@ -83,6 +293,74 @@ The CI workflow uses different flags than local development:
 1. Run `make format` (runs isort + black)
 2. Run `make lint` (runs ruff + mypy + bandit)
 3. Verify: `black --check traigent/ && isort --check-only traigent/`
+
+## 🔍 SonarQube Local Validation (CRITICAL)
+
+**BEFORE pushing code changes, ALWAYS validate with local SonarQube to avoid CI failures.**
+
+### Why This Matters
+- SonarCloud enforces **80%+ coverage on new code**
+- Coverage is measured on **source files**, not test files
+- Tests must **import and execute** the actual code paths being changed
+- Writing tests that only test patterns (not the actual files) will NOT provide coverage
+
+### Pre-Push Checklist for Code Changes
+
+1. **Generate coverage report for changed files:**
+   ```bash
+   # Identify changed source files
+   git diff --name-only origin/main -- 'traigent/**/*.py'
+
+   # Run tests with coverage for those specific modules
+   TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true \
+     pytest tests/ --cov=traigent.module.changed --cov-report=xml:coverage.xml
+   ```
+
+2. **Run local SonarQube scan:**
+   ```bash
+   # Ensure SonarQube is running
+   curl -s http://localhost:9000/api/system/status
+
+   # Run scan (requires sonar-scanner installed)
+   source .env.local && make sonar-local
+   ```
+
+3. **Check coverage on new code:**
+   - Open http://localhost:9000/dashboard?id=Traigent
+   - Navigate to "New Code" tab
+   - Verify **Coverage on New Code ≥ 80%**
+
+### Common Coverage Mistakes
+
+```python
+# ❌ WRONG - Testing the pattern, not the actual file
+# This test covers test_plugin_architecture.py, NOT platforms.py
+def test_getattr_pattern():
+    err = ModuleNotFoundError("test")
+    err.name = "traigent.cloud"
+    missing = getattr(err, "name", "") or ""
+    assert missing.startswith("traigent.cloud")
+
+# ✅ CORRECT - Import and trigger the actual code path
+def test_platforms_cloud_not_installed():
+    with patch.dict(sys.modules, {"traigent.cloud.auth": None}):
+        # Force reimport to trigger the exception handler
+        import importlib
+        import traigent.agents.platforms as platforms
+        importlib.reload(platforms)
+        assert platforms._CLOUD_AUTH_AVAILABLE is False
+```
+
+### If Local SonarQube Not Available
+
+At minimum, verify coverage locally:
+```bash
+# Run coverage and check percentage
+pytest tests/unit/path/to/relevant_tests.py \
+  --cov=traigent.module.you.changed \
+  --cov-report=term-missing \
+  --cov-fail-under=80
+```
 
 ## 🚨 Critical Rules
 1. **Format Before Commit**: Always run `make format` before committing Python changes.
@@ -190,121 +468,3 @@ When writing tests, avoid these anti-patterns identified in our meta-analysis:
 
 ### Reference
 See `tests/optimizer_validation/META_ANALYSIS_REPORT.md` and `tests/optimizer_validation/INDEPENDENT_META_ANALYSIS.md` for detailed analysis of test quality issues.
-
-## 📊 Statistical Rigor for Experiment Results
-
-**NEVER claim a hypothesis is "confirmed" or "proven" without proper statistical validation.**
-
-When reporting experimental results:
-
-### 1. Single-run experiments are INCONCLUSIVE by default
-- One random seed = anecdotal evidence, not proof
-- Always label single-run results as "preliminary" or "suggestive"
-
-### 2. Required for claiming statistical significance
-- Multiple independent runs (minimum 5, preferably 10+)
-- Appropriate statistical test (t-test, bootstrap CI, McNemar's, etc.)
-- Reported p-value < 0.05 (or stated significance threshold)
-- Effect size calculation (Cohen's d or equivalent)
-
-### 3. Language guidelines
-- ❌ "The hypothesis is confirmed"
-- ❌ "Results prove that X outperforms Y"
-- ❌ "We demonstrate that..."
-- ✅ "Results suggest..." (single run)
-- ✅ "Preliminary evidence indicates..." (single run)
-- ✅ "With p < 0.05, we reject the null hypothesis..." (validated)
-
-### 4. Always acknowledge limitations
-- Sample size and its implications
-- Number of random seeds used
-- Whether null hypothesis testing was performed
-- Potential confounds
-
-## 🤖 AutoCoder Operational Rules
-
-### 1. "RUN" means RUN - No modifications
-- "Commence", "Run it", "Execute", "Go ahead" = RUN THE SCRIPT AS-IS
-- Do NOT make any code changes before, during, or after execution
-- Do NOT ask "Want me to fix this?" or present accept/reject prompts
-- **After the run**: Inform about issues/improvements, but WAIT for user to explicitly initiate changes
-- Key shift: **I inform, you initiate.** Modifications require explicit user initiation.
-
-### 2. 🚨 CRITICAL: No hardcoded values in print statements
-- All printed configuration info MUST come from actual variables
-- This applies to ALL literals: strings, numbers, lists - EVERYTHING
-- BAD: `print("Models: gpt-3.5-turbo, gpt-4o-mini")`
-- BAD: `print(f"Max trials: 10")`  # Number literals are ALSO hardcoding!
-- BAD: `print(f"Algorithm: optuna")`  # String literals are hardcoding!
-- GOOD: `print(f"Models: {', '.join(config_space['model'])}")`
-- GOOD: `print(f"Max trials: {MAX_TRIALS}")`
-- GOOD: `print(f"Algorithm: {OPTIMIZATION_ALGORITHM}")`
-
-### 3. Don't change approved formats
-- Once a format/output is tested and approved, DO NOT modify it
-- If you need to add features, ADD NEW functions/files
-- Never silently change existing approved behavior
-
-### 4. Ask before expensive operations
-- Before running anything that costs money (API calls, cloud resources)
-- Confirm the exact code that will run
-- Confirm cost limits are set correctly
-- Do NOT make last-minute code changes before expensive runs
-
-### 5. 🚨 CRITICAL: Single source of truth
-- Configuration values should be defined ONCE in config.py
-- All references (prints, logs, docs, decorators, callbacks) must read from that source
-- Never duplicate configuration values as strings/numbers elsewhere
-- **"Constants First" workflow**:
-  1. FIRST: Add constant to config.py
-  2. THEN: Import and use it everywhere
-  3. NEVER: Write a literal value "temporarily" - it's never temporary
-- Example violation (what I did wrong):
-  ```python
-  # ❌ I wrote this in 3 different places:
-  max_trials=10,  # text2sql_agent.py
-  TqdmProgressCallback(total_trials=10)  # run_poc.py
-  print(f"Max trials: 10")  # run_poc.py
-
-  # ✅ Should have been:
-  MAX_TRIALS = 10  # config.py (define ONCE)
-  max_trials=MAX_TRIALS,  # use constant
-  TqdmProgressCallback(total_trials=MAX_TRIALS)  # use constant
-  print(f"Max trials: {MAX_TRIALS}")  # use constant
-  ```
-
-### 6. Test runs must be representative
-- Test runs should use the same code path as production runs
-- If test passes, production should work identically
-- Do NOT add features between test and production runs
-
-### 7. Documentation must reference source of truth
-- Docstrings, comments, README files must NOT hardcode config values
-- BAD: "Supports models: gpt-3.5-turbo, gpt-4o" (hardcoded in docstring)
-- GOOD: "Supports models: see SUPPORTED_MODELS constant" (references source)
-
-### 8. Do NOT modify Traigent core code
-- Never modify files under `traigent/` directory (the SDK core)
-- OK to modify: `examples/`, `tests/`, `docs/`, `scripts/`, `paper_experiments/`
-- If Traigent has a bug, work around it in customer code
-- Known workarounds:
-  - `cost_limit=`/`cost_approved=` decorator params don't work → use env vars instead
-  - `evaluator=` param doesn't work → use `metric_functions=` instead
-
-### 9. Mock mode status
-- `.env` has `TRAIGENT_MOCK_MODE=false` (real scoring for RAG examples)
-- If VS Code test discovery breaks, set it back to true
-- Prompt the user: "Mock mode is currently OFF. Want me to enable it for tests?"
-
-### 10. Never push to main
-- NEVER run `git push` to the main branch
-- Always create a feature/dev branch for changes
-- Use pull requests to merge into main
-- If on main, checkout a new branch before committing
-
-### 11. Never commit or push without explicit permission
-- NEVER run `git commit` or `git push` unless the user explicitly asks
-- Explicit requests include: "commit", "push", "commit and push", "please commit"
-- NOT explicit: completing a task, user saying "do it", user approving changes
-- After making code changes, WAIT for the user to request a commit
-- This applies even if the changes are complete and tested

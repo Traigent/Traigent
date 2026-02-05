@@ -5,9 +5,9 @@ This is NOT the real Traigent cloud implementation and does NOT represent
 Traigent's proprietary IP.
 
 This module provides a basic base class for experimental platform executors
-used during development and testing while the OptiGen backend is being built.
+used during development and testing while the Traigent backend is being built.
 
-Real Traigent cloud execution happens in the OptiGen backend (proprietary).
+Real Traigent cloud execution happens in the Traigent backend (proprietary).
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Compatibility FUNC-AGENTS FUNC-INTEGRATIONS REQ-AGNT-013 REQ-INT-008 SYNC-OptimizationFlow
@@ -36,7 +36,7 @@ class BasePlatformExecutor(AgentExecutor):
     🚨 WARNING: This is NOT the real Traigent cloud architecture!
 
     This is a simplified base class for local testing and development.
-    Real platform execution happens in the OptiGen backend.
+    Real platform execution happens in the Traigent backend.
 
     All experimental executors should inherit from this class.
     """

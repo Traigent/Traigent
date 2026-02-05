@@ -275,11 +275,11 @@ class TestSyncManager:
 
     # Session Conversion Tests
 
-    def test_convert_session_to_optigen_format(
+    def test_convert_session_to_traigent_format(
         self, sync_manager: SyncManager, sample_session: OptimizationSession
     ) -> None:
-        """Test conversion of local session to OptiGen format."""
-        result = sync_manager.convert_session_to_optigen_format(sample_session)
+        """Test conversion of local session to Traigent format."""
+        result = sync_manager.convert_session_to_traigent_format(sample_session)
 
         # Check structure
         assert "agent" in result
@@ -313,7 +313,7 @@ class TestSyncManager:
         assert result["experiment_run"]["metadata"]["total_trials"] == 3
         assert result["experiment_run"]["metadata"]["best_score"] == 0.92
 
-    def test_convert_session_to_optigen_format_minimal_data(
+    def test_convert_session_to_traigent_format_minimal_data(
         self, sync_manager: SyncManager
     ) -> None:
         """Test conversion with minimal session data."""
@@ -328,7 +328,7 @@ class TestSyncManager:
             trials=[],
         )
 
-        result = sync_manager.convert_session_to_optigen_format(minimal_session)
+        result = sync_manager.convert_session_to_traigent_format(minimal_session)
 
         assert result["agent"]["name"] == "Local Agent: minimal_func"
         assert len(result["experiment_run"]["results"]) == 0
