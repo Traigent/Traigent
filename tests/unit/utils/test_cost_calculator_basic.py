@@ -15,5 +15,5 @@ def test_cost_calculator_token_counts():
         model_name="claude-3-haiku-20240307", input_tokens=100, output_tokens=50
     )
     assert cb.total_tokens >= 0
-    # Cost may be zero if tokencost unavailable
+    # Cost may be zero if litellm unavailable
     assert cb.total_cost >= 0.0

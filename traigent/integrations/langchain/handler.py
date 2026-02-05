@@ -404,7 +404,7 @@ class TraigentHandler(BaseCallbackHandler):
                 if call.model is None:
                     call.model = response.llm_output.get("model_name")
 
-            # Calculate cost (uses tokencost if available)
+            # Calculate cost (uses litellm if available)
             if call.total_tokens > 0 and call.model:
                 call.cost = self._estimate_cost(
                     call.model, call.input_tokens, call.output_tokens
@@ -473,7 +473,7 @@ class TraigentHandler(BaseCallbackHandler):
                 if call.model is None:
                     call.model = response.llm_output.get("model_name")
 
-            # Calculate cost (simplified - uses tokencost if available)
+            # Calculate cost (simplified - uses litellm if available)
             if call.total_tokens > 0 and call.model:
                 call.cost = self._estimate_cost(
                     call.model, call.input_tokens, call.output_tokens
@@ -654,17 +654,17 @@ class TraigentHandler(BaseCallbackHandler):
     ) -> float:
         """Estimate cost for LLM call.
 
-        Uses tokencost library via cost_calculator, with hardcoded fallback
-        estimates when tokencost is unavailable or model is unknown.
+        Uses litellm library via cost_calculator, with hardcoded fallback
+        estimates when litellm is unavailable or model is unknown.
         """
         try:
             from traigent.utils.cost_calculator import (
-                TOKENCOST_AVAILABLE,
+                LITELLM_AVAILABLE,
                 calculate_llm_cost,
             )
 
-            # Try tokencost-based calculation first
-            if TOKENCOST_AVAILABLE:
+            # Try litellm-based calculation first
+            if LITELLM_AVAILABLE:
                 result = calculate_llm_cost(
                     model_name=model,
                     input_tokens=input_tokens,
@@ -672,9 +672,9 @@ class TraigentHandler(BaseCallbackHandler):
                 )
                 if result.total_cost > 0:
                     return result.total_cost
-                # tokencost returned 0 (unknown model) - fall through to estimates
+                # litellm returned 0 (unknown model) - fall through to estimates
 
-            # Fallback estimates (per 1M tokens) when tokencost unavailable or model unknown
+            # Fallback estimates (per 1M tokens) when litellm unavailable or model unknown
             return self._fallback_cost_estimate(model, input_tokens, output_tokens)
         except Exception:
             return self._fallback_cost_estimate(model, input_tokens, output_tokens)
@@ -682,7 +682,7 @@ class TraigentHandler(BaseCallbackHandler):
     def _fallback_cost_estimate(
         self, model: str, input_tokens: int, output_tokens: int
     ) -> float:
-        """Hardcoded fallback cost estimates when tokencost is unavailable."""
+        """Hardcoded fallback cost estimates when litellm is unavailable."""
         # Costs per 1M tokens (input, output)
         cost_per_1m = {
             "gpt-4o": (2.50, 10.00),

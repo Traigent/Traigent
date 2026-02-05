@@ -15,9 +15,13 @@ try:
     from langchain.chains import LLMChain
     from langchain.prompts import ChatPromptTemplate
     from langchain_openai import ChatOpenAI
+
+    _LANGCHAIN_AVAILABLE = True
 except ImportError:
-    print("Please install LangChain: pip install langchain langchain-openai")
-    sys.exit(1)
+    _LANGCHAIN_AVAILABLE = False
+    LLMChain = None  # type: ignore[misc, assignment]
+    ChatPromptTemplate = None  # type: ignore[misc, assignment]
+    ChatOpenAI = None  # type: ignore[misc, assignment]
 
 from . import register_problem
 from .base import BaseLangChainProblem, ProblemConfig, ProblemMetric

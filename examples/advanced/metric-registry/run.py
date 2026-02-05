@@ -12,8 +12,11 @@ from typing import Any
 os.environ.setdefault("TRAIGENT_FORCE_LOCAL", "true")
 os.environ.setdefault("TRAIGENT_MOCK_LLM", "true")
 
-import traigent
-from traigent.metrics import MetricSpec, register_metric, reset_registry
+import traigent  # noqa: E402
+from traigent.metrics import MetricSpec, register_metric, reset_registry  # noqa: E402
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 BASE = Path(__file__).parent
 DATASET = str(BASE / "evaluation_set.jsonl")

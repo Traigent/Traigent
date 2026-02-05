@@ -40,7 +40,7 @@ from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from traigent.utils.logging import get_logger
@@ -86,7 +86,7 @@ if TYPE_CHECKING:
 # =============================================================================
 
 
-class SpanStatus(str, Enum):
+class SpanStatus(StrEnum):
     """OpenTelemetry-compatible span status values."""
 
     RUNNING = "RUNNING"
@@ -97,7 +97,7 @@ class SpanStatus(str, Enum):
     CANCELLED = "CANCELLED"
 
 
-class SpanType(str, Enum):
+class SpanType(StrEnum):
     """Types of spans in a workflow trace."""
 
     NODE = "node"

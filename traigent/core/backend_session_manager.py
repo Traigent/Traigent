@@ -362,8 +362,17 @@ class BackendSessionManager:
             )
         if "measures" in metadata and "measures" not in metrics_payload:
             metrics_payload["measures"] = metadata["measures"]
-            logger.debug(
-                "Added measures to metrics payload for trial %s", trial_result.trial_id
+            logger.info(
+                "📊 Added %d measures to metrics payload for trial %s (status=%s)",
+                len(metadata["measures"]),
+                trial_result.trial_id,
+                trial_result.status.value,
+            )
+        elif trial_result.status == TrialStatus.PRUNED:
+            logger.warning(
+                "⚠️ No measures found for PRUNED trial %s - metadata keys: %s",
+                trial_result.trial_id,
+                list(metadata.keys()),
             )
 
         if "score" not in metrics_payload and score is not None:

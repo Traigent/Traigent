@@ -1,6 +1,6 @@
 # ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
 
-**Current Version**: 0.9.0 (Beta)
+**Current Version**: 0.10.0 (Beta)
 
 ---
 
@@ -39,6 +39,85 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 ### Agent Configuration Hooks
 
 ![Traigent Agent Hooks Demo](docs/demos/output/github-hooks.svg)
+
+## 🏗️ Architecture Overview
+
+```mermaid
+flowchart LR
+    subgraph Optimizer["<b>Optimizer</b>"]
+        TPE["TPE"]
+        Grid["Grid"]
+        NSGA["NSGA-II"]
+    end
+
+    subgraph App["<b>Your Application</b>"]
+        Decorator["@traigent.optimize()<br/><i>objectives, tuned vars,<br/>constraints, budget</i>"]
+        Function["Your Function"]
+        Evaluator["Evaluator<br/><i>(LLM-as-Judge)</i>"]
+        Dataset["Dataset<br/><i>(.jsonl)</i>"]
+    end
+
+    subgraph Orchestrator["<b>Traigent Orchestrator</b>"]
+        Suggest["1. Suggest<br/><i>propose config</i>"]
+        Inject["2. Inject<br/><i>override params</i>"]
+        Evaluate["3. Evaluate<br/><i>run & score</i>"]
+        Record["4. Record<br/><i>update optimizer</i>"]
+        Continue{"5. Continue?<br/><i>budget, trials</i>"}
+    end
+
+    subgraph Results["<b>Results</b>"]
+        History["History"]
+        Pareto["Pareto Front"]
+        Best["Best Config"]
+    end
+
+    Optimizer <-..->|suggest /<br/>learn| Suggest
+    Decorator --> Inject
+    Function --> Inject
+    Suggest --> Inject
+    Inject --> Evaluate
+    Evaluator --> Evaluate
+    Dataset --> Evaluate
+    Evaluate --> Record
+    Record --> Continue
+    Continue -->|next| Suggest
+    Continue -->|done| History
+    Continue -->|done| Pareto
+    Continue -->|done| Best
+
+    %% Styling
+    style Optimizer fill:#9333ea,stroke:#7c3aed,color:#fff
+    style App fill:#3b82f6,stroke:#2563eb,color:#fff
+    style Orchestrator fill:#f97316,stroke:#ea580c,color:#fff
+    style Results fill:#22c55e,stroke:#16a34a,color:#fff
+
+    style TPE fill:#a855f7,stroke:#9333ea,color:#fff
+    style Grid fill:#a855f7,stroke:#9333ea,color:#fff
+    style NSGA fill:#a855f7,stroke:#9333ea,color:#fff
+
+    style Decorator fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Function fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Evaluator fill:#60a5fa,stroke:#3b82f6,color:#fff
+    style Dataset fill:#60a5fa,stroke:#3b82f6,color:#fff
+
+    style Suggest fill:#fb923c,stroke:#f97316,color:#fff
+    style Inject fill:#fb923c,stroke:#f97316,color:#fff
+    style Evaluate fill:#fb923c,stroke:#f97316,color:#fff
+    style Record fill:#fb923c,stroke:#f97316,color:#fff
+    style Continue fill:#fb923c,stroke:#f97316,color:#fff
+
+    style History fill:#4ade80,stroke:#22c55e,color:#fff
+    style Pareto fill:#4ade80,stroke:#22c55e,color:#fff
+    style Best fill:#4ade80,stroke:#22c55e,color:#fff
+```
+
+**How it works:**
+
+1. **Suggest**: The optimizer proposes a configuration to test
+2. **Inject**: Traigent overrides your function's parameters with the proposed config
+3. **Evaluate**: Your function runs against the dataset, scored by the evaluator
+4. **Record**: Results update the optimizer's model
+5. **Continue**: Loop continues until budget/trials exhausted, then outputs results
 
 ## 🚀 Quick Example: See Tuned Variables in Action
 

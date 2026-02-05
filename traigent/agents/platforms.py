@@ -756,7 +756,7 @@ class OpenAIAgentExecutor(AgentExecutor):
         input_data: dict[str, Any],
         config_overrides: dict[str, Any] | None = None,
     ) -> CostEstimate:
-        """Estimate execution cost using tokencost library."""
+        """Estimate execution cost using litellm library."""
         config = self._merge_configurations(
             agent_spec.model_parameters or {}, config_overrides
         )
@@ -766,9 +766,12 @@ class OpenAIAgentExecutor(AgentExecutor):
         prompt = self._format_prompt(agent_spec.prompt_template, input_data)
 
         try:
-            from tokencost import calculate_completion_cost, calculate_prompt_cost
+            from traigent.utils.cost_calculator import (
+                calculate_completion_cost,
+                calculate_prompt_cost,
+            )
 
-            # Convert prompt string to message format for tokencost
+            # Convert prompt string to message format for litellm
             prompt_messages = [{"role": "user", "content": prompt}]
 
             # Calculate input cost
@@ -786,7 +789,7 @@ class OpenAIAgentExecutor(AgentExecutor):
                 "estimated_cost": float(total_cost),
                 "estimated_input_cost": float(input_cost),
                 "estimated_output_cost": float(output_cost),
-                "confidence": 0.8,  # Higher confidence with tokencost
+                "confidence": 0.8,  # Higher confidence with litellm
             }
 
         except ImportError:

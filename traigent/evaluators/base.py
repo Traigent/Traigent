@@ -1216,31 +1216,37 @@ class BaseEvaluator(ABC):
         consumed = 0
         exhausted = False
 
-        for i, example in enumerate(dataset.examples):
-            if sample_lease and not sample_lease.try_take(1):
-                exhausted = True
-                break
+        try:
+            for i, example in enumerate(dataset.examples):
+                if sample_lease and not sample_lease.try_take(1):
+                    exhausted = True
+                    break
 
-            if detailed:
-                result = await self._evaluate_single_detailed(
-                    func,
-                    config,
-                    example,
-                    i,
-                    executor=None,
-                    progress_callback=progress_callback,
-                )
-                example_results.append(result)
-                outputs.append(result.actual_output)
-                errors.append(result.error_message)
-            else:
-                output, error = await self._evaluate_single_non_detailed(
-                    func, config, example, i, progress_callback
-                )
-                outputs.append(output)
-                errors.append(error)
+                if detailed:
+                    result = await self._evaluate_single_detailed(
+                        func,
+                        config,
+                        example,
+                        i,
+                        executor=None,
+                        progress_callback=progress_callback,
+                    )
+                    example_results.append(result)
+                    outputs.append(result.actual_output)
+                    errors.append(result.error_message)
+                else:
+                    output, error = await self._evaluate_single_non_detailed(
+                        func, config, example, i, progress_callback
+                    )
+                    outputs.append(output)
+                    errors.append(error)
 
-            consumed += 1
+                consumed += 1
+        except TrialPrunedError as e:
+            # Attach partial results that were collected before pruning
+            if detailed and example_results:
+                e.example_results = [r for r in example_results if r is not None]
+            raise
 
         return outputs, errors, example_results, consumed, exhausted
 
@@ -1338,8 +1344,13 @@ class BaseEvaluator(ABC):
         """Handle a completed task result, storing success or error appropriately."""
         try:
             result = task.result()
-        except TrialPrunedError:
+        except TrialPrunedError as e:
             await self._cancel_pending_tasks(pending_tasks, sample_lease)
+            # Attach partial example results to the exception before re-raising
+            if detailed and example_results_by_index:
+                e.example_results = self._collect_partial_results(
+                    example_results_by_index
+                )
             raise
         except asyncio.CancelledError:
             # S7497: CancelledError must be re-raised after cleanup
@@ -1476,6 +1487,22 @@ class BaseEvaluator(ABC):
                 if isinstance(result, asyncio.CancelledError):
                     sample_lease.rollback(1)
 
+    def _collect_partial_results(
+        self,
+        example_results_by_index: dict[int, ExampleResult | None],
+    ) -> list[ExampleResult]:
+        """Collect partial example results for pruned trials.
+
+        Returns a list of non-None ExampleResult objects sorted by index.
+        This is used to capture partial results when a trial is pruned early.
+        """
+        ordered_indices = sorted(example_results_by_index.keys())
+        return [
+            result
+            for i in ordered_indices
+            if (result := example_results_by_index[i]) is not None
+        ]
+
     def _collect_ordered_results(
         self,
         outputs_by_index: dict[int, Any],
@@ -1548,18 +1575,26 @@ class BaseEvaluator(ABC):
         examples = list(dataset.examples)
         semaphore = asyncio.Semaphore(self.max_workers)
 
-        consumed, exhausted = await self._run_concurrent_tasks(
-            func,
-            config,
-            examples,
-            sample_lease,
-            detailed,
-            progress_callback,
-            outputs_by_index,
-            errors_by_index,
-            example_results_by_index,
-            semaphore,
-        )
+        try:
+            consumed, exhausted = await self._run_concurrent_tasks(
+                func,
+                config,
+                examples,
+                sample_lease,
+                detailed,
+                progress_callback,
+                outputs_by_index,
+                errors_by_index,
+                example_results_by_index,
+                semaphore,
+            )
+        except TrialPrunedError as e:
+            # Attach partial results that were collected before pruning
+            if detailed and example_results_by_index:
+                e.example_results = self._collect_partial_results(
+                    example_results_by_index
+                )
+            raise
 
         outputs, errors, example_results = self._collect_ordered_results(
             outputs_by_index, errors_by_index, example_results_by_index, detailed

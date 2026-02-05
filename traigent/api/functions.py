@@ -660,7 +660,13 @@ def get_available_strategies() -> dict[str, dict[str, Any]]:
                 "supports_continuous": False,
                 "supports_categorical": True,
                 "deterministic": True,
-                "parameters": {"description": "No additional parameters"},
+                "parameters": {
+                    "parameter_order": (
+                        "Map parameter names to numeric priorities. Lower values "
+                        "vary slowest; higher values vary fastest."
+                    ),
+                    "order": "Alias for parameter_order.",
+                },
                 "best_for": "Small parameter spaces, exhaustive evaluation",
             }
 
@@ -844,6 +850,7 @@ def with_usage(
     total_cost: float,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    response_time_ms: float | None = None,
 ) -> str | dict[str, Any]:
     """Wrap a response with usage metadata if in optimization mode.
 
@@ -857,6 +864,7 @@ def with_usage(
         input_tokens: Number of input tokens consumed (informational, for UI display).
             If only one token count is provided, the other defaults to 0.
         output_tokens: Number of output tokens generated (informational, for UI display).
+        response_time_ms: Response time in milliseconds (optional, for latency tracking).
             If only one token count is provided, the other defaults to 0.
 
     Returns:
@@ -954,14 +962,20 @@ def with_usage(
     # Build metadata - always include total_cost (required)
     meta: dict[str, Any] = {"total_cost": float(total_cost)}
 
-    # Only include token counts if explicitly provided (not None)
-    # This avoids overwriting existing extracted token counts with zeros
-    if input_tokens is not None or output_tokens is not None:
-        usage: dict[str, int] = {}
+    # Only include usage metadata if any field is explicitly provided (not None)
+    # This avoids overwriting existing extracted values with zeros
+    if (
+        input_tokens is not None
+        or output_tokens is not None
+        or response_time_ms is not None
+    ):
+        usage: dict[str, int | float] = {}
         if input_tokens is not None:
             usage["input_tokens"] = int(input_tokens)
         if output_tokens is not None:
             usage["output_tokens"] = int(output_tokens)
+        if response_time_ms is not None:
+            usage["response_time_ms"] = float(response_time_ms)
         meta["usage"] = usage
 
     result["__traigent_meta__"] = meta

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Example: Applying Saved Configurations - Save and Load Optimal Configs."""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +21,9 @@ for _depth in range(1, 7):
     except IndexError:
         continue
 from examples.utils.langchain_compat import ChatOpenAI, HumanMessage
+
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
 
 try:
     import traigent
@@ -54,9 +58,7 @@ def customer_support_agent(question: str, choices: list[str]) -> int:
 
     Returns a 0-based index corresponding to the best choice.
     """
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo", temperature=0.3, model_kwargs={"max_tokens": 120}
-    )
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, max_tokens=120)
 
     labeled_choices = "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(choices))
     prompt = f"""You are a helpful customer support assistant.
@@ -148,7 +150,7 @@ def load_and_apply_saved_config():
             llm = ChatOpenAI(
                 model="gpt-3.5-turbo",  # Overridden by saved config
                 temperature=0.3,  # Overridden by saved config
-                model_kwargs={"max_tokens": 120},  # Overridden by saved config
+                max_tokens=120,  # Overridden by saved config
             )
             labeled = "\n".join(f"{chr(65+i)}. {opt}" for i, opt in enumerate(choices))
             prompt = f"""Choose the best answer (A-D) for the question below.

@@ -80,6 +80,7 @@ from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
+from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import (
     OptimizationError,
 )
@@ -435,6 +436,12 @@ class OptimizationOrchestrator:
     def _configure_evaluator_execution_mode(self) -> None:
         if hasattr(self.evaluator, "execution_mode"):
             self.evaluator.execution_mode = self.traigent_config.execution_mode
+
+        # Register hybrid lifecycle manager for cleanup if present
+        # (HybridAPIEvaluator exposes lifecycle_manager property)
+        self._hybrid_lifecycle_manager = getattr(
+            self.evaluator, "lifecycle_manager", None
+        )
 
     def _initialize_backend_client(self) -> BackendIntegratedClient | None:
         """Initialize backend client if cloud features are available.
@@ -817,6 +824,22 @@ class OptimizationOrchestrator:
                 await result
         except Exception as exc:
             logger.debug("Backend client cleanup failed: %s", exc)
+
+    async def _cleanup_hybrid_lifecycle(self) -> None:
+        """Release hybrid API lifecycle manager if one was registered."""
+        lifecycle_manager = getattr(self, "_hybrid_lifecycle_manager", None)
+        if lifecycle_manager is None:
+            return
+
+        try:
+            releaser = getattr(lifecycle_manager, "release", None)
+            if releaser:
+                result = releaser()
+                if inspect.isawaitable(result):
+                    await result
+                logger.debug("Hybrid lifecycle manager released")
+        except Exception as exc:
+            logger.debug("Hybrid lifecycle cleanup failed: %s", exc)
 
     def _get_progress_info(self, current_trial: int) -> ProgressInfo:
         """Create progress information for callbacks."""
@@ -1534,6 +1557,25 @@ class OptimizationOrchestrator:
             logger.debug("No workflow spans to submit")
             return
 
+        # Skip trace submission when running in offline mode or with mock sessions
+        # Mock IDs (mock_session_, mock_exp_, mock_run_, mock-session-) don't exist
+        # in the backend database, so trace ingestion would fail with 404
+        if is_backend_offline():
+            logger.debug("Skipping workflow trace submission: backend is offline")
+            self._collected_spans = []
+            return
+
+        # Check if session_id is a mock ID (created when backend was unavailable)
+        if session_id and (
+            session_id.startswith("mock_session_")
+            or session_id.startswith("mock-session-")
+        ):
+            logger.debug(
+                f"Skipping workflow trace submission: mock session '{session_id}'"
+            )
+            self._collected_spans = []
+            return
+
         try:
             # Get trace_id from first span (all spans share same trace)
             trace_id = self._collected_spans[0].trace_id
@@ -1614,6 +1656,15 @@ class OptimizationOrchestrator:
         experiment_id = self._get_experiment_id_from_session(session_id)
         if not experiment_id:
             logger.debug("Cannot create workflow graph: no experiment_id available")
+            return None
+
+        # Skip graph creation for mock experiment IDs (they don't exist in backend)
+        if experiment_id.startswith("mock_exp_") or experiment_id.startswith(
+            "mock-exp-"
+        ):
+            logger.debug(
+                f"Cannot create workflow graph: mock experiment_id '{experiment_id}'"
+            )
             return None
 
         # Get experiment_run_id for linking
@@ -2088,6 +2139,7 @@ class OptimizationOrchestrator:
             raise OptimizationError(f"Optimization failed: {e}") from e
         finally:
             await self._cleanup_backend_client()
+            await self._cleanup_hybrid_lifecycle()
 
     def _abandon_optuna_trial(
         self,
