@@ -696,15 +696,19 @@ class BaseEvaluator(ABC):
             outputs: Actual outputs from function
             expected_outputs: Expected outputs
             errors: Error messages (None for successful evaluations)
-            **context: Additional context for metric computation
+            **context: Additional context for metric computation.
+                metrics_override: Optional list of metric names to compute
+                    instead of self.metrics. Avoids mutating shared state
+                    for thread-safety.
 
         Returns:
             Dictionary of metric name to value
         """
         metrics: dict[str, float] = {}
+        metric_names = context.pop("metrics_override", None) or self.metrics
 
         ragas_metric_names = [
-            name for name in self.metrics if name in self._ragas_metric_names
+            name for name in metric_names if name in self._ragas_metric_names
         ]
         ragas_results: dict[str, float] = {}
 
@@ -732,7 +736,7 @@ class BaseEvaluator(ABC):
                 logger.warning("Failed to compute ragas metrics: %s", exc)
                 ragas_results = dict.fromkeys(ragas_metric_names, 0.0)
 
-        for metric_name in self.metrics:
+        for metric_name in metric_names:
             if metric_name in ragas_results:
                 metrics[metric_name] = ragas_results[metric_name]
                 continue
