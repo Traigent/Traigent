@@ -116,4 +116,4 @@ if __name__ == "__main__":
         print(complex_llm_pipeline("Explain hybrid mode briefly."))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

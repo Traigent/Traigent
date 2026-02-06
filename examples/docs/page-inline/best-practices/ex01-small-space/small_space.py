@@ -119,4 +119,4 @@ if __name__ == "__main__":
         print(classify_text("A red car is parked outside."))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

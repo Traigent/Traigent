@@ -134,4 +134,4 @@ if __name__ == "__main__":
         print(production_support_agent("How do I reset my password?"))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

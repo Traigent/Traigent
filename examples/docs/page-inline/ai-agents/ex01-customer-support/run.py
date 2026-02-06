@@ -25,4 +25,4 @@ if __name__ == "__main__":
         print("  python run.py")
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

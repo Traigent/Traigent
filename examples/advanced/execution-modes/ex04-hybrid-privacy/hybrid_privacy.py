@@ -130,4 +130,4 @@ if __name__ == "__main__":
         print(proprietary_assistant("Give a helpful answer."))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

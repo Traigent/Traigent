@@ -117,4 +117,4 @@ if __name__ == "__main__":
         print(my_llm_function("Say hello to the world"))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None

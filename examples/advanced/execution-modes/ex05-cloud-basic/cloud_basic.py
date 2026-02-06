@@ -126,4 +126,4 @@ if __name__ == "__main__":
         print(text_summarizer("Traigent helps optimize LLM parameters."))
     except KeyboardInterrupt:
         print("\nCancelled by user.")
-        raise SystemExit(130)
+        raise SystemExit(130) from None
