@@ -287,7 +287,7 @@ class TestProviderValidatorCaching:
     def test_get_key_fingerprint(self):
         """Test key fingerprint generation."""
         validator = ProviderValidator()
-        key = "test-api-key-12345"  # pragma: allowlist secret
+        key = "mock-validation-value"  # pragma: allowlist secret
         fingerprint = validator._get_key_fingerprint(key)
         expected = hashlib.sha256(key.encode()).hexdigest()[:8]
         assert fingerprint == expected
