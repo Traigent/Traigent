@@ -75,7 +75,11 @@ def optimized_summary(text: str) -> str:
 
 if __name__ == "__main__":
     try:
-        _res = optimized_summary("test input")
-        print(getattr(_res, "content", _res))
-    except Exception as e:
-        print(e)
+        try:
+            _res = optimized_summary("test input")
+            print(getattr(_res, "content", _res))
+        except Exception as e:
+            print(e)
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

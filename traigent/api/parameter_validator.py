@@ -77,9 +77,11 @@ class ParameterValidator:
 
     def _validate_execution_mode(self, execution_mode: str | ExecutionMode) -> None:
         """Validate execution mode parameter."""
+        from traigent.utils.exceptions import ConfigurationError
+
         try:
             normalized = resolve_execution_mode(execution_mode)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, ConfigurationError) as exc:
             raise ValidationError(
                 f"Invalid execution_mode '{execution_mode}'. {exc}"
             ) from exc

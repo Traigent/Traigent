@@ -26,6 +26,9 @@ import importlib.util
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
+os.environ.setdefault("TRAIGENT_COST_APPROVED", "true")
+
+
 _evaluator_path = Path(__file__).parent.parent / "eval" / "evaluator.py"
 _spec = importlib.util.spec_from_file_location("code_evaluator", _evaluator_path)
 _evaluator_module = importlib.util.module_from_spec(_spec)

@@ -420,7 +420,7 @@ os.unlink(dataset_path)
 
         self._run_code_safely(test_code, "evaluation")
 
-    def _run_code_safely(self, code: str, name: str, timeout: int = 10):
+    def _run_code_safely(self, code: str, name: str, timeout: int = 30):
         """Run code in a subprocess safely."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)

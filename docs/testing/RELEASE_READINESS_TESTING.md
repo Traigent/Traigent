@@ -497,7 +497,7 @@ if LANGCHAIN_AVAILABLE:
         llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
         # In mock mode, this should work without API key
         response = llm.invoke(question)
-        return response.content
+        return str(response.content)
 ```
 
 ### 5.2 Persistence Test

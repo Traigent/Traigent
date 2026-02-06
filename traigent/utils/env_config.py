@@ -9,7 +9,7 @@ import os
 import secrets
 import warnings
 from pathlib import Path
-from typing import Literal, overload
+from typing import TYPE_CHECKING, Literal, overload
 
 from dotenv import load_dotenv
 
@@ -32,32 +32,6 @@ if os.environ.get("TRAIGENT_MOCK_MODE"):
 env_file = Path(__file__).parent.parent.parent / ".env"
 if env_file.exists():
     load_dotenv(env_file)
-else:
-    # Try to load from configs/env-templates/.env.local.template as fallback (development only)
-    template_file = (
-        Path(__file__).parent.parent.parent
-        / "configs"
-        / "env-templates"
-        / ".env.local.template"
-    )
-    if template_file.exists():
-        # Suppress warning in mock LLM mode or when running examples/tests
-        # (When mocking LLMs, you don't need real API keys)
-        mock_llm = os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
-        suppress_warning = (
-            os.getenv("TRAIGENT_SUPPRESS_ENV_WARNING", "false").lower() == "true"
-        )
-        if not mock_llm and not suppress_warning:
-            # Only warn for non-demo usage - check if running interactively
-            import sys
-
-            if sys.stderr.isatty():
-                warnings.warn(
-                    "No .env file found. Using template defaults. "
-                    "For production, create a .env file with your configuration.",
-                    UserWarning,
-                    stacklevel=2,
-                )
 
 _MIN_JWT_SECRET_LENGTH = 32
 _PRODUCTION_ENV_NAMES = {"prod", "production"}
@@ -66,6 +40,9 @@ logger = get_logger(__name__)
 
 # Cache generated development secrets so repeated calls stay consistent per process.
 _GENERATED_DEV_JWT_SECRET: str | None = None
+
+if TYPE_CHECKING:
+    from traigent.config.types import TraigentConfig
 
 
 def _normalize_str(value: str | None) -> str | None:
@@ -236,6 +213,18 @@ def is_mock_llm() -> bool:
     return get_env_var("TRAIGENT_MOCK_LLM", "false").lower() == "true"
 
 
+def should_show_cloud_notice(traigent_config: "TraigentConfig") -> bool:
+    """Return True when the cloud API key notice should be shown."""
+    if is_mock_llm() or is_backend_offline():
+        return False
+    if traigent_config.is_edge_analytics_mode():
+        return False
+
+    from traigent.config.backend_config import BackendConfig
+
+    return not BackendConfig.get_api_key()
+
+
 def is_backend_offline() -> bool:
     """Check if Traigent backend calls should be skipped.
 
@@ -262,3 +251,51 @@ def is_backend_offline() -> bool:
 def is_development() -> bool:
     """Check if running in development mode."""
     return _get_environment_name() in {"dev", "development"}
+
+
+def skip_provider_validation() -> bool:
+    """Check if provider validation should be skipped.
+
+    Provider validation is skipped when:
+    - TRAIGENT_SKIP_PROVIDER_VALIDATION=true is set
+    - TRAIGENT_MOCK_LLM=true is set (no real API calls)
+
+    This allows users to bypass validation for:
+    - Custom/internal models not recognized by Traigent
+    - Testing scenarios where validation is not needed
+    - Environments where validation requests are blocked
+
+    Returns:
+        True if provider validation should be skipped, False otherwise.
+
+    See also:
+        - is_mock_llm(): Check if LLM API calls should be mocked
+        - validate_providers param in @traigent.optimize decorator
+    """
+    # Skip if mock mode is enabled (no real API calls anyway)
+    if is_mock_llm():
+        return True
+
+    # Skip if explicitly disabled
+    skip_env = get_env_var("TRAIGENT_SKIP_PROVIDER_VALIDATION", "false")
+    return skip_env.lower() in ("true", "1", "yes")
+
+
+def get_validation_timeout() -> float:
+    """Get provider validation timeout in seconds.
+
+    Reads from TRAIGENT_VALIDATION_TIMEOUT environment variable.
+    Defaults to 5.0 seconds if not set.
+
+    Returns:
+        Validation timeout in seconds.
+    """
+    timeout_str = get_env_var("TRAIGENT_VALIDATION_TIMEOUT", "5.0")
+    try:
+        return float(timeout_str)
+    except ValueError:
+        logger.warning(
+            "Invalid TRAIGENT_VALIDATION_TIMEOUT '%s', using default 5.0s",
+            timeout_str,
+        )
+        return 5.0

@@ -608,22 +608,26 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # Handle both sync and async execution
     try:
-        asyncio.run(main())
-    except RuntimeError:
-        # Fallback for environments where asyncio is not available
-        console.print("[dim]Running in synchronous mode...[/dim]\\n")
+        # Handle both sync and async execution
+        try:
+            asyncio.run(main())
+        except RuntimeError:
+            # Fallback for environments where asyncio is not available
+            console.print("[dim]Running in synchronous mode...[/dim]\\n")
 
-        # Generate sample queries
-        queries = create_safety_guardrails_dataset(total_queries=20)
-        console.print(f"✅ Generated {len(queries)} sample safety test queries\\n")
+            # Generate sample queries
+            queries = create_safety_guardrails_dataset(total_queries=20)
+            console.print(f"✅ Generated {len(queries)} sample safety test queries\\n")
 
-        # Show configuration space
-        console.print("[bold]Traigent Configuration Space:[/bold]")
-        for key, values in SAFETY_SEARCH_SPACE.items():
-            console.print(f"  {key}: {values}")
+            # Show configuration space
+            console.print("[bold]Traigent Configuration Space:[/bold]")
+            for key, values in SAFETY_SEARCH_SPACE.items():
+                console.print(f"  {key}: {values}")
 
-        console.print(
-            "\\n[green]This example demonstrates systematic safety guardrails optimization![/green]"
-        )
+            console.print(
+                "\\n[green]This example demonstrates systematic safety guardrails optimization![/green]"
+            )
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

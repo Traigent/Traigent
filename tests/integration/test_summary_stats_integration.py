@@ -11,6 +11,7 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestSummaryStatsIntegration:
@@ -260,30 +261,33 @@ class TestExecutionModeHandling:
     """Test that execution modes are handled correctly throughout the system."""
 
     def test_traigent_config_valid_execution_modes(self):
-        """Test that TraigentConfig accepts valid execution modes."""
-        # Test valid modes (privacy maps to hybrid for backward compatibility)
-        test_cases = [
-            ("edge_analytics", "edge_analytics"),
-            ("privacy", "hybrid"),  # Legacy mode maps to hybrid + privacy_enabled=True
-            ("hybrid", "hybrid"),
-            ("standard", "standard"),
-            ("cloud", "cloud"),
-        ]
+        """Test that TraigentConfig accepts edge_analytics mode.
 
-        for input_mode, expected_mode in test_cases:
-            config = TraigentConfig(execution_mode=input_mode)
-            assert config.execution_mode == expected_mode
+        Note: Only edge_analytics is currently supported. cloud/hybrid raise
+        ConfigurationError (not yet supported), privacy/standard raise
+        ConfigurationError (removed).
+        """
+        from traigent.utils.exceptions import ConfigurationError
 
-            # Privacy mode should enable privacy_enabled flag
-            if input_mode == "privacy":
-                assert config.privacy_enabled is True
+        # Only edge_analytics is valid
+        config = TraigentConfig(execution_mode="edge_analytics")
+        assert config.execution_mode == "edge_analytics"
+
+        # cloud/hybrid raise ConfigurationError (not yet supported)
+        for mode in ["cloud", "hybrid"]:
+            with pytest.raises(ConfigurationError, match="not yet supported"):
+                TraigentConfig(execution_mode=mode)
+
+        # privacy/standard raise ConfigurationError (removed)
+        for mode in ["privacy", "standard"]:
+            with pytest.raises(ConfigurationError, match="No such mode"):
+                TraigentConfig(execution_mode=mode)
 
     def test_traigent_config_invalid_execution_mode(self):
         """Test that TraigentConfig rejects invalid execution modes."""
         for invalid_mode in ["invalid_mode", "local"]:
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(ConfigurationError, match="No such mode"):
                 TraigentConfig(execution_mode=invalid_mode)
-        assert "execution_mode must be one of" in str(exc_info.value)
 
     def test_evaluator_execution_mode_initialization(self):
         """Test that evaluator correctly initializes with execution_mode."""
