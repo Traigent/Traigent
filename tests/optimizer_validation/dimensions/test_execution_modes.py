@@ -1,6 +1,8 @@
 """Tests for execution mode configurations.
 
-Tests all execution modes: EDGE_ANALYTICS, PRIVACY, HYBRID, STANDARD, CLOUD
+Tests execution modes. Note: only edge_analytics is currently supported.
+cloud and hybrid raise ConfigurationError (not yet supported).
+privacy and standard raise ConfigurationError (removed).
 """
 
 from __future__ import annotations
@@ -13,15 +15,20 @@ from tests.optimizer_validation.specs import (
     TestScenario,
     basic_scenario,
 )
+from traigent.utils.exceptions import ConfigurationError
 
-# All supported execution modes
-EXECUTION_MODES = ["edge_analytics", "privacy", "hybrid", "standard", "cloud"]
+# Only edge_analytics is currently supported
+SUPPORTED_EXECUTION_MODES = ["edge_analytics"]
+
+# Modes that raise ConfigurationError
+UNSUPPORTED_MODES = ["cloud", "hybrid"]  # Not yet supported
+REMOVED_MODES = ["privacy", "standard"]  # Removed
 
 
 class TestExecutionModeMatrix:
-    """Test matrix for all execution modes."""
+    """Test matrix for supported execution modes."""
 
-    @pytest.mark.parametrize("execution_mode", EXECUTION_MODES)
+    @pytest.mark.parametrize("execution_mode", SUPPORTED_EXECUTION_MODES)
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_execution_mode_basic(
@@ -30,7 +37,7 @@ class TestExecutionModeMatrix:
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test each execution mode works with basic configuration."""
+        """Test each supported execution mode works with basic configuration."""
         scenario = basic_scenario(
             name=f"basic_{execution_mode}",
             execution_mode=execution_mode,
@@ -54,6 +61,31 @@ class TestExecutionModeMatrix:
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
+    @pytest.mark.parametrize("execution_mode", UNSUPPORTED_MODES)
+    @pytest.mark.unit
+    def test_unsupported_mode_raises_configuration_error(
+        self,
+        execution_mode: str,
+    ) -> None:
+        """Test that unsupported modes raise ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            # Try to create a scenario with unsupported mode
+            from traigent.config.types import resolve_execution_mode
+
+            resolve_execution_mode(execution_mode)
+
+    @pytest.mark.parametrize("execution_mode", REMOVED_MODES)
+    @pytest.mark.unit
+    def test_removed_mode_raises_configuration_error(
+        self,
+        execution_mode: str,
+    ) -> None:
+        """Test that removed modes raise ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            from traigent.config.types import resolve_execution_mode
+
+            resolve_execution_mode(execution_mode)
+
 
 class TestInvalidExecutionMode:
     """Tests for invalid execution mode configurations."""
@@ -68,8 +100,7 @@ class TestInvalidExecutionMode:
         """Test behavior with an invalid execution mode string.
 
         Purpose:
-            Verify that providing an unknown execution mode raises a ValueError
-            or handled gracefully.
+            Verify that providing an unknown execution mode raises ConfigurationError.
 
         Edge Case: Invalid execution mode
         """
@@ -81,14 +112,14 @@ class TestInvalidExecutionMode:
             max_trials=1,
             expected=ExpectedResult(
                 outcome=ExpectedOutcome.FAILURE,
-                error_type=ValueError,
+                error_type=ConfigurationError,
             ),
             gist_template="invalid-mode -> {error_type()} | {status()}",
         )
 
         _, result = await scenario_runner(scenario)
 
-        # Should fail with ValueError
+        # Should fail with ConfigurationError
 
         # Verify trials were executed with valid configs
         if hasattr(result, "trials"):
@@ -166,135 +197,51 @@ class TestEdgeAnalyticsMode:
 
 
 class TestPrivacyMode:
-    """Tests specific to PRIVACY execution mode."""
+    """Tests for PRIVACY execution mode - now removed."""
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_privacy_mode_no_data_transmission(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test privacy mode does not transmit input/output data."""
-        scenario = basic_scenario(
-            name="privacy_no_transmit",
-            execution_mode="privacy",
-            max_trials=2,
-            gist_template="privacy -> {trial_count()} | {status()}",
-        )
+    def test_privacy_mode_raises_configuration_error(self) -> None:
+        """Test privacy mode raises ConfigurationError (removed)."""
+        from traigent.config.types import resolve_execution_mode
 
-        _, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception)
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            resolve_execution_mode("privacy")
 
 
 class TestHybridMode:
-    """Tests specific to HYBRID execution mode."""
+    """Tests for HYBRID execution mode - not yet supported."""
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_hybrid_mode_local_with_fallback(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test hybrid mode runs locally with cloud fallback option."""
-        scenario = basic_scenario(
-            name="hybrid_fallback",
-            execution_mode="hybrid",
-            max_trials=2,
-            gist_template="hybrid -> {trial_count()} | {status()}",
-        )
+    def test_hybrid_mode_raises_configuration_error(self) -> None:
+        """Test hybrid mode raises ConfigurationError (not yet supported)."""
+        from traigent.config.types import resolve_execution_mode
 
-        _, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception)
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            resolve_execution_mode("hybrid")
 
 
 class TestStandardMode:
-    """Tests specific to STANDARD execution mode."""
+    """Tests for STANDARD execution mode - now removed."""
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_standard_mode_cloud_orchestration(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test standard mode uses cloud orchestration."""
-        scenario = basic_scenario(
-            name="standard_cloud",
-            execution_mode="standard",
-            max_trials=2,
-            gist_template="standard -> {trial_count()} | {status()}",
-        )
+    def test_standard_mode_raises_configuration_error(self) -> None:
+        """Test standard mode raises ConfigurationError (removed)."""
+        from traigent.config.types import resolve_execution_mode
 
-        _, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception)
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            resolve_execution_mode("standard")
 
 
 class TestCloudMode:
-    """Tests specific to CLOUD execution mode."""
+    """Tests for CLOUD execution mode - not yet supported."""
 
     @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_cloud_mode_full_saas(
-        self,
-        scenario_runner,
-        result_validator,
-    ) -> None:
-        """Test cloud mode uses full SaaS execution."""
-        scenario = basic_scenario(
-            name="cloud_saas",
-            execution_mode="cloud",
-            max_trials=2,
-            gist_template="cloud -> {trial_count()} | {status()}",
-        )
+    def test_cloud_mode_raises_configuration_error(self) -> None:
+        """Test cloud mode raises ConfigurationError (not yet supported)."""
+        from traigent.config.types import resolve_execution_mode
 
-        _, result = await scenario_runner(scenario)
-
-        assert not isinstance(result, Exception)
-
-        # Verify trials were executed with valid configs
-        if hasattr(result, "trials"):
-            assert len(result.trials) >= 1, "Should complete at least one trial"
-            for trial in result.trials:
-                config = getattr(trial, "config", {})
-                assert config, "Trial should have config"
-
-        validation = result_validator(scenario, result)
-        assert validation.passed, validation.summary()
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            resolve_execution_mode("cloud")
 
 
 class TestExecutionModeEdgeCases:

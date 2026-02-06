@@ -77,7 +77,7 @@ This repository includes helper tooling that stores secrets under:
 `project=<project>, name=<ENV_VAR_NAME>`.
 
 ```bash
-python3 tools/keyring_import_env.py --env-file walkthrough/examples/real/.env --project traigent
+python3 tools/keyring_import_env.py --env-file walkthrough/real/.env --project traigent
 ```
 
 This keeps non-secrets (URLs, flags) out of the keyring by default; pass `--all`

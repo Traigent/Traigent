@@ -239,48 +239,37 @@ class TestOptunaConfigSpaceTypes:
 
 
 class TestOptunaExecutionModes:
-    """Test Optuna algorithms with all execution modes.
+    """Test Optuna algorithms with execution modes.
 
-    Purpose:
-        Validate that Optuna optimizers work correctly across all
-        execution mode configurations.
-
-    Coverage Gap Addressed:
-        Only edge_analytics was tested; adding privacy, hybrid, cloud, standard.
+    Note:
+        Only edge_analytics is currently supported. cloud/hybrid raise
+        ConfigurationError (not yet supported), privacy/standard raise
+        ConfigurationError (removed).
     """
 
     @pytest.mark.parametrize("algorithm", OPTUNA_ALGORITHMS)
-    @pytest.mark.parametrize(
-        "execution_mode", ["privacy", "hybrid", "cloud", "standard"]
-    )
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_optuna_execution_modes(
+    async def test_optuna_edge_analytics_mode(
         self,
         algorithm: str,
-        execution_mode: str,
         scenario_runner,
         result_validator,
     ) -> None:
-        """Test Optuna algorithms with different execution modes.
+        """Test Optuna algorithms with edge_analytics execution mode.
 
         Purpose:
-            Verify each Optuna algorithm works correctly with privacy, hybrid,
-            cloud, and standard execution modes.
+            Verify each Optuna algorithm works correctly with edge_analytics,
+            the only currently supported execution mode.
 
-        Expectations:
-            - Optimization completes successfully
-            - Execution mode constraints are respected
-            - No data leakage in privacy mode
-
-        Dimensions: Algorithm={algorithm}, ExecutionMode={execution_mode}
+        Dimensions: Algorithm={algorithm}, ExecutionMode=edge_analytics
         """
         scenario = basic_scenario(
-            name=f"{algorithm}_{execution_mode}",
-            execution_mode=execution_mode,
+            name=f"{algorithm}_edge_analytics",
+            execution_mode="edge_analytics",
             max_trials=2,
             mock_mode_config={"optimizer": algorithm},
-            gist_template=f"{algorithm}-{execution_mode} -> {{trial_count()}}",
+            gist_template=f"{algorithm}-edge_analytics -> {{trial_count()}}",
         )
 
         _, result = await scenario_runner(scenario)
@@ -290,14 +279,9 @@ class TestOptunaExecutionModes:
         # Verify trials were executed
         if hasattr(result, "trials"):
             assert len(result.trials) >= 1, "Should complete at least one trial"
-            # Verify trial configs are valid
             for trial in result.trials:
                 config = getattr(trial, "config", {})
                 assert config, "Trial should have config"
-
-        # Verify execution mode was applied if available in result metadata
-        if hasattr(result, "execution_mode"):
-            assert result.execution_mode == execution_mode
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

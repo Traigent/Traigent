@@ -37,13 +37,15 @@ class TestParameterValidator:
         self.validator = ParameterValidator()
 
     def test_validate_execution_mode_valid(self):
-        """Test validation of valid execution modes."""
-        valid_modes = ["edge_analytics", "privacy", "standard", "cloud", "hybrid"]
+        """Test validation of valid execution modes.
 
-        for mode in valid_modes:
-            # Should not raise exception - validate returns None on success
-            result = self.validator._validate_execution_mode(mode)
-            assert result is None, f"Expected None for valid mode {mode}"
+        Only edge_analytics is currently supported. cloud/hybrid raise
+        ConfigurationError (not yet supported), privacy/standard raise
+        ConfigurationError (removed).
+        """
+        # Only edge_analytics is valid
+        result = self.validator._validate_execution_mode("edge_analytics")
+        assert result is None, "Expected None for valid mode edge_analytics"
 
     def test_validate_execution_mode_invalid(self):
         """Test validation of invalid execution modes."""

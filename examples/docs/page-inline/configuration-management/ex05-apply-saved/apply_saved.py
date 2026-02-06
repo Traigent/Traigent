@@ -213,14 +213,18 @@ Options:
 
 
 if __name__ == "__main__":
-    # Example usage
-    print("=" * 60)
-    print("Traigent: Apply Saved Configuration Example")
-    print("=" * 60)
+    try:
+        # Example usage
+        print("=" * 60)
+        print("Traigent: Apply Saved Configuration Example")
+        print("=" * 60)
 
-    # You can either:
-    # 1. Run optimization and save config
-    # results = use_optimized_support()
+        # You can either:
+        # 1. Run optimization and save config
+        # results = use_optimized_support()
 
-    # 2. Or load and use a previously saved config
-    load_and_apply_saved_config()
+        # 2. Or load and use a previously saved config
+        load_and_apply_saved_config()
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

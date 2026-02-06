@@ -1,0 +1,20 @@
+{"input": {"task": "Write a function that adds two numbers"}}
+{"input": {"task": "Write a function that checks if a number is even"}}
+{"input": {"task": "Write a function that reverses a string"}}
+{"input": {"task": "Write a function that finds the maximum in a list"}}
+{"input": {"task": "Write a function that counts vowels in a string"}}
+{"input": {"task": "Write a function that checks if a string is a palindrome"}}
+{"input": {"task": "Write a function that performs binary search on a sorted list"}}
+{"input": {"task": "Write a function that counts word frequency in a text"}}
+{"input": {"task": "Write a function that flattens a nested list"}}
+{"input": {"task": "Write a function that validates an email address format"}}
+{"input": {"task": "Write a function that merges two sorted lists"}}
+{"input": {"task": "Implement an LRU cache class with get and put methods"}}
+{"input": {"task": "Write Dijkstra's algorithm for shortest path"}}
+{"input": {"task": "Implement a function to serialize and deserialize a binary tree"}}
+{"input": {"task": "Write a function that solves the N-Queens problem"}}
+{"input": {"task": "Implement a trie data structure with insert and search"}}
+{"input": {"task": "Write a function that finds all permutations of a string"}}
+{"input": {"task": "Implement a min heap with insert and extract_min"}}
+{"input": {"task": "Write a function that detects a cycle in a linked list"}}
+{"input": {"task": "Implement topological sort for a directed acyclic graph"}}

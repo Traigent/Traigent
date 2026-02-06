@@ -140,8 +140,7 @@ class {class_name}(ProblemDefinition):
             llm = ChatOpenAI(
                 model=config.model,
                 temperature=config.temperature,
-                model_kwargs={"max_tokens": config.max_tokens
-            })
+                max_tokens=config.max_tokens)
 
             # Create prompt based on problem type
             {prompt_generation}
@@ -288,7 +287,7 @@ register_problem("{name}", {class_name})
             difficulty=difficulty,
             output_type=output_type,
             example_count=len(examples),
-            model_kwargs={"max_tokens": max_tokens},
+            max_tokens=max_tokens,
             models_list=json.dumps(models),
             temperature_range=json.dumps(temp_values),
             examples_data=examples_data,
