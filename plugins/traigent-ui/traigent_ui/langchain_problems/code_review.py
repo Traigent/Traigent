@@ -411,7 +411,7 @@ class CodeReviewProblem(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.1,
-                model_kwargs={"max_tokens": 500},
+                max_tokens=500,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -476,7 +476,7 @@ Provide a thorough code review with specific, actionable feedback.""",
             llm = ChatOpenAI(
                 model="gpt-4o-mini",  # Will be overridden by Traigent
                 temperature=0.1,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 500},  # Will be overridden by Traigent
+                max_tokens=500,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

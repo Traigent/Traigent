@@ -48,16 +48,20 @@ class GeminiPlugin(LLMPlugin):
         }
 
     def _get_metadata(self) -> PluginMetadata:
-        """Return Gemini plugin metadata."""
+        """Return Gemini plugin metadata.
+
+        Note: google-genai is the primary SDK for Traigent's direct Gemini support.
+        google-generativeai is kept for LangChain compatibility (langchain-google-genai).
+        """
         return PluginMetadata(
             name="gemini",
             version="1.0.0",
-            supported_packages=["google-generativeai"],
+            supported_packages=["google-genai", "google-generativeai"],
             priority=IntegrationPriority.NORMAL,
             description="Google Gemini integration",
             author="Traigent Team",
-            requires_packages=["google-generativeai>=0.3.0"],
-            supports_versions={"google-generativeai": "0."},
+            requires_packages=["google-genai>=0.8.0"],
+            supports_versions={"google-genai": "0.", "google-generativeai": "0."},
         )
 
     def _get_extra_mappings(self) -> dict[str, str]:

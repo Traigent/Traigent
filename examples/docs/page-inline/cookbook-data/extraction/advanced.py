@@ -134,13 +134,19 @@ Text: {text}
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        print("Optimizing extract_fields (advanced)…")
-        res = await extract_fields.optimize(max_trials=10)
-        print("Best config:", res.best_config)
-        extract_fields.set_config(res.best_config)
-        print("Test:", extract_fields("Invoice: Omega Inc billed $799 on 2024-05-01."))
+        async def _main():
+            print("Optimizing extract_fields (advanced)…")
+            res = await extract_fields.optimize(max_trials=10)
+            print("Best config:", res.best_config)
+            extract_fields.set_config(res.best_config)
+            print(
+                "Test:", extract_fields("Invoice: Omega Inc billed $799 on 2024-05-01.")
+            )
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

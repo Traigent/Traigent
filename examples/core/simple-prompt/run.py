@@ -157,38 +157,42 @@ def summarize_text(text: str) -> str:
 
 
 if __name__ == "__main__":
-    print("Starting Simple Prompt Optimization...")
+    try:
+        print("Starting Simple Prompt Optimization...")
 
-    async def main():
+        async def main():
+            try:
+                # Run the optimization
+                # max_trials determines how many configurations to test
+                result = await summarize_text.optimize(max_trials=5)
+
+                print("\nOptimization Complete!")
+                print(f"Best Score: {result.best_score}")
+                print(f"Best Configuration: {result.best_config}")
+
+                # Show a summary table
+                df = result.to_aggregated_dataframe()
+                print("\nResults Summary:")
+                print(
+                    df[
+                        ["model", "temperature", "prompt_style", "accuracy", "cost"]
+                    ].to_string(index=False)
+                )
+            except Exception as e:
+                import traceback
+
+                print(f"\n❌ EXAMPLE FAILED WITH ERROR: {e}")
+                traceback.print_exc()
+                raise
+
         try:
-            # Run the optimization
-            # max_trials determines how many configurations to test
-            result = await summarize_text.optimize(max_trials=5)
-
-            print("\nOptimization Complete!")
-            print(f"Best Score: {result.best_score}")
-            print(f"Best Configuration: {result.best_config}")
-
-            # Show a summary table
-            df = result.to_aggregated_dataframe()
-            print("\nResults Summary:")
-            print(
-                df[
-                    ["model", "temperature", "prompt_style", "accuracy", "cost"]
-                ].to_string(index=False)
-            )
+            asyncio.run(main())
         except Exception as e:
             import traceback
 
-            print(f"\n❌ EXAMPLE FAILED WITH ERROR: {e}")
+            print(f"\n❌ ASYNCIO.RUN FAILED WITH ERROR: {e}")
             traceback.print_exc()
             raise
-
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        import traceback
-
-        print(f"\n❌ ASYNCIO.RUN FAILED WITH ERROR: {e}")
-        traceback.print_exc()
-        raise
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

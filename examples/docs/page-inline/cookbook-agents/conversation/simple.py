@@ -58,12 +58,16 @@ def should_escalate(utterance: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await should_escalate.optimize(max_trials=10)
-        should_escalate.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", should_escalate("I'm contacting my lawyer"))
+        async def _main():
+            res = await should_escalate.optimize(max_trials=10)
+            should_escalate.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", should_escalate("I'm contacting my lawyer"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

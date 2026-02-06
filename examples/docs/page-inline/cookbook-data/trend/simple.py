@@ -58,12 +58,16 @@ def classify_trend(series: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await classify_trend.optimize(max_trials=10)
-        classify_trend.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", classify_trend("1, 2, 3, 5"))
+        async def _main():
+            res = await classify_trend.optimize(max_trials=10)
+            classify_trend.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", classify_trend("1, 2, 3, 5"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

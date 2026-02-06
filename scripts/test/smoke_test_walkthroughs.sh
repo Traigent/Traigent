@@ -11,7 +11,7 @@ cd "$REPO_ROOT"
 export TRAIGENT_MOCK_LLM="${TRAIGENT_MOCK_LLM:-true}"
 EXAMPLE_TIMEOUT="${WALKTHROUGH_TIMEOUT:-30}"
 
-examples=(walkthrough/examples/0*.py)
+examples=(walkthrough/mock/0*.py)
 
 echo "🚬 Running walkthrough smoke test (timeout: ${EXAMPLE_TIMEOUT}s)"
 for example in "${examples[@]}"; do

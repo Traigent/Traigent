@@ -9,7 +9,8 @@ import pytest
 from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.cloud.optimizer_client import OptimizerDirectClient
 from traigent.config.types import ExecutionMode
-from traigent.traigent_client import TraigentClient as OptiGenClient
+from traigent.traigent_client import TraigentClient as TraigentClient
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestExecutionModes:
@@ -72,7 +73,7 @@ class TestExecutionModes:
         os.environ["TRAIGENT_FORCE_LOCAL"] = "true"
 
         try:
-            client = OptiGenClient(
+            client = TraigentClient(
                 execution_mode="edge_analytics", agent_builder=mock_agent_builder
             )
 
@@ -104,160 +105,46 @@ class TestExecutionModes:
 
     def test_legacy_local_label_is_accepted(self):
         """Ensure legacy execution_mode='edge_analytics' still maps to Edge Analytics."""
-        client = OptiGenClient(execution_mode="edge_analytics")
+        client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    @pytest.mark.asyncio
-    async def test_hybrid_mode_execution(
-        self, mock_agent_builder, test_dataset, configuration_space
-    ):
-        """Test standard mode execution."""
-        # Mock backend and optimizer clients
-        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
-            with patch(
-                "traigent.traigent_client.OptimizerDirectClient"
-            ) as MockOptimizer:
-                # Setup mock backend
-                mock_backend = AsyncMock()
-                mock_backend.create_hybrid_session = AsyncMock(
-                    return_value=(
-                        "session123",
-                        "token123",
-                        "http://optimizer:8000/api/v1/metrics",
-                    )
-                )
-                mock_backend.finalize_hybrid_session = AsyncMock(
-                    return_value={
-                        "best_configuration": {"temperature": 0.5, "max_tokens": 500},
-                        "best_metrics": {"accuracy": 0.95},
-                        "status": "completed",
-                    }
-                )
-                mock_backend.__aenter__ = AsyncMock(return_value=mock_backend)
-                mock_backend.__aexit__ = AsyncMock()
-                MockBackend.return_value = mock_backend
-
-                # Setup mock optimizer
-                mock_optimizer = AsyncMock()
-                mock_optimizer.get_next_configuration = AsyncMock(
-                    side_effect=[
-                        {
-                            "has_next": True,
-                            "configuration": {"temperature": 0.5, "max_tokens": 500},
-                            "trial_id": "trial1",
-                        },
-                        {
-                            "has_next": True,
-                            "configuration": {"temperature": 0.9, "max_tokens": 100},
-                            "trial_id": "trial2",
-                        },
-                        {"has_next": False},
-                    ]
-                )
-                mock_optimizer.submit_metrics = AsyncMock()
-                mock_optimizer.__aenter__ = AsyncMock(return_value=mock_optimizer)
-                mock_optimizer.__aexit__ = AsyncMock()
-                MockOptimizer.return_value = mock_optimizer
-
-                # Create client in standard mode
-                client = OptiGenClient(
-                    execution_mode="standard",
-                    agent_builder=mock_agent_builder,
-                    api_key="test_key",
-                )
-
-                # Run optimization
-                result = await client.optimize(
-                    function=lambda x: x,
-                    dataset=test_dataset,
-                    configuration_space=configuration_space,
-                    objectives=["accuracy"],
-                    max_trials=2,
-                )
-
-                # Verify results
-                assert result["execution_mode"] == "standard"
-                assert result["completed_trials"] == 2
-                assert "best_configuration" in result
-
-                # Verify backend calls
-                mock_backend.create_hybrid_session.assert_called_once()
-                mock_backend.finalize_hybrid_session.assert_called_once()
-
-                # Verify optimizer calls
-                assert mock_optimizer.get_next_configuration.call_count == 2
-                assert mock_optimizer.submit_metrics.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_cloud_mode_execution(self, test_dataset, configuration_space):
-        """Test SaaS mode execution."""
-        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
-            # Setup mock backend for SaaS mode
-            mock_backend = AsyncMock()
-            mock_backend.upload_dataset = AsyncMock(
-                return_value={"dataset_id": "dataset123"}
-            )
-            mock_backend.create_optimization_session = AsyncMock(
-                return_value={"session_id": "saas_session123"}
-            )
-            mock_backend.get_session_status = AsyncMock(
-                side_effect=[
-                    {"status": "RUNNING", "completed_trials": 1},
-                    {"status": "RUNNING", "completed_trials": 2},
-                    {"status": "COMPLETED", "completed_trials": 2},
-                ]
-            )
-            mock_backend.get_optimization_results = AsyncMock(
-                return_value={
-                    "best_configuration": {"temperature": 0.7},
-                    "best_metrics": {"accuracy": 0.98},
-                    "total_trials": 2,
-                }
-            )
-            mock_backend.__aenter__ = AsyncMock(return_value=mock_backend)
-            mock_backend.__aexit__ = AsyncMock()
-            MockBackend.return_value = mock_backend
-
-            # Create client in SaaS mode
-            client = OptiGenClient(execution_mode="cloud", api_key="test_key")
-
-            # Run optimization
-            result = await client.optimize(
-                function=lambda x: x,
-                dataset=test_dataset,
-                configuration_space=configuration_space,
-                objectives=["accuracy"],
-                max_trials=2,
+    def test_standard_mode_raises_configuration_error(self, mock_agent_builder):
+        """Test that 'standard' mode (removed) raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            TraigentClient(
+                execution_mode="standard",
+                agent_builder=mock_agent_builder,
+                api_key="test_key",
             )
 
-            # Verify results
-            assert result["execution_mode"] == "cloud"
-            assert result["best_metrics"]["accuracy"] == 0.98
+    def test_hybrid_mode_raises_configuration_error(self, mock_agent_builder):
+        """Test that 'hybrid' mode (not yet supported) raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="'hybrid' not yet supported"):
+            TraigentClient(
+                execution_mode="hybrid",
+                agent_builder=mock_agent_builder,
+                api_key="test_key",
+            )
 
-            # Verify backend calls
-            mock_backend.upload_dataset.assert_called_once()
-            mock_backend.create_optimization_session.assert_called_once()
-            assert mock_backend.get_session_status.call_count >= 1
-            mock_backend.get_optimization_results.assert_called_once()
+    def test_cloud_mode_raises_configuration_error(self):
+        """Test that 'cloud' mode (not yet supported) raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="'cloud' not yet supported"):
+            TraigentClient(execution_mode="cloud", api_key="test_key")
 
-    @pytest.mark.asyncio
-    async def test_execution_mode_auto_detection(self):
-        """Test automatic execution mode detection."""
-        # Test Edge Analytics detection (no API key)
-        client = OptiGenClient(execution_mode="auto")
+    def test_execution_mode_auto_detection(self):
+        """Test automatic execution mode detection.
+
+        In the current SDK, 'auto' always resolves to edge_analytics since
+        cloud/hybrid modes are not yet supported.
+        """
+        # With or without API key, auto defaults to edge_analytics
+        client = TraigentClient(execution_mode="auto")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-        # Test SaaS mode detection (with API key)
-        client = OptiGenClient(execution_mode="auto", api_key="test_key")
-        assert client.execution_mode == ExecutionMode.CLOUD
-
-        # Test standard mode detection (privacy flag)
-        os.environ["TRAIGENT_PRIVATE_DATA"] = "true"
-        try:
-            client = OptiGenClient(execution_mode="auto", api_key="test_key")
-            assert client.execution_mode == ExecutionMode.STANDARD
-        finally:
-            del os.environ["TRAIGENT_PRIVATE_DATA"]
+        # Even with API key, auto mode defaults to edge_analytics
+        # (cloud/hybrid modes not yet supported)
+        client = TraigentClient(execution_mode="auto", api_key="test_key")
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @pytest.mark.asyncio
     async def test_local_execution_adapter(self, mock_agent_builder, test_dataset):
@@ -332,43 +219,13 @@ class TestExecutionModes:
             # Verify batch submission was called
             assert mock_session.post.called
 
-    @pytest.mark.asyncio
-    async def test_error_handling_in_hybrid_mode(
-        self, mock_agent_builder, test_dataset, configuration_space
-    ):
-        """Test error handling in standard mode."""
-        with patch("traigent.traigent_client.BackendIntegratedClient") as MockBackend:
-            # Setup mock backend that fails on context manager entry
-            mock_backend = AsyncMock()
-            mock_backend.create_hybrid_session = AsyncMock(
-                side_effect=Exception("Backend connection failed")
-            )
-            # Make __aenter__ raise the exception during connection
-            mock_backend.__aenter__ = AsyncMock(
-                side_effect=Exception("Backend connection failed")
-            )
-            mock_backend.__aexit__ = AsyncMock()
-            MockBackend.return_value = mock_backend
-
-            client = OptiGenClient(
-                execution_mode="standard",
+    def test_invalid_mode_raises_configuration_error(self, mock_agent_builder):
+        """Test that invalid modes raise ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            TraigentClient(
+                execution_mode="invalid_mode",
                 agent_builder=mock_agent_builder,
-                api_key="test_key",  # Need API key for backend client
             )
-
-            # Should handle exception gracefully or raise it
-            try:
-                await client.optimize(
-                    function=lambda x: x,
-                    dataset=test_dataset,
-                    configuration_space=configuration_space,
-                    objectives=["accuracy"],
-                    max_trials=2,
-                )
-                # If no exception raised, check if error is in result
-                assert False, "Expected exception but none was raised"
-            except Exception as e:
-                assert "Backend connection failed" in str(e)
 
 
 class TestPrivacyCompliance:
@@ -413,45 +270,12 @@ class TestPrivacyCompliance:
             ],
         }
 
-    @pytest.mark.asyncio
-    async def test_hybrid_mode_no_data_transmission(
-        self, mock_agent_builder, test_dataset
+    def test_standard_mode_raises_configuration_error_in_privacy_context(
+        self, mock_agent_builder
     ):
-        """Verify that standard mode doesn't transmit actual data."""
-        transmitted_data = []
-
-        # Intercept all network calls
-        with patch("aiohttp.ClientSession") as MockSession:
-            mock_session = AsyncMock()
-
-            # Capture all POST data
-            async def capture_post(url, json=None, **kwargs):
-                transmitted_data.append(json)
-                mock_response = AsyncMock()
-                mock_response.status = 200
-                mock_response.json = AsyncMock(return_value={"status": "ok"})
-                return mock_response
-
-            mock_session.post = capture_post
-            MockSession.return_value = mock_session
-
-            # Run in standard mode
-            os.environ["TRAIGENT_FORCE_HYBRID"] = "true"
-            try:
-                OptiGenClient(
-                    execution_mode="standard", agent_builder=mock_agent_builder
-                )
-
-                # Check transmitted data doesn't contain dataset
-                for data in transmitted_data:
-                    if data:
-                        assert "examples" not in str(data)
-                        assert test_dataset["examples"][0]["input"]["text"] not in str(
-                            data
-                        )
-
-            finally:
-                del os.environ["TRAIGENT_FORCE_HYBRID"]
+        """Verify that standard mode (removed) raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="No such mode 'standard'"):
+            TraigentClient(execution_mode="standard", agent_builder=mock_agent_builder)
 
     @pytest.mark.asyncio
     async def test_cloud_mode_data_encryption(self):
@@ -509,7 +333,7 @@ class TestPerformanceAndScaling:
         # Create multiple clients
         clients = []
         for _i in range(3):
-            client = OptiGenClient(
+            client = TraigentClient(
                 execution_mode="edge_analytics",  # Use Edge Analytics for simplicity
                 agent_builder=mock_agent_builder,
             )
