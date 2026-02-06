@@ -14,11 +14,15 @@ os.environ["TRAIGENT_MOCK_LLM"] = "true"
 from customer_support import demonstrate_customer_support
 
 if __name__ == "__main__":
-    # Run the demonstration
-    demonstrate_customer_support()
+    try:
+        # Run the demonstration
+        demonstrate_customer_support()
 
-    print("\n" + "=" * 60)
-    print("Example complete!")
-    print("\nTo run without mock mode:")
-    print("  export TRAIGENT_MOCK_LLM=false")
-    print("  python run.py")
+        print("\n" + "=" * 60)
+        print("Example complete!")
+        print("\nTo run without mock mode:")
+        print("  export TRAIGENT_MOCK_LLM=false")
+        print("  python run.py")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

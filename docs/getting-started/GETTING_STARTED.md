@@ -26,7 +26,7 @@ from langchain_openai import ChatOpenAI
 def answer_question(question: str) -> str:
     cfg = traigent.get_config()  # Active trial/applied config
     llm = ChatOpenAI(model=cfg.get("model"), temperature=cfg.get("temperature"))
-    return llm.invoke(question).content
+    return str(llm.invoke(question).content)
 
 # Async-safe in Traigent - use asyncio.run in sync contexts
 if __name__ == "__main__":
@@ -103,12 +103,16 @@ from litellm import completion
 def my_agent(query: str) -> str:
     config = traigent.get_config()
     response = completion(model=config.get("model"), messages=[{"role": "user", "content": query}])
-    return response.choices[0].message.content
+    return str(response.choices[0].message.content)
 ```
 
 ## 🔒 Execution Model
 
-Open-source builds support `execution_mode="edge_analytics"` (local). Cloud/hybrid orchestration is a roadmap item—keep runs in local mode unless you have a managed backend wired up.
+Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local).
+
+`execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported in this build; they will raise `NotYetSupported` when optimization runs.
+
+To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
 ---
 

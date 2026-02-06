@@ -143,14 +143,14 @@ declare -a DOCS_EXAMPLES=(
 
 # Walkthrough examples - tutorial series
 declare -a WALKTHROUGH_EXAMPLES=(
-    "../walkthrough/examples/mock/01_tuning_qa.py"
-    "../walkthrough/examples/mock/02_zero_code_change.py"
-    "../walkthrough/examples/mock/03_parameter_mode.py"
-    "../walkthrough/examples/mock/04_multi_objective.py"
-    "../walkthrough/examples/mock/05_rag_parallel.py"
-    "../walkthrough/examples/mock/06_custom_evaluator.py"
-    "../walkthrough/examples/mock/07_multi_provider.py"
-    "../walkthrough/examples/mock/08_privacy_modes.py"
+    "../walkthrough/mock/01_tuning_qa.py"
+    "../walkthrough/mock/02_zero_code_change.py"
+    "../walkthrough/mock/03_parameter_mode.py"
+    "../walkthrough/mock/04_multi_objective.py"
+    "../walkthrough/mock/05_rag_parallel.py"
+    "../walkthrough/mock/06_custom_evaluator.py"
+    "../walkthrough/mock/07_multi_provider.py"
+    "../walkthrough/mock/08_privacy_modes.py"
 )
 
 print_header() {

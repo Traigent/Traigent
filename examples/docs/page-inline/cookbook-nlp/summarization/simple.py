@@ -55,15 +55,21 @@ def summarize(document: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await summarize.optimize(max_trials=10)
-        summarize.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print(
-            "Test:",
-            summarize("Traigent helps optimize LLM apps for quality, cost, and speed."),
-        )
+        async def _main():
+            res = await summarize.optimize(max_trials=10)
+            summarize.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print(
+                "Test:",
+                summarize(
+                    "Traigent helps optimize LLM apps for quality, cost, and speed."
+                ),
+            )
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

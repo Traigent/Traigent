@@ -153,11 +153,15 @@ CLASSIFICATION_DATASET = [
 ]
 
 if __name__ == "__main__":
-    print("🔧 Traigent Examples Shared Utilities")
-    print("This module provides common functionality for examples.")
-    print("\nAvailable utilities:")
-    print("  • BaseExample class for consistent example structure")
-    print("  • Dataset creation helpers")
-    print("  • Result display utilities")
-    print("  • Error handling patterns")
-    print("  • Sample datasets for common tasks")
+    try:
+        print("🔧 Traigent Examples Shared Utilities")
+        print("This module provides common functionality for examples.")
+        print("\nAvailable utilities:")
+        print("  • BaseExample class for consistent example structure")
+        print("  • Dataset creation helpers")
+        print("  • Result display utilities")
+        print("  • Error handling patterns")
+        print("  • Sample datasets for common tasks")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

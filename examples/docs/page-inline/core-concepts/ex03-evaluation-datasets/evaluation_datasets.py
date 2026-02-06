@@ -331,20 +331,24 @@ def analyze_dataset_characteristics() -> None:
 
 
 if __name__ == "__main__":
-    print("=" * 60)
-    print("Traigent Core Concepts: Evaluation Datasets")
-    print("=" * 60)
+    try:
+        print("=" * 60)
+        print("Traigent Core Concepts: Evaluation Datasets")
+        print("=" * 60)
 
-    # Demonstrate dataset formats
-    demonstrate_dataset_formats()
+        # Demonstrate dataset formats
+        demonstrate_dataset_formats()
 
-    # Analyze dataset characteristics
-    analyze_dataset_characteristics()
+        # Analyze dataset characteristics
+        analyze_dataset_characteristics()
 
-    print("\n" + "=" * 50)
-    print("Dataset Examples Created")
-    print("=" * 50)
-    print("1. JSONL file dataset (classification_tasks.jsonl)")
-    print("2. Python list dataset (in-memory)")
-    print("3. Dynamic dataset generation (math problems)")
-    print("\nEach format has its use cases and advantages!")
+        print("\n" + "=" * 50)
+        print("Dataset Examples Created")
+        print("=" * 50)
+        print("1. JSONL file dataset (classification_tasks.jsonl)")
+        print("2. Python list dataset (in-memory)")
+        print("3. Dynamic dataset generation (math problems)")
+        print("\nEach format has its use cases and advantages!")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

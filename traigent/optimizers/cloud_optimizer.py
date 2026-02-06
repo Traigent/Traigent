@@ -1,8 +1,8 @@
-"""RemoteOptimizer implementation with fallback support.
+"""CloudOptimizer implementation for cloud optimization services.
 
-This module provides the RemoteOptimizer class that integrates with remote
-optimization services while maintaining fallback to local optimization for
-reliability and seamless operation.
+This module provides the CloudOptimizer class that integrates with remote
+optimization services. Note: Cloud mode is not yet supported in the
+open-source SDK.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID REQ-OPT-ALG-004 REQ-CLOUD-009 SYNC-CloudHybrid
@@ -63,17 +63,18 @@ def _run_async_safely(coro: Coroutine[Any, Any, T]) -> T:
 
 
 class CloudOptimizer(BaseOptimizer):
-    """Optimizer that delegates to cloud optimization service with local fallback.
+    """Optimizer that delegates to cloud optimization service.
 
-    This optimizer provides the best of both worlds:
+    This optimizer provides:
     - Advanced optimization algorithms from cloud services
-    - Reliability through local fallback when cloud services are unavailable
     - Smart dataset subset selection for cost optimization
     - Enhanced exploration-exploitation strategies
 
     Note:
+        Cloud mode is not yet supported in the open-source SDK.
+        This optimizer is reserved for future enterprise features.
         This is distinct from RemoteOptimizer (in remote.py) which is a simpler
-        privacy-aware scaffold. CloudOptimizer provides full session management,
+        scaffold. CloudOptimizer provides full session management,
         smart suggestions, and optimization strategies.
     """
 

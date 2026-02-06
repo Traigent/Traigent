@@ -4175,11 +4175,11 @@ Excluded directories: .git, .venv, .traigent, __pycache__, .mypy_cache, .ruff_ca
 | walkthrough/examples/datasets/code_gen.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/datasets/rag_questions.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/datasets/simple_questions.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
-| walkthrough/examples/mock/01_simple.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
+| walkthrough/examples/mock/01_simple_optimization.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/02_zero_code_change.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/03_parameter_mode.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/04_multi_objective.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
-| walkthrough/examples/mock/05_rag.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
+| walkthrough/examples/mock/05_rag_parallel.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/06_custom_evaluator.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/07_privacy_modes.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/classification.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
@@ -4187,11 +4187,11 @@ Excluded directories: .git, .venv, .traigent, __pycache__, .mypy_cache, .ruff_ca
 | walkthrough/examples/mock/rag_questions.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/mock/simple_questions.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/.env |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
-| walkthrough/examples/real/01_simple.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
+| walkthrough/examples/real/01_simple_optimization.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/02_zero_code_change.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/03_parameter_mode.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/04_multi_objective.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
-| walkthrough/examples/real/05_rag.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
+| walkthrough/examples/real/05_rag_parallel.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/06_custom_evaluator.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/07_privacy_modes.py |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |
 | walkthrough/examples/real/classification.jsonl |  |  |  | X |  | Walkthrough assets; keep for onboarding. | review |

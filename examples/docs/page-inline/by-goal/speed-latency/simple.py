@@ -91,12 +91,16 @@ Output only JSON.
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await calculate.optimize(max_trials=10)
-        calculate.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", calculate("12 + 7 * 2"))
+        async def _main():
+            res = await calculate.optimize(max_trials=10)
+            calculate.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", calculate("12 + 7 * 2"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

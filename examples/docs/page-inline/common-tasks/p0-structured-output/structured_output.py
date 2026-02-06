@@ -130,4 +130,8 @@ def extract_json(text: str) -> str:
 
 
 if __name__ == "__main__":
-    print(extract_json("Name: John Doe, Email: john@example.com, Amount: 42"))
+    try:
+        print(extract_json("Name: John Doe, Email: john@example.com, Amount: 42"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

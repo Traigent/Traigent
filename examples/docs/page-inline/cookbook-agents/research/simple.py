@@ -55,12 +55,16 @@ def answer(question: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await answer.optimize(max_trials=10)
-        answer.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", answer("capital of france"))
+        async def _main():
+            res = await answer.optimize(max_trials=10)
+            answer.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", answer("capital of france"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130)

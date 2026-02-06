@@ -479,28 +479,39 @@ def get_buffer_stats():
 - ❌ Not ideal for pure functions
 - ❌ **Not safe for parallel trials** (see warning below)
 
-> ⚠️ **Parallel Execution Warning**: Attribute mode stores configuration on the
-> function object, which is shared across all concurrent trial invocations. When
-> running with `trial_concurrency > 1`, the `current_config` attribute can be
-> overwritten by another trial mid-execution, causing race conditions.
+> ⚠️ **Parallel Execution Blocked**: Attribute mode is **not compatible** with
+> parallel trials (`trial_concurrency > 1`). The SDK raises `ValueError` if you
+> attempt this combination - no workarounds exist.
 >
-> **Recommendations:**
-> - Use `injection_mode="context"` or `"parameter"` for parallel trials
-> - Use `traigent.get_config()` inside your function for correct per-trial access
-> - If you must use attribute mode with parallel trials, set
->   `allow_parallel_attribute=True` in your injection options and access config
->   via `traigent.get_config()`:
+> **Why?** Attribute mode fundamentally relies on a shared mutable function
+> attribute (`my_func.current_config`) that cannot be made thread-safe:
+>
+> - Concurrent trials overwrite the same attribute simultaneously
+> - There is no isolation between trials - all share the same function object
+> - Race conditions cause silent data corruption
+>
+> **Alternatives for parallel execution:**
+> - Use `injection_mode="context"` (recommended) - fully thread-safe
+> - Use `injection_mode="parameter"` - explicit config passing
+> - Use sequential trials: `parallel_config={"trial_concurrency": 1}`
 >
 > ```python
+> # ✅ CORRECT: Use context mode for parallel trials
 > @traigent.optimize(
->     injection={"injection_mode": "attribute", "allow_parallel_attribute": True},
->     parallel_config={"trial_concurrency": 2},
+>     injection_mode="context",  # Thread-safe
+>     parallel_config={"trial_concurrency": 4},
 >     ...
 > )
 > def my_func(query: str) -> str:
->     # Use get_config() for thread-safe access, not my_func.current_config
->     config = traigent.get_config()
+>     config = traigent.get_config()  # Thread-safe access
 >     return process(query, config)
+>
+> # ❌ BLOCKED: Attribute mode + parallel raises ValueError
+> @traigent.optimize(
+>     injection_mode="attribute",
+>     parallel_config={"trial_concurrency": 2},  # ValueError!
+>     ...
+> )
 > ```
 
 ### When to Use
