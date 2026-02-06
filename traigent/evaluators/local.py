@@ -1206,19 +1206,15 @@ class LocalEvaluator(BaseEvaluator):
                 and name not in custom_metric_keys
             ]
             if base_metric_names:
-                original_metrics = self.metrics
-                try:
-                    self.metrics = base_metric_names
-                    aggregated_metrics = self.compute_metrics(
-                        outputs,
-                        expected_outputs,
-                        errors,
-                        dataset=dataset,
-                        example_results=example_results,
-                        example_metrics=metrics_tracker.example_metrics,
-                    )
-                finally:
-                    self.metrics = original_metrics
+                aggregated_metrics = self.compute_metrics(
+                    outputs,
+                    expected_outputs,
+                    errors,
+                    dataset=dataset,
+                    example_results=example_results,
+                    example_metrics=metrics_tracker.example_metrics,
+                    metrics_override=base_metric_names,
+                )
             else:
                 aggregated_metrics = {}
         else:
