@@ -898,7 +898,7 @@ Options:
 
                 return max(0.1, min(1.0, confidence))
 
-            except (statistics.StatisticsError, ValueError, ZeroDivisionError):
+            except (ValueError, ZeroDivisionError):
                 return 0.3
 
     def estimate_remaining_cost(

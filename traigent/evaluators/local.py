@@ -710,6 +710,53 @@ class LocalEvaluator(BaseEvaluator):
         example_metric.custom_metrics["output_cost"] = example_metric.cost.output_cost
         example_metric.custom_metrics["total_cost"] = example_metric.cost.total_cost
 
+    def _inject_usage_from_meta(
+        self, usage: dict[str, Any], metrics: ExampleMetrics
+    ) -> None:
+        """Inject usage data (tokens, response time) from __traigent_meta__.
+
+        Args:
+            usage: Usage dict from __traigent_meta__ with optional keys:
+                input_tokens, output_tokens, response_time_ms.
+            metrics: ExampleMetrics to update.
+        """
+        # Inject token counts (key-presence checks allow explicit zeros)
+        for key, attr in [
+            ("input_tokens", "input_tokens"),
+            ("output_tokens", "output_tokens"),
+        ]:
+            if key not in usage:
+                continue
+            try:
+                val = usage[key]
+                if val < 0:
+                    logger.warning(f"Negative {key} clamped: {val} → 0")
+                setattr(metrics.tokens, attr, max(0, val))
+            except Exception as e:
+                logger.error(f"Failed to inject {key}: {e}", extra={"usage": usage})
+
+        # Recompute total_tokens if any token counts were injected
+        if "input_tokens" in usage or "output_tokens" in usage:
+            try:
+                metrics.tokens.total_tokens = (
+                    metrics.tokens.input_tokens + metrics.tokens.output_tokens
+                )
+            except Exception as e:
+                logger.error(f"Failed to compute total_tokens: {e}")
+
+        # Inject response_time_ms if provided
+        if "response_time_ms" not in usage:
+            return
+        try:
+            response_time = usage["response_time_ms"]
+            if response_time < 0:
+                logger.warning(
+                    f"Negative response_time_ms clamped: {response_time} → 0.0"
+                )
+            metrics.response.response_time_ms = max(0.0, float(response_time))
+        except Exception as e:
+            logger.error(f"Failed to inject response_time_ms: {e}")
+
     def _extract_and_inject_traigent_meta(
         self, output: Any, metrics: ExampleMetrics
     ) -> TraigentMetadata | None:
@@ -718,22 +765,12 @@ class LocalEvaluator(BaseEvaluator):
         This method runs AFTER cost calculation to allow user-provided costs
         to override SDK-calculated values (including mock mode zeros).
 
-        Uses type guards from traigent.core.meta_types to validate the
-        __traigent_meta__ structure at runtime.
-
         Args:
             output: Raw function output (may be dict with __traigent_meta__).
             metrics: ExampleMetrics to update with user-provided values.
 
         Returns:
-            The meta dict if found, None otherwise. Invalid structure logs
-            errors but does not abort evaluation.
-
-        Note:
-            - Type guard validates structure before extraction
-            - Tokens are injected using key-presence checks (explicit zeros override)
-            - Derived metrics (tokens_per_second) are recomputed after injection
-            - Custom metrics receive the raw output dict (including __traigent_meta__)
+            The meta dict if found, None otherwise.
         """
         from traigent.core.meta_types import TraigentMetadata, is_traigent_metadata
 
@@ -744,108 +781,41 @@ class LocalEvaluator(BaseEvaluator):
         if meta is None:
             return None
 
-        # Type guard: Validate structure
         if not is_traigent_metadata(meta):
             logger.error(
                 "Invalid __traigent_meta__ structure",
                 extra={
                     "meta": meta,
                     "expected_keys": ["total_cost (required)", "usage (optional)"],
-                    "validation": "Type guard failed - structure does not match TraigentMetadata",
+                    "validation": "Type guard failed",
                 },
             )
             return None
 
-        # Now TypedDict ensures correct structure (mypy knows this)
         meta = cast(TraigentMetadata, meta)
         logger.debug(f"Validated __traigent_meta__ with keys: {meta.keys()}")
 
-        # Inject tokens with validation (usage is NotRequired, so check existence)
+        # Inject usage data (tokens, response time)
         if "usage" in meta:
-            usage = meta["usage"]
-            try:
-                # Use key-presence checks (not truthiness) to allow explicit zeros
-                if "input_tokens" in usage:
-                    input_val = usage["input_tokens"]
-                    if input_val < 0:
-                        logger.warning(
-                            f"Negative input_tokens clamped: {input_val} → 0"
-                        )
-                    metrics.tokens.input_tokens = max(0, input_val)
-            except Exception as e:
-                logger.error(
-                    f"Failed to inject input_tokens despite type guard: {e}",
-                    extra={"usage": usage},
-                )
+            self._inject_usage_from_meta(cast(dict, meta["usage"]), metrics)
 
-            try:
-                if "output_tokens" in usage:
-                    output_val = usage["output_tokens"]
-                    if output_val < 0:
-                        logger.warning(
-                            f"Negative output_tokens clamped: {output_val} → 0"
-                        )
-                    metrics.tokens.output_tokens = max(0, output_val)
-            except Exception as e:
-                logger.error(
-                    f"Failed to inject output_tokens despite type guard: {e}",
-                    extra={"usage": usage},
-                )
-
-            # Recompute total_tokens if any token counts were injected
-            try:
-                if "input_tokens" in usage or "output_tokens" in usage:
-                    metrics.tokens.total_tokens = (
-                        metrics.tokens.input_tokens + metrics.tokens.output_tokens
-                    )
-            except Exception as e:
-                logger.error(
-                    f"Failed to compute total_tokens: {e}",
-                    extra={
-                        "input_tokens": metrics.tokens.input_tokens,
-                        "output_tokens": metrics.tokens.output_tokens,
-                    },
-                )
-
-            # Inject response_time_ms if provided
-            try:
-                if "response_time_ms" in usage:
-                    response_time = usage["response_time_ms"]
-                    if response_time < 0:
-                        logger.warning(
-                            f"Negative response_time_ms clamped: {response_time} → 0.0"
-                        )
-                    metrics.response.response_time_ms = max(0.0, float(response_time))
-            except Exception as e:
-                logger.error(
-                    f"Failed to inject response_time_ms: {e}",
-                    extra={"response_time_ms": usage.get("response_time_ms")},
-                )
-
-        # Inject cost with validation
+        # Inject cost
         try:
             total_cost = meta["total_cost"]
             if total_cost < 0:
                 logger.warning(f"Negative total_cost clamped: {total_cost} → 0.0")
             metrics.cost.total_cost = max(0.0, float(total_cost))
         except Exception as e:
-            logger.error(
-                f"Failed to inject total_cost: {e}",
-                extra={"total_cost": meta.get("total_cost")},
-            )
+            logger.error(f"Failed to inject total_cost: {e}")
 
-        # Recompute derived metrics after token injection
+        # Recompute derived metrics
         try:
-            # Reset tokens_per_second if tokens are now 0 (avoid stale values)
             if metrics.tokens.total_tokens == 0:
                 metrics.response.tokens_per_second = 0.0
             else:
                 MetricsCalculator.calculate_tokens_per_second(metrics)
         except Exception as e:
-            logger.error(
-                f"Failed to recompute tokens_per_second: {e}",
-                extra={"total_tokens": metrics.tokens.total_tokens},
-            )
+            logger.error(f"Failed to recompute tokens_per_second: {e}")
 
         logger.debug(
             f"Injected cost=${metrics.cost.total_cost:.4f}, "

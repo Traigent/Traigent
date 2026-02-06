@@ -43,6 +43,7 @@ _MSG_TRANSIENT_WARNING = (
 )
 _MSG_AVAILABLE_UNVERIFIED = "Available (unverified: {error_type})"
 _MSG_VALIDATION_FAILED = "Validation failed ({error_type})"
+_MSG_AVAILABLE_CACHED = "Available (cached)"
 
 # Provider detection patterns (model name -> provider)
 # Matches: gpt-*, o1-*, o3-* -> openai
@@ -426,7 +427,7 @@ class ProviderValidator:
             return ProviderStatus(
                 provider="openai",
                 valid=True,
-                message="Available (cached)",
+                message=_MSG_AVAILABLE_CACHED,
             )
 
         try:
@@ -492,7 +493,7 @@ class ProviderValidator:
             return ProviderStatus(
                 provider="anthropic",
                 valid=True,
-                message="Available (cached)",
+                message=_MSG_AVAILABLE_CACHED,
             )
 
         try:
@@ -560,7 +561,7 @@ class ProviderValidator:
             return ProviderStatus(
                 provider="google",
                 valid=True,
-                message="Available (cached)",
+                message=_MSG_AVAILABLE_CACHED,
             )
 
         try:
@@ -630,7 +631,7 @@ class ProviderValidator:
             return ProviderStatus(
                 provider="mistral",
                 valid=True,
-                message="Available (cached)",
+                message=_MSG_AVAILABLE_CACHED,
             )
 
         try:
@@ -695,7 +696,7 @@ class ProviderValidator:
             return ProviderStatus(
                 provider="cohere",
                 valid=True,
-                message="Available (cached)",
+                message=_MSG_AVAILABLE_CACHED,
             )
 
         try:

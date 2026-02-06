@@ -44,7 +44,10 @@ jobs:
     - name: Linting with ruff
       run: |
         ruff check traigent/ --output-format=github
-        ruff check traigent/ --statistics
+
+    - name: Ruff statistics
+      run: |
+        ruff check traigent/ --statistics || true
 
     - name: Type checking with mypy
       run: |
