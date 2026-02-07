@@ -514,6 +514,7 @@ def collect_orchestrator_kwargs(
     agent_measures: dict[str, Any] | None,
     global_measures: dict[str, Any] | None,
     promotion_gate: Any | None,
+    invocations_per_example: int = 1,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -527,6 +528,7 @@ def collect_orchestrator_kwargs(
         agent_measures: Agent measures mapping
         global_measures: Global measures mapping
         promotion_gate: Promotion gate configuration
+        invocations_per_example: LLM invocations per example (already validated)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -534,6 +536,7 @@ def collect_orchestrator_kwargs(
     kwargs: dict[str, Any] = {
         "cache_policy": algorithm_kwargs.get("cache_policy", "allow_repeats"),
         "samples_include_pruned": samples_include_pruned_value,
+        "invocations_per_example": invocations_per_example,
     }
 
     optional_keys = [

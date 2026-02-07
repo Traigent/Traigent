@@ -254,6 +254,10 @@ class OptimizationOrchestrator:
             cost_enforcer=self.cost_enforcer,
             max_trials=self._max_trials,
             max_total_examples=self._max_total_examples,
+            configuration_space=(
+                self.optimizer.config_space if self.optimizer.config_space else None
+            ),
+            invocations_per_example=kwargs.get("invocations_per_example", 1),
         )
 
         self._trial_lifecycle = TrialLifecycle(self)

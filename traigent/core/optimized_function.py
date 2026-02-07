@@ -1139,6 +1139,7 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
+        invocations_per_example: int = 1,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
         orchestrator_kwargs = collect_orchestrator_kwargs(
@@ -1151,6 +1152,7 @@ class OptimizedFunction:
             agent_measures=getattr(self, "agent_measures", None),
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
+            invocations_per_example=invocations_per_example,
         )
 
         # Auto-initialize workflow traces tracker if backend is configured
@@ -1381,6 +1383,23 @@ class OptimizedFunction:
             )
         )
 
+        # Phase 5.5: Pop cost-estimation params before optimizer creation
+        raw_invocations = algorithm_kwargs.pop("invocations_per_example", 1)
+        try:
+            invocations_per_example = max(1, int(raw_invocations))
+            if invocations_per_example != raw_invocations:
+                logger.debug(
+                    "invocations_per_example coerced: %r -> %d",
+                    raw_invocations,
+                    invocations_per_example,
+                )
+        except (TypeError, ValueError):
+            invocations_per_example = 1
+            logger.warning(
+                "Invalid invocations_per_example=%r, defaulting to 1",
+                raw_invocations,
+            )
+
         # Phase 6: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials:
@@ -1427,6 +1446,7 @@ class OptimizedFunction:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
+            invocations_per_example=invocations_per_example,
         )
 
         # Phase 9: Run optimization and finalize
