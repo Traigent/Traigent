@@ -346,179 +346,41 @@ class SeamlessParameterProvider(ConfigurationProvider):
 
         @wraps(func)
         def seamless_wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Get current Traigent configuration
-            current_config = get_config()
+            from traigent.config.context import config_context as _config_context
 
             # Start with the passed config (this is the primary config we want to use)
             active_config = config.copy() if config else {}
 
-            # Merge with context config if available (context takes precedence)
-            if isinstance(current_config, TraigentConfig):
-                context_dict = current_config.to_dict()
-                # Only update if context_dict has actual values
-                if context_dict:
-                    # Also include custom_params
-                    context_dict.update(current_config.custom_params)
-                    # Update active_config with context values
-                    active_config.update(context_dict)
-            elif isinstance(current_config, dict) and current_config:
-                # Update active_config with context values
-                active_config.update(current_config)
+            # Only merge context config when a context has been explicitly set.
+            # When no context is set, config_context.get() returns None and
+            # get_config() synthesises a default TraigentConfig whose to_dict()
+            # returns {'execution_mode': 'edge_analytics'} — a truthy dict that
+            # would pollute active_config with irrelevant defaults.
+            raw_ctx = _config_context.get(None)
+            if raw_ctx is not None:
+                current_config = get_config()
+                if isinstance(current_config, TraigentConfig):
+                    context_dict = current_config.to_dict()
+                    if context_dict:
+                        active_config.update(context_dict)
+                elif isinstance(current_config, dict) and current_config:
+                    active_config.update(current_config)
 
             # If no config at all, just call original function
             if not active_config:
                 logger.debug(f"No configuration for {func.__name__}, using original")
                 return func(*args, **kwargs)
 
-            # Check cache for already transformed function
-            cache_key = self._get_cache_key(func, active_config)
-            cached_func = None
-            with self._cache_lock:
-                if cache_key in self._compiled_cache:
-                    cached_func = self._compiled_cache[cache_key]
-                    self._cache_access_count[cache_key] = (
-                        self._cache_access_count.get(cache_key, 0) + 1
-                    )
-                    logger.debug(f"Using cached transformation for {func.__name__}")
-                else:
-                    # Enforce cache size limit (LRU eviction) only when adding new entries
-                    if len(self._compiled_cache) >= self._max_cache_size:
-                        # Remove least recently used item
-                        if self._cache_access_count:  # Guard against empty dict
-                            lru_key = min(
-                                self._cache_access_count,
-                                key=lambda k: self._cache_access_count[k],
-                            )
-                            del self._compiled_cache[lru_key]
-                            del self._cache_access_count[lru_key]
-                            logger.debug(f"Evicted {lru_key} from cache (LRU)")
-
-            # Execute cached function OUTSIDE the lock to avoid holding it during execution
-            if cached_func is not None:
-                return cached_func(*args, **kwargs)
-
-            def _handle_injection_error(exc: Exception) -> None:
-                error_text = str(exc).lower()
-                model_value = active_config.get("model")
-                config_error_markers = [
-                    "model_not_found",
-                    "model not found",
-                    "invalid model",
-                    "does not exist",
-                ]
-                if isinstance(exc, ConfigurationError) or any(
-                    marker in error_text for marker in config_error_markers
-                ):
-                    raise ConfigurationError(
-                        "Failed to execute with injected configuration"
-                        + (
-                            f" (model='{model_value}')"
-                            if model_value is not None
-                            else ""
-                        )
-                        + f": {exc}"
-                    ) from exc
-                raise
-
-            # Transform the function
+            # Set context so that get_config() inside the function
+            # returns the injected config (not a default TraigentConfig).
+            # Wrap in TraigentConfig so callers using get_config() see a
+            # proper object with custom_params, model, etc.
+            _ctx_config = TraigentConfig.from_dict(active_config)
+            _ctx_token = _config_context.set(_ctx_config)
             try:
-                # Don't log sensitive config values
-                config_keys = list(active_config.keys()) if active_config else []
-                logger.debug(
-                    f"Transforming function {func.__name__} with config keys: {config_keys}"
-                )
-                transformed_func, modified_vars = self._transform_function(
-                    func, active_config
-                )
-
-                if not callable(transformed_func):
-                    raise ConfigurationError("Transformed function must be callable")
-
-                should_shim, signature = self._should_apply_runtime_shim(
-                    func, active_config, modified_vars
-                )
-
-                if should_shim:
-                    shimmed = create_runtime_shim(
-                        func, active_config, signature=signature
-                    )
-                    try:
-                        result = shimmed(*args, **kwargs)
-                    except Exception as exc:  # noqa: BLE001
-                        _handle_injection_error(exc)
-                    else:
-                        with self._cache_lock:
-                            self._compiled_cache[cache_key] = shimmed
-                            self._cache_access_count[cache_key] = 1
-                        with self._stats_lock:
-                            self._stats["runtime_shims"] += 1
-                        logger.debug(
-                            f"Seamless provider using runtime shim for {func.__name__}"
-                        )
-                        return result
-                if modified_vars:
-                    try:
-                        result = transformed_func(*args, **kwargs)
-                    except Exception as exc:  # noqa: BLE001
-                        _handle_injection_error(exc)
-                    else:
-                        with self._cache_lock:
-                            self._compiled_cache[cache_key] = transformed_func
-                            self._cache_access_count[cache_key] = 1
-                        with self._stats_lock:
-                            self._stats["ast_rewrites"] += 1
-                        logger.debug(
-                            f"Cached and executing transformed {func.__name__}"
-                        )
-                        return result
-
-                # No assignments were modified and no shim required
-                with self._cache_lock:
-                    self._compiled_cache[cache_key] = func
-                    self._cache_access_count[cache_key] = 1
-                with self._stats_lock:
-                    self._stats["fallback_triggers"]["no_injection"].append(
-                        sorted(active_config.keys())
-                    )
-                logger.debug(
-                    f"Seamless provider found no injectable targets for {func.__name__}; "
-                    "configuration keys were %s",
-                    sorted(active_config.keys()),
-                )
-                return func(*args, **kwargs)
-
-            except Exception as e:  # noqa: BLE001
-                logger.debug(
-                    "Failed to transform function %s. Attempting runtime shim fallback.",
-                    func.__name__,
-                    exc_info=False,
-                )
-                import traceback
-
-                logger.debug("Traceback: %s", traceback.format_exc())
-                with self._stats_lock:
-                    self._stats["fallback_triggers"]["transform_failure"].append(str(e))
-                try:
-                    signature = self._get_signature(func)
-                    shimmed = create_runtime_shim(
-                        func, active_config, signature=signature
-                    )
-                except Exception as shim_build_exc:  # noqa: BLE001
-                    raise ConfigurationError(
-                        "Failed to inject configuration via seamless provider"
-                    ) from shim_build_exc
-
-                try:
-                    result = shimmed(*args, **kwargs)
-                except Exception as shim_exc:  # noqa: BLE001
-                    _handle_injection_error(shim_exc)
-                else:
-                    with self._cache_lock:
-                        self._compiled_cache[cache_key] = shimmed
-                        self._cache_access_count[cache_key] = 1
-                    with self._stats_lock:
-                        self._stats["runtime_shims"] += 1
-                    return result
+                return self._seamless_run(func, active_config, args, kwargs)
+            finally:
+                _config_context.reset(_ctx_token)
 
         # Handle async functions
         if inspect.iscoroutinefunction(func):
@@ -534,6 +396,169 @@ class SeamlessParameterProvider(ConfigurationProvider):
             return async_seamless_wrapper
 
         return seamless_wrapper
+
+    def _seamless_run(
+        self,
+        func: Callable[..., Any],
+        active_config: dict[str, Any],
+        args: tuple[Any, ...],
+        kwargs: dict[str, Any],
+    ) -> Any:
+        """Execute the seamless injection pipeline for a single invocation.
+
+        This method is called from ``seamless_wrapper`` (inside
+        ``inject_config``) after the context variable has already been
+        set so that ``get_config()`` returns *active_config*.
+
+        Args:
+            func: The original user function.
+            active_config: Merged configuration dict to inject.
+            args: Positional arguments forwarded to *func*.
+            kwargs: Keyword arguments forwarded to *func*.
+
+        Returns:
+            The return value of the (possibly transformed) function.
+        """
+
+        def _handle_injection_error(exc: Exception) -> None:
+            error_text = str(exc).lower()
+            model_value = active_config.get("model")
+            config_error_markers = [
+                "model_not_found",
+                "model not found",
+                "invalid model",
+                "does not exist",
+            ]
+            if isinstance(exc, ConfigurationError) or any(
+                marker in error_text for marker in config_error_markers
+            ):
+                raise ConfigurationError(
+                    "Failed to execute with injected configuration"
+                    + (f" (model='{model_value}')" if model_value is not None else "")
+                    + f": {exc}"
+                ) from exc
+            raise
+
+        # Check cache for already transformed function
+        cache_key = self._get_cache_key(func, active_config)
+        cached_func = None
+        with self._cache_lock:
+            if cache_key in self._compiled_cache:
+                cached_func = self._compiled_cache[cache_key]
+                self._cache_access_count[cache_key] = (
+                    self._cache_access_count.get(cache_key, 0) + 1
+                )
+                logger.debug(f"Using cached transformation for {func.__name__}")
+            else:
+                # Enforce cache size limit (LRU eviction) only when adding new entries
+                if len(self._compiled_cache) >= self._max_cache_size:
+                    # Remove least recently used item
+                    if self._cache_access_count:  # Guard against empty dict
+                        lru_key = min(
+                            self._cache_access_count,
+                            key=lambda k: self._cache_access_count[k],
+                        )
+                        del self._compiled_cache[lru_key]
+                        del self._cache_access_count[lru_key]
+                        logger.debug(f"Evicted {lru_key} from cache (LRU)")
+
+        # Execute cached function OUTSIDE the lock to avoid holding it during execution
+        if cached_func is not None:
+            return cached_func(*args, **kwargs)
+
+        # Transform the function
+        try:
+            # Don't log sensitive config values
+            config_keys = list(active_config.keys()) if active_config else []
+            logger.debug(
+                f"Transforming function {func.__name__} with config keys: {config_keys}"
+            )
+            transformed_func, modified_vars = self._transform_function(
+                func, active_config
+            )
+
+            if not callable(transformed_func):
+                raise ConfigurationError("Transformed function must be callable")
+
+            should_shim, signature = self._should_apply_runtime_shim(
+                func, active_config, modified_vars
+            )
+
+            if should_shim:
+                shimmed = create_runtime_shim(func, active_config, signature=signature)
+                try:
+                    result = shimmed(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    _handle_injection_error(exc)
+                else:
+                    with self._cache_lock:
+                        self._compiled_cache[cache_key] = shimmed
+                        self._cache_access_count[cache_key] = 1
+                    with self._stats_lock:
+                        self._stats["runtime_shims"] += 1
+                    logger.debug(
+                        f"Seamless provider using runtime shim for {func.__name__}"
+                    )
+                    return result
+            if modified_vars:
+                try:
+                    result = transformed_func(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    _handle_injection_error(exc)
+                else:
+                    with self._cache_lock:
+                        self._compiled_cache[cache_key] = transformed_func
+                        self._cache_access_count[cache_key] = 1
+                    with self._stats_lock:
+                        self._stats["ast_rewrites"] += 1
+                    logger.debug(f"Cached and executing transformed {func.__name__}")
+                    return result
+
+            # No assignments were modified and no shim required
+            with self._cache_lock:
+                self._compiled_cache[cache_key] = func
+                self._cache_access_count[cache_key] = 1
+            with self._stats_lock:
+                self._stats["fallback_triggers"]["no_injection"].append(
+                    sorted(active_config.keys())
+                )
+            logger.debug(
+                f"Seamless provider found no injectable targets for {func.__name__}; "
+                "configuration keys were %s",
+                sorted(active_config.keys()),
+            )
+            return func(*args, **kwargs)
+
+        except Exception as e:  # noqa: BLE001
+            logger.debug(
+                "Failed to transform function %s. Attempting runtime shim fallback.",
+                func.__name__,
+                exc_info=False,
+            )
+            import traceback
+
+            logger.debug("Traceback: %s", traceback.format_exc())
+            with self._stats_lock:
+                self._stats["fallback_triggers"]["transform_failure"].append(str(e))
+            try:
+                signature = self._get_signature(func)
+                shimmed = create_runtime_shim(func, active_config, signature=signature)
+            except Exception as shim_build_exc:  # noqa: BLE001
+                raise ConfigurationError(
+                    "Failed to inject configuration via seamless provider"
+                ) from shim_build_exc
+
+            try:
+                result = shimmed(*args, **kwargs)
+            except Exception as shim_exc:  # noqa: BLE001
+                _handle_injection_error(shim_exc)
+            else:
+                with self._cache_lock:
+                    self._compiled_cache[cache_key] = shimmed
+                    self._cache_access_count[cache_key] = 1
+                with self._stats_lock:
+                    self._stats["runtime_shims"] += 1
+                return result
 
     def _transform_function(
         self, func: Callable[..., Any], config: dict[str, Any]

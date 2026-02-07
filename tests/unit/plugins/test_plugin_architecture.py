@@ -851,57 +851,13 @@ class TestTraigentClientEdgeAnalyticsMode:
                     sys.modules[mod] = module_obj
 
     def test_traigent_client_cloud_mode_requires_cloud(self):
-        """TraigentClient should raise FeatureNotAvailableError for cloud mode."""
-        from importlib.abc import MetaPathFinder
+        """TraigentClient should raise ConfigurationError for cloud mode.
 
-        class CloudBlocker(MetaPathFinder):
-            """Meta path finder that blocks traigent.cloud imports using find_spec."""
+        Cloud mode is not yet supported, so TraigentClient raises
+        ConfigurationError before even checking for cloud dependencies.
+        """
+        from traigent.traigent_client import TraigentClient
+        from traigent.utils.exceptions import ConfigurationError
 
-            def find_spec(self, fullname, path, target=None):
-                if fullname.startswith("traigent.cloud"):
-                    # Raise ModuleNotFoundError with .name attribute set
-                    err = ModuleNotFoundError(f"No module named '{fullname}'")
-                    err.name = fullname
-                    raise err
-                return None
-
-        # Save original modules for restoration
-        saved_modules = {}
-        modules_to_clear = [
-            k
-            for k in tuple(sys.modules.keys())
-            if k.startswith("traigent.cloud") or k == "traigent.traigent_client"
-        ]
-        for mod in modules_to_clear:
-            saved_modules[mod] = sys.modules.pop(mod, None)
-
-        blocker = CloudBlocker()
-        sys.meta_path.insert(0, blocker)
-
-        try:
-            # Import fresh module with cloud blocked
-            import traigent.traigent_client as traigent_client
-            from traigent.utils.exceptions import FeatureNotAvailableError
-
-            # Should raise for cloud mode
-            with pytest.raises(FeatureNotAvailableError) as exc_info:
-                traigent_client.TraigentClient(
-                    execution_mode="cloud",
-                    agent_builder=None,
-                )
-
-            assert "Traigent cloud integration" in str(exc_info.value)
-            assert "pip install traigent[cloud]" in str(exc_info.value)
-        finally:
-            sys.meta_path.remove(blocker)
-            # Clear the test's version of the modules
-            for mod in list(sys.modules.keys()):
-                if (
-                    mod.startswith("traigent.cloud")
-                    or mod == "traigent.traigent_client"
-                ):
-                    sys.modules.pop(mod, None)
-            # Restore original modules for other tests
-            for mod, module_obj in saved_modules.items():
-                if module_obj is not None:
-                    sys.modules[mod] = module_obj
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            TraigentClient(execution_mode="cloud", agent_builder=None)

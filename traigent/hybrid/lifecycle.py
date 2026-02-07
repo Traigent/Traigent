@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -35,7 +36,7 @@ class SessionInfo:
     """
 
     session_id: str
-    created_at: float = field(default_factory=lambda: asyncio.get_event_loop().time())
+    created_at: float = field(default_factory=time.monotonic)
     last_heartbeat: float = 0.0
     heartbeat_count: int = 0
     is_alive: bool = True

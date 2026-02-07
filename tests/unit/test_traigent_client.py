@@ -14,7 +14,7 @@ import pytest
 
 from traigent.config.types import ExecutionMode
 from traigent.traigent_client import TraigentClient
-from traigent.utils.exceptions import OptimizationError
+from traigent.utils.exceptions import ConfigurationError, OptimizationError
 
 
 class TestTraigentClientInitialization:
@@ -30,13 +30,14 @@ class TestTraigentClientInitialization:
         mock_backend_config.get_backend_url.return_value = "https://default.url"
 
         client = TraigentClient(
-            api_key="explicit_key", backend_url="https://explicit.url"
+            api_key="explicit_key",  # pragma: allowlist secret
+            backend_url="https://explicit.url",
         )
 
-        assert client.api_key == "explicit_key"
+        assert client.api_key == "explicit_key"  # pragma: allowlist secret
         assert client.backend_url == "https://explicit.url"
         assert client._explicit_api_key is True
-        assert client.execution_mode == ExecutionMode.CLOUD
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -49,7 +50,7 @@ class TestTraigentClientInitialization:
 
         client = TraigentClient()
 
-        assert client.api_key == "default_key"
+        assert client.api_key == "default_key"  # pragma: allowlist secret
         assert client.backend_url == "https://default.url"
         assert client._explicit_api_key is False
 
@@ -96,29 +97,15 @@ class TestDetermineExecutionMode:
         client = TraigentClient(execution_mode="edge_analytics")
         assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
-    @patch("traigent.traigent_client.BackendIntegratedClient")
-    @patch("traigent.config.backend_config.BackendConfig")
-    def test_explicit_standard_mode(
-        self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
-    ) -> None:
-        """Test explicit standard mode selection."""
-        mock_backend_config.get_api_key.return_value = "key"
-        mock_backend_config.get_backend_url.return_value = "https://url"
+    def test_explicit_standard_mode_raises(self) -> None:
+        """Test explicit standard mode raises ConfigurationError (removed mode)."""
+        with pytest.raises(ConfigurationError, match="No such mode"):
+            TraigentClient(execution_mode="standard")
 
-        client = TraigentClient(execution_mode="standard")
-        assert client.execution_mode == ExecutionMode.STANDARD
-
-    @patch("traigent.traigent_client.BackendIntegratedClient")
-    @patch("traigent.config.backend_config.BackendConfig")
-    def test_explicit_cloud_mode(
-        self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
-    ) -> None:
-        """Test explicit cloud mode selection."""
-        mock_backend_config.get_api_key.return_value = "key"
-        mock_backend_config.get_backend_url.return_value = "https://url"
-
-        client = TraigentClient(execution_mode="cloud")
-        assert client.execution_mode == ExecutionMode.CLOUD
+    def test_explicit_cloud_mode_raises(self) -> None:
+        """Test explicit cloud mode raises ConfigurationError (not yet supported)."""
+        with pytest.raises(ConfigurationError, match="not yet supported"):
+            TraigentClient(execution_mode="cloud")
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -139,12 +126,15 @@ class TestDetermineExecutionMode:
     def test_auto_mode_with_force_hybrid(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode detection with TRAIGENT_FORCE_HYBRID."""
+        """Test auto mode with TRAIGENT_FORCE_HYBRID defaults to edge_analytics.
+
+        Cloud/hybrid modes are not yet supported, so auto always resolves to edge_analytics.
+        """
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
         client = TraigentClient(execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.STANDARD
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -152,12 +142,15 @@ class TestDetermineExecutionMode:
     def test_auto_mode_with_force_cloud(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode detection with TRAIGENT_FORCE_CLOUD."""
+        """Test auto mode with TRAIGENT_FORCE_CLOUD defaults to edge_analytics.
+
+        Cloud mode is not yet supported, so auto always resolves to edge_analytics.
+        """
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
         client = TraigentClient(execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.CLOUD
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -165,12 +158,15 @@ class TestDetermineExecutionMode:
     def test_auto_mode_with_explicit_api_key(
         self, mock_backend_config: MagicMock, mock_backend_client: MagicMock
     ) -> None:
-        """Test auto mode defaults to cloud when API key is provided."""
+        """Test auto mode defaults to edge_analytics even with API key.
+
+        Cloud mode is not yet supported, so auto always resolves to edge_analytics.
+        """
         mock_backend_config.get_api_key.return_value = "key"
         mock_backend_config.get_backend_url.return_value = "https://url"
 
         client = TraigentClient(api_key="explicit_key", execution_mode="auto")
-        assert client.execution_mode == ExecutionMode.CLOUD
+        assert client.execution_mode == ExecutionMode.EDGE_ANALYTICS
 
     @patch("traigent.traigent_client.BackendIntegratedClient")
     @patch("traigent.config.backend_config.BackendConfig")
@@ -416,26 +412,25 @@ class TestOptimizeValidation:
     """Tests for optimize method validation."""
 
     @pytest.mark.asyncio
-    async def test_optimize_missing_model_raises_error(self) -> None:
-        """Test optimize raises error when model is missing in standard mode."""
-        with patch("traigent.traigent_client.BackendIntegratedClient"):
-            with patch("traigent.config.backend_config.BackendConfig") as mock_config:
-                mock_config.get_api_key.return_value = "key"
-                mock_config.get_backend_url.return_value = "https://url"
-                # Use standard mode which doesn't auto-fill model
-                client = TraigentClient(execution_mode="standard")
+    async def test_optimize_edge_analytics_auto_fills_model(self) -> None:
+        """Test optimize auto-fills model in edge_analytics mode."""
+        mock_builder = Mock()
+        client = TraigentClient(
+            execution_mode="edge_analytics", agent_builder=mock_builder
+        )
 
-                def test_func() -> str:
-                    return "test"
+        def test_func() -> str:
+            return "test"
 
-                dataset = {"examples": []}
-                config_space = {}  # No model specified
-                objectives = ["accuracy"]
+        dataset = {"examples": [{"input": "test"}]}
+        config_space = {}  # No model specified — edge_analytics auto-fills it
+        objectives = ["accuracy"]
 
-                with pytest.raises(ValueError, match="missing required entries: model"):
-                    await client.optimize(
-                        test_func, dataset, config_space, objectives, max_trials=10
-                    )
+        # Should not raise; edge_analytics fills model with default
+        result = await client.optimize(
+            test_func, dataset, config_space, objectives, max_trials=1
+        )
+        assert result is not None
 
     @pytest.mark.asyncio
     async def test_optimize_edge_analytics_missing_agent_builder(self) -> None:
@@ -460,6 +455,9 @@ class TestOptimizeValidation:
                     )
 
 
+@pytest.mark.skip(
+    reason="standard mode not yet supported — re-enable when mode is implemented"
+)
 class TestOptimizeHybrid:
     """Tests for hybrid/standard mode optimization."""
 
@@ -644,6 +642,9 @@ class TestOptimizeHybrid:
                 assert result["completed_trials"] == 1
 
 
+@pytest.mark.skip(
+    reason="cloud mode not yet supported — re-enable when mode is implemented"
+)
 class TestOptimizeSaaS:
     """Tests for SaaS/cloud mode optimization."""
 
