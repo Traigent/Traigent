@@ -232,7 +232,7 @@ Checklist:
 - [ ] Optional deps are handled gracefully (import guards, clear error messages).
 - [ ] "Experimental" modules are clearly labeled and not required for core flows.
 - [ ] Plots/analytics do not leak sensitive data by default.
-- [ ] TVL spec loading is deterministic (`runtime/tvl_demo.yaml` is a useful smoke input).
+- [ ] TVL spec loading is deterministic (`configs/runtime/tvl_demo.yaml` is a useful smoke input).
 
 Suggested tests:
 - `pytest tests/unit/test_analytics.py -q`

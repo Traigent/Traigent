@@ -22,7 +22,7 @@ optimize:
       model: "default"  # Zero cost for testing
 
 evaluate:
-  baseline_path: "baselines/current.json"
+  baseline_path: "configs/baselines/current.json"
   threshold: 0.05  # 5% improvement threshold
   metrics:
     - accuracy

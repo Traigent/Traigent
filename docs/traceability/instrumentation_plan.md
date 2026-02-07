@@ -4,10 +4,10 @@ Purpose: add runtime trace hooks using `tools.trace_sync.runtime` so `verify-run
 
 ## Prereqs
 - Ensure CodeSync package is importable: from the CodeSync repo run `pip install -e .[dev]` or add its path to `PYTHONPATH`.
-- Runtime helpers to import in Traigent:  
+- Runtime helpers to import in Traigent:
   `from tools.trace_sync.runtime import flow_context, set_flow_id, concept_action, sync_rule, record_action`
 - This repo includes `tools/trace_sync_bootstrap.py` for optional monkey-patched instrumentation if you want to avoid code edits.
-- Default log: `<repo>/runtime/traces/runtime.log`; override via env `TRACE_SYNC_LOG_PATH` if needed.
+- Default log: `<repo>/configs/runtime/traces/runtime.log`; override via env `TRACE_SYNC_LOG_PATH` if needed.
 
 ## Instrumentation principles
 - Instrument concept/requirement boundaries, not every helper.
@@ -35,7 +35,7 @@ Purpose: add runtime trace hooks using `tools.trace_sync.runtime` so `verify-run
 ## Coordination
 - Use `docs/traceability/tagging_tracking.md` to claim instrumentation rows (set `in-progress` with agent_id/UUID).
 - Make minimal edits per file; add imports + decorators/calls; avoid behavior changes.
-- After instrumenting a batch, run a flow to produce runtime log, then `python -m tools.trace_sync.cli verify-runtime --log runtime/traces/runtime.log --repo /path/to/specs`.
+- After instrumenting a batch, run a flow to produce runtime log, then `python -m tools.trace_sync.cli verify-runtime --log configs/runtime/traces/runtime.log --repo /path/to/specs`.
 
 ## Notes
 - Keep new instrumentation in-place in existing modules (no separate folder needed because hooks must wrap the real entrypoints). If config helpers are needed, add a small module under `traigent/config` or `traigent/utils` with clear naming.
