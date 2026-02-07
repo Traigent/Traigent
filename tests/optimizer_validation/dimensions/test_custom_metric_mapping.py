@@ -177,7 +177,7 @@ class TestCustomMetricToObjectiveMapping:
             mock_mode_config={"optimizer": "grid"},
             expected=ExpectedResult(
                 required_metrics=["accuracy"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="single-metric-map -> {trial_count()} | {status()}",
         )
@@ -379,7 +379,7 @@ class TestOverrideDefaultMetrics:
             mock_mode_config={"optimizer": "grid"},
             expected=ExpectedResult(
                 required_metrics=["accuracy"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="override-semantic -> {trial_count()} | {status()}",
         )
@@ -447,7 +447,7 @@ class TestOverrideDefaultMetrics:
             mock_mode_config={"optimizer": "random"},
             expected=ExpectedResult(
                 required_metrics=["accuracy"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="override-fuzzy -> {trial_count()} | {status()}",
         )
@@ -512,7 +512,7 @@ class TestOverrideDefaultMetrics:
             mock_mode_config={"optimizer": "grid"},
             expected=ExpectedResult(
                 required_metrics=["accuracy"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="override-config -> {trial_count()} | {status()}",
         )
@@ -635,7 +635,7 @@ class TestMetricsWithDirections:
             mock_mode_config={"optimizer": "grid"},
             expected=ExpectedResult(
                 required_metrics=["accuracy"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="metric-maximize -> {trial_count()} | {status()}",
         )
@@ -1016,7 +1016,7 @@ class TestDirectionEdgeCases:
             mock_mode_config={"optimizer": "random"},
             expected=ExpectedResult(
                 required_metrics=["accuracy", "score"],
-                best_score_range=(0.3, 1.0),
+                best_score_range=(0.55, 1.0),
             ),
             gist_template="all-maximize -> {trial_count()} | {status()}",
         )
