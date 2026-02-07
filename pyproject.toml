@@ -247,19 +247,13 @@ known_third_party = [
 
 [tool.mypy]
 python_version = "3.12"
-files = [
-    "traigent/core/samplers/factory.py",
-    "traigent/core/types.py",
-    "traigent/core/cost_enforcement.py",
-    "traigent/cloud/client.py",
-    "traigent/integrations/plugin_registry.py",
-    "traigent/integrations/llms/langchain/discovery.py",
-]
+files = ["traigent", "tests", "examples"]
+exclude = ["examples/advanced/ai-engineering-tasks"]
 ignore_missing_imports = true
 follow_imports = "skip"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false  # temporarily relaxed for automated refactors
+disallow_untyped_defs = false
 disallow_incomplete_defs = false
 check_untyped_defs = false
 disallow_untyped_decorators = false
@@ -285,12 +279,55 @@ module = [
     "numpy.*",
     "pandas.*",
     "matplotlib.*",
+    "tokencost.*",
     "litellm.*",
-    "redis.*"
+    "redis.*",
 ]
 ignore_missing_imports = true
 
-# Pytest configuration moved to pytest.ini for VSCode compatibility
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--tb=short",
+    "-n", "auto",
+    "--dist", "loadgroup",
+    "-v",
+    "--ignore=demos",
+    "--ignore=playground",
+    "--ignore=plugins",
+    "--ignore=tests/manual_validation",
+    "--ignore=tests/legacy",
+    "--ignore=tests/auto_tune",
+    "--ignore=tests/unit/bridges",
+    "--ignore=tests/unit/test_bridge_wrapper.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_budget.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_stop_conditions.py",
+    "--ignore=tests/unit/core/test_constraints_enforced.py",
+    "--ignore=tests/unit/evaluators/test_litellm_integration.py",
+    "--ignore=tests/unit/core/test_orchestrator.py",
+]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+    "e2e: marks tests as end-to-end tests",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "asyncio: marks tests as async tests",
+    "analytics: marks tests as analytics tests",
+    "security: marks tests as security tests",
+    "timeout: marks tests that expect a timeout decorator",
+    "rate_limit: marks tests for rate limit handling behavior",
+    "chaos: marks chaos/fault injection tests (slow, may be flaky)",
+    "contract: marks contract tests against real APIs (requires credentials)",
+]
 
 [tool.coverage.run]
 source = ["traigent"]
