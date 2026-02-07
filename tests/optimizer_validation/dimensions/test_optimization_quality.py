@@ -87,9 +87,7 @@ class TestBestScoreRangeValidation:
             expected=ExpectedResult(
                 min_trials=4,
                 max_trials=4,
-                # Note: In mock mode, custom evaluators aren't honored so scores are random
-                # We test structure here; real best_score_range tests need integration mode
-                # best_score_range=(0.8, 1.0),  # Would be used in integration mode
+                best_score_range=(0.3, 1.0),  # Mock mode: accuracy ~[0.5, 1.0]
             ),
             gist_template="max-score-range -> {trial_count()} | {best_score()}",
         )
@@ -240,7 +238,7 @@ class TestOptimizationDirection:
             config_space={"model": ["a", "b", "c", "d"]},
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(min_trials=4),
+            expected=ExpectedResult(min_trials=4, best_score_range=(0.3, 1.0)),
             gist_template="max-highest -> {trial_count()} | {best_score()}",
         )
 
@@ -307,7 +305,7 @@ class TestOptimizationDirection:
             config_space={"model": ["a", "b", "c", "d"]},
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(min_trials=4),
+            expected=ExpectedResult(min_trials=4, best_score_range=(0.0, 0.7)),
             gist_template="min-lowest -> {trial_count()} | {best_score()}",
         )
 
@@ -361,7 +359,7 @@ class TestBestConfigQuality:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(min_trials=4),
+            expected=ExpectedResult(min_trials=4, best_score_range=(0.3, 1.0)),
             gist_template="best-config-match -> {trial_count()} | {best_config()}",
         )
 
@@ -420,7 +418,7 @@ class TestBestConfigQuality:
                 "max_tokens": [100, 500],
             },
             max_trials=2,
-            expected=ExpectedResult(min_trials=1),
+            expected=ExpectedResult(min_trials=1, best_score_range=(0.3, 1.0)),
             gist_template="best-config-complete -> {trial_count()} | {best_config()}",
         )
 
@@ -458,6 +456,7 @@ class TestTrialMetricsQuality:
             expected=ExpectedResult(
                 min_trials=2,
                 required_metrics=["accuracy"],
+                best_score_range=(0.3, 1.0),
             ),
             gist_template="trial-metrics -> {trial_count()} | {status()}",
         )
@@ -489,7 +488,7 @@ class TestTrialMetricsQuality:
             description="Metrics should have valid numeric values",
             config_space={"model": ["gpt-3.5-turbo", "gpt-4"]},
             max_trials=2,
-            expected=ExpectedResult(min_trials=2),
+            expected=ExpectedResult(min_trials=2, best_score_range=(0.3, 1.0)),
             gist_template="valid-metrics -> {trial_count()} | {status()}",
         )
 
