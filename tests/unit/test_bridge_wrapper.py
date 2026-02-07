@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-# Get the project root (where pytest.ini lives)
+# Get the project root (where pyproject.toml lives)
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 

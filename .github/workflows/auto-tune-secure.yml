@@ -429,8 +429,8 @@ jobs:
           echo "🔄 Rolling back to previous baseline..."
 
           # Check for backup baseline
-          if [ -f "baselines/performance.json.backup" ]; then
-            mv baselines/performance.json.backup baselines/performance.json
+          if [ -f "configs/baselines/performance.json.backup" ]; then
+            mv configs/baselines/performance.json.backup configs/baselines/performance.json
             echo "✅ Rolled back to previous baseline"
           else
             echo "⚠️ No backup baseline found"

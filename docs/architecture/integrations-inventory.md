@@ -257,7 +257,7 @@ anthropic_api_url -> base_url
 ### 7. **langchain_plugin.py** (393 lines)
 **Framework**: LangChain (with dynamic discovery)
 
-**Supported Packages**: 
+**Supported Packages**:
 - `langchain>=0.1.0`
 - `langchain-core>=0.1`
 - langchain, langchain-openai, langchain-anthropic, langchain-google, langchain-aws, langchain-huggingface, langchain-community
@@ -817,11 +817,11 @@ OpenAI SDK (optional):
 ### Missing Implementations
 1. **Vector Store Integrations** - Placeholder exists, no implementations
    - Pinecone, Weaviate, Milvus, etc.
-   
+
 2. **Cohere Plugin** - Referenced in framework_override.py but no dedicated plugin
    - Parameter mappings exist in hardcoded form
    - Needs dedicated CoherPlugin class
-   
+
 3. **HuggingFace Plugin** - Referenced but no dedicated plugin
    - Parameter mappings exist in hardcoded form
    - Needs dedicated HuggingFacePlugin class
@@ -895,4 +895,3 @@ OpenAI SDK (optional):
 | Parameter Mappings | 100+ |
 | Class Overrides | 40+ |
 | Method Overrides | 50+ |
-
