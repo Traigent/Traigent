@@ -2092,6 +2092,10 @@ class OptimizationOrchestrator:
             self._logger_facade.attach(self._logger)
         self._logger_facade.log_trial_result(trial_result)
 
+    def _estimate_optimization_cost(self, dataset: Dataset) -> float:
+        """Estimate optimization cost. Delegates to CostEstimator."""
+        return self._cost_estimator.estimate_optimization_cost(dataset)
+
     def _extract_trial_cost(self, trial_result: TrialResult) -> float | None:
         """Extract cost from trial result. Delegates to CostEstimator."""
         return CostEstimator.extract_trial_cost(trial_result)
