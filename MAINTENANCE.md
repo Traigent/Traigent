@@ -414,9 +414,7 @@ make test-coverage
 
 | File | Purpose |
 |------|---------|
-| `pyproject.toml` | Package metadata, dependencies, tool configs |
-| `mypy.ini` | MyPy type checker configuration |
-| `pytest.ini` | Pytest configuration |
+| `pyproject.toml` | Package metadata, dependencies, tool configs (mypy, pytest, coverage, ruff, black, isort) |
 | `.pre-commit-config.yaml` | Pre-commit hooks |
 | `scripts/config/mkdocs.yml` | Documentation site config |
 | `scripts/config/tox.ini` | Tox automation config |

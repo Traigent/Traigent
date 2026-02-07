@@ -128,7 +128,6 @@ See `scripts/archive/README.md` for complete list of archived scripts and their 
 ### ⚙️ Configuration (`config/`)
 Configuration files moved from root for better organization:
 - **`mkdocs.yml`** - MkDocs documentation site configuration
-- **`mypy.ini`** - MyPy type checker configuration
 - **`tox.ini`** - Tox testing automation configuration
 - **`.pre-commit-config.yaml`** - Pre-commit hooks configuration
 - **`.pylance-settings.json`** - Pylance language server settings

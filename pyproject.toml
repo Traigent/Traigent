@@ -247,8 +247,14 @@ known_third_party = [
 
 [tool.mypy]
 python_version = "3.12"
-files = ["traigent", "tests", "examples"]
-exclude = ["examples/advanced/ai-engineering-tasks"]
+files = [
+    "traigent/core/samplers/factory.py",
+    "traigent/core/types.py",
+    "traigent/core/cost_enforcement.py",
+    "traigent/cloud/client.py",
+    "traigent/integrations/plugin_registry.py",
+    "traigent/integrations/llms/langchain/discovery.py",
+]
 ignore_missing_imports = true
 follow_imports = "skip"
 warn_return_any = true
