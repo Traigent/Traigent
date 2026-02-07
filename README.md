@@ -479,25 +479,6 @@ pip install -e ".[all]"
 
 ---
 
-## 🎮 Interactive UI and Use Cases
-
-> 💡 **Interactive Demos**: Advanced examples, use cases, and the Streamlit playground have moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo).
->
-> ```bash
-> # Clone the demo repository
-> git clone https://github.com/Traigent/TraigentDemo
-> cd TraigentDemo
->
-> # Follow the README for setup and usage
-> ```
-
-The TraigentDemo repository provides:
-
-- Define problems using natural language
-- Test and compare different AI agents
-- Visualize performance metrics
-- Export optimal configurations
-
 ## 📏 Evaluation
 
 Traigent evaluates your AI agent's performance by comparing outputs to expected results using semantic similarity, custom evaluators, or mock mode for testing.
@@ -569,91 +550,15 @@ def my_agent(query: str) -> str:
 - Migration path from local to cloud
 - Security best practices
 
-### ✨ Zero-Code Integration - Keep Your Code Unchanged!
-
-Traigent works with your existing code through a simple decorator. Here's how the example above works step by step:
-
-**🎯 The Magic: Parameter Interception**
-
-- Traigent automatically detects `ChatOpenAI()` and `similarity_search()` calls
-- During optimization, it overrides your hardcoded values with test configurations
-- Your original code stays exactly the same - no refactoring needed!
-
-**📊 Optimization Results You'll See:**
-
-```bash
-🔧 Trial 1/20: gpt-3.5-turbo, temp=0.7, k=5 → 81% accuracy, $0.15/1K
-🔧 Trial 5/20: gpt-4o-mini, temp=0.1, k=3 → 94% accuracy, $0.12/1K
-🔧 Trial 12/20: gpt-4o, temp=0.1, k=3 → 97% accuracy, $0.48/1K
-💡 Best configuration found: gpt-4o-mini, temp=0.1, k=3
-```
-
-**🚀 Business Impact:**
-
-- **15% accuracy improvement** (81% → 94%)
-- **20% cost reduction** ($0.15 → $0.12 per 1K queries)
-- **Zero development time** - just add a decorator
-
-**⚙️ Optimization Parameters:**
+### Optimization Parameters
 
 | Parameter | Where | Description |
 |-----------|-------|-------------|
-| `configuration_space` | `@traigent.optimize()` decorator | Define what parameters to test |
+| `configuration_space` | `@traigent.optimize()` decorator | Parameters to test (required) |
 | `objectives` | `@traigent.optimize()` decorator | Metrics to optimize for |
 | `eval_dataset` | `@traigent.optimize()` decorator | Dataset for evaluation |
 | `algorithm` | `.optimize()` method call | Search algorithm: `"random"`, `"grid"`, `"bayesian"` |
 | `max_trials` | `.optimize()` method call | Number of configurations to test |
-
-```python
-# Decorator defines WHAT to optimize
-@traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
-    objectives=["accuracy", "cost"],
-    eval_dataset="data.jsonl"
-)
-def my_agent(query: str) -> str:
-    ...
-
-# Method call defines HOW to optimize
-results = await my_agent.optimize(
-    algorithm="random",  # Search strategy
-    max_trials=20        # Number of trials
-)
-```
-
-### 🧠 Tuned Variables: The Core Concept
-
-**Tuned Variables** are configuration parameters whose optimal values dynamically change based on:
-
-1. **Objective shifts**: Changes in optimization priorities (e.g., prioritizing cost reduction vs. accuracy)
-2. **Environmental changes**: New model availability, data distribution shifts, or context evolution
-
-Unlike static configuration parameters (like API endpoints or credentials), **Tuned Variables** directly influence agent behavior and require continuous optimization:
-
-#### Examples of Tuned Variables:
-
-- **Model Selection**: `gpt-3.5-turbo` → `gpt-4o` based on accuracy/cost trade-offs
-- **Temperature**: `0.1` (factual) → `0.9` (creative) based on task requirements
-- **Retrieval Depth**: `k=3` (fast) → `k=10` (comprehensive) based on precision needs
-- **Output Format**: `json` vs `text` based on downstream processing requirements
-
-#### Static vs Tuned Variables:
-
-```python
-# ❌ Static variables (don't optimize these)
-database_url = "postgresql://..."
-api_key = "sk-..."
-
-# ✅ Tuned Variables (optimize these for agent performance)
-model = "gpt-4o-mini"        # Cost vs accuracy trade-off
-temperature = 0.3            # Creativity vs consistency
-k = 5                        # Retrieval depth vs speed
-format = "json"              # Structured vs natural output
-```
-
-### 🎯 Traigent's Two-Mode Strategy: The Best of Both Worlds
-
-Traigent offers **two powerful modes** designed specifically for software engineers working with AI agents. Unlike general optimization libraries, Traigent understands agent patterns and can automatically optimize LLM calls, retrieval parameters, and agent logic.
 
 ## 🎯 Configuration Injection Modes
 
@@ -695,37 +600,6 @@ def my_agent(query: str, config: TraigentConfig) -> str:
 - **Seamless**: Existing codebases, rapid adoption, zero migration
 - **Parameter**: New development, type safety, complex logic
 
-## 🌟 Problem Definition and Management
-
-### Define Problems with AI Understanding
-
-```python
-# Use the traigent-ui plugin or programmatically define problems
-from traigent_ui.problem_management import SmartProblemAnalyzer
-
-analyzer = SmartProblemAnalyzer()
-result = await analyzer.analyze_and_generate(
-    description="I need to classify customer emails by department",
-    count=50  # AI generates 50 test examples
-)
-
-# AI automatically:
-# - Detects this is a classification problem
-# - Generates relevant test examples
-# - Suggests appropriate metrics
-# - Creates optimal prompt templates
-```
-
-> **Note**: For interactive problem management, see the Streamlit UI in [TraigentDemo](https://github.com/Traigent/TraigentDemo).
-
-### 🔍 Smart Agent Discovery Process
-
-1. **Describe Your Problem**: "I need to analyze customer feedback sentiment"
-2. **AI Generates Test Cases**: Automatically creates diverse examples
-3. **Test Multiple Agents**: Compare GPT-3.5, GPT-4, Claude, etc.
-4. **See Clear Results**: Visual comparison of accuracy, cost, and speed
-5. **Export Best Config**: Use the optimal settings in production
-
 ## 💻 CLI Commands
 
 The CLI provides local optimization, validation, results management, and template generation:
@@ -763,77 +637,20 @@ traigent generate -t basic -o traigent_example.py
 traigent check path/to/module.py --threshold=10
 ```
 
-## 📊 Real Results from Real Users
-
-```python
-# Before Traigent: Guessing at configurations
-llm = ChatOpenAI(model="gpt-4", temperature=0.7)  # Expensive and maybe not optimal
-
-# After Traigent: Data-driven decisions
-llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)  # 95% accuracy at 10x less cost!
-```
-
-**Typical improvements:**
-
-- 💰 **Cost Reduction**: 60-90% lower costs
-- 🎯 **Accuracy Gains**: 5-15% better performance
-- ⏱️ **Speed Boost**: 2-5x faster responses
-- 🤖 **Model Discovery**: Find hidden gems like Claude Haiku
-- 📈 **Usage Insights**: Understand your optimization patterns with privacy-safe analytics
-
 ## ✨ Key Features
 
-### 🚀 **Zero-Code-Change Integration**
+- **Zero-Code Integration**: Add `@traigent.optimize()` to existing code - no refactoring needed
+- **Multi-Algorithm Optimization**: Grid search, Random search, and Bayesian (TPE, NSGA-II)
+- **Multi-Objective**: Optimize accuracy, latency, cost, and custom metrics simultaneously
+- **Framework Support**: LangChain, OpenAI SDK, Anthropic, and any LLM provider
+- **Cost Tracking**: Integrated tokencost library with 500+ model pricing
+- **Parallel Execution**: Concurrent trials and example-level parallelism
+- **Privacy-First**: Local execution mode keeps all data on your machine
+- **Extensible**: Custom evaluators, metrics, and optimization strategies
 
-- **🎯 Works with Your Code**: Automatically optimizes LangChain, OpenAI SDK, and more
-- **🔄 No Modifications Needed**: Your existing code stays exactly the same
-- **🧠 Smart Testing**: Intelligently explores different models and parameters
-- **⚡ Simple Decorator**: Just add `@traigent.optimize()` - that's it!
-
-### 🎮 **User-Friendly Interface**
-
-- **📝 Natural Language**: Describe problems in plain English
-- **🤖 AI Understanding**: Automatic problem classification and example generation
-- **📊 Visual Results**: Clear charts comparing agent performance
-- **📤 Easy Export**: One-click configuration export
-
-### 📦 **Production Ready**
-
-- **🎨 Multiple Optimization Algorithms**: Grid search, Random search, and Bayesian optimization
-- **📊 Multi-Objective Optimization**: Optimize for accuracy, latency, cost, and custom metrics
-- **💰 Accurate Cost Tracking**: Integrated tokencost library supports 500+ models with real-time pricing
-- **🔗 Framework Support**: LangChain, OpenAI SDK, Anthropic, and more
-- **🤝 Dual Execution Models**: Privacy-first local or cloud-powered testing
-- **🎮 Interactive UI**: User-friendly Streamlit Playground
-- **⚙️ Smart Testing**: Automatic parameter exploration and comparison
-- **⚡ Real-Time Progress**: Watch as different agents are tested
-- **🔌 Extensible Design**: Add custom models and evaluation metrics
-- **📝 Problem Templates**: 9 standardized AI problem types
-- **🧪 Production-Ready**: Battle-tested with comprehensive logging
-
-### 🛠️ **Intelligent Features**
-
-- **🧠 Natural Language Understanding**: Describe problems in plain English
-- **🎭 Claude SDK Integration**: Smart problem analysis and classification
-- **🔄 Cost Optimization**: Smart sampling reduces costs by 60-80%
-- **🌐 Comprehensive Testing**: Compare accuracy, cost, and speed
-- **🏗️ Platform Agnostic**: Works with any LLM provider
-- **💰 Transparent Pricing**: See exactly what each agent costs
-- **🚀 Parallel Testing**: Test multiple configurations simultaneously
-  - Example-level concurrency: set `parallel_config={"example_concurrency": 8}` in `@traigent.optimize(...)` or override per run
-  - Trial-level concurrency: set `parallel_config={"trial_concurrency": 4}` (e.g., `.optimize(parallel_config={...})`) to evaluate multiple configs at once
-
-#### Parallel Execution Examples
+### Parallel Execution
 
 ```python
-import traigent
-from traigent.evaluators.base import Dataset, EvaluationExample
-
-# Small dataset
-ds = Dataset(examples=[
-    EvaluationExample(input_data={"x": i}, expected_output=f"val-{i}") for i in range(8)
-])
-
 @traigent.optimize(
     eval_dataset=ds,
     objectives=["accuracy"],
@@ -842,188 +659,65 @@ ds = Dataset(examples=[
     parallel_config={"example_concurrency": 4, "trial_concurrency": 2},
 )
 def fn(x: int) -> str:
-    import time; time.sleep(0.1)  # Simulate work
-    return f"val-{x}"
-
-# Override at call-site if needed
-# results = await fn.optimize(
-#     parallel_config={"example_concurrency": 8, "trial_concurrency": 4}
-# )
-```
-
-#### Hybrid + Privacy
-
-```python
-@traigent.optimize(
-    eval_dataset=ds,
-    objectives=["accuracy"],
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"]},
-    execution_mode="hybrid",
-    privacy_enabled=True   # Never transmit input/output/prompts
-)
-def agent(x: int) -> str:
     return f"val-{x}"
 ```
 
-- **🔐 Privacy Options**: Keep sensitive data on your servers
+### 💰 Cost Tracking
 
-### 💰 **Cost Tracking & Optimization**
-
-Traigent includes professional-grade cost tracking powered by the **tokencost** library:
-
-- **500+ Models Supported**: OpenAI, Anthropic, Google, Cohere, Mistral, and more
-- **Real-Time Pricing**: Always up-to-date pricing information
-- **Automatic Updates**: No manual pricing table maintenance needed
-- **Detailed Breakdown**: Track input tokens, output tokens, and total costs
-- **Multi-Provider**: Compare costs across different LLM providers
-- **Cost Objectives**: Optimize for cost alongside accuracy and performance
+Cost is automatically tracked during optimization via the **tokencost** library (500+ models, all major providers):
 
 ```python
-# Cost information is automatically tracked during optimization
 results = await my_agent.optimize()
 print(f"Total optimization cost: ${results.total_cost:.4f}")
 print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 ```
 
-- **📊 Privacy-Safe Analytics**: Track optimization patterns with zero sensitive data
-- **🎯 Smart Insights**: Get personalized upgrade recommendations based on usage
-- **🏃‍♂️ Gradual Migration**: Start local, upgrade selectively based on real value
+## 🎓 More Examples
 
-## 🎓 Quick Examples
+> **Interactive UI & advanced examples**: See the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository for Streamlit playground, use cases, and research benchmarks.
 
-### 🎮 Interactive UI & Advanced Examples
+### Config Access Reference
 
-For interactive UI tools, advanced use cases, and research examples, see the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository:
-- **Interactive Control Center**: Streamlit-based UI for problem definition and agent exploration
-- **Use Cases**: Production-ready examples (document summarization, data extraction, etc.)
-- **Research**: Paper experiments and performance benchmarks
-- **Development Tools**: Code review system, trace analysis utilities
-
-### 💻 Programmatic Usage
-
-```python
-# Your proprietary function stays local
-def analyze_customer_data(customer_id: str, query: str) -> str:
-    # Sensitive business logic here
-    customer = load_customer_data(customer_id)  # Private data
-    return generate_response(customer, query)
-
-# Optimize with cloud guidance, execute locally
-@traigent.optimize(
-    eval_dataset="customer_queries.jsonl",
-    objectives=["accuracy", "response_time"],
-    configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o"],
-        "temperature": (0.0, 0.5),
-        "response_style": ["concise", "detailed", "friendly"]
-    },
-    execution_mode="interactive"  # Model 1
-)
-def optimized_analyzer(customer_id: str, query: str) -> str:
-    config = traigent.get_config()  # Works during optimization and after apply_best_config()
-    # Your logic with optimized parameters
-    return analyze_customer_data(customer_id, query)
-
-# Run optimization and reuse the best settings later
-# result = await optimized_analyzer.optimize()
-# print(result.best_config)                 # Best trial config
-# print(optimized_analyzer.current_config)  # Applied to future calls
-```
-
-**Config access: during vs. after**
-
-| When you're running             | Use this                      | Notes                                                         |
+| Context                         | API                           | Notes                                                         |
 | ------------------------------- | ----------------------------- | ------------------------------------------------------------- |
 | Inside the optimized function   | `traigent.get_config()`       | Unified access during optimization and after apply_best_config(). |
 | During optimization (strict)    | `traigent.get_trial_config()` | Raises `OptimizationStateError` if no active trial.           |
 | After optimization completes    | `result.best_config`          | Returned by `func.optimize()`.                                |
 | When calling the function later | `func.current_config`         | Automatically set to the best config.                         |
 
-### ☁️ Model 2: Cloud-Based Agent Optimization (Coming Soon)
-
-> **Note**: Cloud optimization is under development. The API below shows the planned interface.
-
-```python
-from traigent.cloud.models import AgentSpecification
-
-# Define agent for cloud optimization
-support_agent = AgentSpecification(
-    id="support-bot-v2",
-    name="Customer Support Bot",
-    agent_type="conversational",
-    agent_platform="openai",
-    prompt_template="""You are an expert support agent.
-
-    Customer: {customer_query}
-    History: {conversation_history}
-
-    Provide a helpful, empathetic response.""",
-    model_parameters={
-        "model": "gpt-4o-mini",
-        "temperature": 0.7,
-        "max_tokens": 200
-    },
-    guidelines=[
-        "Be empathetic and understanding",
-        "Provide actionable solutions",
-        "Escalate complex issues"
-    ]
-)
-
-# Optimize in the cloud
-async def optimize_support_agent():
-    async with TraigentCloudClient(api_key="your-key") as client:
-        response = await client.optimize_agent(
-            agent_spec=support_agent,
-            dataset=support_conversations,
-            configuration_space={
-                "model": ["gpt-4o-mini", "gpt-4o"],
-                "temperature": (0.3, 0.9),
-                "max_tokens": [150, 250, 350]
-            },
-            objectives=["customer_satisfaction", "resolution_rate", "cost"]
-        )
-
-        # Cloud handles everything
-        print(f"Optimization started: {response.optimization_id}")
-```
-
 ### 🎯 Real-World: LangChain + OpenAI Optimization
 
 ```python
-from langchain_openai import OpenAI
-from langchain import LLMChain, PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
 import traigent
 
 # Your existing LangChain code - unchanged!
 def analyze_sentiment(text: str) -> str:
-    llm = OpenAI(model="gpt-4o-mini", temperature=0.5)
-    prompt = PromptTemplate(
-        template="Analyze sentiment of: {text}\nSentiment:",
-        input_variables=["text"]
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+    prompt = ChatPromptTemplate.from_template(
+        "Analyze sentiment of: {text}\nSentiment:"
     )
-    chain = LLMChain(llm=llm, prompt=prompt)
-    return chain.run(text=text)
+    chain = prompt | llm
+    return chain.invoke({"text": text}).content
 
 # Optimize it with zero code changes!
 @traigent.optimize(
     eval_dataset="sentiment_test_set.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o", "davinci-002"],
+        "model": ["gpt-4o-mini", "gpt-4o"],
         "temperature": [0.0, 0.3, 0.7, 1.0]
     },
-    # Seamless optimization is enabled by default!
 )
 def analyze_sentiment_optimized(text: str) -> str:
-    # EXACT SAME CODE - just copy-pasted!
-    llm = OpenAI(model="gpt-4o-mini", temperature=0.5)
-    prompt = PromptTemplate(
-        template="Analyze sentiment of: {text}\nSentiment:",
-        input_variables=["text"]
+    # EXACT SAME CODE - just add the decorator!
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+    prompt = ChatPromptTemplate.from_template(
+        "Analyze sentiment of: {text}\nSentiment:"
     )
-    chain = LLMChain(llm=llm, prompt=prompt)
-    return chain.run(text=text)
+    chain = prompt | llm
+    return chain.invoke({"text": text}).content
 ```
 
 ### 🔥 Multi-Framework Optimization
@@ -1039,8 +733,8 @@ import openai
         "model": ["gpt-4o-mini", "gpt-4o"],
         "temperature": [0.1, 0.5, 0.9],
         "max_tokens": [100, 500, 1000]
-    }
-    # Seamless framework override is automatic!
+    },
+)
 def translate_text(text: str, target_language: str) -> str:
     # Your existing OpenAI code - no changes needed!
     response = openai.chat.completions.create(
@@ -1062,7 +756,7 @@ def translate_text(text: str, target_language: str) -> str:
     eval_dataset="complex_tasks.jsonl",
     objectives=["accuracy", "cost"],
     configuration_space={
-        "model": ["gpt-4o-mini", "gpt-4o", "claude-2"],
+        "model": ["gpt-4o-mini", "gpt-4o", "claude-3-5-haiku-latest"],
         "temperature": [0.0, 0.5, 1.0],
         "max_tokens": [100, 500, 2000]
     },
@@ -1081,67 +775,12 @@ def complex_reasoning_task(query: str) -> str:
 
 ## 📚 Pre-built Examples
 
-Traigent comes with ready-to-use examples in `examples/`:
-
-### Core Examples
-
-Located in `examples/core/`:
-
-- **simple-prompt**: Basic prompt optimization
-- **hello-world**: Q&A with RAG optimization
-- **few-shot-classification**: Few-shot learning patterns
-- **multi-objective-tradeoff**: Balance accuracy vs cost with weighted objectives
-- **token-budget-summarization**: Optimize within token limits
-- **structured-output-json**: JSON schema validation
-- **tool-use-calculator**: Function calling optimization
-- **prompt-style-optimization**: Tune prompt style and tone
-- **safety-guardrails**: Content moderation patterns
-
-Each example includes:
-
-- Complete `run.py` with production-quality code
-- Evaluation datasets in `examples/datasets/`
-- Mock mode support (no API keys needed!)
-- Inline documentation
-
-### Running Examples
+Each example in `examples/core/` includes a complete `run.py`, datasets, and mock mode support. See `examples/README.md` for the full list.
 
 ```bash
-# First, ensure you have the dependencies installed
-pip install -e ".[integrations]"
-
-# Run any example in mock mode
 export TRAIGENT_MOCK_LLM=true
 python examples/core/simple-prompt/run.py
 ```
-
-## 🤔 Why Traigent?
-
-### The Problem with Traditional Optimization
-
-❌ **Privacy Concerns**: Sending proprietary data to external services
-❌ **Limited Control**: Black-box optimization without transparency
-❌ **High Costs**: Testing every configuration on full datasets
-❌ **Integration Pain**: Rewriting code for optimization tools
-❌ **Vendor Lock-in**: Tied to specific optimization platforms
-
-### Traigent's Dual-Model Solution
-
-✅ **Privacy First**: Choose local execution with cloud guidance
-✅ **Full Transparency**: See exactly what's being optimized and why
-✅ **60-80% Cost Reduction**: Smart dataset subset selection
-✅ **Zero Code Changes**: Works with your existing functions
-✅ **Platform Agnostic**: Works with any LLM provider
-✅ **Smart Analytics**: Privacy-safe insights guide your optimization journey
-✅ **Gradual Adoption**: Start local, see value, upgrade selectively
-
-### Choose Your Approach
-
-🏠 **Model 1**: Keep data local, get cloud intelligence
-☁️ **Model 2**: Leverage full cloud power for agents
-🎭 **Hybrid**: Start local, refine in cloud
-
-**Result**: Complete control over your optimization strategy
 
 ## 📚 Documentation
 
@@ -1171,7 +810,8 @@ Traigent/
 ├── docs/              # Documentation
 ├── plugins/           # Optional plugins (analytics, UI, etc.)
 ├── tools/             # Architecture analysis utilities
-├── scripts/           # Development automation
+├── scripts/           # Development and automation scripts
+├── configs/           # Configuration, baselines, and runtime
 └── requirements/      # Dependency specifications
 ```
 
@@ -1185,35 +825,23 @@ git clone https://github.com/Traigent/Traigent.git
 cd Traigent
 
 # Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 
-# Install development dependencies
-pip install -e ".[dev]"
+# Install all development dependencies
+pip install -e ".[all,dev]"
 
-# Run tests
-pytest tests/
-# Or use our comprehensive test runner
-python scripts/test/run_tests.py
+# Run tests (uses pytest-xdist for parallel execution)
+make test
+# Or directly:
+TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true pytest
 
-# Run linting (scripts organized in scripts/linting/)
-./scripts/linting/run_linters.sh
-# Or individually:
-ruff check traigent/
-ruff format traigent/
+# Format and lint
+make format   # Black + isort
+make lint     # Ruff + mypy + bandit
 
 # Install pre-commit hooks
 pre-commit install
 ```
-
-### 📂 Clean Project Organization
-
-The project maintains a clean, professional structure:
-
-- **Core directories** with clear, single purposes
-- **All scripts centralized** in `scripts/` with subdirectory organization
-- **All documentation unified** in `docs/` with logical grouping
-- **Clean root directory** with only essential files
 
 ## 🤝 Contributing
 
@@ -1247,126 +875,25 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🔧 Troubleshooting
 
-### Verify Installation
+**Verify installation**: `python scripts/validation/verify_installation.py`
 
-Run our verification script to check all dependencies:
+**Common issues:**
 
-```bash
-python scripts/validation/verify_installation.py
-```
+| Problem | Fix |
+|---------|-----|
+| `ModuleNotFoundError` | `pip install -e ".[integrations]"` or check your venv is activated |
+| 0.0% accuracy | Set `TRAIGENT_MOCK_LLM=true` for demo mode, or check dataset format |
+| Missing API keys | Copy `.env.example` to `.env` and add your keys; or use mock mode |
+| Permission errors | Use `pip install --user` or create a fresh venv |
+| Dependency conflicts | `pip install --upgrade pip` then try a fresh venv |
 
-### Installation Issues
-
-If you encounter installation errors:
-
-1. **Missing Dependencies** (e.g., `ModuleNotFoundError: No module named 'langchain_openai'`):
-
-   ```bash
-   pip install -r requirements/requirements-integrations.txt
-   pip install -e .
-   ```
-
-2. **Upgrade pip**: `pip install --upgrade pip`
-
-3. **Clear pip cache**: `pip cache purge`
-
-4. **Install in stages**:
-   ```bash
-   pip install -e .              # First, basic installation
-   pip install -r requirements/requirements-integrations.txt  # Then integrations
-   pip install -e ".[dev]"       # Finally dev dependencies if needed
-   ```
-
-### Common Gotchas for New Users
-
-#### README Code Examples vs Quickstart Files
-
-The code examples in this README demonstrate patterns and concepts but may require API keys. The **actually runnable** examples are in `examples/quickstart/`:
-
-```bash
-# These work immediately with mock mode - no API keys needed!
-export TRAIGENT_MOCK_LLM=true
-python examples/quickstart/01_simple_qa.py   # Simple Q&A
-python examples/quickstart/02_customer_support_rag.py  # RAG example
-python examples/quickstart/03_custom_objectives.py     # Custom weights
-```
-
-#### Required Parameters
-
-The `@traigent.optimize` decorator **requires** a `configuration_space` parameter:
-
-```python
-# ❌ This will fail - missing configuration_space
-@traigent.optimize(eval_dataset="data.jsonl", objectives=["accuracy"])
-
-# ✅ This works - configuration_space is required
-@traigent.optimize(
-    configuration_space={"temperature": [0.1, 0.5, 0.9]},
-    eval_dataset="data.jsonl",
-    objectives=["accuracy"]
-)
-```
-
-#### Dataset Paths
-
-Common datasets in the repo:
-
-- `data/qa_samples.jsonl`
-- `examples/quickstart/rag_feedback.jsonl`
-
-For other datasets, use the full path or create your own local copy.
-
-#### Mock Mode and API Keys
-
-`TRAIGENT_MOCK_LLM=true` prevents Traigent from making real API calls during optimization, but if your agent code directly instantiates `ChatOpenAI()` or similar, you still need the API key set (even if unused). The quickstart examples avoid this by using mock responses internally.
-
-### Common Issues
-
-#### 0.0% Accuracy in Results
-
-If you see 0.0% accuracy:
-
-- **Enable Mock Mode**: Set `TRAIGENT_MOCK_LLM=true` for realistic demo values
-- **Check Dataset Format**: Ensure your dataset follows the correct format (see Evaluation section)
-- **Use Custom Evaluator**: For non-exact matches, provide a custom evaluator function
-- **Verify API Keys**: Ensure OPENAI_API_KEY is set for embedding-based evaluation
-
-#### Missing Environment Variables
-
-```bash
-# Create a .env file with your API keys
-echo "OPENAI_API_KEY=your-key-here" >> .env
-echo "TRAIGENT_API_KEY=your-key-here" >> .env
-
-# Load in Python
-from dotenv import load_dotenv
-load_dotenv()
-```
-
-#### Import Errors
-
-- **ModuleNotFoundError**: Ensure you're in the correct directory and virtual environment
-- **langchain_openai not found**: Install with `pip install langchain-openai`
-- **langchain_chroma not found**: Install with `pip install langchain-chroma`
-- **dotenv not found**: Install with `pip install python-dotenv`
-
-#### Other Issues
-
-- **Permission errors**: Use `pip install --user` or ensure venv is activated
-- **Dependency conflicts**: Try creating a fresh virtual environment
-- **Memory issues**: Use smaller datasets or reduce batch sizes
+**Note**: README code examples show patterns but may need API keys. Use `examples/quickstart/` for ready-to-run examples with `TRAIGENT_MOCK_LLM=true`.
 
 ## 🌟 Community
 
 - **[Discord](https://discord.gg/traigent)**: Join our community
 - **[GitHub Issues](https://github.com/Traigent/Traigent/issues)**: Report bugs or request features
 - **[GitHub Discussions](https://github.com/Traigent/Traigent/discussions)**: Ask questions and share ideas
-
-## 🙏 Acknowledgments
-
-- Built with ❤️ by the Traigent team and community
-- Inspired by the needs of LLM developers worldwide
-- Thanks to all our [contributors](https://github.com/Traigent/Traigent/graphs/contributors)
 
 ---
 
