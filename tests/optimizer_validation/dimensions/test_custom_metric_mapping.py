@@ -175,7 +175,10 @@ class TestCustomMetricToObjectiveMapping:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["accuracy"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="single-metric-map -> {trial_count()} | {status()}",
         )
 
@@ -374,7 +377,10 @@ class TestOverrideDefaultMetrics:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["accuracy"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="override-semantic -> {trial_count()} | {status()}",
         )
 
@@ -439,7 +445,10 @@ class TestOverrideDefaultMetrics:
             },
             max_trials=2,
             mock_mode_config={"optimizer": "random"},
-            expected=ExpectedResult(required_metrics=["accuracy"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="override-fuzzy -> {trial_count()} | {status()}",
         )
 
@@ -501,7 +510,10 @@ class TestOverrideDefaultMetrics:
             },
             max_trials=2,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["accuracy"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="override-config -> {trial_count()} | {status()}",
         )
 
@@ -568,7 +580,10 @@ class TestMetricsWithDirections:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["cost"]),
+            expected=ExpectedResult(
+                required_metrics=["cost"],
+                best_score_range=(0.0, 0.7),
+            ),
             gist_template="metric-minimize -> {trial_count()} | {status()}",
         )
 
@@ -618,7 +633,10 @@ class TestMetricsWithDirections:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["accuracy"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="metric-maximize -> {trial_count()} | {status()}",
         )
 
@@ -996,7 +1014,10 @@ class TestDirectionEdgeCases:
             },
             max_trials=2,
             mock_mode_config={"optimizer": "random"},
-            expected=ExpectedResult(required_metrics=["accuracy", "score"]),
+            expected=ExpectedResult(
+                required_metrics=["accuracy", "score"],
+                best_score_range=(0.55, 1.0),
+            ),
             gist_template="all-maximize -> {trial_count()} | {status()}",
         )
 
@@ -1046,7 +1067,10 @@ class TestDirectionEdgeCases:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["cost"]),
+            expected=ExpectedResult(
+                required_metrics=["cost"],
+                best_score_range=(0.0, 0.7),
+            ),
             gist_template="single-min -> {trial_count()} | {status()}",
         )
 
@@ -1542,7 +1566,10 @@ class TestMetricConflictCases:
             },
             max_trials=4,
             mock_mode_config={"optimizer": "grid"},
-            expected=ExpectedResult(required_metrics=["score"]),
+            expected=ExpectedResult(
+                required_metrics=["score"],
+                best_score_range=(0.0, 1.0),
+            ),
             gist_template="overwrite-builtin -> {trial_count()} | {status()}",
         )
 
