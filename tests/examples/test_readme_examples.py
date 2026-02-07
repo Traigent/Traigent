@@ -156,7 +156,7 @@ class TestREADMEExamples:
         # Create a simplified test that verifies the decorator works without external deps
         test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
@@ -263,7 +263,7 @@ if 'simple_qa_agent' in locals():
         # Create a simplified test with mocks
         test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
@@ -345,7 +345,7 @@ if 'customer_support_agent' in locals():
 
             test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 {import_line}
 print("✅ Import successful: {import_line}")
 """
@@ -480,6 +480,7 @@ print("✅ Mock mode works for decorated functions")
                 try:
                     self._run_code_safely(test_code, "mock_mode_test", timeout=15)
                     mock_mode_count += 1
+                    break  # Same test code each iteration; one success is sufficient
                 except Exception:
                     pass  # Some examples might be incomplete
 
