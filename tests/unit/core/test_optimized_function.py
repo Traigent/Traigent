@@ -672,7 +672,7 @@ class TestOptimizedFunction:
             assert result is mock_result
 
             # Check that CustomEvaluatorWrapper was created with custom evaluator
-            from traigent.core.optimized_function import CustomEvaluatorWrapper
+            from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 
             orchestrator_call = mock_orchestrator_class.call_args
             evaluator_arg = orchestrator_call[1]["evaluator"]

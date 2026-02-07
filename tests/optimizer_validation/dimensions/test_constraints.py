@@ -409,11 +409,10 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle gracefully - no valid configs exist
+        assert hasattr(result, "trials"), "Result should have trials attribute"
+        assert result.stop_reason is not None, "Should have a stop reason"
         # When all configs are rejected by constraint, we get 0 trials
-        if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 0
-            ), "Should have 0 trials (all configs rejected)"
+        assert len(result.trials) == 0, "Should have 0 trials (all configs rejected)"
 
         # Skip validator - it expects trials, but none exist when all rejected
 
@@ -441,10 +440,11 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # None is falsy, so should act like False - all configs rejected
-        if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 0
-            ), "Should have 0 trials (None returns = falsy = rejected)"
+        assert hasattr(result, "trials"), "Result should have trials attribute"
+        assert result.stop_reason is not None, "Should have a stop reason"
+        assert (
+            len(result.trials) == 0
+        ), "Should have 0 trials (None returns = falsy = rejected)"
 
         # Skip validator - it expects trials, but none exist when all rejected
 
@@ -472,11 +472,10 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle exception gracefully
+        assert hasattr(result, "trials"), "Result should have trials attribute"
+        assert result.stop_reason is not None, "Should have a stop reason"
         # Exception in constraint = rejection, all configs rejected = 0 trials
-        if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 0
-            ), "Should have 0 trials (exception = rejection)"
+        assert len(result.trials) == 0, "Should have 0 trials (exception = rejection)"
 
         # Skip validator - it expects trials, but none exist when all rejected
 
@@ -612,9 +611,13 @@ class TestConstraintEdgeCases:
         _, result = await scenario_runner(scenario)
 
         # Should handle many constraints
-        if not isinstance(result, Exception):
-            validation = result_validator(scenario, result)
-            assert validation.passed, validation.summary()
+        assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
+        validation = result_validator(scenario, result)
+        assert validation.passed, validation.summary()
 
     @pytest.mark.unit
     @pytest.mark.asyncio

@@ -239,7 +239,7 @@ class TestApplyBestConfig:
         assert opt_func._current_config == sample_optimization_result.best_config
         assert opt_func._current_config != initial_config
 
-    @patch("traigent.core.optimized_function.logger")
+    @patch("traigent.core.config_state_manager.logger")
     def test_apply_best_config_logging(
         self,
         mock_logger,
@@ -277,7 +277,7 @@ class TestApplyBestConfig:
             objectives=sample_objectives,
         )
 
-        with patch.object(opt_func, "_setup_function_wrapper") as mock_setup:
+        with patch.object(opt_func._csm, "_setup_wrapper_callback") as mock_setup:
             opt_func.apply_best_config(sample_optimization_result)
             mock_setup.assert_called_once()
 
