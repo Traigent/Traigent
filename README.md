@@ -21,10 +21,11 @@ Traigent optimizes LLM applications by running multiple trials across configurat
 
 Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
 
-> 💡 **Local Playground**: Run the interactive Streamlit control center locally with `streamlit run playground/traigent_control_center.py`. Also explore the `examples/` directory for end-to-end flows.
+> 💡 **Interactive Demos & Use Cases**: Advanced examples, use-cases, playground UI, and demos have been moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo). The core SDK examples remain in `examples/` and `walkthrough/`.
 
-> **Note**: Research papers and experimental code have been moved to a separate repository:
-> [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments)
+> **Note**: Research papers and experimental code are in separate repositories:
+> - [TraigentDemo](https://github.com/Traigent/TraigentDemo) - Use cases, playground, demos
+> - [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments) - Research papers
 
 ## 🎬 See Traigent in Action
 
@@ -442,19 +443,14 @@ When installing Traigent, you can choose specific feature sets:
 | `[analytics]`    | Analytics and visualization   | View optimization results        |
 | `[bayesian]`     | Bayesian optimization         | Advanced optimization algorithms |
 | `[integrations]` | Framework integrations        | LangChain, OpenAI, Anthropic     |
-| `[playground]`   | Interactive UI                | Streamlit control center         |
-| `[examples]`     | Example dependencies          | Run all demo scripts             |
 | `[dev]`          | Development tools             | pytest, black, ruff, mypy        |
-| `[all]`          | Complete installation         | Everything above                 |
+| `[all]`          | Complete installation         | All optional features            |
 
 **Recommended installs:**
 
 ```bash
 # For running examples and development
 pip install -e ".[dev,integrations,analytics]"
-
-# For the Streamlit playground UI
-pip install -e ".[playground]"
 
 # For everything (largest install)
 pip install -e ".[all]"
@@ -483,19 +479,19 @@ pip install -e ".[all]"
 
 ---
 
-## 🎮 Interactive UI - Get Started in Minutes
+## 🎮 Interactive UI and Use Cases
 
-> 💡 **Local Playground**: Launch the interactive Streamlit control center locally:
+> 💡 **Interactive Demos**: Advanced examples, use cases, and the Streamlit playground have moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo).
 >
 > ```bash
-> # Install playground dependencies first (if not already installed)
-> pip install -e ".[playground]"
+> # Clone the demo repository
+> git clone https://github.com/Traigent/TraigentDemo
+> cd TraigentDemo
 >
-> # Then launch the control center
-> streamlit run playground/traigent_control_center.py
+> # Follow the README for setup and usage
 > ```
 
-The Traigent Control Center provides a user-friendly interface to:
+The TraigentDemo repository provides:
 
 - Define problems using natural language
 - Test and compare different AI agents
@@ -699,13 +695,13 @@ def my_agent(query: str, config: TraigentConfig) -> str:
 - **Seamless**: Existing codebases, rapid adoption, zero migration
 - **Parameter**: New development, type safety, complex logic
 
-## 🌟 Natural Language Problem Definition
+## 🌟 Problem Definition and Management
 
 ### Define Problems with AI Understanding
 
 ```python
-# Use the UI or programmatically define problems
-from playground.problem_management import SmartProblemAnalyzer
+# Use the traigent-ui plugin or programmatically define problems
+from traigent_ui.problem_management import SmartProblemAnalyzer
 
 analyzer = SmartProblemAnalyzer()
 result = await analyzer.analyze_and_generate(
@@ -719,6 +715,8 @@ result = await analyzer.analyze_and_generate(
 # - Suggests appropriate metrics
 # - Creates optimal prompt templates
 ```
+
+> **Note**: For interactive problem management, see the Streamlit UI in [TraigentDemo](https://github.com/Traigent/TraigentDemo).
 
 ### 🔍 Smart Agent Discovery Process
 
@@ -893,25 +891,13 @@ print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 
 ## 🎓 Quick Examples
 
-### 🎮 Using the Interactive UI
+### 🎮 Interactive UI & Advanced Examples
 
-1. **Launch the Control Center:**
-
-   ```bash
-   streamlit run playground/traigent_control_center.py
-   ```
-
-2. **Define Your Problem:**
-
-   - Click "Problem Manager" → "Define Your Problem"
-   - Type: "I need to summarize long documents"
-   - AI generates test cases automatically
-
-3. **Find the Best Agent:**
-   - Click "Explore Agents"
-   - Select models to compare (GPT-3.5, GPT-4, etc.)
-   - Click "Find Best Agent"
-   - See results in real-time!
+For interactive UI tools, advanced use cases, and research examples, see the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository:
+- **Interactive Control Center**: Streamlit-based UI for problem definition and agent exploration
+- **Use Cases**: Production-ready examples (document summarization, data extraction, etc.)
+- **Research**: Paper experiments and performance benchmarks
+- **Development Tools**: Code review system, trace analysis utilities
 
 ### 💻 Programmatic Usage
 
@@ -1160,7 +1146,7 @@ python examples/core/simple-prompt/run.py
 ## 📚 Documentation
 
 - **[Quick Start Guide](docs/getting-started/GETTING_STARTED.md)**: Get started in 5 minutes
-- **[Playground UI Guide](playground/README.md)**: Interactive Playground
+- **[TraigentDemo Repository](https://github.com/Traigent/TraigentDemo)**: Use cases, playground, demos
 - **[Architecture Guide](docs/architecture/ARCHITECTURE.md)**: Technical design details
 - **[Secrets Management](docs/guides/secrets_management.md)**: Secure AWS-backed workflow
 - **[Examples](examples/)**: Working code examples
@@ -1179,13 +1165,17 @@ Traigent/
 │   ├── optimizers/    # Optimization algorithms
 │   ├── cloud/         # Cloud integration
 │   └── integrations/  # Framework integrations
-├── playground/        # Interactive UI (Streamlit control center)
-├── examples/          # Example scripts and demos
-├── tests/             # Test suite and configurations
-├── docs/              # All documentation
-├── scripts/           # Development and automation tools
+├── examples/          # Core SDK examples
+├── walkthrough/       # Interactive tutorials
+├── tests/             # Test suite
+├── docs/              # Documentation
+├── plugins/           # Optional plugins (analytics, UI, etc.)
+├── tools/             # Architecture analysis utilities
+├── scripts/           # Development automation
 └── requirements/      # Dependency specifications
 ```
+
+> See [docs/architecture/project-structure.md](docs/architecture/project-structure.md) for detailed structure.
 
 ### Development Setup
 
