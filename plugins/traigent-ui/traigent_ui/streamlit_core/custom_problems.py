@@ -11,34 +11,20 @@ from typing import Any, Callable, Dict, List, Optional
 
 import streamlit as st
 
-# Import problem management utilities
+# Import problem management utilities from traigent_ui plugin
 try:
-    # Import for availability check only
-    import problem_management  # noqa: F401 - Import check only
-    import streamlit_utils  # noqa: F401 - Import check only
-    from langchain_problems import load_all_problems
-    from problem_management.llm_providers import (
+    from traigent_ui.langchain_problems import load_all_problems
+    from traigent_ui.problem_management.llm_providers import (
         LLMProviderManager,
         get_available_providers,
     )
-    from streamlit_core.state import make_safe_filename
-except ImportError as e:
-    # Fallback to explicit package-qualified imports for environments where
-    # the playground path was not injected yet.
-    try:
-        from playground import problem_management  # noqa: F401
-        from playground import streamlit_utils  # noqa: F401
-        from playground.langchain_problems import load_all_problems
-        from playground.problem_management.llm_providers import (
-            LLMProviderManager,
-            get_available_providers,
-        )
-        from playground.streamlit_core.state import make_safe_filename
-    except Exception as inner_e:  # pragma: no cover - defensive fallback for UI import
-        st.error(f"Import error: {e} / {inner_e}")
-        LLMProviderManager = None  # type: ignore
-        get_available_providers = lambda: []  # type: ignore
-        make_safe_filename = lambda name: name or "generated_problem"  # type: ignore
+    from traigent_ui.streamlit_core.state import make_safe_filename
+except ImportError as e:  # pragma: no cover - defensive fallback for UI import
+    st.error(f"Import error: {e}. Make sure traigent_ui plugin is properly installed.")
+    LLMProviderManager = None  # type: ignore
+    get_available_providers = lambda: []  # type: ignore
+    make_safe_filename = lambda name: name or "generated_problem"  # type: ignore
+    load_all_problems = lambda: []  # type: ignore
 
 
 def render_problem_manager_tab():
