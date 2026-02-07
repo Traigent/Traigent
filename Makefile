@@ -30,14 +30,17 @@ install-dev:  ## Install package with all development dependencies
 	$(PIP) install -e ".[all,dev,dspy,docs]"
 	$(PYTHON) -m pre_commit install
 
-test:  ## Run all tests
-	$(PYTEST) $(TEST_DIR) -v
+test:  ## Run all tests (parallel with pytest-xdist)
+	$(PYTEST) $(TEST_DIR) -n auto --dist loadgroup
 
-test-unit:  ## Run unit tests only
+test-unit:  ## Run unit tests only (parallel)
+	$(PYTEST) $(TEST_DIR)/unit -n auto --dist loadgroup
+
+test-unit-serial:  ## Run unit tests sequentially (for debugging)
 	$(PYTEST) $(TEST_DIR)/unit -v
 
-test-integration:  ## Run integration tests only
-	$(PYTEST) $(TEST_DIR)/integration -v
+test-integration:  ## Run integration tests only (parallel)
+	$(PYTEST) $(TEST_DIR)/integration -n auto --dist loadgroup
 
 test-validation:  ## Run optimizer validation tests
 	TRAIGENT_MOCK_LLM=true TRAIGENT_OFFLINE_MODE=true $(PYTEST) $(TEST_DIR)/optimizer_validation -v

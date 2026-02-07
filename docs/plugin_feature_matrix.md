@@ -24,7 +24,7 @@ Comprehensive coverage of Traigent capabilities to guide splitting the package i
 | Security | JWT validation, encryption, headers, rate limiter, tenant/session management | Used in cloud/enterprise paths | security extra | Plugin/enterprise |
 | Cloud/backend | Backend client/session sync, remote optimizers, cloud execution modes | `execution.execution_mode`, backend env vars | Core deps | Plugin/enterprise |
 | CLI and developer tools | traigent optimize/results/plot/auth/hooks; persistence manager saves runs | CLI flags; `get_available_strategies` | Core | Base (could split UI commands later) |
-| UI and playground | Streamlit control center and demos | Run via `streamlit run playground/traigent_control_center.py` | playground extra | Plugin/UI bundle |
+| UI and demos | Interactive Streamlit UI and advanced examples | See [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository | Separate repo | Plugin/UI bundle |
 | Storage and persistence | Local results (.traigent_local), locking, resume, cost logs | `execution.local_storage_path`, CLI results | Core | Base |
 
 Sources reviewed: README, docs/feature_matrices/*, traigent/api/decorators.py, traigent/config/types.py, traigent/core/orchestrator.py, pyproject.toml, integrations inventory, hooks, integrations modules.

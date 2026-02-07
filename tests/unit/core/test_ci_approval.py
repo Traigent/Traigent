@@ -177,8 +177,7 @@ class TestValidateHmacToken:
     def test_valid_signed_token(self) -> None:
         token = self._make_signed_token()
         with patch.dict(
-            os.environ,
-            {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            os.environ, {"TRAIGENT_APPROVAL_SECRET": "test-secret"}  # pragma: allowlist secret
         ):
             assert _validate_hmac_token(token) is True
 
@@ -186,24 +185,21 @@ class TestValidateHmacToken:
         token = self._make_signed_token()
         token["signature"] = "invalid-sig"
         with patch.dict(
-            os.environ,
-            {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            os.environ, {"TRAIGENT_APPROVAL_SECRET": "test-secret"}  # pragma: allowlist secret
         ):
             assert _validate_hmac_token(token) is False
 
     def test_expired_token(self) -> None:
         token = self._make_signed_token(expires_delta=timedelta(hours=-1))
         with patch.dict(
-            os.environ,
-            {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            os.environ, {"TRAIGENT_APPROVAL_SECRET": "test-secret"}  # pragma: allowlist secret
         ):
             assert _validate_hmac_token(token) is False
 
     def test_ttl_exceeds_24h(self) -> None:
         token = self._make_signed_token(expires_delta=timedelta(hours=25))
         with patch.dict(
-            os.environ,
-            {"TRAIGENT_APPROVAL_SECRET": "test-secret"},  # pragma: allowlist secret
+            os.environ, {"TRAIGENT_APPROVAL_SECRET": "test-secret"}  # pragma: allowlist secret
         ):
             assert _validate_hmac_token(token) is False
 

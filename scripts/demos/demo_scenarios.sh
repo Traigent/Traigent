@@ -20,52 +20,43 @@ if [[ -z "${VIRTUAL_ENV:-}" && -f "${PROJECT_ROOT}/.venv/bin/activate" ]]; then
   source "${PROJECT_ROOT}/.venv/bin/activate"
 fi
 
+# NOTE: Paper experiments (FEVER, HotpotQA) moved to TraigentDemo repository
+# See: https://github.com/Traigent/TraigentDemo
+
 scenarios=(
   "Hello World – RAG tuner"
   "Prompt A/B tradeoff"
   "Structured JSON extractor"
-  "FEVER case study"
-  "HotpotQA CLI run"
 )
 
 descriptions=(
   "Compare RAG vs. no-RAG and top_k choices on a simple QA task."
   "Grid-test prompt variants, models, and temperatures with parallel trials."
   "Enforce JSON structure while optimizing a custom json_score metric."
-  "Paper-grade FEVER pipeline with constraints and calibration hooks."
-  "Unified CLI optimization run for the HotpotQA scenario."
 )
 
 commands=(
   "python examples/core/hello-world/run.py"
   "python examples/core/prompt-ab-test/run.py"
   "python examples/core/structured-output-json/run.py"
-  "python paper_experiments/case_study_fever/run_case_study.py --trials 24 --parallel-trials 4 --export-trials trial_history.json"
-  "python paper_experiments/cli.py optimize --scenario hotpotqa --trials 20 --parallel-trials 4 --export-trials --output-dir paper_experiments/artifacts/hotpotqa_demo"
 )
 
 real_flags=(
   ""
   ""
   ""
-  "--mock-mode off"
-  "--mock-mode off"
 )
 
 dataset_paths=(
   "${PROJECT_ROOT}/examples/datasets/hello-world/evaluation_set.jsonl"
   "${PROJECT_ROOT}/examples/datasets/prompt-ab-test/evaluation_set.jsonl"
   "${PROJECT_ROOT}/examples/datasets/structured-output-json/evaluation_set.jsonl"
-  "${PROJECT_ROOT}/paper_experiments/case_study_fever/datasets/fever_dev_subset.jsonl"
-  "${PROJECT_ROOT}/paper_experiments/case_study_rag/datasets/hotpotqa_dev_subset.jsonl"
 )
 
 snippet_paths=(
   "${PROJECT_ROOT}/examples/core/hello-world/run.py"
   "${PROJECT_ROOT}/examples/core/prompt-ab-test/run.py"
   "${PROJECT_ROOT}/examples/core/structured-output-json/run.py"
-  "${PROJECT_ROOT}/paper_experiments/case_study_fever/pipeline.py"
-  "${PROJECT_ROOT}/paper_experiments/case_study_rag/pipeline.py"
 )
 
 print_menu() {
@@ -100,20 +91,6 @@ EOF
 Demonstrates seamless injection with a custom json_score metric so you can measure
 field-level extraction accuracy while nudging the LLM toward particular formatting
 guidelines. Great for downstream API integrations that reject malformed payloads.
-EOF
-      ;;
-    3)
-      cat <<'EOF'
-Paper-aligned FEVER case study. The optimizer balances FEVER score, latency, and cost
-under a false-positive chance constraint, saving artifacts for calibration and figure
-generation. Ideal for showcasing Traigent’s constraint-aware search.
-EOF
-      ;;
-    4)
-      cat <<'EOF'
-The unified paper_experiments CLI driving the HotpotQA scenario. One command wires
-baseline evaluation, optimization, tagging, and artifact management—handy for larger
-batch runs or sweeps shared across teammates.
 EOF
       ;;
   esac
@@ -180,38 +157,6 @@ def extract_fields(
     schema_rigidity: str = "strict",
 ) -> str:
     ...
-EOF
-      ;;
-    3)
-      cat <<'EOF'
-@traigent.optimize(
-    eval_dataset=str(spec.dataset),
-    objectives=spec.objectives,
-    configuration_space=spec.configuration_space,
-    constraints=constraints,
-    auto_override_frameworks=auto_override_frameworks,
-    mock_mode_config={"enabled": mock_mode_enabled, "override_evaluator": False},
-    metric_functions=metric_functions,
-)
-def fever_case_study(claim: str) -> dict[str, Any]:
-    """Simulated fact-verification pipeline that respects the current configuration."""
-    return pipeline_impl(claim)
-EOF
-      ;;
-    4)
-      cat <<'EOF'
-@traigent.optimize(
-    eval_dataset=str(spec.dataset),
-    objectives=spec.objectives,
-    configuration_space=spec.configuration_space,
-    constraints=constraints,
-    auto_override_frameworks=auto_override_frameworks,
-    mock_mode_config={"enabled": mock_mode_enabled, "override_evaluator": False},
-    metric_functions=metric_functions,
-)
-def hotpot_case_study(question: str, context: list[str]) -> str:
-    """Simulated RAG pipeline that respects the current configuration."""
-    return pipeline_impl(question, context)
 EOF
       ;;
   esac
