@@ -70,14 +70,14 @@ fi
 echo -e "\n${YELLOW}Creating directory structure...${NC}"
 mkdir -p data/raw data/prepared
 mkdir -p optimization_results optimization_logs
-mkdir -p baselines reports performance_plots
+mkdir -p configs/baselines reports performance_plots
 mkdir -p scripts/hooks scripts/auto_tune
 echo -e "${GREEN}✓ Directory structure created${NC}"
 
 # Create initial baseline if it doesn't exist
-if [ ! -f "baselines/performance.json" ]; then
+if [ ! -f "configs/baselines/performance.json" ]; then
     echo -e "\n${YELLOW}Creating initial performance baseline...${NC}"
-    cat > baselines/performance.json << EOF
+    cat > configs/baselines/performance.json << EOF
 {
   "accuracy": 0.8,
   "avg_latency": 1.0,

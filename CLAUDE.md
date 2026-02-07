@@ -35,62 +35,62 @@ When you create implementation plans using EnterPlanMode/ExitPlanMode:
 **Traigent uses dependency injection, multi-threading, and shared resource guardrails. ALL changes must consider these patterns.**
 
 ### Dependency Injection Pattern
-- `OptimizedFunction` receives injected dependencies: `TraigentConfig`, `BudgetGuardrail`, `CloudClient`, etc.
+- `OptimizedFunction` receives injected dependencies: `TraigentConfig`, `CostEnforcer`, `CloudClient`, etc.
 - **NEVER** instantiate shared resources directly inside functions
 - **ALWAYS** accept dependencies as parameters or use factory patterns
-- Example: `OptimizationOrchestrator` injects budget guardrail into trial executor
+- Example: `OptimizationOrchestrator` injects cost enforcer into trial executor
 
 ```python
 # ✅ CORRECT - Dependency injection
-def run_trial(config: dict, budget_guardrail: BudgetGuardrail) -> TrialResult:
-    budget_guardrail.check_before_trial()
+def run_trial(config: dict, cost_enforcer: CostEnforcer) -> TrialResult:
+    permit = cost_enforcer.acquire_permit()
     # ... trial logic
 
 # ❌ WRONG - Direct instantiation creates multiple instances
 def run_trial(config: dict) -> TrialResult:
-    budget_guardrail = BudgetGuardrail()  # BREAKS shared state!
-    budget_guardrail.check_before_trial()
+    cost_enforcer = CostEnforcer()  # BREAKS shared state!
+    permit = cost_enforcer.acquire_permit()
 ```
 
 ### Multi-Threading Considerations
 - Parallel trial execution uses `ThreadPoolExecutor` (see `traigent/core/orchestrator.py`)
 - **All shared resources MUST be thread-safe** (use locks, thread-local storage, or immutable data)
-- Budget guardrails use threading locks to prevent race conditions
+- Cost enforcement uses threading locks to prevent race conditions
 - Example thread-safe patterns:
-  - `BudgetGuardrail` uses `threading.Lock()` for spend tracking
+  - `CostEnforcer` uses `threading.RLock()` for spend tracking
   - Trial results are collected in thread-safe queues
   - Configuration sampling uses immutable config snapshots
 
 ```python
 # ✅ CORRECT - Thread-safe shared state
-class BudgetGuardrail:
+class CostEnforcer:
     def __init__(self):
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._spent = 0.0
 
-    def add_cost(self, cost: float):
+    def track_cost(self, cost: float):
         with self._lock:
             self._spent += cost
 
 # ❌ WRONG - Race condition
-class BudgetGuardrail:
+class CostEnforcer:
     def __init__(self):
         self._spent = 0.0
 
-    def add_cost(self, cost: float):
+    def track_cost(self, cost: float):
         self._spent += cost  # Multiple threads can corrupt this!
 ```
 
-### Budget Guardrail Integration
+### Cost Enforcement Integration
 When adding features that consume resources (LLM calls, API requests):
-1. **Always check budget before execution**: Call `budget_guardrail.check_before_trial()` or similar
-2. **Track costs after execution**: Call `budget_guardrail.add_cost(trial_cost)`
-3. **Handle budget exceeded**: Raise `BudgetExceededError` and stop gracefully
-4. **Thread-safety**: Never bypass locks or create duplicate guardrail instances
+1. **Always acquire a permit before execution**: Call `cost_enforcer.acquire_permit()`
+2. **Track costs after execution**: Call `cost_enforcer.track_cost(permit, trial_cost)`
+3. **Handle budget exceeded**: Raise `CostLimitExceeded` and stop gracefully
+4. **Thread-safety**: Never bypass locks or create duplicate enforcer instances
 
 Key files:
-- `traigent/core/budget.py` - Budget guardrail implementation
-- `traigent/core/orchestrator.py` - Budget integration in optimization loop
+- `traigent/core/cost_enforcement.py` - Cost enforcer implementation
+- `traigent/core/orchestrator.py` - Cost integration in optimization loop
 - `traigent/core/trial_lifecycle.py` - Cost tracking per trial
 
 ### Resource Injection Checklist
@@ -101,7 +101,7 @@ Before implementing ANY new feature that:
 - Shares state across trials
 
 **Ask yourself:**
-1. ✅ Does this respect the injected budget guardrail?
+1. ✅ Does this respect the injected cost enforcer?
 2. ✅ Is this thread-safe for parallel execution?
 3. ✅ Am I using dependency injection (not creating new instances)?
 4. ✅ Do I handle budget exceeded gracefully?

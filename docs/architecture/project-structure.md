@@ -7,10 +7,9 @@ This document outlines the current structure of the Traigent SDK project.
 ```
 Traigent/
 ├── README.md                  # Main project documentation
-├── LICENSE                    # MIT license
-├── pyproject.toml             # Build and packaging config
+├── LICENSE                    # Apache-2.0 license
+├── pyproject.toml             # Build, packaging, and tool config
 ├── uv.lock                    # Lockfile (uv)
-├── pytest.ini                 # Test configuration
 ├── traigent/                  # Core SDK source code
 ├── tests/                     # Test suite
 ├── examples/                  # Usage examples and demo runners
@@ -20,10 +19,11 @@ Traigent/
 ├── scripts/                   # Utility and automation scripts
 ├── plugins/                   # Optional plugin packages
 ├── requirements/              # Dependency sets and guides
-├── configs/                   # Configuration templates
-├── baselines/                 # Performance baselines
-├── runtime/                   # Runtime configs
-└── stress_tests/              # Stress testing suite
+└── configs/                   # Configuration, baselines, and runtime
+    ├── auto_tune_config.yaml
+    ├── env-templates/
+    ├── baselines/             # Performance baselines
+    └── runtime/               # Runtime configs
 ```
 
 > **Note**: Use-cases, demos, playground, paper experiments, and non-essential tools
