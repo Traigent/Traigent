@@ -5,7 +5,7 @@ This plan adds the **agent development workflow** layer (see `docs/agent_develop
 ## Pre-Launch Content Audit (blocking sign-off)
 
 Before Week 1 goes live, do a quick audit pass on any piece that makes a factual/product claim.
-Checklist: `marketing/PRE_LAUNCH_CONTENT_AUDIT.md`
+Checklist: `docs/marketing/PRE_LAUNCH_CONTENT_AUDIT.md`
 
 **Blockers (must be true or removed/qualified):**
 - Budget-dependent claims: “tests thousands”, “hours not weeks”, “zero code changes” → qualify with “within your evaluation budget / depending on your stack”.
@@ -108,7 +108,7 @@ Builders will compare to evaluation/observability tools and to “we can build t
 | Objection | Response angle | Proof/asset |
 | --- | --- | --- |
 | “I can build this with pytest + scripts.” | You can—Traigent packages repeatable patterns: spec-driven knobs, built-in evaluators, and standard gates so teams don’t reinvent. | `examples/integrations/ci-cd/README.md`, `docs/api-reference/decorator-reference.md` |
-| “Works only for certain stacks.” | True: low friction for common LangChain/OpenAI SDK patterns; custom stacks may need adapter code. Be explicit early. | (Add matrix) `marketing/INTEGRATION_COMPATIBILITY_MATRIX.md` |
+| “Works only for certain stacks.” | True: low friction for common LangChain/OpenAI SDK patterns; custom stacks may need adapter code. Be explicit early. | (Add matrix) `docs/marketing/INTEGRATION_COMPATIBILITY_MATRIX.md` |
 
 ### 3) ML / Evaluation / Applied Research Engineers
 

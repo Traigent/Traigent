@@ -2,7 +2,7 @@
 
 ## Before you publish
 
-- If this is Week 1 (or reused content), run the blocking audit: `marketing/PRE_LAUNCH_CONTENT_AUDIT.md`
+- If this is Week 1 (or reused content), run the blocking audit: `docs/marketing/PRE_LAUNCH_CONTENT_AUDIT.md`
 - Decide whether you’re saying “launching today” vs “about to release” (keep consistent for the week).
 - TVL expansion is **Tuned Variable Language (TVL)**. Use “TVL spec” for brevity after first mention.
 - Pick one primary CTA (repo OR one example OR docs). Don’t stack links.
@@ -10,7 +10,7 @@
   - `docs/demos/output/optimize.svg`
   - `docs/demos/output/hooks.svg`
   - `docs/demos/output/github-hooks.svg`
-- Add 3–6 hashtags from `marketing/LAUNCH_MESSAGING.md`.
+- Add 3–6 hashtags from `docs/marketing/LAUNCH_MESSAGING.md`.
 
 ## After you publish (same day)
 

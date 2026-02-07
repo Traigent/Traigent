@@ -20,7 +20,7 @@ Traigent treats Tuned Variables as first-class:
 - Optimize for accuracy/cost/latency together
 - Ship behind CI-style gates
 
-Minimal agent spec template (copy/paste): `marketing/templates/AGENT_SPEC_TEMPLATE.md` (link: https://github.com/Traigent/Traigent/blob/main/marketing/templates/AGENT_SPEC_TEMPLATE.md)
+Minimal agent spec template (copy/paste): `docs/marketing/templates/AGENT_SPEC_TEMPLATE.md` (link: https://github.com/Traigent/Traigent/blob/main/docs/marketing/templates/AGENT_SPEC_TEMPLATE.md)
 
 Repo: https://github.com/Traigent/Traigent
 

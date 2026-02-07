@@ -24,4 +24,4 @@ Ask for feedback + link to a single thing (repo, example, docs).
 
 ## Hashtags (3–6)
 
-Use the shared set in `marketing/LAUNCH_MESSAGING.md`.
+Use the shared set in `docs/marketing/LAUNCH_MESSAGING.md`.
