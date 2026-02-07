@@ -137,7 +137,7 @@ def test_feature_behavior():
 - New optimization algorithms
 - Additional framework integrations
 - Performance improvements
-- UI/UX enhancements for the playground
+- UI/UX enhancements (see TraigentDemo repository)
 
 ## Pull Request Guidelines
 
@@ -195,8 +195,8 @@ Traigent/
 │   ├── optimizers/    # Optimization algorithms
 │   └── ...
 ├── tests/             # Test suite
-├── examples/          # Example scripts
-├── playground/        # Interactive UI
+├── examples/          # Core SDK examples
+├── plugins/           # Optional plugins (analytics, UI, etc.)
 └── docs/             # Documentation
 ```
 

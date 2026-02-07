@@ -443,19 +443,14 @@ When installing Traigent, you can choose specific feature sets:
 | `[analytics]`    | Analytics and visualization   | View optimization results        |
 | `[bayesian]`     | Bayesian optimization         | Advanced optimization algorithms |
 | `[integrations]` | Framework integrations        | LangChain, OpenAI, Anthropic     |
-| `[ui]`           | UI plugin                     | Problem management utilities     |
-| `[examples]`     | Example dependencies          | Run all demo scripts             |
 | `[dev]`          | Development tools             | pytest, black, ruff, mypy        |
-| `[all]`          | Complete installation         | Everything above                 |
+| `[all]`          | Complete installation         | All optional features            |
 
 **Recommended installs:**
 
 ```bash
 # For running examples and development
 pip install -e ".[dev,integrations,analytics]"
-
-# For UI utilities (problem management)
-pip install -e ".[ui]"
 
 # For everything (largest install)
 pip install -e ".[all]"
@@ -896,25 +891,13 @@ print(f"Best configuration cost per call: ${results.best_config_cost:.6f}")
 
 ## 🎓 Quick Examples
 
-### 🎮 Using the Interactive UI
+### 🎮 Interactive UI & Advanced Examples
 
-1. **Launch the Control Center:**
-
-   ```bash
-   streamlit run playground/traigent_control_center.py
-   ```
-
-2. **Define Your Problem:**
-
-   - Click "Problem Manager" → "Define Your Problem"
-   - Type: "I need to summarize long documents"
-   - AI generates test cases automatically
-
-3. **Find the Best Agent:**
-   - Click "Explore Agents"
-   - Select models to compare (GPT-3.5, GPT-4, etc.)
-   - Click "Find Best Agent"
-   - See results in real-time!
+For interactive UI tools, advanced use cases, and research examples, see the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository:
+- **Interactive Control Center**: Streamlit-based UI for problem definition and agent exploration
+- **Use Cases**: Production-ready examples (document summarization, data extraction, etc.)
+- **Research**: Paper experiments and performance benchmarks
+- **Development Tools**: Code review system, trace analysis utilities
 
 ### 💻 Programmatic Usage
 
