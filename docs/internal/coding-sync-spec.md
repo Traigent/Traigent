@@ -6,7 +6,7 @@ Modern LLM coding assistants are good at spitting out code, but bad at:
 * Adding features **incrementally** without breaking old ones.
 * Showing a clear path from a **requirement** to the **code** and the **runtime behavior**.
 
-Meng & Jackson’s “What You See Is What It Does” paper calls this problem **illegibility**, and argues that robust LLM coding needs: 
+Meng & Jackson’s “What You See Is What It Does” paper calls this problem **illegibility**, and argues that robust LLM coding needs:
 
 * **Incrementality** – small features via small, local changes.
 * **Integrity** – new changes don’t silently break old ones.
@@ -51,7 +51,7 @@ You know this thing “works” when all are true:
 ### 1.2 Design integrity
 
 * Concept code **never** directly calls other concepts’ internals or DB tables.
-* Cross‑concept behavior is **factored into synchronizations**, not scattered in random controllers/services. 
+* Cross‑concept behavior is **factored into synchronizations**, not scattered in random controllers/services.
 * Static checks can list:
 
   * concept boundary violations,
@@ -80,7 +80,7 @@ For a new feature:
 * Every request / job gets a **flow ID**.
 * You can reconstruct a **human‑readable narrative** for a flow:
 
-  * “Web/request(register) → Password.validate → User.register → Profile.register → JWT.generate → Web.respond …” 
+  * “Web/request(register) → Password.validate → User.register → Profile.register → JWT.generate → Web.respond …”
 * Given a bug, you can:
 
   * find the flow,
@@ -89,7 +89,7 @@ For a new feature:
 
 ### 1.5 LLM integration
 
-* LLMs mostly work with **structured specs** (concepts + syncs + requirements), not just raw code. 
+* LLMs mostly work with **structured specs** (concepts + syncs + requirements), not just raw code.
 * Generated code is annotated with IDs and passes static traceability checks.
 * For a failing test/flow, you can hand an LLM:
 
@@ -104,9 +104,9 @@ The system revolves around these node types:
 
 * `Requirement` – “what we want” (`REQ-*`).
 * `Functionality` – features / user stories (`FUNC-*`).
-* `Concept` – user‑facing unit of behavior with its own state & actions (`CONC-*`). 
+* `Concept` – user‑facing unit of behavior with its own state & actions (`CONC-*`).
 * `Action` – operation of a concept (`CONC-Password.check`).
-* `Synchronization` – rule “when these actions happen, under these conditions, then call these actions” (`SYNC-*`). 
+* `Synchronization` – rule “when these actions happen, under these conditions, then call these actions” (`SYNC-*`).
 * `CodeUnit` – concrete implementation (file/class/function).
 * `TestCase` – test identifiers (unit / integration / e2e).
 * `ActionRecord` – runtime occurrence of an action/sync.
@@ -244,7 +244,7 @@ version: 1
 status: active
 ```
 
-This follows the structure in the paper (purpose / state / actions / operational principle) but serialized as YAML. 
+This follows the structure in the paper (purpose / state / actions / operational principle) but serialized as YAML.
 
 ### 3.4 `docs/syncs/*.yml`
 
@@ -278,7 +278,7 @@ version: 1
 status: active
 ```
 
-The DSL is “when / where / then”, similar to the paper’s examples, but encoded as YAML. 
+The DSL is “when / where / then”, similar to the paper’s examples, but encoded as YAML.
 
 ### 3.5 `reports/code_summaries.json`
 
@@ -730,7 +730,7 @@ Flow flow-9876 (HTTP POST /register):
 4. Web.respond(error="User already exists", code=422)
 ```
 
-Exactly the kind of trace used in the WYSIWID bug‑fix story. 
+Exactly the kind of trace used in the WYSIWID bug‑fix story.
 
 ---
 
@@ -880,7 +880,7 @@ Your orchestrator can:
 6. Run tests and gather traces.
 7. If a test fails, call `explain-flow` and feed trace + specs back into the LLM to debug.
 
-This keeps the assistant *honest* about architecture and requirements, and gives you the legibility, incrementality, and transparency the paper argues for. 
+This keeps the assistant *honest* about architecture and requirements, and gives you the legibility, incrementality, and transparency the paper argues for.
 
 ---
 
