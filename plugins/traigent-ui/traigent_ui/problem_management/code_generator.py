@@ -317,7 +317,7 @@ register_problem("{name}", {class_name})
             Updated module code
         """
         # Read existing module
-        module_path = Path(f"playground/langchain_problems/{problem_name}.py")
+        module_path = Path(f"traigent_ui/langchain_problems/{problem_name}.py")
         if not module_path.exists():
             raise FileNotFoundError(f"Problem module not found: {module_path}")
 

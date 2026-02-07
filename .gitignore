@@ -312,9 +312,12 @@ validate_*.py
 !.post_release_recommendation_fixes/templates/
 !.post_release_recommendation_fixes/templates/**
 
-# Marketing materials viewer (local development only)
+# Marketing materials viewer (removed - was local development only)
 tools/marketing-viewer/
 run_marketing_viewer.sh
+
+# Node modules in tools (regenerate with npm install)
+tools/**/node_modules/
 
 # Virtual environments (additional)
 test_env/

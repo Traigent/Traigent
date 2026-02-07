@@ -69,6 +69,16 @@ repos:
         types: [file]
         additional_dependencies: ['pyyaml>=6.0']
 
+  # Prevent committing gitignored files
+  - repo: local
+    hooks:
+      - id: check-ignored-files
+        name: Check for ignored files staged for commit
+        language: script
+        entry: scripts/hooks/check-ignored-files.sh
+        pass_filenames: false
+        always_run: true
+
 # Configuration for detect-secrets
 # Run: detect-secrets scan > .secrets.baseline
 # to create initial baseline
