@@ -372,6 +372,11 @@ class TestOptunaObjectiveConfigs:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -411,6 +416,11 @@ class TestOptunaObjectiveConfigs:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -462,6 +472,11 @@ class TestOptunaInjectionModes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -522,6 +537,11 @@ class TestOptunaMultiObjective:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -559,6 +579,11 @@ class TestOptunaEdgeCases:
 
         # Should still work with random sampling fallback
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -592,6 +617,17 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+        for trial in result.trials:
+            config = getattr(trial, "config", {})
+            if "temperature" in config:
+                assert (
+                    0.0 <= config["temperature"] <= 2.0
+                ), f"temperature out of range: {config['temperature']}"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -622,6 +658,11 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -661,6 +702,11 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -697,6 +743,11 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -726,6 +777,11 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -755,6 +811,11 @@ class TestOptunaEdgeCases:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -896,6 +957,11 @@ class TestOptunaWithTimeout:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -932,5 +998,10 @@ class TestOptunaWithTimeout:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

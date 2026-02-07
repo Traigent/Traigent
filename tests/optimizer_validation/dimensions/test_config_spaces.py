@@ -503,6 +503,13 @@ class TestConfigSpaceEdgeCases:
 
         # Should handle tiny ranges
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -598,6 +605,13 @@ class TestConfigSpaceEdgeCases:
 
         # Should handle None as a valid categorical value
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -659,6 +673,13 @@ class TestConfigSpaceEdgeCases:
 
         # Should handle unicode gracefully
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -687,6 +708,13 @@ class TestConfigSpaceEdgeCases:
 
         # Should handle special characters in keys
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -842,8 +870,11 @@ class TestParameterExplorationOrder:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
-        if hasattr(result, "trials") and len(result.trials) >= 4:
+        if len(result.trials) >= 4:
             configs = [t.config for t in result.trials]
 
             # First two trials should have same model
@@ -903,8 +934,11 @@ class TestParameterExplorationOrder:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
-        if hasattr(result, "trials") and len(result.trials) >= 4:
+        if len(result.trials) >= 4:
             configs = [t.config for t in result.trials]
 
             # First two trials should have same temperature
@@ -1007,6 +1041,13 @@ class TestParameterExplorationOrder:
 
         # Should handle partial specification gracefully
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -1048,6 +1089,13 @@ class TestParameterExplorationOrder:
 
         # Should handle gracefully - either ignore or error
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
+
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
             # Should still complete the 4 combinations

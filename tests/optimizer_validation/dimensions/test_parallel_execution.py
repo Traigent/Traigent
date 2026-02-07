@@ -40,6 +40,7 @@ class TestInvocationBudgeting:
             expected=ExpectedResult(
                 min_trials=max_trials,
                 max_trials=max_trials,
+                expected_stop_reason="max_trials_reached",
             ),
             gist_template="budget-seq -> {trial_count()} | {status()}",
         )
@@ -47,6 +48,9 @@ class TestInvocationBudgeting:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify exact trial count
         if hasattr(result, "trials"):
@@ -97,6 +101,7 @@ class TestInvocationBudgeting:
             expected=ExpectedResult(
                 min_trials=max_trials,
                 max_trials=max_trials,
+                expected_stop_reason="max_trials_reached",
             ),
             gist_template="budget-large -> {trial_count()} | {status()}",
         )
@@ -104,6 +109,9 @@ class TestInvocationBudgeting:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         if hasattr(result, "trials"):
             assert (
@@ -141,6 +149,7 @@ class TestInvocationBudgeting:
             expected=ExpectedResult(
                 min_trials=4,
                 max_trials=4,
+                expected_stop_reason="optimizer",
             ),
             gist_template="grid-exhaust -> {trial_count()} | {status()}",
         )
@@ -148,6 +157,9 @@ class TestInvocationBudgeting:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         if hasattr(result, "trials"):
             assert (
@@ -183,6 +195,8 @@ class TestInvocationBudgeting:
 
         # Should either succeed with few trials or hit timeout
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
             if hasattr(result, "trials"):
                 # Should have stopped early due to timeout
                 assert (
@@ -447,6 +461,9 @@ class TestBudgetWithConstraints:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Should have at most max_trials completed trials
         if hasattr(result, "trials"):
@@ -549,6 +566,9 @@ class TestStopConditionPriority:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Failed: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         if hasattr(result, "trials"):
             # Grid should stop at 4
