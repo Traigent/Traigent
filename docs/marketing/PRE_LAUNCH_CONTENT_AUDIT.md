@@ -29,4 +29,3 @@ Use this before publishing Week 1 content (and whenever you reuse older drafts).
 - Date:
 - Reviewer:
 - Notes / changes made:
-

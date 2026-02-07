@@ -36,4 +36,3 @@ These are **in-repo integrations/plugins**; exact behavior depends on how your a
 
 - OSS focuses on local execution (`edge_analytics`) with forward-compatible placeholders for cloud/hybrid.
 - Don’t imply managed backend/hosted eval infrastructure unless it’s actually provisioned for the reader.
-

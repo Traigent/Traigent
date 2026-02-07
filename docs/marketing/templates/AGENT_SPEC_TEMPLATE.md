@@ -59,4 +59,3 @@ Operational details:
 - When to re-run tuning:
 - Rollback plan:
 - Owner (team/person):
-
