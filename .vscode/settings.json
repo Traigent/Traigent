@@ -1,0 +1,42 @@
+{
+  "python.defaultInterpreterPath": "REDACTED_TRAIGENT_ROOT/Traigent/.venv/bin/python",
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+  "python.testing.pytestArgs": [
+    "tests",
+    "-n",
+    "auto",
+    "--dist",
+    "loadgroup",
+    "--ignore=tests/integration",
+    "--ignore=tests/e2e",
+    "--ignore=tests/performance",
+    "--ignore=tests/chaos",
+    "--ignore=tests/optimizer_validation",
+    "--ignore=tests/unit/bridges",
+    "--ignore=tests/unit/test_bridge_wrapper.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_budget.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_stop_conditions.py",
+    "--ignore=tests/unit/core/test_orchestrator.py",
+    "--ignore=tests/unit/core/test_constraints_enforced.py",
+    "--ignore=tests/unit/evaluators/test_litellm_integration.py"
+  ],
+  "python.testing.cwd": "${workspaceFolder}",
+  "python.envFile": "${workspaceFolder}/.env",
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.extraPaths": ["${workspaceFolder}"],
+  "editor.formatOnSave": true,
+  "python.formatting.provider": "none",
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    }
+  },
+  "sonarlint.connectedMode.project": {
+    "connectionId": "traigent",
+    "projectKey": "Traigent_Traigent"
+  }
+}

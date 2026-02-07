@@ -1,30 +1,27 @@
-# Traigent Playground
+# Traigent UI Plugin
 
-This directory contains the Traigent Playground - a comprehensive Streamlit application for managing LLM optimization problems and running Traigent optimizations.
+This plugin provides utilities for managing LLM optimization problems and Streamlit-based UI components.
+
+> **Note**: The Streamlit playground has been moved to the TraigentDemo repository.
+> See https://github.com/Traigent/TraigentDemo for the interactive playground.
 
 ## 🚀 Quick Start
 
 ```bash
-# From the TraigentSDK root directory
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[playground]"  # or: pip install -r playground/requirements_streamlit.txt
-.venv/bin/streamlit run playground/traigent_control_center.py
+# Install the UI plugin
+pip install -e ".[ui]"
+
+# Or from the plugin directory
+cd plugins/traigent-ui
+pip install -e .
 ```
 
 ## 📁 Directory Structure
 
 ```
-playground/
-├── traigent_control_center.py    # Main Streamlit application
+traigent_ui/
 ├── problem_management/            # Problem creation and management utilities
 ├── problem_generation/            # Intelligent problem generation system
-├── streamlit_utils/              # UI utilities for Streamlit
-├── langchain_problems/           # Generated and stored problems
-├── optimization_results/         # Optimization run results
-├── optimization_logs/            # Detailed optimization logs
-├── optimization_storage.py       # Storage handler for results
-├── optimization_callbacks.py     # Callbacks for optimization tracking
 ├── problem_manager.py           # CLI tool for problem management
 └── generate_problem_suite.py    # Batch problem generation tool
 ```

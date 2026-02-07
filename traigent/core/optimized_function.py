@@ -1152,7 +1152,6 @@ class OptimizedFunction:
             agent_measures=getattr(self, "agent_measures", None),
             global_measures=getattr(self, "global_measures", None),
             promotion_gate=getattr(self, "promotion_gate", None),
-            invocations_per_example=invocations_per_example,
         )
 
         # Auto-initialize workflow traces tracker if backend is configured

@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from playground.problem_management.example_generator import ExampleGenerator, GeneratedExample
-from playground.problem_management.intelligence import ProblemInsights, ProblemIntelligence
+from traigent_ui.problem_management.example_generator import ExampleGenerator, GeneratedExample
+from traigent_ui.problem_management.intelligence import ProblemInsights, ProblemIntelligence
 from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .diversity_analyzer import DiversityAnalyzer, DiversityMetrics

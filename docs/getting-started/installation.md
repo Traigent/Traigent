@@ -35,8 +35,6 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 | `integrations` | LangChain, OpenAI, Anthropic, MLflow, W&B | `pip install -e ".[integrations]"` |
 | `security` | FastAPI, JWT, cryptography, Redis | `pip install -e ".[security]"` |
 | `visualization` | matplotlib, plotly | `pip install -e ".[visualization]"` |
-| `playground` | Streamlit control center | `pip install -e ".[playground]"` |
-| `examples` | Full example/demo deps | `pip install -e ".[examples]"` |
 | `test` | pytest + tooling | `pip install -e ".[test]"` |
 | `dev` | Linters + tests | `pip install -e ".[dev]"` |
 | `docs` | MkDocs tooling | `pip install -e ".[docs]"` |
@@ -45,12 +43,12 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
 
 ## Common Scenarios
 
-- **Run quickstart examples (no API keys):**
+- **Run examples (no API keys):**
 
   ```bash
-  pip install -e ".[examples]"
+  pip install -e ".[integrations]"
   export TRAIGENT_MOCK_LLM=true
-  python examples/quickstart/01_simple_qa.py
+  python examples/core/hello-world/run.py
   ```
 
 - **Develop/contribute:**
@@ -60,12 +58,9 @@ For the latest changes, install from source (GitHub). If you're on a pinned rele
   TRAIGENT_MOCK_LLM=true pytest tests/ -q
   ```
 
-- **Playground UI:**
+- **Interactive UI & advanced examples:**
 
-  ```bash
-  pip install -e ".[playground]"
-  streamlit run playground/traigent_control_center.py
-  ```
+  See the [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository for Streamlit UI tools, use cases, and research examples.
 
 - **Full bundle for team environments:**
 
