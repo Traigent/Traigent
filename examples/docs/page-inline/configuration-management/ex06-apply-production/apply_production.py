@@ -271,8 +271,12 @@ def demo_production_usage():
 
 
 if __name__ == "__main__":
-    # Run demonstration
-    service = demo_production_usage()
+    try:
+        # Run demonstration
+        service = demo_production_usage()
 
-    print("\n" + "=" * 50)
-    print("Production deployment ready with optimal configuration!")
+        print("\n" + "=" * 50)
+        print("Production deployment ready with optimal configuration!")
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

@@ -364,7 +364,7 @@ def qa_system(question, temperature=0.5, max_tokens=100):
     prompt = f"Answer concisely: {question}"
     response = llm.invoke(prompt)
 
-    return response.content
+    return str(response.content)
 
 # The default evaluator will use semantic similarity
 # to compare answers, allowing for paraphrasing

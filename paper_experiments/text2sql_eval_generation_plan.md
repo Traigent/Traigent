@@ -135,7 +135,7 @@ def text2sql_agent(question: str, db_id: str, config: dict) -> str:
     llm = ChatOpenAI(model=config["model"], temperature=config["temperature"])
     schema = load_schema(db_id)
     prompt = build_prompt(question, schema, config["prompt_style"])
-    return llm.invoke(prompt).content
+    return str(llm.invoke(prompt).content)
 ```
 
 ### Phase 4: Experiment Runner (45 min)

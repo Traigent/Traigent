@@ -58,12 +58,16 @@ def route(task: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await route.optimize(max_trials=10)
-        route.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", route("Design a plan to launch a new feature"))
+        async def _main():
+            res = await route.optimize(max_trials=10)
+            route.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", route("Design a plan to launch a new feature"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

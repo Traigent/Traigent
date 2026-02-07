@@ -207,35 +207,39 @@ def respond_safely(prompt_input: str) -> str:
 
 
 if __name__ == "__main__":
-    import time
+    try:
+        import time
 
-    print("=" * 60)
-    print("Safety Guardrails Optimization Example")
-    print("=" * 60)
-    print("\nObjective: safety_accuracy (maximize)")
-    print("Configuration space:")
-    print("  - safety_strength: low, medium, high")
-    print("  - refusal_style: brief, policy_cite")
-    print("  - temperature: 0.0 (fixed)")
-    print("Total configurations: 6 (3 x 2 x 1)")
-    print(
-        f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
-    )
-    print("-" * 60)
-
-    async def main() -> None:
-        start_time = time.time()
-        trials = 8 if not MOCK else 6  # 6 covers all config combinations
-        result = await respond_safely.optimize(algorithm="grid", max_trials=trials)
-        elapsed = time.time() - start_time
-
-        print("\n" + "=" * 60)
-        print("OPTIMIZATION COMPLETE")
         print("=" * 60)
-        print(f"Best config: {result.best_config}")
-        print(f"Best score: {result.best_score:.2f}")
-        print(f"Total trials: {len(result.trials)}")
-        print(f"Runtime: {elapsed:.2f}s")
-        _print_results(result)
+        print("Safety Guardrails Optimization Example")
+        print("=" * 60)
+        print("\nObjective: safety_accuracy (maximize)")
+        print("Configuration space:")
+        print("  - safety_strength: low, medium, high")
+        print("  - refusal_style: brief, policy_cite")
+        print("  - temperature: 0.0 (fixed)")
+        print("Total configurations: 6 (3 x 2 x 1)")
+        print(
+            f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+        )
+        print("-" * 60)
 
-    asyncio.run(main())
+        async def main() -> None:
+            start_time = time.time()
+            trials = 8 if not MOCK else 6  # 6 covers all config combinations
+            result = await respond_safely.optimize(algorithm="grid", max_trials=trials)
+            elapsed = time.time() - start_time
+
+            print("\n" + "=" * 60)
+            print("OPTIMIZATION COMPLETE")
+            print("=" * 60)
+            print(f"Best config: {result.best_config}")
+            print(f"Best score: {result.best_score:.2f}")
+            print(f"Total trials: {len(result.trials)}")
+            print(f"Runtime: {elapsed:.2f}s")
+            _print_results(result)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

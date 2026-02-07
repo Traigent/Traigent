@@ -26,6 +26,7 @@ from traigent.core.orchestrator_helpers import (
     extract_cost_from_results,
     extract_optuna_trial_id,
     normalize_parallel_trials,
+    pre_trial_validate_config,
     prepare_evaluation_config,
     prepare_objectives,
     validate_constructor_arguments,
@@ -1004,3 +1005,52 @@ class TestExtractCostFromResults:
         result = MockResult()
         examples, _cost = extract_cost_from_results(result, None, "trial_1")
         assert examples == 50  # Uses total_examples, not len(example_results)
+
+
+# ---------------------------------------------------------------------------
+# pre_trial_validate_config tests
+# ---------------------------------------------------------------------------
+
+
+class TestPreTrialValidateConfig:
+    """Tests for pre_trial_validate_config function."""
+
+    def test_empty_constraints_returns_true(self):
+        """No constraints means any config is valid."""
+        assert pre_trial_validate_config({"model": "gpt-4"}, []) is True
+
+    def test_all_constraints_pass(self):
+        """Config satisfying all constraints returns True."""
+        constraints = [
+            lambda c: c.get("temperature", 0) <= 1.0,
+            lambda c: c.get("model") in ("gpt-4", "gpt-3.5"),
+        ]
+        config = {"temperature": 0.7, "model": "gpt-4"}
+        assert pre_trial_validate_config(config, constraints) is True
+
+    def test_constraint_fails_returns_false(self):
+        """Config violating a constraint returns False."""
+        constraints = [lambda c: c.get("temperature", 0) <= 1.0]
+        config = {"temperature": 1.5}
+        assert pre_trial_validate_config(config, constraints) is False
+
+    def test_constraint_exception_returns_false(self):
+        """Constraint that raises exception returns False (fail-closed)."""
+
+        def bad_constraint(c):
+            raise ValueError("broken constraint")
+
+        assert pre_trial_validate_config({"x": 1}, [bad_constraint]) is False
+
+    def test_first_constraint_fails_short_circuits(self):
+        """Should stop checking after first failure."""
+        call_count = 0
+
+        def counting_constraint(c):
+            nonlocal call_count
+            call_count += 1
+            return True
+
+        constraints = [lambda c: False, counting_constraint]
+        pre_trial_validate_config({"x": 1}, constraints)
+        assert call_count == 0

@@ -75,7 +75,11 @@ def my_function():
 
 if __name__ == "__main__":
     try:
-        _res = my_function()
-        print(getattr(_res, "content", _res))
-    except Exception as e:
-        print(e)
+        try:
+            _res = my_function()
+            print(getattr(_res, "content", _res))
+        except Exception as e:
+            print(e)
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

@@ -126,4 +126,8 @@ def proprietary_assistant(query: str) -> str:
 
 
 if __name__ == "__main__":
-    print(proprietary_assistant("Give a helpful answer."))
+    try:
+        print(proprietary_assistant("Give a helpful answer."))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

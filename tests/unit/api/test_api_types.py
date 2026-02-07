@@ -53,9 +53,9 @@ class TestEnums:
         assert OptimizationStatus.RUNNING != OptimizationStatus.COMPLETED
 
     def test_enum_string_representation(self):
-        """Test enum string representation."""
-        assert str(OptimizationStatus.RUNNING) == "OptimizationStatus.RUNNING"
-        assert str(TrialStatus.CANCELLED) == "TrialStatus.CANCELLED"
+        """Test enum string representation (StrEnum returns value directly)."""
+        assert str(OptimizationStatus.RUNNING) == "running"
+        assert str(TrialStatus.CANCELLED) == "cancelled"
         # Test the actual values
         assert OptimizationStatus.RUNNING.value == "running"
         assert TrialStatus.CANCELLED.value == "cancelled"
