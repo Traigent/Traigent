@@ -74,6 +74,96 @@ class BackendSessionManager:
         self._optimization_id = optimization_id
         self._optimization_status = optimization_status
 
+    @staticmethod
+    def create_backend_client(
+        traigent_config: TraigentConfig,
+    ) -> BackendIntegratedClient | None:
+        """Initialize backend client if cloud features are available.
+
+        Returns None when cloud plugin is not installed (graceful degradation).
+        Raises FeatureNotAvailableError only when cloud mode is explicitly
+        requested but plugin is missing.
+
+        Args:
+            traigent_config: Global configuration for execution mode and storage
+
+        Returns:
+            BackendIntegratedClient if available, None otherwise
+        """
+        # Try to import cloud module - may not be available if cloud plugin not installed
+        try:
+            from traigent.cloud.backend_client import (
+                BackendClientConfig,
+                BackendIntegratedClient,
+            )
+            from traigent.config.backend_config import BackendConfig
+        except ModuleNotFoundError as err:
+            # Cloud module not installed - check if this was the cloud module itself
+            missing_module = getattr(err, "name", "") or ""
+            if missing_module.startswith("traigent.cloud"):
+                if traigent_config.execution_mode == "cloud":
+                    # User explicitly requested cloud mode but plugin not installed
+                    from traigent.utils.exceptions import FeatureNotAvailableError
+
+                    raise FeatureNotAvailableError(
+                        "Cloud execution mode",
+                        plugin_name="traigent-cloud",
+                        install_hint="pip install traigent[cloud]",
+                    ) from err
+                # For edge_analytics or other modes, gracefully degrade to local-only
+                logger.info(
+                    f"Cloud module not available for {traigent_config.execution_mode} mode. "
+                    "Continuing with local storage only."
+                )
+                return None
+            # Re-raise if it's a different missing module (broken install)
+            raise
+
+        backend_url = BackendConfig.get_backend_url()
+        api_key = BackendConfig.get_api_key()
+
+        if traigent_config.is_edge_analytics_mode() or BackendConfig.is_local_backend():
+            logger.info(
+                f"Configuring for {traigent_config.execution_mode} mode "
+                f"with backend at {backend_url} (fallback enabled)"
+            )
+        else:
+            logger.info(
+                f"Configuring for {traigent_config.execution_mode} mode "
+                f"with backend at {backend_url}"
+            )
+
+        backend_config = BackendClientConfig(
+            backend_base_url=backend_url,
+            enable_session_sync=True,
+        )
+        local_storage_path = traigent_config.get_local_storage_path()
+
+        try:
+            client = BackendIntegratedClient(
+                api_key=api_key,
+                backend_config=backend_config,
+                enable_fallback=True,
+                local_storage_path=local_storage_path,
+            )
+            logger.info(
+                f"Backend client initialized for {traigent_config.execution_mode} mode - "
+                f"session endpoints at {backend_config.backend_base_url}"
+            )
+            return client
+        except Exception as exc:
+            logger.warning(
+                "Backend initialization warning. Continuing with local storage only. "
+                "Results will not appear in backend UI.",
+                exc_info=exc,
+            )
+            return BackendIntegratedClient(
+                api_key=None,
+                backend_config=backend_config,
+                enable_fallback=True,
+                local_storage_path=local_storage_path,
+            )
+
     def _should_suppress_backend_warnings(self) -> bool:
         """Check if backend-related warnings should be suppressed.
 

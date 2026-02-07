@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from traigent.cloud.backend_client import BackendIntegratedClient
     from traigent.integrations.observability.workflow_traces import (
         SpanPayload,
-        WorkflowGraphPayload,
         WorkflowTracesTracker,
     )
 
@@ -41,6 +40,7 @@ from traigent.config.types import ExecutionMode, TraigentConfig
 from traigent.core.backend_session_manager import BackendSessionManager
 from traigent.core.cache_policy import CachePolicyHandler
 from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
+from traigent.core.cost_estimator import CostEstimator
 from traigent.core.logger_facade import LoggerFacade
 from traigent.core.metadata_helpers import (
     merge_run_metrics_into_session_summary,
@@ -59,6 +59,7 @@ from traigent.core.orchestrator_helpers import (
     prepare_evaluation_config,
     prepare_objectives,
     validate_constructor_arguments,
+    validate_dataset,
 )
 from traigent.core.parallel_execution_manager import (
     ParallelExecutionManager,
@@ -76,12 +77,12 @@ from traigent.core.sample_budget import SampleBudgetManager
 from traigent.core.stop_condition_manager import StopConditionManager
 from traigent.core.trial_lifecycle import TrialLifecycle
 from traigent.core.utils import extract_examples_attempted
+from traigent.core.workflow_trace_manager import WorkflowTraceManager
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.metrics.registry import clone_registry
 from traigent.optimizers.base import BaseOptimizer
 from traigent.tvl.promotion_gate import PromotionGate
 from traigent.utils.callbacks import CallbackManager, OptimizationCallback, ProgressInfo
-from traigent.utils.env_config import is_backend_offline
 from traigent.utils.exceptions import (
     OptimizationError,
 )
@@ -205,15 +206,26 @@ class OptimizationOrchestrator:
             metric_registry.clone() if metric_registry is not None else clone_registry()
         )
 
-        # Workflow traces tracker for span collection and backend submission
         self._workflow_traces_tracker: WorkflowTracesTracker | None = (
             workflow_traces_tracker
         )
-        self._collected_spans: list[SpanPayload] = []
 
         self._backend_client: BackendIntegratedClient | None = None
         self.backend_client = self._initialize_backend_client()
         self._initialize_runtime_state()
+
+        # Workflow trace manager for span collection and backend submission
+        self._workflow_trace_manager = WorkflowTraceManager(
+            workflow_traces_tracker=workflow_traces_tracker,
+            backend_client=self.backend_client,
+            function_descriptor=None,  # Set later in _initialize_optimization_run
+            optimizer_config_space=(
+                self.optimizer.config_space if self.optimizer.config_space else {}
+            ),
+            max_trials=self.max_trials,
+            optimizer_class_name=self.optimizer.__class__.__name__,
+            optimization_id=self._optimization_id,
+        )
 
         self.backend_session_manager = BackendSessionManager(
             backend_client=self.backend_client,
@@ -237,6 +249,13 @@ class OptimizationOrchestrator:
         )
 
         self._configure_stop_conditions()
+
+        self._cost_estimator = CostEstimator(
+            cost_enforcer=self.cost_enforcer,
+            max_trials=self._max_trials,
+            max_total_examples=self._max_total_examples,
+        )
+
         self._trial_lifecycle = TrialLifecycle(self)
         self._initialized = True
 
@@ -445,88 +464,8 @@ class OptimizationOrchestrator:
         )
 
     def _initialize_backend_client(self) -> BackendIntegratedClient | None:
-        """Initialize backend client if cloud features are available.
-
-        Returns None when cloud plugin is not installed (graceful degradation).
-        Raises FeatureNotAvailableError only when cloud mode is explicitly
-        requested but plugin is missing.
-        """
-        # Try to import cloud module - may not be available if cloud plugin not installed
-        try:
-            from traigent.cloud.backend_client import (
-                BackendClientConfig,
-                BackendIntegratedClient,
-            )
-            from traigent.config.backend_config import BackendConfig
-        except ModuleNotFoundError as err:
-            # Cloud module not installed - check if this was the cloud module itself
-            missing_module = getattr(err, "name", "") or ""
-            if missing_module.startswith("traigent.cloud"):
-                if self.traigent_config.execution_mode == "cloud":
-                    # User explicitly requested cloud mode but plugin not installed
-                    from traigent.utils.exceptions import FeatureNotAvailableError
-
-                    raise FeatureNotAvailableError(
-                        "Cloud execution mode",
-                        plugin_name="traigent-cloud",
-                        install_hint="pip install traigent[cloud]",
-                    ) from err
-                # For edge_analytics or other modes, gracefully degrade to local-only
-                logger.info(
-                    f"Cloud module not available for {self.traigent_config.execution_mode} mode. "
-                    "Continuing with local storage only."
-                )
-                return None
-            # Re-raise if it's a different missing module (broken install)
-            raise
-
-        backend_url = BackendConfig.get_backend_url()
-        api_key = BackendConfig.get_api_key()
-
-        if (
-            self.traigent_config.is_edge_analytics_mode()
-            or BackendConfig.is_local_backend()
-        ):
-            logger.info(
-                f"Configuring for {self.traigent_config.execution_mode} mode "
-                f"with backend at {backend_url} (fallback enabled)"
-            )
-        else:
-            logger.info(
-                f"Configuring for {self.traigent_config.execution_mode} mode "
-                f"with backend at {backend_url}"
-            )
-
-        backend_config = BackendClientConfig(
-            backend_base_url=backend_url,
-            enable_session_sync=True,
-        )
-        local_storage_path = self.traigent_config.get_local_storage_path()
-
-        try:
-            client = BackendIntegratedClient(
-                api_key=api_key,
-                backend_config=backend_config,
-                enable_fallback=True,
-                local_storage_path=local_storage_path,
-            )
-            logger.info(
-                f"Backend client initialized for {self.traigent_config.execution_mode} mode - "
-                f"session endpoints at {backend_config.backend_base_url}"
-            )
-            return client
-        except Exception as exc:
-            logger.warning(
-                "Backend initialization warning. Continuing with local storage only. "
-                "Results will not appear in backend UI.",
-                exc_info=exc,
-            )
-            return BackendIntegratedClient(
-                api_key=None,
-                backend_config=backend_config,
-                enable_fallback=True,
-                local_storage_path=local_storage_path,
-            )
+        """Initialize backend client. Delegates to BackendSessionManager."""
+        return BackendSessionManager.create_backend_client(self.traigent_config)
 
     def _initialize_runtime_state(self) -> None:
         self._trials: list[TrialResult] = []
@@ -1547,252 +1486,13 @@ class OptimizationOrchestrator:
         except Exception as exc:
             logger.debug("Analytics submission failed: %s", exc)
 
-    def collect_workflow_span(
-        self,
-        span_data: SpanPayload,
-    ) -> None:
-        """Collect a workflow span for later submission to backend.
-
-        Args:
-            span_data: Span payload to collect
-        """
-        if self._workflow_traces_tracker is not None:
-            self._collected_spans.append(span_data)
+    def collect_workflow_span(self, span_data: SpanPayload) -> None:
+        """Collect a workflow span for later submission. Delegates to WorkflowTraceManager."""
+        self._workflow_trace_manager.collect_span(span_data)
 
     async def _submit_workflow_traces(self, session_id: str | None = None) -> None:
-        """Submit collected workflow spans and graph to backend.
-
-        Called during optimization finalization to send all collected spans
-        and workflow graph to the backend for visualization in the workflow traces view.
-
-        Spans are grouped by configuration_run_id and submitted separately so each
-        trial's ConfigurationRun gets its run_metadata updated with trace_id.
-
-        Args:
-            session_id: Backend session ID (used to get experiment_id for graph)
-        """
-        if self._workflow_traces_tracker is None:
-            return
-
-        if not self._collected_spans:
-            logger.debug("No workflow spans to submit")
-            return
-
-        # Skip trace submission when running in offline mode or with mock sessions
-        # Mock IDs (mock_session_, mock_exp_, mock_run_, mock-session-) don't exist
-        # in the backend database, so trace ingestion would fail with 404
-        if is_backend_offline():
-            logger.debug("Skipping workflow trace submission: backend is offline")
-            self._collected_spans = []
-            return
-
-        # Check if session_id is a mock ID (created when backend was unavailable)
-        if session_id and (
-            session_id.startswith("mock_session_")
-            or session_id.startswith("mock-session-")
-        ):
-            logger.debug(
-                f"Skipping workflow trace submission: mock session '{session_id}'"
-            )
-            self._collected_spans = []
-            return
-
-        try:
-            # Get trace_id from first span (all spans share same trace)
-            trace_id = self._collected_spans[0].trace_id
-
-            # Try to create workflow graph for visualization (only submit once)
-            graph = self._create_optimization_workflow_graph(session_id)
-
-            # Group spans by configuration_run_id so each trial gets trace_id in its metadata
-            spans_by_config_run = self._group_spans_by_config_run()
-
-            # Submit each group separately
-            total_submitted = 0
-            graph_id = None
-            for idx, (config_run_id, spans) in enumerate(spans_by_config_run.items()):
-                # Only include graph in first request
-                include_graph = graph if idx == 0 else None
-
-                response = await self._workflow_traces_tracker.ingest_traces_async(
-                    graph=include_graph,
-                    spans=spans,
-                    trace_id=trace_id,
-                    configuration_run_id=config_run_id,
-                )
-
-                if response.success:
-                    total_submitted += len(spans)
-                    if response.graph_id:
-                        graph_id = response.graph_id
-                else:
-                    logger.warning(
-                        f"Failed to submit spans for config_run {config_run_id}: {response.error}"
-                    )
-
-            if total_submitted > 0:
-                graph_msg = f", graph_id={graph_id}" if graph_id else ""
-                logger.info(
-                    f"Submitted {total_submitted} workflow spans "
-                    f"for trace {trace_id[:8]}...{graph_msg}"
-                )
-
-        except Exception as exc:
-            logger.warning(f"Workflow trace submission failed: {exc}")
-        finally:
-            # Clear collected spans after submission attempt
-            self._collected_spans = []
-
-    def _group_spans_by_config_run(self) -> dict[str, list]:
-        """Group collected spans by configuration_run_id."""
-        from collections import defaultdict
-
-        spans_by_config_run: dict[str, list] = defaultdict(list)
-        for span in self._collected_spans:
-            spans_by_config_run[span.configuration_run_id].append(span)
-        return dict(spans_by_config_run)
-
-    def _create_optimization_workflow_graph(
-        self, session_id: str | None
-    ) -> WorkflowGraphPayload | None:
-        """Create a workflow graph representing the optimization flow.
-
-        Creates a simple graph with START -> optimization_run -> END nodes
-        to enable workflow trace visualization in the frontend.
-
-        Args:
-            session_id: Backend session ID for looking up experiment_id
-
-        Returns:
-            WorkflowGraphPayload if experiment_id found, None otherwise
-        """
-        # Import here to avoid circular dependency
-        from traigent.integrations.observability.workflow_traces import (
-            WorkflowEdge,
-            WorkflowGraphPayload,
-            WorkflowNode,
-        )
-
-        # Get experiment_id from session mapping
-        experiment_id = self._get_experiment_id_from_session(session_id)
-        if not experiment_id:
-            logger.debug("Cannot create workflow graph: no experiment_id available")
-            return None
-
-        # Skip graph creation for mock experiment IDs (they don't exist in backend)
-        if experiment_id.startswith("mock_exp_") or experiment_id.startswith(
-            "mock-exp-"
-        ):
-            logger.debug(
-                f"Cannot create workflow graph: mock experiment_id '{experiment_id}'"
-            )
-            return None
-
-        # Get experiment_run_id for linking
-        experiment_run_id = self._get_experiment_run_id_from_session(session_id)
-
-        # Get function name for display
-        function_name = (
-            self._function_descriptor.identifier
-            if self._function_descriptor
-            else "optimization"
-        )
-
-        # Create nodes for the optimization workflow
-        nodes = [
-            WorkflowNode(
-                id="__start__",
-                type="entry",
-                display_name="Start",
-                metadata={"purpose": "Workflow entry point"},
-            ),
-            WorkflowNode(
-                id="optimization_run",
-                type="agent",
-                display_name=f"Optimize: {function_name}",
-                tunable_params=(
-                    list(self.optimizer.config_space.keys())
-                    if self.optimizer.config_space
-                    else []
-                ),
-                metadata={
-                    "purpose": "Execute optimization trials",
-                    "function": function_name,
-                    "max_trials": self.max_trials,
-                    "algorithm": self.optimizer.__class__.__name__,
-                },
-            ),
-            WorkflowNode(
-                id="__end__",
-                type="exit",
-                display_name="End",
-                metadata={"purpose": "Workflow exit point"},
-            ),
-        ]
-
-        # Create edges
-        edges = [
-            WorkflowEdge(from_node="__start__", to_node="optimization_run"),
-            WorkflowEdge(from_node="optimization_run", to_node="__end__"),
-        ]
-
-        return WorkflowGraphPayload(
-            experiment_id=experiment_id,
-            experiment_run_id=experiment_run_id,
-            nodes=nodes,
-            edges=edges,
-            metadata={
-                "workflow_type": "sdk_optimization",
-                "function_name": function_name,
-                "optimization_id": self._optimization_id,
-            },
-        )
-
-    def _get_experiment_id_from_session(self, session_id: str | None) -> str | None:
-        """Get experiment_id from backend session mapping.
-
-        Args:
-            session_id: Backend session ID
-
-        Returns:
-            experiment_id if found, None otherwise
-        """
-        if not session_id or not self.backend_client:
-            return None
-
-        try:
-            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
-            if callable(get_mapping):
-                mapping = get_mapping(session_id)
-                if mapping:
-                    return getattr(mapping, "experiment_id", None)
-        except Exception as exc:
-            logger.debug(f"Could not get experiment_id from session mapping: {exc}")
-
-        return None
-
-    def _get_experiment_run_id_from_session(self, session_id: str | None) -> str | None:
-        """Get experiment_run_id from backend session mapping.
-
-        Args:
-            session_id: Backend session ID
-
-        Returns:
-            experiment_run_id if found, None otherwise
-        """
-        if not session_id or not self.backend_client:
-            return None
-
-        try:
-            get_mapping = getattr(self.backend_client, "get_session_mapping", None)
-            if callable(get_mapping):
-                mapping = get_mapping(session_id)
-                if mapping:
-                    return getattr(mapping, "experiment_run_id", None)
-        except Exception as exc:
-            logger.debug(f"Could not get experiment_run_id from session mapping: {exc}")
-
-        return None
+        """Submit collected workflow traces. Delegates to WorkflowTraceManager."""
+        await self._workflow_trace_manager.submit_traces(session_id)
 
     def _initialize_optimization_run(
         self,
@@ -1826,6 +1526,7 @@ class OptimizationOrchestrator:
 
         descriptor = resolve_function_descriptor(func)
         self._function_descriptor = descriptor
+        self._workflow_trace_manager._function_descriptor = descriptor
 
         # Compute content scores once for the dataset (used for backend analytics)
         self._dataset_name = getattr(dataset, "name", "dataset")
@@ -1893,14 +1594,10 @@ class OptimizationOrchestrator:
                 self._samples_include_pruned
             )
 
-    def _validate_dataset(self, dataset: Dataset) -> None:
-        """Ensure dataset is present and non-empty before optimization."""
-
-        if dataset is None:
-            raise ValueError("Dataset cannot be None") from None
-
-        if not dataset or len(dataset) == 0:
-            raise ValueError("Dataset cannot be empty")
+    @staticmethod
+    def _validate_dataset(dataset: Dataset) -> None:
+        """Ensure dataset is present and non-empty. Delegates to orchestrator_helpers."""
+        validate_dataset(dataset)
 
     async def create_session(  # NOSONAR - async for API consistency with other orchestrator methods
         self, function_name: str | None = None, dataset_name: str | None = None
@@ -1997,18 +1694,8 @@ class OptimizationOrchestrator:
             )
 
     def _check_cost_approval(self, dataset: Dataset) -> None:
-        """Check cost approval before optimization."""
-        if self.cost_enforcer.is_mock_mode:
-            return
-        estimated_cost = self._estimate_optimization_cost(dataset)
-        if not self.cost_enforcer.check_and_approve(estimated_cost):
-            from traigent.core.cost_enforcement import OptimizationAborted
-
-            raise OptimizationAborted(
-                f"Cost approval declined. Estimated cost: ${estimated_cost:.2f}, "
-                f"limit: ${self.cost_enforcer.config.limit:.2f}. "
-                f"Set TRAIGENT_COST_APPROVED=true or increase TRAIGENT_RUN_COST_LIMIT."
-            )
+        """Check cost approval before optimization. Delegates to CostEstimator."""
+        self._cost_estimator.check_cost_approval(dataset)
 
     def _check_budget_limits(
         self, trial_count: int
@@ -2405,95 +2092,9 @@ class OptimizationOrchestrator:
             self._logger_facade.attach(self._logger)
         self._logger_facade.log_trial_result(trial_result)
 
-    def _estimate_optimization_cost(self, dataset: Dataset) -> float:
-        """Estimate total optimization cost for pre-approval check.
-
-        Calculation:
-        - Estimates total samples based on configuration and dataset size
-        - Uses max_total_examples if configured (shared budget across trials)
-        - Otherwise estimates samples_per_trial × max_trials
-        - Includes retry factor (1.2x) for potential failures
-        - Uses conservative estimates for unknown models
-
-        Note: This is an ESTIMATE. Actual costs may vary significantly.
-        The estimate is based on typical token usage and current pricing.
-
-        Args:
-            dataset: The evaluation dataset.
-
-        Returns:
-            Estimated cost in USD.
-        """
-        # Base cost per example (conservative estimate for GPT-4 class models)
-        # Assumes ~2000 tokens input, ~500 tokens output per example
-        base_cost_per_example = 0.01  # $0.01 per example (conservative)
-
-        # Get dataset size
-        dataset_size = len(dataset) if hasattr(dataset, "__len__") else 100
-
-        # Get max trials (default to 10 if not set)
-        max_trials = self._max_trials or 10
-
-        # Determine total samples based on configuration
-        if self._max_total_examples is not None:
-            # Global sample budget is set - use it directly for cost estimation
-            # Don't clip to dataset_size because:
-            # 1. With multiple trials, samples can be re-evaluated with different configs
-            # 2. The budget represents total API calls, not unique samples
-            # 3. Clipping would underestimate cost when budget > dataset_size
-            total_samples = self._max_total_examples
-            estimation_mode = "total_examples_budget"
-        else:
-            # No global budget - each trial may evaluate the full dataset
-            # This is a worst-case conservative estimate
-            samples_per_trial = dataset_size
-            total_samples = max_trials * samples_per_trial
-            estimation_mode = "per_trial_full_dataset"
-
-        # Total cost with retry factor for failures and potential re-evaluations
-        retry_factor = 1.2
-        estimated_total = total_samples * base_cost_per_example * retry_factor
-
-        logger.debug(
-            f"Cost estimate ({estimation_mode}): {total_samples} total samples "
-            f"× ${base_cost_per_example}/sample × {retry_factor} retry = ${estimated_total:.2f}"
-        )
-
-        return estimated_total
-
     def _extract_trial_cost(self, trial_result: TrialResult) -> float | None:
-        """Extract cost from trial result for cost enforcement tracking.
-
-        Attempts to find cost from multiple sources:
-        1. trial_result.metrics["total_cost"] or ["cost"]
-        2. trial_result.metadata["total_example_cost"]
-        3. Returns None if cost cannot be determined (triggers fallback mode)
-
-        Args:
-            trial_result: The completed trial result.
-
-        Returns:
-            Cost in USD, or None if cost cannot be determined.
-        """
-        # Try metrics first
-        metrics = trial_result.metrics or {}
-        for key in ("total_cost", "cost"):
-            if key in metrics:
-                try:
-                    return float(metrics[key])
-                except (TypeError, ValueError):
-                    pass
-
-        # Try metadata
-        metadata = trial_result.metadata or {}
-        if "total_example_cost" in metadata:
-            try:
-                return float(metadata["total_example_cost"])
-            except (TypeError, ValueError):
-                pass
-
-        # Cost cannot be determined
-        return None
+        """Extract cost from trial result. Delegates to CostEstimator."""
+        return CostEstimator.extract_trial_cost(trial_result)
 
     def _log_checkpoint(
         self,
