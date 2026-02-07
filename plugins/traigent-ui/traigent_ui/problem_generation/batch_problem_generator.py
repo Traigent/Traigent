@@ -11,8 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from playground.problem_management.code_generator import CodeGenerator
-from playground.problem_management.intelligence import ProblemIntelligence
+from traigent_ui.problem_management.code_generator import CodeGenerator
+from traigent_ui.problem_management.intelligence import ProblemIntelligence
 from traigent.utils.secure_path import safe_write_text, validate_path
 
 from .enhanced_example_generator import (

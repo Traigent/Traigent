@@ -326,6 +326,7 @@ if 'customer_support_agent' in locals():
             "numpy",
             "pandas",
             "playground",  # Local playground module - optional for examples
+            "traigent_ui",  # UI plugin - optional for problem management
             "litellm",  # LiteLLM for multi-provider support
         }
 
