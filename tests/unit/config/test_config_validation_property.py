@@ -135,9 +135,16 @@ def test_execution_mode_accepts_valid_values(mode):
 
 @given(
     st.text().filter(
-        lambda x: x
-        not in ["edge_analytics", "privacy", "hybrid", "standard", "cloud", ""]
-        and x.strip() != ""  # Exclude whitespace-only strings (treated as empty)
+        lambda x: x.strip().lower()
+        not in [
+            "edge_analytics",
+            "privacy",
+            "hybrid",
+            "standard",
+            "cloud",
+            "hybrid_api",
+            "",
+        ]
     )
 )
 def test_execution_mode_rejects_invalid_values(mode):

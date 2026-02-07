@@ -2,6 +2,12 @@
 # Install: pip install pre-commit && pre-commit install
 
 repos:
+  # Python import sorting
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+
   # Python code formatting
   - repo: https://github.com/psf/black
     rev: 26.1.0
