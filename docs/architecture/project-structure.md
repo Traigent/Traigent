@@ -7,7 +7,7 @@ This document outlines the current structure of the Traigent SDK project.
 ```
 Traigent/
 ├── README.md                  # Main project documentation
-├── LICENSE                    # MIT license
+├── LICENSE                    # Apache-2.0 license
 ├── pyproject.toml             # Build, packaging, and tool config
 ├── uv.lock                    # Lockfile (uv)
 ├── traigent/                  # Core SDK source code

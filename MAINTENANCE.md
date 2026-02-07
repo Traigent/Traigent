@@ -230,12 +230,6 @@ Metrics tracked:
 - Quality (completeness scores)
 - Consistency (format adherence)
 
-### 5.2 Documentation Validation
-
-```bash
-python scripts/validation/validate_docs.py
-```
-
 ---
 
 ## 6. Project Cleanup

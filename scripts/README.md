@@ -120,10 +120,9 @@ See `scripts/archive/README.md` for complete list of archived scripts and their 
 - **`install-dev.sh`** - Development environment installation
 
 ### ✅ **Validation (`validation/`)**
-**Code and documentation validation:**
-- **`validate_docs.py`** - Comprehensive documentation validation
-- **`validate_examples.py`** - Example code validation and testing
+**Code and installation validation:**
 - **`verify_installation.py`** - Installation verification and diagnostics
+- **`verify_tokencost_integration.py`** - TokenCost integration verification
 
 ### ⚙️ Configuration (`config/`)
 Configuration files moved from root for better organization:
@@ -291,12 +290,6 @@ python scripts/development/test_imports.py
 
 # Local integration testing
 python scripts/integration/test-local-integration.py
-
-# Validate documentation
-python scripts/validation/validate_docs.py
-
-# Validate examples
-python scripts/validation/validate_examples.py
 
 # Verify installation
 python scripts/validation/verify_installation.py

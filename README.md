@@ -1,4 +1,4 @@
-# ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required!
+# ✨ Traigent: Find the Perfect AI Parameters for Your Task - Zero Code Changes Required
 
 **Current Version**: 0.10.0 (Beta)
 
@@ -24,6 +24,7 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 > 💡 **Interactive Demos & Use Cases**: Advanced examples, use-cases, playground UI, and demos have been moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo). The core SDK examples remain in `examples/` and `walkthrough/`.
 
 > **Note**: Research papers and experimental code are in separate repositories:
+>
 > - [TraigentDemo](https://github.com/Traigent/TraigentDemo) - Use cases, playground, demos
 > - [Traigent-Experiments](https://github.com/Traigent/Traigent-Experiments) - Research papers
 
@@ -77,8 +78,8 @@ load_dotenv()
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # 🎯 Adaptive Variable #1
-        "temperature": [0.1, 0.5, 0.9]                         # 🎯 Adaptive Variable #2
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # 🎯 Tuned Variable #1
+        "temperature": [0.1, 0.5, 0.9]                         # 🎯 Tuned Variable #2
     },
     objectives=["accuracy", "cost"],    # What to optimize for
     # Dataset file path (relative to examples/datasets/quickstart/)
