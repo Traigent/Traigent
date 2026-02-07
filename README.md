@@ -195,7 +195,8 @@ KNOWLEDGE_BASE = [
         "temperature": [0.1, 0.5, 0.9],
         "k": [3, 5, 10]  # RAG retrieval depth
     },
-    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl")  # Provide your dataset
+    objectives=["accuracy", "cost"],
+    evaluation=EvaluationOptions(eval_dataset="rag_feedback.jsonl"),
 )
 def customer_support_agent(query: str, knowledge_base: list = KNOWLEDGE_BASE) -> str:
     """Answer customer questions using RAG"""
@@ -261,7 +262,8 @@ custom_objectives = ObjectiveSchema.from_objectives(
     eval_dataset="data/qa_samples.jsonl",
 )
 def weighted_agent(question: str) -> str:
-    ...
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
+    return llm.invoke(f"Answer concisely: {question}").content
 ```
 
 > **Tip**: See `examples/quickstart/03_custom_objectives.py` for a complete working example.
@@ -282,7 +284,10 @@ TVL (Traigent Validation Language) defines the _what_—constraints, objectives,
 ```python
 @traigent.optimize(tvl_spec="docs/tvl/tvl-website/client/public/examples/ch1_motivation_experiment.tvl.yml")
 def rag_agent(query: str) -> str:
-    ...
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+    docs = vectorstore.similarity_search(query, k=5)
+    context = "\n".join(d.page_content for d in docs)
+    return llm.invoke(f"Context: {context}\nQuestion: {query}").content
 ```
 
 TVL sections control the configuration space, objectives, constraints, and budgets—no
@@ -389,10 +394,15 @@ print(my_agent.current_config)  # Shows the applied config
 my_agent.apply_config({"model": "gpt-4o-mini", "temperature": 0.1, "k": 3})
 
 # Or inside the function, access the current trial/applied config
-@traigent.optimize(...)
+@traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.5]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/qa_samples.jsonl",
+)
 def my_agent(query: str) -> str:
     config = traigent.get_config()  # Works during optimization and after apply
-    # Use config values...
+    llm = ChatOpenAI(model=config.get("model"), temperature=config.get("temperature"))
+    return llm.invoke(f"Answer: {query}").content
 ```
 
 <!-- Backend configuration (for Traigent Cloud users - coming soon)
@@ -498,7 +508,8 @@ Traigent evaluates your AI agent's performance by comparing outputs to expected 
     objectives=["accuracy", "cost"]
 )
 def my_agent(question: str) -> str:
-    return process_question(question)
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.5)
+    return llm.invoke(f"Answer: {question}").content
 ```
 
 **Dataset Format (JSONL):** Each line must be valid JSON with these fields:
@@ -535,11 +546,15 @@ Traigent supports local execution with cloud modes planned:
 
 ```python
 @traigent.optimize(
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.5]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/qa_samples.jsonl",
     execution_mode="edge_analytics",  # Full privacy, works today
-    local_storage_path="./my_optimizations"
+    local_storage_path="./my_optimizations",
 )
 def my_agent(query: str) -> str:
-    return process_query(query)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+    return llm.invoke(f"Answer: {query}").content
 ```
 
 > **Local Storage**: When using `edge_analytics` mode, Traigent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
@@ -572,7 +587,9 @@ Perfect for optimizing existing agents without refactoring:
 
 ```python
 @traigent.optimize(
-    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]}
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "temperature": [0.1, 0.9]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/qa_samples.jsonl",
 )
 def my_agent(query: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)  # Auto-optimized!
@@ -590,11 +607,15 @@ from traigent import TraigentConfig
 
 @traigent.optimize(
     injection_mode="parameter",
-    configuration_space={"model": ["gpt-4o-mini"], "k": [3, 5, 10]}
+    configuration_space={"model": ["gpt-4o-mini", "gpt-4o"], "k": [3, 5, 10]},
+    objectives=["accuracy", "cost"],
+    eval_dataset="data/qa_samples.jsonl",
 )
 def my_agent(query: str, config: TraigentConfig) -> str:
     llm = ChatOpenAI(model=config.get("model"))  # Explicit access
-    return llm.invoke(query).content
+    docs = vectorstore.similarity_search(query, k=config.get("k"))
+    context = "\n".join(d.page_content for d in docs)
+    return llm.invoke(f"Context: {context}\nQuestion: {query}").content
 ```
 
 **Which to use?**
@@ -654,14 +675,18 @@ traigent check path/to/module.py --threshold=10
 
 ```python
 @traigent.optimize(
-    eval_dataset=ds,
-    objectives=["accuracy"],
-    configuration_space={"p": [1, 2, 3, 4]},
+    eval_dataset="data/qa_samples.jsonl",
+    objectives=["accuracy", "cost"],
+    configuration_space={
+        "model": ["gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.1, 0.5, 0.9],
+    },
     execution_mode="edge_analytics",
     parallel_config={"example_concurrency": 4, "trial_concurrency": 2},
 )
-def fn(x: int) -> str:
-    return f"val-{x}"
+def parallel_qa(question: str) -> str:
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
+    return llm.invoke(f"Answer: {question}").content
 ```
 
 ### 💰 Cost Tracking
@@ -751,7 +776,7 @@ def translate_text(text: str, target_language: str) -> str:
     return response.choices[0].message.content
 ```
 
-### 📊 Advanced: Multi-Objective with Cost Optimization
+### 📊 Advanced: Multi-Objective with Cross-Provider Comparison
 
 ```python
 @traigent.optimize(
@@ -762,17 +787,13 @@ def translate_text(text: str, target_language: str) -> str:
         "temperature": [0.0, 0.5, 1.0],
         "max_tokens": [100, 500, 2000]
     },
-    optimization_strategy={
-        "max_cost_budget": 100.0,  # Stop when $100 spent
-        "exploration_ratio": 0.3,   # 30% exploration, 70% exploitation
-        "adaptive_sample_size": True  # Smart dataset subset selection
-    }
 )
 def complex_reasoning_task(query: str) -> str:
-    # Your production code stays exactly the same!
-    llm = OpenAI(model="gpt-4o", temperature=0.7, max_tokens=1000)
-    # ... rest of your complex logic ...
-    return result
+    llm = ChatOpenAI(model="gpt-4o", temperature=0.7, max_tokens=1000)
+    response = llm.invoke(
+        f"Think step by step and answer:\n{query}"
+    )
+    return response.content
 ```
 
 ## 📚 Pre-built Examples
