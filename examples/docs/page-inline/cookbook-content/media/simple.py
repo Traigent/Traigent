@@ -55,12 +55,16 @@ def shotlist(topic: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await shotlist.optimize(max_trials=10)
-        shotlist.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:\n", shotlist("Traigent SDK launch"))
+        async def _main():
+            res = await shotlist.optimize(max_trials=10)
+            shotlist.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:\n", shotlist("Traigent SDK launch"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

@@ -107,13 +107,17 @@ Message: {message}
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        print("Optimizing support_intent (advanced)…")
-        res = await support_intent.optimize(max_trials=10)
-        print("Best config:", res.best_config)
-        support_intent.set_config(res.best_config)
-        print("Test:", support_intent("I want to cancel my plan"))
+        async def _main():
+            print("Optimizing support_intent (advanced)…")
+            res = await support_intent.optimize(max_trials=10)
+            print("Best config:", res.best_config)
+            support_intent.set_config(res.best_config)
+            print("Test:", support_intent("I want to cancel my plan"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

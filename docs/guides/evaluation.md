@@ -43,7 +43,7 @@ from langchain_openai import ChatOpenAI
 )
 def qa_agent(question: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
-    return llm.invoke(f"Question: {question}\nAnswer:").content
+    return str(llm.invoke(f"Question: {question}\nAnswer:").content)
 ```
 
 ### 2) Custom scoring functions

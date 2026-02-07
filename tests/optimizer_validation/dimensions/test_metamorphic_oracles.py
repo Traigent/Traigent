@@ -164,6 +164,20 @@ class TestConstraintMetamorphic:
             result_constrained, Exception
         ), f"Constrained failed: {result_constrained}"
 
+        # Explicit behavior assertions on results
+        assert hasattr(result_free, "trials"), "Free result should have trials"
+        assert hasattr(
+            result_constrained, "trials"
+        ), "Constrained result should have trials"
+        assert len(result_free.trials) >= 1, "Free result should have at least 1 trial"
+        assert (
+            len(result_constrained.trials) >= 1
+        ), "Constrained result should have at least 1 trial"
+        for trial in result_free.trials:
+            assert trial.config, "Each free trial should have a config"
+        for trial in result_constrained.trials:
+            assert trial.config, "Each constrained trial should have a config"
+
         # METAMORPHIC PROPERTY: Constrained should have <= trials
         if hasattr(result_free, "trials") and hasattr(result_constrained, "trials"):
             free_count = len(result_free.trials)
@@ -241,6 +255,20 @@ class TestSpaceSizeMetamorphic:
         # Both should succeed
         assert not isinstance(result_small, Exception), f"Small failed: {result_small}"
         assert not isinstance(result_large, Exception), f"Large failed: {result_large}"
+
+        # Explicit behavior assertions on results
+        assert hasattr(result_small, "trials"), "Small result should have trials"
+        assert hasattr(result_large, "trials"), "Large result should have trials"
+        assert (
+            len(result_small.trials) >= 1
+        ), "Small result should have at least 1 trial"
+        assert (
+            len(result_large.trials) >= 1
+        ), "Large result should have at least 1 trial"
+        for trial in result_small.trials:
+            assert trial.config, "Each small-space trial should have a config"
+        for trial in result_large.trials:
+            assert trial.config, "Each large-space trial should have a config"
 
         # METAMORPHIC PROPERTY: Small space trials <= large space trials
         if hasattr(result_small, "trials") and hasattr(result_large, "trials"):

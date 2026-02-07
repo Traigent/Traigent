@@ -1,0 +1,20 @@
+{"input": {"question": "What is 2+2?"}, "output": "4"}
+{"input": {"question": "What is the capital of France?"}, "output": "Paris"}
+{"input": {"question": "What color is the sky?"}, "output": "blue"}
+{"input": {"question": "How many days are in a week?"}, "output": "7"}
+{"input": {"question": "What is the largest planet?"}, "output": "Jupiter"}
+{"input": {"question": "What year did World War II end?"}, "output": "1945"}
+{"input": {"question": "What is H2O commonly called?"}, "output": "water"}
+{"input": {"question": "How many continents are there?"}, "output": "7"}
+{"input": {"question": "What is the speed of light in km/s?"}, "output": "299792"}
+{"input": {"question": "Who wrote Romeo and Juliet?"}, "output": "Shakespeare"}
+{"input": {"question": "What causes ocean tides?"}, "output": "The gravitational pull of the moon and sun"}
+{"input": {"question": "Why is the sky blue?"}, "output": "Rayleigh scattering of sunlight by atmosphere"}
+{"input": {"question": "How does photosynthesis work?"}, "output": "Plants convert light energy to chemical energy using chlorophyll"}
+{"input": {"question": "What is machine learning?"}, "output": "A method where computers learn patterns from data"}
+{"input": {"question": "Why do we have seasons?"}, "output": "Earth's axial tilt causes varying sun angles throughout the year"}
+{"input": {"question": "Explain opportunity cost with an example"}, "output": "The value of the next best alternative foregone when making a choice"}
+{"input": {"question": "What is the difference between weather and climate?"}, "output": "Weather is short-term atmospheric conditions; climate is long-term patterns"}
+{"input": {"question": "How does a vaccine work?"}, "output": "It trains the immune system to recognize and fight pathogens"}
+{"input": {"question": "What is cognitive bias?"}, "output": "Systematic patterns of deviation from rational judgment"}
+{"input": {"question": "Explain the concept of compound interest"}, "output": "Interest calculated on both principal and accumulated interest"}

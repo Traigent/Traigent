@@ -72,13 +72,17 @@ def generate_headline(topic: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        print("Optimizing headline generation (advanced)…")
-        res = await generate_headline.optimize(max_trials=10)
-        print("Best config:", res.best_config)
-        generate_headline.set_config(res.best_config)
-        print("Test:", generate_headline("Traigent SDK for LLM optimization"))
+        async def _main():
+            print("Optimizing headline generation (advanced)…")
+            res = await generate_headline.optimize(max_trials=10)
+            print("Best config:", res.best_config)
+            generate_headline.set_config(res.best_config)
+            print("Test:", generate_headline("Traigent SDK for LLM optimization"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

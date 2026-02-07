@@ -58,12 +58,16 @@ def support_intent(message: str) -> str:
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        res = await support_intent.optimize(max_trials=10)
-        support_intent.set_config(res.best_config)
-        print("Best config:", res.best_config)
-        print("Test:", support_intent("My card was charged twice this month"))
+        async def _main():
+            res = await support_intent.optimize(max_trials=10)
+            support_intent.set_config(res.best_config)
+            print("Best config:", res.best_config)
+            print("Test:", support_intent("My card was charged twice this month"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None
