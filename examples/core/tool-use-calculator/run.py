@@ -205,23 +205,27 @@ def solve_math(expr: str, config: dict | None = None) -> str:
 
 
 if __name__ == "__main__":
-    print(
-        "Tired of arithmetic slips? Toggle tool use and watch math answers stabilize."
-    )
-
-    async def main() -> None:
-        workers = 2 if not MOCK else 1
-        trials = 8 if not MOCK else 4
-        parallel_config = {
-            "trial_concurrency": 2 if workers > 1 else 1,
-            "thread_workers": workers,
-        }
-        r = await solve_math.optimize(
-            max_trials=trials,
-            algorithm="random",
-            parallel_config=parallel_config,
+    try:
+        print(
+            "Tired of arithmetic slips? Toggle tool use and watch math answers stabilize."
         )
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
 
-    asyncio.run(main())
+        async def main() -> None:
+            workers = 2 if not MOCK else 1
+            trials = 8 if not MOCK else 4
+            parallel_config = {
+                "trial_concurrency": 2 if workers > 1 else 1,
+                "thread_workers": workers,
+            }
+            r = await solve_math.optimize(
+                max_trials=trials,
+                algorithm="random",
+                parallel_config=parallel_config,
+            )
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

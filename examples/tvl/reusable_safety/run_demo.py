@@ -14,7 +14,7 @@ Run with:
     python run_demo.py -n -f     # Fast mode (no animations)
     python run_demo.py --no-backend  # Skip backend submission
     python run_demo.py --real-llm    # Use real LLM calls via Groq
-    python run_demo.py --real-llm --load-env ../../../walkthrough/examples/real/.env
+    python run_demo.py --real-llm --load-env ../../../walkthrough/real/.env
 
 For real LLM mode, install dependencies:
     uv pip install litellm python-dotenv transformers torch
@@ -1651,7 +1651,7 @@ def main() -> None:
         "--load-env",
         type=str,
         default=None,
-        help="Path to .env file to load (e.g., ../../walkthrough/examples/real/.env)",
+        help="Path to .env file to load (e.g., ../../walkthrough/real/.env)",
     )
     parser.add_argument(
         "--workers",

@@ -777,36 +777,44 @@ def answer(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run the multi-provider tradeoff demo")
-    parser.add_argument(
-        "--verbose-results",
-        action="store_true",
-        help="Print detailed per-example outputs for each trial",
-    )
-    parser.add_argument(
-        "--max-trials",
-        type=int,
-        default=None,
-        help="Override the number of optimization trials to run",
-    )
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="anthropic/claude-3-7-sonnet-latest",
-        help="Model identifier (include provider prefix for non-default providers)",
-    )
-    args = parser.parse_args()
-
-    print("Crunching math expressions across multiple providers…")
-
-    async def main() -> None:
-        trials = (
-            args.max_trials if args.max_trials is not None else (10 if not MOCK else 4)
+    try:
+        parser = argparse.ArgumentParser(
+            description="Run the multi-provider tradeoff demo"
         )
-        r = await answer.optimize(max_trials=trials, model=args.model)
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
-        if args.verbose_results:
-            _dump_example_results(r, show_full_output=True)
+        parser.add_argument(
+            "--verbose-results",
+            action="store_true",
+            help="Print detailed per-example outputs for each trial",
+        )
+        parser.add_argument(
+            "--max-trials",
+            type=int,
+            default=None,
+            help="Override the number of optimization trials to run",
+        )
+        parser.add_argument(
+            "--model",
+            type=str,
+            default="anthropic/claude-3-7-sonnet-latest",
+            help="Model identifier (include provider prefix for non-default providers)",
+        )
+        args = parser.parse_args()
 
-    asyncio.run(main())
+        print("Crunching math expressions across multiple providers…")
+
+        async def main() -> None:
+            trials = (
+                args.max_trials
+                if args.max_trials is not None
+                else (10 if not MOCK else 4)
+            )
+            r = await answer.optimize(max_trials=trials, model=args.model)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
+            if args.verbose_results:
+                _dump_example_results(r, show_full_output=True)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

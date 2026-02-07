@@ -4,7 +4,7 @@ Comprehensive coverage of Traigent capabilities to guide splitting the package i
 
 | Area | Capabilities / Options | Config / Entry Points | Dependencies / Extras | Plugin Scope Note |
 | --- | --- | --- | --- | --- |
-| Injection and config delivery | Context, parameter, attribute, seamless injection; default_config; auto framework overrides and explicit framework_targets; allow_parallel_attribute opt-in | optimize decorator via `injection.*`, `default_config`, `injection_mode`, `config_param` | Core | Keep in base |
+| Injection and config delivery | Context, parameter, attribute, seamless injection; default_config; auto framework overrides and explicit framework_targets; attribute mode blocked for parallel trials | optimize decorator via `injection.*`, `default_config`, `injection_mode`, `config_param` | Core | Keep in base |
 | Execution modes and storage | Edge analytics, hybrid/privacy, standard, cloud; local_storage_path, minimal_logging, privacy_enabled; repetitions aggregation | `execution.*`, env `TRAIGENT_RESULTS_FOLDER`, `TRAIGENT_MOCK_LLM` | Core | Base |
 | Optimization algorithms | Random, Grid, Bayesian (scikit-optimize), Optuna (TPE, Random, CMAES, Grid, NSGAII), Parallel/Adaptive/Interactive, Remote/Cloud | Runtime `algorithm`, `max_trials`, `timeout`, `cache_policy` | bayesian extra, core optuna | Base: optuna/random/grid; plugin candidates: bayesian, parallel batch, remote/cloud, interactive |
 | Objectives and multi-objective | ObjectiveSchema with weights/orientation, banded objectives, aggregation modes (sum, harmonic, chebyshev); multi-objective via Optuna NSGA-II and MultiObjectiveBatchOptimizer | `objectives`, `ObjectiveSchema`, TVL bands | Optuna for NSGA-II | Multi-objective/banded to plugins |

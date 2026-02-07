@@ -13,7 +13,7 @@ from tests.integration.test_ctd_execution_modes import (
     _grid_configurations,
     _run_behavior_validation,
 )
-from traigent.optigen_integration import OptiGenClient
+from traigent.traigent_client import TraigentClient
 
 # Only run cases that require an API key to exercise backend communication.
 LIVE_CASES = [case for case in CTD_CASES if case["combo"].get("has_api_key")]
@@ -67,7 +67,7 @@ async def test_ctd_execution_behavior_live(case: dict, monkeypatch) -> None:
         )
 
     # Instantiate real client
-    client = OptiGenClient(
+    client = TraigentClient(
         execution_mode=combo.get("explicit_mode", "auto"), api_key=api_key
     )
 

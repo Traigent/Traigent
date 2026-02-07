@@ -33,6 +33,8 @@ from pathlib import Path
 from threading import RLock
 from typing import TYPE_CHECKING
 
+from traigent.utils.exceptions import CostLimitExceeded
+
 if TYPE_CHECKING:
     pass
 
@@ -82,15 +84,6 @@ class Permit:
     def is_granted(self) -> bool:
         """Check if this permit was granted (not denied)."""
         return self.amount > 0.0 and self.id >= 0
-
-
-class CostLimitExceeded(Exception):
-    """Raised when accumulated cost exceeds the configured limit."""
-
-    def __init__(self, accumulated: float, limit: float) -> None:
-        self.accumulated = accumulated
-        self.limit = limit
-        super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
 
 
 class OptimizationAborted(Exception):
@@ -245,6 +238,11 @@ class CostEnforcer:
             if self._async_used and not self._sync_used:
                 logger.info("CostEnforcer: switching from async to sync methods")
             self._sync_used = True
+
+    def update_limit(self, new_limit: float) -> None:
+        """Update the cost limit with synchronization."""
+        with self._lock:
+            self.config.limit = new_limit
 
     def _load_config(self) -> CostEnforcerConfig:
         """Load configuration from environment variables with safe parsing."""
@@ -900,7 +898,7 @@ Options:
 
                 return max(0.1, min(1.0, confidence))
 
-            except (statistics.StatisticsError, ValueError, ZeroDivisionError):
+            except (ValueError, ZeroDivisionError):
                 return 0.3
 
     def estimate_remaining_cost(
@@ -1206,3 +1204,15 @@ Options:
             f"trials={status.trial_count}, "
             f"limit_reached={status.limit_reached})"
         )
+
+
+__all__ = [
+    "CostEnforcer",
+    "CostEnforcerConfig",
+    "CostEstimate",
+    "CostLimitExceeded",
+    "CostStatus",
+    "CostTrackingRequiredError",
+    "OptimizationAborted",
+    "Permit",
+]

@@ -343,7 +343,7 @@ def _normalize_model_for_fallback(model: str) -> str:
 
 
 def _fallback_cost_from_tokens(
-    model: str, input_tokens: int, output_tokens: int
+    model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
     """Calculate costs using fallback pricing dictionary.
 
@@ -388,7 +388,8 @@ def _fallback_cost_from_tokens(
         with _warned_models_lock:
             if model not in _warned_models:
                 _warned_models.add(model)
-                logger.warning(
+                log_fn = logger.debug if _quiet else logger.warning
+                log_fn(
                     "Using fallback pricing for model %r (matched %r)",
                     model,
                     matched_key,
@@ -398,6 +399,122 @@ def _fallback_cost_from_tokens(
         return input_cost, output_cost
 
     return 0.0, 0.0
+
+
+# ---------------------------------------------------------------------------
+# Heuristic tier pricing for pre-optimization cost estimation
+# ---------------------------------------------------------------------------
+
+# Per-token costs for each pricing tier (conservative estimates)
+_TIER_EXPENSIVE = {"input": 10.0e-6, "output": 30.0e-6}  # ~GPT-4-turbo class
+_TIER_MID = {"input": 3.0e-6, "output": 15.0e-6}  # ~GPT-4o / Sonnet class
+_TIER_CHEAP = {"input": 0.25e-6, "output": 1.25e-6}  # ~Haiku / Mini class
+
+# Ordered regex rules for model tier classification.
+# Order is critical: most specific patterns first to avoid substring collisions.
+# \b treats `-` as a word boundary, so "gpt-4o-mini" matches r"gpt-4o\b".
+# We rely on ordering (gpt-4o-mini checked BEFORE gpt-4o) to handle this.
+_TIER_RULES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"gpt-4o-mini|gpt-4-mini", re.IGNORECASE), "cheap"),
+    (re.compile(r"gpt-4-turbo", re.IGNORECASE), "expensive"),
+    (re.compile(r"gpt-4o\b", re.IGNORECASE), "mid"),
+    (re.compile(r"gpt-4\b(?!o)", re.IGNORECASE), "expensive"),
+    (re.compile(r"gpt-3\.5", re.IGNORECASE), "cheap"),
+    (re.compile(r"opus", re.IGNORECASE), "expensive"),
+    (re.compile(r"sonnet", re.IGNORECASE), "mid"),
+    (re.compile(r"haiku", re.IGNORECASE), "cheap"),
+    (re.compile(r"\bmini|flash|nano", re.IGNORECASE), "cheap"),
+    (re.compile(r"pro\b", re.IGNORECASE), "mid"),
+]
+
+_TIER_PRICING = {
+    "expensive": _TIER_EXPENSIVE,
+    "mid": _TIER_MID,
+    "cheap": _TIER_CHEAP,
+}
+
+
+def _classify_model_tier(model_name: str) -> str:
+    """Classify a model name into a pricing tier using regex matching.
+
+    Returns one of ``"expensive"``, ``"mid"``, or ``"cheap"``.
+    Falls back to ``"mid"`` (conservative) when no pattern matches.
+    """
+    for pattern, tier in _TIER_RULES:
+        if pattern.search(model_name):
+            return tier
+    return "mid"
+
+
+def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
+    """Get per-token pricing for a model, with graceful fallback.
+
+    Uses a 3-tier lookup chain for conservative pre-optimization cost estimation:
+
+    1. **litellm**: exact per-token pricing from litellm's database.
+       Models that return ``(0, 0)`` are NOT treated as free — falls through
+       to heuristic tier (EMA will correct after the first trial).
+    2. **Fallback dict**: prefix-matching against ``FALLBACK_MODEL_PRICING``.
+       Does NOT apply ``EXACT_MODEL_MAPPING`` — intentionally skipped so that
+       e.g. ``gpt-4`` stays in the EXPENSIVE tier rather than being downgraded
+       to ``gpt-4o`` (MID tier). The mapping is correct for runtime cost
+       calculation but wrong for conservative pre-estimation.
+    3. **Heuristic tier**: regex-based classification into EXPENSIVE / MID / CHEAP.
+
+    Args:
+        model_name: Model identifier (may include provider prefix).
+
+    Returns:
+        ``(input_cost_per_token, output_cost_per_token, estimation_method)``
+    """
+    # --- Tier 1: litellm ---
+    if LITELLM_AVAILABLE and _is_model_known_to_litellm(model_name):
+        try:
+            input_cost, output_cost = litellm.cost_per_token(
+                model=model_name, prompt_tokens=1, completion_tokens=1
+            )
+            if input_cost > 0 or output_cost > 0:
+                logger.debug(
+                    "Model pricing from litellm for %r: input=%.2e, output=%.2e",
+                    model_name,
+                    input_cost,
+                    output_cost,
+                )
+                return float(input_cost), float(output_cost), "litellm"
+            # litellm returned (0, 0) — may lack pricing data. Fall through.
+        except Exception:
+            logger.debug(
+                "litellm pricing lookup failed for %r, trying fallback",
+                model_name,
+                exc_info=True,
+            )
+
+    # --- Tier 2: Fallback dict (prefix matching, no EXACT_MODEL_MAPPING) ---
+    normalized = _normalize_model_for_fallback(model_name)
+    # Use _quiet=True to log at DEBUG during estimation (not WARNING)
+    input_cost_fb, output_cost_fb = _fallback_cost_from_tokens(
+        normalized, 1, 1, _quiet=True
+    )
+    if input_cost_fb > 0 or output_cost_fb > 0:
+        logger.debug(
+            "Model pricing from fallback dict for %r: input=%.2e, output=%.2e",
+            model_name,
+            input_cost_fb,
+            output_cost_fb,
+        )
+        return input_cost_fb, output_cost_fb, "fallback_dict"
+
+    # --- Tier 3: Heuristic tier classification ---
+    tier = _classify_model_tier(model_name)
+    pricing = _TIER_PRICING[tier]
+    logger.debug(
+        "Model pricing from heuristic tier %r for %r: input=%.2e, output=%.2e",
+        tier,
+        model_name,
+        pricing["input"],
+        pricing["output"],
+    )
+    return pricing["input"], pricing["output"], f"heuristic:{tier}"
 
 
 @dataclass

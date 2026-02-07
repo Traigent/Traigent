@@ -152,9 +152,13 @@ Generate high-quality content based on the given topic and context."""
 
 
 if __name__ == "__main__":
-    import asyncio
-    import dataclasses
-    import json
+    try:
+        import asyncio
+        import dataclasses
+        import json
 
-    result = asyncio.run(content_generator.optimize(max_trials=10))
-    print(json.dumps(dataclasses.asdict(result), default=str, indent=2))
+        result = asyncio.run(content_generator.optimize(max_trials=10))
+        print(json.dumps(dataclasses.asdict(result), default=str, indent=2))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

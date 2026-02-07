@@ -56,6 +56,9 @@ class TestMaxTrialsStopCondition:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
         assert (
             len(result.trials) == max_trials
         ), f"Expected exactly {max_trials} trials, got {len(result.trials)}"
@@ -1176,6 +1179,9 @@ class TestTrialCountAccuracy:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
         assert (
             len(result.trials) == expected_trials
         ), f"Expected {expected_trials} trials, got {len(result.trials)}"
@@ -1331,6 +1337,9 @@ class TestStopConditionsWithParallelModes:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
         assert (
             len(result.trials) == max_trials
         ), f"Expected {max_trials} trials with {parallel_mode} mode, got {len(result.trials)}"

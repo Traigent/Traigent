@@ -373,14 +373,20 @@ class TestLicenseValidatorInit:
 
     def test_init_with_api_key_env(self):
         """Test initialization falls back to TRAIGENT_API_KEY env var."""
-        with patch.dict(os.environ, {"TRAIGENT_API_KEY": "env-key-456"}):  # pragma: allowlist secret
+        with patch.dict(
+            os.environ, {"TRAIGENT_API_KEY": "env-key-456"}  # pragma: allowlist secret
+        ):
             validator = LicenseValidator()
             assert validator._api_key == "env-key-456"  # pragma: allowlist secret
 
     def test_init_explicit_api_key_overrides_env(self):
         """Test explicit api_key takes precedence over env var."""
-        with patch.dict(os.environ, {"TRAIGENT_API_KEY": "env-key"}):  # pragma: allowlist secret
-            validator = LicenseValidator(api_key="explicit-key")  # pragma: allowlist secret
+        with patch.dict(
+            os.environ, {"TRAIGENT_API_KEY": "env-key"}  # pragma: allowlist secret
+        ):
+            validator = LicenseValidator(
+                api_key="explicit-key"  # pragma: allowlist secret
+            )
             assert validator._api_key == "explicit-key"  # pragma: allowlist secret
 
     def test_init_offline_mode_explicit(self):

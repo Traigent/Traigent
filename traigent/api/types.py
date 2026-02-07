@@ -60,6 +60,8 @@ StopReason = Literal[
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
+    "vendor_error",  # Provider error (rate limit/quota/service)
+    "network_error",  # Connectivity failure
 ]
 
 
