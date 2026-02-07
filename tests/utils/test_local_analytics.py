@@ -10,9 +10,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from traigent.config.types import ExecutionMode, TraigentConfig
-from traigent.storage.local_storage import (
-    LocalStorageManager,
-)
+from traigent.storage.local_storage import LocalStorageManager
 from traigent.utils.local_analytics import (
     LocalAnalytics,
     collect_and_submit_analytics,
@@ -398,8 +396,9 @@ class TestConvenienceFunctions:
         result = collect_and_submit_analytics(config)
         assert result is None  # Function returns None
 
+    @patch("traigent.utils.env_config.is_mock_llm", return_value=False)
     @patch("threading.Thread")
-    def test_collect_and_submit_analytics_success(self, mock_thread_class):
+    def test_collect_and_submit_analytics_success(self, mock_thread_class, _mock_llm):
         """Test convenience function success path with threading."""
         config = TraigentConfig(
             execution_mode="edge_analytics",
@@ -421,10 +420,11 @@ class TestConvenienceFunctions:
         assert "target" in call_kwargs
         mock_thread.start.assert_called_once()
 
+    @patch("traigent.utils.env_config.is_mock_llm", return_value=False)
     @patch("traigent.utils.local_analytics.asyncio.ensure_future")
     @patch("traigent.utils.local_analytics.asyncio.get_running_loop")
     def test_collect_and_submit_analytics_async_context(
-        self, mock_get_loop, mock_ensure_future
+        self, mock_get_loop, mock_ensure_future, _mock_llm
     ):
         """Test convenience function in async context."""
         config = TraigentConfig(
@@ -581,7 +581,7 @@ class TestAnalyticsIntegration:
 
         # Add trial with sensitive data
         sensitive_config = {
-            "api_key": "example-key-123",
+            "api_key": "example-key-123",  # pragma: allowlist secret
             "model": "gpt-4",
             "user_data": "sensitive_customer_info",
         }
