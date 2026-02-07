@@ -5,6 +5,7 @@ to improve testability and reduce class complexity.
 
 Functions:
 - validate_constructor_arguments: Input validation for optimizer, evaluator, etc.
+- validate_dataset: Ensure dataset is present and non-empty
 - normalize_parallel_trials: Validate and normalize parallel_trials parameter
 - prepare_objectives: Prepare objectives list and create default schema
 - allocate_parallel_ceilings: Allocate sample budget across parallel trials
@@ -24,7 +25,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, cast
 
 from traigent.core.objectives import ObjectiveSchema, create_default_objectives
-from traigent.evaluators.base import BaseEvaluator
+from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.optimizers.base import BaseOptimizer
 from traigent.utils.exceptions import TVLConstraintError
 from traigent.utils.logging import get_logger
@@ -62,6 +63,22 @@ def validate_constructor_arguments(
         raise ValueError("max_total_examples must be non-negative")
     if timeout is not None and timeout < 0:
         raise ValueError("timeout must be non-negative")
+
+
+def validate_dataset(dataset: Dataset) -> None:
+    """Ensure dataset is present and non-empty before optimization.
+
+    Args:
+        dataset: The evaluation dataset to validate
+
+    Raises:
+        ValueError: If dataset is None or empty
+    """
+    if dataset is None:
+        raise ValueError("Dataset cannot be None") from None
+
+    if not dataset or len(dataset) == 0:
+        raise ValueError("Dataset cannot be empty")
 
 
 def normalize_parallel_trials(parallel_trials: int | None) -> int:
