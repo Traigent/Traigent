@@ -62,6 +62,35 @@ def resolve_execution_mode(
     )
 
 
+# Currently supported execution modes
+_SUPPORTED_MODES = {ExecutionMode.EDGE_ANALYTICS, ExecutionMode.HYBRID_API}
+_NOT_YET_SUPPORTED_MODES = {ExecutionMode.HYBRID, ExecutionMode.CLOUD}
+# PRIVACY and STANDARD are removed — not in either set
+
+
+def validate_execution_mode(mode: ExecutionMode | str | None) -> ExecutionMode:
+    """Resolve *and* validate that an execution mode is currently supported.
+
+    Raises :class:`~traigent.utils.exceptions.ConfigurationError` for removed
+    modes (``privacy``, ``standard``) and not-yet-supported modes (``cloud``,
+    ``hybrid``).  Use :func:`resolve_execution_mode` when you only need
+    string-to-enum conversion without support validation.
+    """
+    from traigent.utils.exceptions import ConfigurationError
+
+    try:
+        resolved = resolve_execution_mode(mode)
+    except ValueError:
+        raise ConfigurationError(f"No such mode '{mode}'") from None
+
+    if resolved in _NOT_YET_SUPPORTED_MODES:
+        raise ConfigurationError(f"'{resolved.value}' not yet supported")
+    if resolved not in _SUPPORTED_MODES:
+        raise ConfigurationError(f"No such mode '{resolved.value}'")
+
+    return resolved
+
+
 class InjectionMode(StrEnum):
     """Configuration injection modes for Traigent optimization.
 

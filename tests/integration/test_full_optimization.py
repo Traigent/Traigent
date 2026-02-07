@@ -249,7 +249,9 @@ class TestFullOptimizationWorkflow:
         assert "algorithms" in info
         assert "features" in info
         assert "integrations" in info
-        assert info["version"] == "0.9.0"
+        from traigent._version import __version__
+
+        assert info["version"] == __version__
         assert "grid" in info["algorithms"]
         assert "random" in info["algorithms"]
 

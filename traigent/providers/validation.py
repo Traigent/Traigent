@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 # Common validation message templates (avoid S1192 duplicate strings)
 _MSG_INVALID_KEY = "Invalid key ({error_type})"
 _MSG_TRANSIENT_WARNING = (
-    "%s validation got transient error (%%s), "
+    "%s validation got transient error (%s), "
     "assuming key is valid. Actual call may fail."
 )
 _MSG_AVAILABLE_UNVERIFIED = "Available (unverified: {error_type})"
