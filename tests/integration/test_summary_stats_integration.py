@@ -142,7 +142,9 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key", backend_config=backend_config, enable_fallback=True
+            api_key="test_key",  # pragma: allowlist secret
+            backend_config=backend_config,
+            enable_fallback=True,
         )
 
         # Mock the aiohttp session
@@ -205,7 +207,9 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key", backend_config=backend_config, enable_fallback=True
+            api_key="test_key",  # pragma: allowlist secret
+            backend_config=backend_config,
+            enable_fallback=True,
         )
 
         # Test with Edge Analytics mode metadata
@@ -261,32 +265,40 @@ class TestExecutionModeHandling:
     """Test that execution modes are handled correctly throughout the system."""
 
     def test_traigent_config_valid_execution_modes(self):
-        """Test that TraigentConfig accepts edge_analytics mode.
+        """Test that TraigentConfig accepts all valid enum execution modes.
 
-        Note: Only edge_analytics is currently supported. cloud/hybrid raise
-        ConfigurationError (not yet supported), privacy/standard raise
-        ConfigurationError (removed).
+        Note: TraigentConfig resolves mode strings leniently. User-facing
+        validation happens at TraigentClient level via validate_execution_mode().
         """
-        from traigent.utils.exceptions import ConfigurationError
-
-        # Only edge_analytics is valid
+        # edge_analytics is the primary supported mode
         config = TraigentConfig(execution_mode="edge_analytics")
         assert config.execution_mode == "edge_analytics"
 
-        # cloud/hybrid raise ConfigurationError (not yet supported)
+        # TraigentConfig accepts all valid enum values (lenient resolution)
+        for mode in ["cloud", "hybrid", "standard"]:
+            config = TraigentConfig(execution_mode=mode)
+            assert config.execution_mode == mode
+
+        # 'privacy' is a back-compat alias that maps to 'hybrid' + privacy_enabled
+        config = TraigentConfig(execution_mode="privacy")
+        assert config.execution_mode == "hybrid"
+        assert config.privacy_enabled is True
+
+        # validate_execution_mode provides strict validation
+        from traigent.config.types import validate_execution_mode
+
         for mode in ["cloud", "hybrid"]:
             with pytest.raises(ConfigurationError, match="not yet supported"):
-                TraigentConfig(execution_mode=mode)
+                validate_execution_mode(mode)
 
-        # privacy/standard raise ConfigurationError (removed)
         for mode in ["privacy", "standard"]:
             with pytest.raises(ConfigurationError, match="No such mode"):
-                TraigentConfig(execution_mode=mode)
+                validate_execution_mode(mode)
 
     def test_traigent_config_invalid_execution_mode(self):
-        """Test that TraigentConfig rejects invalid execution modes."""
+        """Test that TraigentConfig rejects invalid execution mode strings."""
         for invalid_mode in ["invalid_mode", "local"]:
-            with pytest.raises(ConfigurationError, match="No such mode"):
+            with pytest.raises(ValueError, match="execution_mode must be one of"):
                 TraigentConfig(execution_mode=invalid_mode)
 
     def test_evaluator_execution_mode_initialization(self):

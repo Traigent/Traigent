@@ -404,10 +404,7 @@ def create_effective_evaluator(
         process_pool = None
 
         if js_parallel_workers > 1:
-            from traigent.bridges.process_pool import (
-                JSProcessPool,
-                JSProcessPoolConfig,
-            )
+            from traigent.bridges.process_pool import JSProcessPool, JSProcessPoolConfig
 
             pool_config = JSProcessPoolConfig(
                 max_workers=js_parallel_workers,
@@ -514,6 +511,7 @@ def collect_orchestrator_kwargs(
     agent_measures: dict[str, Any] | None,
     global_measures: dict[str, Any] | None,
     promotion_gate: Any | None,
+    invocations_per_example: int = 1,
 ) -> dict[str, Any]:
     """Collect optional kwargs for orchestrator from algorithm_kwargs and attrs.
 
@@ -527,6 +525,7 @@ def collect_orchestrator_kwargs(
         agent_measures: Agent measures mapping
         global_measures: Global measures mapping
         promotion_gate: Promotion gate configuration
+        invocations_per_example: Number of invocations per example (default: 1)
 
     Returns:
         Dict of orchestrator keyword arguments.
@@ -534,6 +533,7 @@ def collect_orchestrator_kwargs(
     kwargs: dict[str, Any] = {
         "cache_policy": algorithm_kwargs.get("cache_policy", "allow_repeats"),
         "samples_include_pruned": samples_include_pruned_value,
+        "invocations_per_example": invocations_per_example,
     }
 
     optional_keys = [

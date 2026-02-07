@@ -85,7 +85,7 @@ def test_version_package_metadata_not_found():
                 importlib.reload(version_module)
                 result = version_module.get_version()
                 # Should fall back to hardcoded version
-                assert result == "0.9.0"
+                assert result == "0.10.0"
 
     # Clean up
     if "TRAIGENT_USE_PACKAGE_METADATA" in os.environ:
@@ -104,7 +104,7 @@ def test_get_version_info():
     assert "patch" in info
     # Version should be 0.9.0 format
     assert info["major"] == "0"
-    assert info["minor"] == "9"
+    assert info["minor"] == "10"
     assert info["patch"] == "0"
 
 

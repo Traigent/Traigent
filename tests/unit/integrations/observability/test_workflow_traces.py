@@ -1182,7 +1182,8 @@ class TestAsyncMethods:
         monkeypatch.setattr(wt_module, "AIOHTTP_AVAILABLE", True)
         return mock_aiohttp
 
-    def test_ingest_traces_async_requires_aiohttp(
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_requires_aiohttp(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Test that async ingest raises ImportError without aiohttp."""
@@ -1190,28 +1191,19 @@ class TestAsyncMethods:
 
         client = WorkflowTracesClient(backend_url="http://localhost:5000")
 
-        import asyncio
+        with pytest.raises(ImportError, match="aiohttp is required"):
+            await client.ingest_traces_async()
 
-        async def test_async():
-            with pytest.raises(ImportError, match="aiohttp is required"):
-                await client.ingest_traces_async()
-
-        asyncio.get_event_loop().run_until_complete(test_async())
-
-    def test_ingest_traces_async_empty_returns_error(
+    @pytest.mark.asyncio
+    async def test_ingest_traces_async_empty_returns_error(
         self, patched_aiohttp: MagicMock
     ) -> None:
         """Test async ingest with no data returns error."""
         client = WorkflowTracesClient(backend_url="http://localhost:5000")
 
-        import asyncio
-
-        async def test_async():
-            response = await client.ingest_traces_async()
-            assert response.success is False
-            assert response.error is not None
-
-        asyncio.get_event_loop().run_until_complete(test_async())
+        response = await client.ingest_traces_async()
+        assert response.success is False
+        assert response.error is not None
 
 
 # =============================================================================

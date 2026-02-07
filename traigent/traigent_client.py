@@ -10,11 +10,9 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
-from traigent.adapters.execution_adapter import (
-    LocalExecutionAdapter,
-)
+from traigent.adapters.execution_adapter import LocalExecutionAdapter
 from traigent.api.types import TrialResult, TrialStatus
-from traigent.config.types import ExecutionMode, TraigentConfig
+from traigent.config.types import ExecutionMode, TraigentConfig, validate_execution_mode
 from traigent.optimizers import get_optimizer
 from traigent.utils.exceptions import OptimizationError
 from traigent.utils.logging import get_logger
@@ -544,37 +542,15 @@ class TraigentClient:
 
         Returns:
             Actual execution mode to use
+
+        Raises:
+            ConfigurationError: If the requested mode is invalid or unsupported.
         """
         if requested_mode != "auto":
-            # Map string values to ExecutionMode enum
-            mode_map = {
-                "edge_analytics": ExecutionMode.EDGE_ANALYTICS,
-                "privacy": ExecutionMode.PRIVACY,
-                "standard": ExecutionMode.STANDARD,
-                "cloud": ExecutionMode.CLOUD,
-            }
-            if requested_mode in mode_map:
-                return mode_map[requested_mode]
-            # Try to construct directly if it's already an enum value
-            return ExecutionMode(requested_mode)
+            return validate_execution_mode(requested_mode)
 
-        # Auto-detection logic
-        if os.environ.get("TRAIGENT_FORCE_LOCAL"):
-            return ExecutionMode.EDGE_ANALYTICS
-        elif os.environ.get("TRAIGENT_FORCE_HYBRID"):
-            return ExecutionMode.STANDARD
-        elif os.environ.get("TRAIGENT_FORCE_CLOUD"):
-            return ExecutionMode.CLOUD
-        else:
-            # Default based on privacy requirements
-            if self._check_privacy_requirements():
-                return ExecutionMode.STANDARD
-            else:
-                # Check if we have API key for SaaS
-                if self._explicit_api_key:
-                    return ExecutionMode.CLOUD
-                else:
-                    return ExecutionMode.EDGE_ANALYTICS
+        # Auto-detection: only edge_analytics is currently supported
+        return ExecutionMode.EDGE_ANALYTICS
 
     def _check_privacy_requirements(self) -> bool:
         """Check if privacy requirements mandate standard mode.
