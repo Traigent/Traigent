@@ -6,13 +6,13 @@ import subprocess
 import time
 import os
 
-# Timing constants (in seconds) - adjust for comfortable viewing pace
-TYPING_SPEED = 0.06         # Time per character when typing commands (was 0.03)
-OUTPUT_LINE_DELAY = 0.15    # Time between output lines (was 0.05)
-EMPTY_LINE_DELAY = 0.10     # Time for empty lines (was 0.02)
-COMMAND_PAUSE = 0.8         # Pause after typing a command (was 0.5)
-POST_COMMAND_DELAY = 0.6    # Delay before showing output (was 0.3)
-FINAL_PAUSE = 2.0           # Pause at end of recording (was 1.0)
+# Timing constants (in seconds) - slow, readable pace
+TYPING_SPEED = 0.12         # Time per character when typing commands
+OUTPUT_LINE_DELAY = 0.35    # Time between output lines
+EMPTY_LINE_DELAY = 0.25     # Time for empty lines
+COMMAND_PAUSE = 1.5         # Pause after typing a command
+POST_COMMAND_DELAY = 1.0    # Delay before showing output
+FINAL_PAUSE = 3.0           # Pause at end of recording
 
 
 def generate_cast(script_path: str, output_path: str, title: str):
@@ -51,23 +51,24 @@ def generate_cast(script_path: str, output_path: str, title: str):
             if line.startswith('$') or line.startswith('#'):
                 # Type character by character for commands/comments
                 for char in line:
-                    f.write(json.dumps([current_time, "o", char]) + '\n')
+                    f.write(json.dumps([round(current_time, 4), "o", char]) + '\n')
                     current_time += TYPING_SPEED
                 current_time += POST_COMMAND_DELAY
-                f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
+                f.write(json.dumps([round(current_time, 4), "o", "\r\n"]) + '\n')
                 current_time += COMMAND_PAUSE
             else:
                 # Output lines appear with readable pacing
                 if line:
-                    f.write(json.dumps([current_time, "o", line + "\r\n"]) + '\n')
+                    f.write(json.dumps([round(current_time, 4), "o", line + "\r\n"]) + '\n')
                     current_time += OUTPUT_LINE_DELAY
                 else:
-                    f.write(json.dumps([current_time, "o", "\r\n"]) + '\n')
+                    f.write(json.dumps([round(current_time, 4), "o", "\r\n"]) + '\n')
                     current_time += EMPTY_LINE_DELAY
 
-        f.write(json.dumps([current_time + FINAL_PAUSE, "o", ""]) + '\n')
+        f.write(json.dumps([round(current_time + FINAL_PAUSE, 4), "o", ""]) + '\n')
 
     print(f"  Generated {output_path}")
+
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))

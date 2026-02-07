@@ -1,6 +1,6 @@
 # Traigent SDK Demo Videos
 
-This directory contains animated terminal demos showcasing Traigent's LLM optimization capabilities. TVL-specific demos live under `demos/scripts/`.
+This directory contains animated terminal demos showcasing Traigent's LLM optimization capabilities.
 
 ## Demo Videos
 
@@ -115,4 +115,4 @@ asciinema play docs/demos/output/optimize.cast
 
 ## Reference
 
-See `docs/DEMO_VIDEO_GUIDE.md` for implementation details and customization options. For TVL demos, see `demos/scripts/TVL_VIDEO_SCRIPTS.md`.
+See `docs/DEMO_VIDEO_GUIDE.md` for implementation details and customization options.
