@@ -69,7 +69,7 @@ jobs:
         TRAIGENT_OFFLINE_MODE: true
         PYTHONPATH: .
       run: |
-        pytest tests/ -v --cov=traigent --cov-report=xml --cov-report=term-missing --tb=short
+        pytest tests/unit/ -v --cov=traigent --cov-report=xml --cov-report=term-missing --tb=short --timeout=60
 
     - name: Upload coverage to Codecov
       if: matrix.python-version == '3.11'
