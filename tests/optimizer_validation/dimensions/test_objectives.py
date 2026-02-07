@@ -396,6 +396,12 @@ class TestObjectiveWithBounds:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception)
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+        for trial in result.trials:
+            config = getattr(trial, "config", {})
+            assert config, "Trial should have config"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 
@@ -427,6 +433,12 @@ class TestObjectiveEdgeCases:
 
         # Should handle zero weight - effectively single objective
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -523,6 +535,12 @@ class TestObjectiveEdgeCases:
 
         # Should handle very small weights
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -550,6 +568,12 @@ class TestObjectiveEdgeCases:
 
         # Should handle large weights
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -583,6 +607,12 @@ class TestObjectiveEdgeCases:
 
         # Should handle multiple objectives
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -652,6 +682,12 @@ class TestObjectiveEdgeCases:
 
         # Should work but may produce unexpected results
         if not isinstance(result, Exception):
+            assert hasattr(result, "trials"), "Result should have trials"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            assert result.stop_reason is not None, "Should have a stop reason"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Trial should have config"
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
 
@@ -791,11 +827,14 @@ class TestMultiObjectiveWithAlgorithms:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
-        if hasattr(result, "trials"):
-            # Grid should have tried all 4 combinations
-            assert (
-                len(result.trials) == 4
-            ), f"Expected 4 trials, got {len(result.trials)}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+        # Grid should have tried all 4 combinations
+        assert len(result.trials) == 4, f"Expected 4 trials, got {len(result.trials)}"
+        for trial in result.trials:
+            config = getattr(trial, "config", {})
+            assert config, "Trial should have config"
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
 

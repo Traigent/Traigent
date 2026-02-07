@@ -80,6 +80,10 @@ jobs:
       run: |
         pre-commit run --all-files || true
 
+    - name: Test assertion quality lint
+      run: |
+        python -m tests.optimizer_validation.tools.lint_test_assertions --format github || true
+
     - name: Package structure validation
       run: |
         python -c "

@@ -6,14 +6,14 @@ on:
     paths:
       - 'examples/**'
       - 'traigent/**'
-      - 'scripts/run_examples.py'
+      - 'scripts/examples/**'
       - 'README.md'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'examples/**'
       - 'traigent/**'
-      - 'scripts/run_examples.py'
+      - 'scripts/examples/**'
       - 'README.md'
   workflow_dispatch:
 

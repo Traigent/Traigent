@@ -97,6 +97,7 @@ class TestInjectionModeWithAlgorithms:
             expected=ExpectedResult(
                 min_trials=4,
                 max_trials=4,  # Grid exhausts space
+                expected_stop_reason="max_trials_reached",
             ),
             gist_template=f"grid+{injection_mode} -> {{trial_count()}} | {{status()}}",
         )
@@ -105,11 +106,13 @@ class TestInjectionModeWithAlgorithms:
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
-        # Grid should complete all 4 combinations
-        if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 4
-            ), f"Grid should run 4 trials, got {len(result.trials)}"
+        # Explicit behavior assertions for grid search
+        assert hasattr(result, "trials"), "Result must have trials attribute"
+        assert (
+            len(result.trials) == 4
+        ), f"Grid should run 4 trials, got {len(result.trials)}"
+        for trial in result.trials:
+            assert getattr(trial, "config", None), "Each trial must have a config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -650,6 +653,7 @@ class TestInjectionModeWithStopConditions:
             expected=ExpectedResult(
                 min_trials=4,
                 max_trials=4,
+                expected_stop_reason="optimizer",
             ),
             gist_template=(
                 f"exhaust+{injection_mode} -> {{trial_count()}} | {{status()}}"
@@ -660,11 +664,13 @@ class TestInjectionModeWithStopConditions:
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
 
-        # Grid should stop at exactly 4 trials
-        if hasattr(result, "trials"):
-            assert (
-                len(result.trials) == 4
-            ), f"Should stop at 4 trials (exhaustion), got {len(result.trials)}"
+        # Explicit behavior assertions for config exhaustion
+        assert hasattr(result, "trials"), "Result must have trials attribute"
+        assert (
+            len(result.trials) >= 4
+        ), f"Should complete at least 4 trials (exhaustion), got {len(result.trials)}"
+        for trial in result.trials:
+            assert getattr(trial, "config", None), "Each trial must have a config"
 
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()
@@ -844,13 +850,19 @@ class TestInjectionModeWithConstraints:
         _, result = await scenario_runner(scenario)
 
         if not isinstance(result, Exception):
+            # Explicit behavior assertions for constraint validation
+            assert hasattr(result, "trials"), "Result must have trials attribute"
+            assert len(result.trials) >= 1, "Should complete at least one trial"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                assert config, "Each trial must have a config"
+
             # All completed trials should have temperature <= 0.8
-            if hasattr(result, "trials"):
-                for trial in result.trials:
-                    config = getattr(trial, "config", {})
-                    temp = config.get("temperature")
-                    if temp is not None:
-                        assert temp <= 0.8, f"Constraint violated: temperature={temp}"
+            for trial in result.trials:
+                config = getattr(trial, "config", {})
+                temp = config.get("temperature")
+                if temp is not None:
+                    assert temp <= 0.8, f"Constraint violated: temperature={temp}"
 
             validation = result_validator(scenario, result)
             assert validation.passed, validation.summary()
