@@ -29,17 +29,19 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ## 🎬 See Traigent in Action
 
+> Click any demo to play the animated version.
+
 ### LLM Agent Optimization
 
-![Traigent Optimization Demo](docs/demos/output/optimize.svg)
+[![Traigent Optimization Demo](docs/demos/output/optimize-still.svg)](docs/demos/output/optimize.svg)
 
 ### Optimization Callbacks
 
-![Traigent Callbacks Demo](docs/demos/output/hooks.svg)
+[![Traigent Callbacks Demo](docs/demos/output/hooks-still.svg)](docs/demos/output/hooks.svg)
 
 ### Agent Configuration Hooks
 
-![Traigent Agent Hooks Demo](docs/demos/output/github-hooks.svg)
+[![Traigent Agent Hooks Demo](docs/demos/output/github-hooks-still.svg)](docs/demos/output/github-hooks.svg)
 
 ## 🏗️ Architecture Overview
 
