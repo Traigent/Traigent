@@ -257,6 +257,8 @@ class ExpectedResultLinter(ast.NodeVisitor):
         "best_score_range",
         "required_metrics",
     }
+    # min_trials counts as validation only when explicitly > 1
+    CONDITIONAL_FIELDS = {"min_trials", "max_trials"}
 
     def __init__(self, file_path: str, source: str) -> None:
         self.file_path = file_path
@@ -292,6 +294,17 @@ class ExpectedResultLinter(ast.NodeVisitor):
 
         # Check if ANY validation field is specified
         has_validation = bool(kwarg_names & self.VALIDATION_FIELDS)
+
+        # Also count min_trials > 1 or max_trials as meaningful validation
+        if not has_validation:
+            for kw in node.keywords:
+                if kw.arg == "min_trials" and isinstance(kw.value, ast.Constant):
+                    if isinstance(kw.value.value, int) and kw.value.value > 1:
+                        has_validation = True
+                        break
+                elif kw.arg == "max_trials":
+                    has_validation = True
+                    break
 
         if not has_validation:
             self.issues.append(
