@@ -520,3 +520,54 @@ class TestRunServer:
         app = MagicMock()
         with pytest.raises(ValueError, match="Unknown server"):
             run_server(app, server="gunicorn")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# _make_error_response tests
+# ---------------------------------------------------------------------------
+class TestMakeErrorResponse:
+    """Tests for _make_error_response helper."""
+
+    def test_without_details(self) -> None:
+        """Test error response without details."""
+        from traigent.wrapper.server import _make_error_response
+
+        result = _make_error_response("ERR_CODE", "Something went wrong")
+        assert result == {"error": {"code": "ERR_CODE", "message": "Something went wrong"}}
+
+    def test_with_details(self) -> None:
+        """Test error response with details included."""
+        from traigent.wrapper.server import _make_error_response
+
+        result = _make_error_response(
+            "VALIDATION_ERROR",
+            "Bad input",
+            details={"field": "temperature", "reason": "out of range"},
+        )
+        assert result["error"]["code"] == "VALIDATION_ERROR"
+        assert result["error"]["details"]["field"] == "temperature"
+
+
+# ---------------------------------------------------------------------------
+# Keep-alive 404 path test
+# ---------------------------------------------------------------------------
+class TestKeepAlive404:
+    """Test keep-alive returns 404 when session is not found."""
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_returns_404_when_session_not_found(self) -> None:
+        """Keep-alive for unknown session with keep_alive disabled returns 404."""
+        svc = TraigentService(
+            capability_id="test_svc",
+            supports_keep_alive=False,
+        )
+        app = create_app(svc)
+        request_body = json.dumps({"session_id": "nonexistent"}).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", KEEP_ALIVE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 404
+        assert send.body_json["error"]["code"] == "SESSION_NOT_FOUND"

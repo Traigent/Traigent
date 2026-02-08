@@ -366,6 +366,32 @@ class TestHTTPTransportMethods:
                 await transport.keep_alive("session-123")
 
     @pytest.mark.asyncio
+    async def test_keep_alive_no_status_or_alive_returns_false(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Keep-alive with response missing both 'status' and 'alive' returns False."""
+        mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
+        mock_response = {"session_id": "session-123", "info": "no relevant key"}
+
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(
+                transport,
+                "_request",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+        ):
+            alive = await transport.keep_alive("session-123")
+
+        assert alive is False
+
+    @pytest.mark.asyncio
     async def test_close(self, transport: HTTPTransport) -> None:
         """Test closing transport."""
         # Initialize client

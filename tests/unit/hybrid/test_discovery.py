@@ -445,3 +445,110 @@ class TestValidateConfigAgainstTvars:
         errors = validate_config_against_tvars(config, tvars)
 
         assert any("temperature" in e and "expected float" in e for e in errors)
+
+
+class TestNormalizeConstraintsForParsing:
+    """Tests for _normalize_constraints_for_parsing static method."""
+
+    def test_none_returns_none(self) -> None:
+        """None constraints pass through."""
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(None)
+        assert result is None
+
+    def test_list_returns_list(self) -> None:
+        """List constraints pass through unchanged."""
+        constraints = [{"id": "c1", "type": "expression", "rule": "x > 0"}]
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert result is constraints
+
+    def test_non_dict_non_list_returns_none(self) -> None:
+        """Non-dict, non-list input returns None."""
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(42)  # type: ignore[arg-type]
+        assert result is None
+
+    def test_typed_constraints_pass_through(self) -> None:
+        """TVL 0.9 typed constraints with 'structural'/'derived' keys pass through."""
+        constraints = {"structural": [{"expr": "x > 0"}], "derived": []}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert result is constraints
+
+    def test_legacy_text_constraints_with_non_list_entries_skipped(self) -> None:
+        """Legacy constraints where group value is not a list are skipped."""
+        constraints = {"hard": "not_a_list", "soft": ["x > 0"]}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["rule"] == "x > 0"
+
+    def test_legacy_dict_entries_appended(self) -> None:
+        """Legacy constraint entries that are already dicts are passed through."""
+        entry = {"id": "c1", "type": "expression", "rule": "x > 0"}
+        constraints = {"hard": [entry]}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert isinstance(result, list)
+        assert result[0] is entry
+
+
+class TestDiscoveryGettersBeforeFetch:
+    """Test discovery getters return None/empty before fetch."""
+
+    def test_get_promotion_policy_before_fetch(self) -> None:
+        """get_promotion_policy returns None when not yet fetched."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_promotion_policy() is None
+
+    def test_get_objectives_before_fetch(self) -> None:
+        """get_objectives returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_objectives() is None
+
+    def test_get_exploration_before_fetch(self) -> None:
+        """get_exploration returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_exploration() is None
+
+    def test_get_defaults_before_fetch(self) -> None:
+        """get_defaults returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_defaults() is None
+
+    def test_get_measures_before_fetch(self) -> None:
+        """get_measures returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_measures() is None
+
+
+class TestBuildOptimizationSpecDerivedConstraints:
+    """Test build_optimization_spec with derived constraints."""
+
+    @pytest.mark.asyncio
+    async def test_derived_constraints_compiled(self) -> None:
+        """Derived constraints from response are compiled into wrappers."""
+        transport = MagicMock()
+        transport.discover_config_space = AsyncMock(
+            return_value=ConfigSpaceResponse(
+                schema_version="0.9",
+                capability_id="derived_agent",
+                tvars=[
+                    TVARDefinition(
+                        name="temperature",
+                        type="float",
+                        domain={"range": [0.0, 1.0]},
+                    )
+                ],
+                constraints={
+                    "derived": [
+                        {"require": "params.temperature <= 0.9", "when": "True"}
+                    ]
+                },
+            )
+        )
+        discovery = ConfigSpaceDiscovery(transport)
+        spec = await discovery.build_optimization_spec()
+        assert len(spec["constraints"]) >= 1
+        assert spec["derived_constraints"] is not None

@@ -419,6 +419,203 @@ class TestOptimization:
         require(mock_evaluator.metrics == ["accuracy"])
 
     @pytest.mark.asyncio
+    async def test_hybrid_discovery_empty_config_space_raises(
+        self, simple_function, sample_dataset
+    ):
+        """Empty discovery result should raise ValueError."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space={},
+            objectives=["accuracy"],
+            eval_dataset=sample_dataset,
+            execution_mode="hybrid_api",
+            hybrid_api_endpoint="http://localhost:8080",
+            hybrid_api_auto_discover_tvars=True,
+        )
+
+        mock_evaluator = Mock()
+        mock_evaluator.discover_config_space = AsyncMock(return_value={})
+        mock_evaluator.close = AsyncMock()
+
+        with (
+            patch(
+                "traigent.core.optimized_function.create_effective_evaluator",
+                return_value=(mock_evaluator, None),
+            ),
+            pytest.raises(ValueError, match="config-space discovery returned no"),
+        ):
+            await opt_func.optimize()
+
+        mock_evaluator.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_discovery_failure_cleans_up_evaluator(
+        self, simple_function, sample_dataset
+    ):
+        """If discovery raises, the bootstrap evaluator should be closed."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space={},
+            objectives=["accuracy"],
+            eval_dataset=sample_dataset,
+            execution_mode="hybrid_api",
+            hybrid_api_endpoint="http://localhost:8080",
+            hybrid_api_auto_discover_tvars=True,
+        )
+
+        mock_evaluator = Mock()
+        mock_evaluator.discover_config_space = AsyncMock(
+            side_effect=ConnectionError("connection refused")
+        )
+        mock_evaluator.close = AsyncMock()
+
+        with (
+            patch(
+                "traigent.core.optimized_function.create_effective_evaluator",
+                return_value=(mock_evaluator, None),
+            ),
+            pytest.raises(ConnectionError, match="connection refused"),
+        ):
+            await opt_func.optimize()
+
+        mock_evaluator.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_discovery_promotion_gate_applied_and_restored(
+        self, simple_function, sample_dataset
+    ):
+        """Discovered promotion policy is applied during optimize and restored after."""
+        from traigent.tvl.models import PromotionPolicy
+
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space={},
+            objectives=["accuracy"],
+            eval_dataset=sample_dataset,
+            execution_mode="hybrid_api",
+            hybrid_api_endpoint="http://localhost:8080",
+            hybrid_api_auto_discover_tvars=True,
+        )
+
+        original_gate = getattr(opt_func, "promotion_gate", None)
+        from datetime import datetime
+
+        mock_result = OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.5},
+            best_score=0.95,
+            optimization_id="hybrid-promo",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        mock_evaluator = Mock()
+        mock_evaluator.discover_config_space = AsyncMock(
+            return_value={"temperature": [0.1, 0.5, 1.0]}
+        )
+        mock_evaluator.optimization_spec = {
+            "objective_schema": create_default_objectives(["accuracy"]),
+            "constraints": [],
+            "default_config": {},
+            "runtime_overrides": {},
+            "promotion_policy": PromotionPolicy(alpha=0.05),
+            "measures": [],
+        }
+        mock_evaluator.metrics = ["accuracy"]
+
+        with (
+            patch(
+                "traigent.core.optimized_function.create_effective_evaluator",
+                return_value=(mock_evaluator, None),
+            ),
+            patch(
+                "traigent.core.optimized_function.get_optimizer",
+                return_value=Mock(),
+            ),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as MockOrchestrator,
+        ):
+            mock_orchestrator = MockOrchestrator.return_value
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+
+            result = await opt_func.optimize()
+            require(result.best_score == pytest.approx(0.95))
+
+            _, orch_kwargs = MockOrchestrator.call_args
+            require(
+                orch_kwargs.get("promotion_gate") is not None,
+                "Promotion gate should have been set from discovery",
+            )
+
+        require(
+            getattr(opt_func, "promotion_gate", None) is original_gate,
+            "Promotion gate should be restored after optimize",
+        )
+
+    @pytest.mark.asyncio
+    async def test_hybrid_discovery_non_dict_spec_ignored(
+        self, simple_function, sample_dataset
+    ):
+        """Non-dict optimization_spec should be silently ignored."""
+        from datetime import datetime
+
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space={},
+            objectives=["accuracy"],
+            eval_dataset=sample_dataset,
+            execution_mode="hybrid_api",
+            hybrid_api_endpoint="http://localhost:8080",
+            hybrid_api_auto_discover_tvars=True,
+        )
+
+        mock_result = OptimizationResult(
+            trials=[],
+            best_config={"temperature": 0.5},
+            best_score=0.8,
+            optimization_id="hybrid-nondict",
+            duration=1.0,
+            convergence_info={},
+            status=OptimizationStatus.COMPLETED,
+            objectives=["accuracy"],
+            algorithm="random",
+            timestamp=datetime.now(),
+            metadata={},
+        )
+
+        mock_evaluator = Mock()
+        mock_evaluator.discover_config_space = AsyncMock(
+            return_value={"temperature": [0.1, 0.5, 1.0]}
+        )
+        mock_evaluator.optimization_spec = "not_a_dict"
+        mock_evaluator.metrics = ["accuracy"]
+
+        with (
+            patch(
+                "traigent.core.optimized_function.create_effective_evaluator",
+                return_value=(mock_evaluator, None),
+            ),
+            patch(
+                "traigent.core.optimized_function.get_optimizer",
+                return_value=Mock(),
+            ),
+            patch(
+                "traigent.core.optimized_function.OptimizationOrchestrator"
+            ) as MockOrchestrator,
+        ):
+            mock_orchestrator = MockOrchestrator.return_value
+            mock_orchestrator.optimize = AsyncMock(return_value=mock_result)
+
+            result = await opt_func.optimize()
+            require(result.best_score == pytest.approx(0.8))
+
+    @pytest.mark.asyncio
     async def test_decorator_runtime_defaults_propagate_to_optimize(
         self, simple_function, sample_config_space, sample_objectives, sample_dataset
     ):

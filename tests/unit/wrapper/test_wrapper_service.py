@@ -985,3 +985,217 @@ class TestWrapperExports:
         assert "TraigentService" in wrapper.__all__
         assert "ServiceConfig" in wrapper.__all__
         assert "Session" in wrapper.__all__
+
+
+# ---------------------------------------------------------------------------
+# Validation error paths in get_config_space
+# ---------------------------------------------------------------------------
+class TestGetConfigSpaceValidation:
+    """Tests for validation errors in get_config_space."""
+
+    def test_tvars_handler_returns_non_dict_raises(self) -> None:
+        """Tvars handler returning non-dict should raise ValueError."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return ["not", "a", "dict"]
+
+        with pytest.raises(ValueError, match="tunables handler must return a dict"):
+            svc.get_config_space()
+
+    def test_constraints_not_dict_or_list_raises(self) -> None:
+        """Constraints that are not dict or list should raise ValueError."""
+        svc = TraigentService(constraints="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="constraints must be a dict or list"):
+            svc.get_config_space()
+
+    def test_objectives_not_list_raises(self) -> None:
+        """Objectives that are not a list should raise ValueError."""
+        svc = TraigentService(objectives="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="objectives must be a list"):
+            svc.get_config_space()
+
+    def test_exploration_not_dict_raises(self) -> None:
+        """Exploration that is not a dict should raise ValueError."""
+        svc = TraigentService(exploration="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="exploration must be a dict"):
+            svc.get_config_space()
+
+    def test_promotion_policy_not_dict_raises(self) -> None:
+        """Promotion policy that is not a dict should raise ValueError."""
+        svc = TraigentService(promotion_policy="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="promotion_policy must be a dict"):
+            svc.get_config_space()
+
+    def test_defaults_not_dict_raises(self) -> None:
+        """Defaults that is not a dict should raise ValueError."""
+        svc = TraigentService(defaults="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="defaults must be a dict"):
+            svc.get_config_space()
+
+    def test_measures_not_list_of_strings_raises(self) -> None:
+        """Measures that is not a list of strings should raise ValueError."""
+        svc = TraigentService(measures=[1, 2, 3])  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="measures must be a list of strings"):
+            svc.get_config_space()
+
+    def test_sync_handler_returning_awaitable_raises(self) -> None:
+        """Sync handler that returns an awaitable should fail with coroutine cleanup."""
+        import asyncio
+
+        svc = TraigentService()
+
+        @svc.objectives
+        def objectives():
+            # Return a coroutine without awaiting — simulates accidental async usage
+            async def inner():
+                return [{"name": "accuracy", "direction": "maximize"}]
+            return inner()
+
+        with pytest.raises(
+            ValueError, match="declaration handlers must be synchronous functions"
+        ):
+            svc.get_config_space()
+
+    def test_normalize_tvars_range_and_resolution(self) -> None:
+        """Top-level range/resolution keys should be moved into domain."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {
+                "temperature": {
+                    "type": "float",
+                    "range": [0.0, 1.5],
+                    "resolution": 0.1,
+                },
+            }
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["domain"]["range"] == [0.0, 1.5]
+        assert tvar["domain"]["resolution"] == 0.1
+
+    def test_normalize_tvars_non_dict_domain_replaced(self) -> None:
+        """Non-dict domain should be replaced with empty dict."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"flag": {"type": "bool", "domain": "invalid"}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert isinstance(tvar["domain"], dict)
+
+
+# ---------------------------------------------------------------------------
+# handle_execute edge cases
+# ---------------------------------------------------------------------------
+class TestHandleExecuteEdgeCases:
+    """Tests for edge cases in handle_execute."""
+
+    @pytest.mark.asyncio
+    async def test_non_dict_input_gets_uuid_and_input_as_data(self) -> None:
+        """Non-dict input should get a UUID and be passed as data."""
+        svc = TraigentService()
+        received = {}
+
+        @svc.execute
+        def run(input_id, data, config):
+            received["input_id"] = input_id
+            received["data"] = data
+            return {"output": "ok"}
+
+        resp = await svc.handle_execute({"inputs": ["raw_string"]})
+        assert resp["status"] == "completed"
+        assert len(received["input_id"]) > 0  # UUID generated
+
+    @pytest.mark.asyncio
+    async def test_partial_status_on_mixed_success_and_failure(self) -> None:
+        """Partial status when some inputs succeed and some fail."""
+        svc = TraigentService()
+        call_count = 0
+
+        @svc.execute
+        def run(input_id, data, config):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("fail on second")
+            return {"output": f"ok-{input_id}"}
+
+        resp = await svc.handle_execute(
+            {
+                "inputs": [
+                    {"input_id": "i1", "data": {}},
+                    {"input_id": "i2", "data": {}},
+                    {"input_id": "i3", "data": {}},
+                ]
+            }
+        )
+        assert resp["status"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# handle_evaluate edge cases
+# ---------------------------------------------------------------------------
+class TestHandleEvaluateEdgeCases:
+    """Tests for edge cases in handle_evaluate."""
+
+    @pytest.mark.asyncio
+    async def test_evaluations_not_list_raises(self) -> None:
+        """Evaluations must be a list."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(ValueError, match="evaluations must be a list"):
+            await svc.handle_evaluate({"evaluations": "not_a_list"})
+
+    @pytest.mark.asyncio
+    async def test_evaluation_with_output_id(self) -> None:
+        """Evaluation with output_id instead of output."""
+        svc = TraigentService()
+        received_output = {}
+
+        @svc.evaluate
+        def score(output, target, config):
+            received_output["output"] = output
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {
+                        "input_id": "e1",
+                        "output_id": "out-123",
+                        "target": "expected",
+                    }
+                ]
+            }
+        )
+        assert received_output["output"] == {"output_id": "out-123"}
+
+    @pytest.mark.asyncio
+    async def test_bool_metrics_excluded_from_aggregation(self) -> None:
+        """Bool-type metric values should be excluded from aggregation."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 0.9, "is_valid": True}
+
+        resp = await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"input_id": "e1", "output": "a", "target": "a"},
+                ]
+            }
+        )
+        agg = resp["aggregate_metrics"]
+        assert "accuracy" in agg
+        assert "is_valid" not in agg  # Bool excluded
