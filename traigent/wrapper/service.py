@@ -58,6 +58,12 @@ class ServiceConfig:
         supports_streaming: Whether to enable streaming support.
         max_batch_size: Maximum inputs per execute request.
         schema_version: TVL schema version.
+        constraints: Optional constraints (legacy textual or typed TVL 0.9 format).
+        objectives: Optional objective definitions.
+        exploration: Optional exploration configuration.
+        promotion_policy: Optional promotion policy definition.
+        defaults: Optional default configuration values.
+        measures: Optional declared measure names.
     """
 
     capability_id: str = "default"
@@ -66,6 +72,12 @@ class ServiceConfig:
     supports_streaming: bool = False
     max_batch_size: int = 100
     schema_version: str = "0.9"
+    constraints: dict[str, Any] | list[Any] | None = None
+    objectives: list[dict[str, Any]] | None = None
+    exploration: dict[str, Any] | None = None
+    promotion_policy: dict[str, Any] | None = None
+    defaults: dict[str, Any] | None = None
+    measures: list[str] | None = None
 
 
 @dataclass
@@ -117,6 +129,12 @@ class TraigentService:
         supports_keep_alive: bool = False,
         supports_streaming: bool = False,
         max_batch_size: int = 100,
+        constraints: dict[str, Any] | list[Any] | None = None,
+        objectives: list[dict[str, Any]] | None = None,
+        exploration: dict[str, Any] | None = None,
+        promotion_policy: dict[str, Any] | None = None,
+        defaults: dict[str, Any] | None = None,
+        measures: list[str] | None = None,
     ) -> None:
         """Initialize TraigentService.
 
@@ -126,6 +144,12 @@ class TraigentService:
             supports_keep_alive: Whether to enable keep-alive support.
             supports_streaming: Whether to enable streaming support.
             max_batch_size: Maximum inputs per execute request.
+            constraints: Optional constraints config.
+            objectives: Optional objective definitions.
+            exploration: Optional exploration configuration.
+            promotion_policy: Optional promotion policy.
+            defaults: Optional default tunable values.
+            measures: Optional declared measure names.
         """
         self.config = ServiceConfig(
             capability_id=capability_id,
@@ -133,12 +157,26 @@ class TraigentService:
             supports_keep_alive=supports_keep_alive,
             supports_streaming=supports_streaming,
             max_batch_size=max_batch_size,
+            constraints=constraints,
+            objectives=objectives,
+            exploration=exploration,
+            promotion_policy=promotion_policy,
+            defaults=defaults,
+            measures=measures,
         )
 
         # Registered handlers
         self._tvars_handler: Callable[[], dict[str, Any]] | None = None
         self._execute_handler: Callable[..., Any] | None = None
         self._evaluate_handler: Callable[..., Any] | None = None
+        self._constraints_handler: Callable[[], dict[str, Any] | list[Any]] | None = (
+            None
+        )
+        self._objectives_handler: Callable[[], list[dict[str, Any]]] | None = None
+        self._exploration_handler: Callable[[], dict[str, Any]] | None = None
+        self._promotion_policy_handler: Callable[[], dict[str, Any]] | None = None
+        self._defaults_handler: Callable[[], dict[str, Any]] | None = None
+        self._measures_handler: Callable[[], list[str]] | None = None
 
         # Session management
         self._sessions: dict[str, Session] = {}
@@ -223,6 +261,49 @@ class TraigentService:
         self._evaluate_handler = func
         return func
 
+    def constraints(self, func: F) -> F:
+        """Decorator to register constraints declaration function."""
+        self._constraints_handler = func  # type: ignore[assignment]
+        return func
+
+    def objectives(self, func: F) -> F:
+        """Decorator to register objectives declaration function."""
+        self._objectives_handler = func  # type: ignore[assignment]
+        return func
+
+    def exploration(self, func: F) -> F:
+        """Decorator to register exploration declaration function."""
+        self._exploration_handler = func  # type: ignore[assignment]
+        return func
+
+    def promotion_policy(self, func: F) -> F:
+        """Decorator to register promotion policy declaration function."""
+        self._promotion_policy_handler = func  # type: ignore[assignment]
+        return func
+
+    def defaults(self, func: F) -> F:
+        """Decorator to register default-config declaration function."""
+        self._defaults_handler = func  # type: ignore[assignment]
+        return func
+
+    def measures(self, func: F) -> F:
+        """Decorator to register declared measure names function."""
+        self._measures_handler = func  # type: ignore[assignment]
+        return func
+
+    def _resolve_declared_section(
+        self,
+        handler: Callable[[], Any] | None,
+        configured: Any,
+    ) -> Any:
+        """Resolve section value from decorator handler or constructor config."""
+        if handler is None:
+            return configured
+        value = handler()
+        if inspect.isawaitable(value):
+            raise ValueError("declaration handlers must be synchronous functions")
+        return value
+
     def get_config_space(self) -> dict[str, Any]:
         """Get TVAR definitions.
 
@@ -238,14 +319,65 @@ class TraigentService:
 
         tvars = self._cached_tvars or {}
         tunables = [{"name": name, **spec} for name, spec in tvars.items()]
+        constraints = self._resolve_declared_section(
+            self._constraints_handler,
+            self.config.constraints,
+        )
+        objectives = self._resolve_declared_section(
+            self._objectives_handler,
+            self.config.objectives,
+        )
+        exploration = self._resolve_declared_section(
+            self._exploration_handler,
+            self.config.exploration,
+        )
+        promotion_policy = self._resolve_declared_section(
+            self._promotion_policy_handler,
+            self.config.promotion_policy,
+        )
+        defaults = self._resolve_declared_section(
+            self._defaults_handler,
+            self.config.defaults,
+        )
+        measures = self._resolve_declared_section(
+            self._measures_handler,
+            self.config.measures,
+        )
 
-        return {
+        if constraints is not None and not isinstance(constraints, (dict, list)):
+            raise ValueError("constraints must be a dict or list")
+        if objectives is not None and not isinstance(objectives, list):
+            raise ValueError("objectives must be a list")
+        if exploration is not None and not isinstance(exploration, dict):
+            raise ValueError("exploration must be a dict")
+        if promotion_policy is not None and not isinstance(promotion_policy, dict):
+            raise ValueError("promotion_policy must be a dict")
+        if defaults is not None and not isinstance(defaults, dict):
+            raise ValueError("defaults must be a dict")
+        if measures is not None and (
+            not isinstance(measures, list)
+            or not all(isinstance(measure, str) for measure in measures)
+        ):
+            raise ValueError("measures must be a list of strings")
+
+        response: dict[str, Any] = {
             "schema_version": self.config.schema_version,
             "capability_id": self.config.capability_id,
             "tunables": tunables,
             "tvars": tunables,  # Backward compatibility alias
-            "constraints": {},
+            "constraints": constraints or {},
         }
+        if objectives is not None:
+            response["objectives"] = objectives
+        if exploration is not None:
+            response["exploration"] = exploration
+        if promotion_policy is not None:
+            response["promotion_policy"] = promotion_policy
+        if defaults is not None:
+            response["defaults"] = defaults
+        if measures is not None:
+            response["measures"] = measures
+        return response
 
     def _normalize_tvars(self, tvars: dict[str, Any]) -> dict[str, Any]:
         """Normalize TVAR definitions to TVL format."""

@@ -140,14 +140,280 @@
           }
         },
         "constraints": {
-          "type": "object",
-          "description": "Structural and behavioral constraints",
-          "additionalProperties": {
-            "type": "array",
-            "items": {
-              "type": "string"
+          "description": "Structural and behavioral constraints (legacy textual or typed TVL 0.9)",
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "$ref": "#/definitions/TypedConstraints"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true
+              }
             }
+          ]
+        },
+        "objectives": {
+          "type": "array",
+          "description": "Optional objective definitions (TVL 0.9 compatible JSON)",
+          "items": {
+            "$ref": "#/definitions/ObjectiveDefinition"
           }
+        },
+        "exploration": {
+          "$ref": "#/definitions/ExplorationConfig"
+        },
+        "promotion_policy": {
+          "$ref": "#/definitions/PromotionPolicy"
+        },
+        "defaults": {
+          "type": "object",
+          "description": "Optional default configuration values",
+          "additionalProperties": true
+        },
+        "measures": {
+          "type": "array",
+          "description": "Optional list of metric names produced by the service",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ObjectiveDefinition": {
+      "type": "object",
+      "title": "ObjectiveDefinition",
+      "description": "Objective definition compatible with TVL 0.9 objectives section",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Objective name",
+          "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        },
+        "direction": {
+          "type": "string",
+          "description": "Objective orientation",
+          "enum": ["maximize", "minimize", "band"]
+        },
+        "weight": {
+          "type": "number",
+          "description": "Objective weight",
+          "default": 1.0
+        },
+        "unit": {
+          "type": "string",
+          "description": "Optional objective unit"
+        },
+        "band": {
+          "$ref": "#/definitions/BandTarget"
+        }
+      },
+      "additionalProperties": false
+    },
+    "BandTarget": {
+      "type": "object",
+      "title": "BandTarget",
+      "description": "Banded objective target definition",
+      "required": ["target"],
+      "properties": {
+        "target": {
+          "type": "array",
+          "description": "Lower/upper target band",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "test": {
+          "type": "string",
+          "description": "Statistical band test",
+          "enum": ["TOST"],
+          "default": "TOST"
+        },
+        "alpha": {
+          "type": "number",
+          "description": "Significance level for band test",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExplorationConfig": {
+      "type": "object",
+      "title": "ExplorationConfig",
+      "description": "Exploration strategy and budget controls (TVL 0.9 exploration section)",
+      "properties": {
+        "strategy": {
+          "description": "Exploration strategy",
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": true
+            }
+          ]
+        },
+        "budgets": {
+          "$ref": "#/definitions/ExplorationBudgets"
+        },
+        "convergence": {
+          "$ref": "#/definitions/ConvergenceCriteria"
+        },
+        "parallelism": {
+          "type": "object",
+          "properties": {
+            "max_parallel_trials": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExplorationBudgets": {
+      "type": "object",
+      "title": "ExplorationBudgets",
+      "description": "Exploration budget limits",
+      "properties": {
+        "max_trials": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_spend_usd": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_wallclock_s": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "ConvergenceCriteria": {
+      "type": "object",
+      "title": "ConvergenceCriteria",
+      "description": "Convergence stop criteria",
+      "required": ["metric", "window", "threshold"],
+      "properties": {
+        "metric": {
+          "type": "string"
+        },
+        "window": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "threshold": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "TypedConstraints": {
+      "type": "object",
+      "title": "TypedConstraints",
+      "description": "Typed TVL 0.9 constraints section",
+      "properties": {
+        "structural": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "derived": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PromotionPolicy": {
+      "type": "object",
+      "title": "PromotionPolicy",
+      "description": "Promotion policy for epsilon-Pareto selection",
+      "properties": {
+        "dominance": {
+          "type": "string",
+          "enum": ["epsilon_pareto"],
+          "default": "epsilon_pareto"
+        },
+        "alpha": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        },
+        "min_effect": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "adjust": {
+          "type": "string",
+          "enum": ["none", "BH"],
+          "default": "none"
+        },
+        "chance_constraints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ChanceConstraint"
+          }
+        },
+        "tie_breakers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "enum": ["min_abs_deviation", "custom"]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ChanceConstraint": {
+      "type": "object",
+      "title": "ChanceConstraint",
+      "required": ["name", "threshold", "confidence"],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "threshold": {
+          "type": "number"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
         }
       },
       "additionalProperties": false
