@@ -533,7 +533,9 @@ class TestMakeErrorResponse:
         from traigent.wrapper.server import _make_error_response
 
         result = _make_error_response("ERR_CODE", "Something went wrong")
-        assert result == {"error": {"code": "ERR_CODE", "message": "Something went wrong"}}
+        assert result == {
+            "error": {"code": "ERR_CODE", "message": "Something went wrong"}
+        }
 
     def test_with_details(self) -> None:
         """Test error response with details included."""
@@ -571,3 +573,188 @@ class TestKeepAlive404:
         )
         assert send.status == 404
         assert send.body_json["error"]["code"] == "SESSION_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Server-level OpenAPI contract edge case tests
+# ---------------------------------------------------------------------------
+class TestServerOpenAPIEdgeCases:
+    """Server-level edge cases per OpenAPI contract."""
+
+    @pytest.mark.asyncio
+    async def test_execute_invalid_json_returns_400(self) -> None:
+        """Malformed JSON body returns 400 INVALID_JSON."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(b"{not valid json}"),
+            send,
+        )
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "INVALID_JSON"
+
+    @pytest.mark.asyncio
+    async def test_execute_empty_inputs_returns_400(self) -> None:
+        """Empty inputs array returns 400 INVALID_REQUEST."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        body = json.dumps({"capability_id": "test_svc", "inputs": []}).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "non-empty" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_batch_size_exceeded_returns_400(self) -> None:
+        """Batch exceeding max_batch_size returns 400."""
+        svc = TraigentService(capability_id="test_svc", max_batch_size=1)
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "inputs": [
+                    {"input_id": "i1", "data": {}},
+                    {"input_id": "i2", "data": {}},
+                ],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "max_batch_size" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_capability_mismatch_returns_400(self) -> None:
+        """Mismatched capability_id returns 400."""
+        svc = TraigentService(capability_id="my_agent")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        body = json.dumps(
+            {
+                "capability_id": "wrong_agent",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "mismatch" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_evaluate_invalid_json_returns_400(self) -> None:
+        """Malformed JSON on evaluate returns 400."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(b"not json"),
+            send,
+        )
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "INVALID_JSON"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_no_handler_returns_400(self) -> None:
+        """Evaluate without handler returns 400."""
+        svc = TraigentService(capability_id="test_svc")
+        app = create_app(svc)
+        body = json.dumps({"evaluations": []}).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "No evaluate handler" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_no_handler_returns_400(self) -> None:
+        """Execute without handler returns 400."""
+        svc = TraigentService(capability_id="test_svc")
+        app = create_app(svc)
+        body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "No execute handler" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_wrong_method_returns_404(self) -> None:
+        """POST to GET-only endpoint returns 404."""
+        svc = TraigentService(capability_id="test_svc")
+        app = create_app(svc)
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", "/traigent/v1/capabilities"),
+            _make_receive(b"{}"),
+            send,
+        )
+        assert send.status == 404
+        assert send.body_json["error"]["code"] == "NOT_FOUND"
+
+    @pytest.mark.asyncio
+    async def test_empty_body_execute_returns_400(self) -> None:
+        """Empty body on execute returns 400 (no inputs)."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(b""),
+            send,
+        )
+        assert send.status == 400

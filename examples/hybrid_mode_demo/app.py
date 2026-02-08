@@ -262,7 +262,7 @@ def evaluate():
             "aggregate_metrics": {"accuracy": {"mean": 0.9, "std": 0.05, "n": 10}}
         }
     """
-    data = request.get_json()
+    data = request.get_json(silent=True) or {}
 
     request_id = data.get("request_id", str(uuid.uuid4()))
     evaluations = data.get("evaluations", [])
@@ -280,10 +280,14 @@ def evaluate():
         "fluency": [],
     }
 
+    def _as_dict(value):
+        """Return a dict payload or an empty dict for unsupported shapes."""
+        return value if isinstance(value, dict) else {}
+
     for eval_item in evaluations:
         input_id = eval_item.get("input_id")
-        output = eval_item.get("output", {})
-        target = eval_item.get("target", {})
+        output = _as_dict(eval_item.get("output"))
+        target = _as_dict(eval_item.get("target"))
 
         # Extract text for comparison
         output_text = str(output.get("response", ""))

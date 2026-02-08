@@ -1057,6 +1057,37 @@ class TestEvaluateOutputs:
         assert results[0].actual_output is None
         assert results[0].metrics == {}
 
+    @pytest.mark.asyncio
+    async def test_evaluate_outputs_omits_null_targets_from_request(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Target fields are omitted when expected output is missing."""
+        ev = HybridAPIEvaluator(
+            transport=mock_transport,
+            capability_id="cap",
+            keep_alive=False,
+        )
+        exec_response = _make_execute_response(
+            outputs=[{"input_id": "ex_0", "output": "result_0"}],
+            operational_metrics={"cost_usd": 0.01, "latency_ms": 50.0},
+        )
+        mock_transport.evaluate = AsyncMock(
+            return_value=_make_evaluate_response(
+                results=[{"input_id": "ex_0", "metrics": {"accuracy": 0.5}}]
+            )
+        )
+
+        # No expected_output -> evaluator should not send target=None.
+        dataset = _make_dataset([{"input_data": {"q": "?"}}])
+        batch = list(dataset)
+        inputs = [{"input_id": "ex_0", "data": {"q": "?"}}]
+
+        await ev._evaluate_outputs(mock_transport, batch, inputs, exec_response)
+
+        sent_request = mock_transport.evaluate.await_args.args[0]
+        assert "target" not in sent_request.evaluations[0]
+        assert "target_id" not in sent_request.evaluations[0]
+
 
 # ---------------------------------------------------------------------------
 # _process_combined_response tests

@@ -1051,6 +1051,7 @@ class TestGetConfigSpaceValidation:
             # Return a coroutine without awaiting — simulates accidental async usage
             async def inner():
                 return [{"name": "accuracy", "direction": "maximize"}]
+
             return inner()
 
         with pytest.raises(
@@ -1199,3 +1200,395 @@ class TestHandleEvaluateEdgeCases:
         agg = resp["aggregate_metrics"]
         assert "accuracy" in agg
         assert "is_valid" not in agg  # Bool excluded
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: TVAR name validation
+# ---------------------------------------------------------------------------
+class TestTVARNameValidation:
+    """TVAR names must match ^[a-zA-Z_][a-zA-Z0-9_]*$ (Python identifiers)."""
+
+    def test_invalid_tvar_name_starts_with_digit(self) -> None:
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"123invalid": {"type": "str", "values": ["a"]}}
+
+        with pytest.raises(ValueError, match="Invalid TVAR name '123invalid'"):
+            svc.get_config_space()
+
+    def test_invalid_tvar_name_with_hyphen(self) -> None:
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"my-param": {"type": "str", "values": ["a"]}}
+
+        with pytest.raises(ValueError, match="Invalid TVAR name 'my-param'"):
+            svc.get_config_space()
+
+    def test_invalid_tvar_name_empty(self) -> None:
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"": {"type": "str", "values": ["a"]}}
+
+        with pytest.raises(ValueError, match="Invalid TVAR name"):
+            svc.get_config_space()
+
+    def test_valid_tvar_name_with_underscore(self) -> None:
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"_my_param_2": {"type": "str", "values": ["a"]}}
+
+        result = svc.get_config_space()
+        assert result["tvars"][0]["name"] == "_my_param_2"
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: execute batch size enforcement
+# ---------------------------------------------------------------------------
+class TestExecuteBatchSizeEnforcement:
+    """Batch size must not exceed max_batch_size from capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_batch_size_exceeds_max(self) -> None:
+        svc = TraigentService(capability_id="test", max_batch_size=2)
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        with pytest.raises(ValueError, match="Batch size 3 exceeds max_batch_size 2"):
+            await svc.handle_execute(
+                {
+                    "capability_id": "test",
+                    "inputs": [
+                        {"input_id": "i1", "data": {}},
+                        {"input_id": "i2", "data": {}},
+                        {"input_id": "i3", "data": {}},
+                    ],
+                }
+            )
+
+    @pytest.mark.asyncio
+    async def test_batch_size_at_limit_succeeds(self) -> None:
+        svc = TraigentService(capability_id="test", max_batch_size=2)
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        resp = await svc.handle_execute(
+            {
+                "capability_id": "test",
+                "inputs": [
+                    {"input_id": "i1", "data": {}},
+                    {"input_id": "i2", "data": {}},
+                ],
+            }
+        )
+        assert resp["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: capability_id mismatch
+# ---------------------------------------------------------------------------
+class TestCapabilityIdValidation:
+    """Requests must match the service's capability_id."""
+
+    @pytest.mark.asyncio
+    async def test_capability_id_mismatch_raises(self) -> None:
+        svc = TraigentService(capability_id="qa_agent")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        with pytest.raises(ValueError, match="capability_id mismatch"):
+            await svc.handle_execute(
+                {
+                    "capability_id": "different_agent",
+                    "inputs": [{"input_id": "i1", "data": {}}],
+                }
+            )
+
+    @pytest.mark.asyncio
+    async def test_missing_capability_id_uses_default(self) -> None:
+        svc = TraigentService(capability_id="qa_agent")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        assert resp["status"] == "completed"
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: NaN/Infinity in metrics
+# ---------------------------------------------------------------------------
+class TestMetricNaNInfFiltering:
+    """NaN and Infinity values must be excluded from metric aggregation."""
+
+    @pytest.mark.asyncio
+    async def test_nan_metrics_excluded_from_execute_aggregation(self) -> None:
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok", "metrics": {"accuracy": float("nan"), "score": 0.9}}
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        qm = resp.get("quality_metrics", {})
+        assert "score" in qm
+        assert "accuracy" not in qm  # NaN excluded
+
+    @pytest.mark.asyncio
+    async def test_inf_metrics_excluded_from_execute_aggregation(self) -> None:
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {
+                "output": "ok",
+                "metrics": {"cost": float("inf"), "latency": 100.0},
+            }
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        qm = resp.get("quality_metrics", {})
+        assert "latency" in qm
+        assert "cost" not in qm  # Inf excluded
+
+    @pytest.mark.asyncio
+    async def test_nan_excluded_from_evaluate_aggregate(self) -> None:
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": float("nan"), "relevance": 0.8}
+
+        resp = await svc.handle_evaluate(
+            {"evaluations": [{"input_id": "e1", "output": "a", "target": "a"}]}
+        )
+        agg = resp["aggregate_metrics"]
+        assert "relevance" in agg
+        assert "accuracy" not in agg  # NaN excluded
+
+    @pytest.mark.asyncio
+    async def test_inf_excluded_from_evaluate_aggregate(self) -> None:
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"loss": float("-inf"), "accuracy": 0.95}
+
+        resp = await svc.handle_evaluate(
+            {"evaluations": [{"input_id": "e1", "output": "a", "target": "a"}]}
+        )
+        agg = resp["aggregate_metrics"]
+        assert "accuracy" in agg
+        assert "loss" not in agg  # -Inf excluded
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: execute edge cases
+# ---------------------------------------------------------------------------
+class TestExecuteContractEdgeCases:
+    """Additional OpenAPI contract edge cases for /execute."""
+
+    @pytest.mark.asyncio
+    async def test_execute_no_config_uses_empty_dict(self) -> None:
+        """Missing config in request defaults to empty dict."""
+        svc = TraigentService()
+        received_config = {}
+
+        @svc.execute
+        def run(input_id, data, config):
+            received_config.update(config)
+            return {"output": "ok"}
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        assert resp["status"] == "completed"
+        assert received_config == {}
+
+    @pytest.mark.asyncio
+    async def test_execute_response_has_required_fields(self) -> None:
+        """Execute response must include all required OpenAPI fields."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok", "cost_usd": 0.01}
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        assert "request_id" in resp
+        assert "execution_id" in resp
+        assert "status" in resp
+        assert "outputs" in resp
+        assert "operational_metrics" in resp
+        assert "total_cost_usd" in resp["operational_metrics"]
+        assert "latency_ms" in resp["operational_metrics"]
+
+    @pytest.mark.asyncio
+    async def test_execute_all_failed_status(self) -> None:
+        """All inputs failing produces status=failed."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RuntimeError("always fails")
+
+        resp = await svc.handle_execute(
+            {
+                "inputs": [
+                    {"input_id": "i1", "data": {}},
+                    {"input_id": "i2", "data": {}},
+                ],
+            }
+        )
+        assert resp["status"] == "failed"
+        assert resp["error"]["code"] == "EXECUTION_FAILED"
+        assert len(resp["error"]["failed_inputs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_handler_returns_non_dict(self) -> None:
+        """Handler returning scalar wraps it as output with cost=0."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return "plain string result"
+
+        resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
+        assert resp["status"] == "completed"
+        assert resp["outputs"][0]["output"] == "plain string result"
+        assert resp["outputs"][0]["cost_usd"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# OpenAPI contract: evaluate edge cases
+# ---------------------------------------------------------------------------
+class TestEvaluateContractEdgeCases:
+    """Additional OpenAPI contract edge cases for /evaluate."""
+
+    @pytest.mark.asyncio
+    async def test_evaluate_empty_list_returns_completed(self) -> None:
+        """Empty evaluations list returns completed with empty results."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        resp = await svc.handle_evaluate({"evaluations": []})
+        assert resp["status"] == "completed"
+        assert resp["results"] == []
+        assert resp["aggregate_metrics"] == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_all_failed_status(self) -> None:
+        """All evaluations failing produces status=failed."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            raise RuntimeError("eval fails")
+
+        resp = await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"input_id": "e1", "output": "a", "target": "a"},
+                    {"input_id": "e2", "output": "b", "target": "b"},
+                ]
+            }
+        )
+        assert resp["status"] == "failed"
+        assert resp["error"]["code"] == "EVALUATION_FAILED"
+        assert len(resp["error"]["failed_inputs"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_evaluate_target_id_forwarding(self) -> None:
+        """target_id should be forwarded as dict when target is None."""
+        svc = TraigentService()
+        received = {}
+
+        @svc.evaluate
+        def score(output, target, config):
+            received["target"] = target
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {
+                        "input_id": "e1",
+                        "output": "result",
+                        "target_id": "target_001",
+                    }
+                ]
+            }
+        )
+        assert received["target"] == {"target_id": "target_001"}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_response_has_required_fields(self) -> None:
+        """Evaluate response must include all required OpenAPI fields."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 0.9}
+
+        resp = await svc.handle_evaluate(
+            {"evaluations": [{"input_id": "e1", "output": "a", "target": "a"}]}
+        )
+        assert "request_id" in resp
+        assert "status" in resp
+        assert "results" in resp
+        assert "aggregate_metrics" in resp
+        result = resp["results"][0]
+        assert "input_id" in result
+        assert "metrics" in result
+
+    @pytest.mark.asyncio
+    async def test_evaluate_aggregate_stats_format(self) -> None:
+        """Aggregate metrics must have mean, std, n fields."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 0.9}
+
+        resp = await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"input_id": "e1", "output": "a", "target": "a"},
+                    {"input_id": "e2", "output": "b", "target": "b"},
+                ]
+            }
+        )
+        agg = resp["aggregate_metrics"]["accuracy"]
+        assert "mean" in agg
+        assert "std" in agg
+        assert "n" in agg
+        assert agg["n"] == 2
+        assert agg["mean"] == 0.9
+
+    @pytest.mark.asyncio
+    async def test_evaluate_handler_returns_scalar(self) -> None:
+        """Handler returning scalar wraps it as {score: value}."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return 0.85
+
+        resp = await svc.handle_evaluate(
+            {"evaluations": [{"input_id": "e1", "output": "a", "target": "a"}]}
+        )
+        assert resp["results"][0]["metrics"] == {"score": 0.85}

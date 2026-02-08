@@ -581,7 +581,9 @@ class HybridAPIEvaluator(BaseEvaluator):
                 evaluation["output"] = None
 
             target_key, target_value = self._extract_target_fields(expected)
-            evaluation[target_key] = target_value
+            # Keep target fields optional per OpenAPI contract.
+            if target_value is not None:
+                evaluation[target_key] = target_value
             evaluations.append(evaluation)
 
         # Call evaluate

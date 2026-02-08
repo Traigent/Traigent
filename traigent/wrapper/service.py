@@ -34,6 +34,8 @@ Example:
 from __future__ import annotations
 
 import inspect
+import math
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -45,6 +47,9 @@ from traigent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 F = TypeVar("F", bound=Callable[..., Any])
+
+# OpenAPI contract: tunable and objective names must be valid Python identifiers.
+_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
 @dataclass
@@ -389,6 +394,11 @@ class TraigentService:
         """Normalize TVAR definitions to TVL format."""
         normalized: dict[str, dict[str, Any]] = {}
         for name, spec in tvars.items():
+            if not _IDENTIFIER_RE.match(name):
+                raise ValueError(
+                    f"Invalid TVAR name '{name}': must be a valid Python identifier "
+                    f"(pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$)"
+                )
             if isinstance(spec, dict):
                 normalized_spec = dict(spec)
                 domain = normalized_spec.get("domain", {})
@@ -471,14 +481,27 @@ class TraigentService:
             raise ValueError("No execute handler registered")
 
         request_id = request.get("request_id", str(uuid.uuid4()))
-        # capability_id from request (default to self.config.capability_id)
-        _ = request.get("capability_id", self.config.capability_id)
+        capability_id = request.get("capability_id", self.config.capability_id)
         config = request.get("config", {})
         inputs = request.get("inputs")
         session_id = request.get("session_id")
 
         if not isinstance(inputs, list) or len(inputs) == 0:
             raise ValueError("inputs must be a non-empty list")
+
+        # Validate capability_id matches this service
+        if capability_id != self.config.capability_id:
+            raise ValueError(
+                f"capability_id mismatch: request has '{capability_id}', "
+                f"service is '{self.config.capability_id}'"
+            )
+
+        # Enforce max_batch_size from capabilities
+        max_batch = self.config.max_batch_size
+        if max_batch and len(inputs) > max_batch:
+            raise ValueError(
+                f"Batch size {len(inputs)} exceeds max_batch_size {max_batch}"
+            )
 
         # Update session if provided
         if session_id:
@@ -697,6 +720,10 @@ class TraigentService:
 
         for metrics in metrics_list:
             for name, value in metrics.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isnan(value) or math.isinf(value):
+                    continue
                 if name not in aggregated:
                     aggregated[name] = 0.0
                     counts[name] = 0
@@ -723,6 +750,8 @@ class TraigentService:
         for metrics in metrics_list:
             for name, value in metrics.items():
                 if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                if math.isnan(value) or math.isinf(value):
                     continue
                 if name not in values_by_metric:
                     values_by_metric[name] = []

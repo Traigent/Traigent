@@ -21,7 +21,9 @@ class TestRedactSensitiveFields:
 
     def test_redact_string_api_key(self):
         """Test that string API keys are redacted."""
-        data = {"api_key": "sk-1234567890abcdef"}  # noqa: S105  # pragma: allowlist secret
+        data = {
+            "api_key": "sk-1234567890abcdef"  # pragma: allowlist secret
+        }  # noqa: S105
         result = TrialOperations._redact_sensitive_fields(data)
         assert "[REDACTED:" in result["api_key"]
         assert "chars]" in result["api_key"]
@@ -113,7 +115,9 @@ class TestMeasuresDictValidationInSubmission:
         """Invalid metric keys trigger MeasuresDict warning but submission continues."""
         mock_client = Mock()
         mock_client.backend_config = Mock()
-        mock_client.backend_config.backend_base_url = "https://api.example.com"  # pragma: allowlist secret
+        mock_client.backend_config.backend_base_url = (
+            "https://api.example.com"  # pragma: allowlist secret
+        )
         mock_client.backend_config.api_base_url = "https://api.example.com"
         mock_client.auth_manager = AsyncMock()
         mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
@@ -161,7 +165,9 @@ class TestMeasuresDictValidationInSubmission:
             mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
             mock_aiohttp.ClientTimeout = Mock()
 
-            with caplog.at_level(logging.WARNING, logger="traigent.cloud.trial_operations"):
+            with caplog.at_level(
+                logging.WARNING, logger="traigent.cloud.trial_operations"
+            ):
                 result = await ops.submit_trial_result_via_session(
                     session_id="test-session",
                     trial_id="test-trial",
