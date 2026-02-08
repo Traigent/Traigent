@@ -86,13 +86,13 @@ CATEGORIES = [
     },
     {
         "name": "ages_already_provided",
-        "expected_behavior": "should_ask_ages",
+        "expected_behavior": "should_not_ask_ages",
         "count": 5,
         "description": (
-            "Queries where the user already provides some age info but the agent "
-            "should still confirm/acknowledge ages for correct pricing. "
-            "E.g., 'my 5-year-old and 8-year-old' — agent should confirm these ages "
-            "and ask if there are additional children."
+            "Queries where the user already provides age info. The agent "
+            "should NOT ask for ages again since they were already provided. "
+            "E.g., 'my 5-year-old and 8-year-old' — ages are known, proceed "
+            "without asking."
         ),
         "context_template": {"has_children": True},
         "examples": [
