@@ -151,6 +151,109 @@ class BayesianOptimizer(BaseOptimizer):
         fixed = []
 
         for param_name, param_values in self.config_space.items():
+            if isinstance(param_values, dict):
+                param_type = str(param_values.get("type", "")).lower()
+
+                if "low" in param_values and "high" in param_values:
+                    low_raw = param_values["low"]
+                    high_raw = param_values["high"]
+
+                    if not isinstance(low_raw, (int, float)) or not isinstance(
+                        high_raw, (int, float)
+                    ):
+                        raise OptimizationError(
+                            f"Parameter '{param_name}' has non-numeric bounds: "
+                            f"low={low_raw!r}, high={high_raw!r}"
+                        )
+
+                    low, high = float(low_raw), float(high_raw)
+                    if low >= high:
+                        raise OptimizationError(
+                            f"Parameter '{param_name}' has invalid bounds: "
+                            f"low ({low}) must be < high ({high})"
+                        )
+
+                    step_raw = param_values.get("step")
+                    step: float | None = None
+                    if step_raw is not None:
+                        if not isinstance(step_raw, (int, float)) or step_raw <= 0:
+                            raise OptimizationError(
+                                f"Parameter '{param_name}' has invalid step: {step_raw!r}"
+                            )
+                        step = float(step_raw)
+
+                    is_integer = param_type in {"int", "integer"}
+                    if is_integer:
+                        if not low.is_integer() or not high.is_integer():
+                            raise OptimizationError(
+                                f"Integer parameter '{param_name}' requires integral "
+                                "low/high bounds"
+                            )
+                        if step is not None and not step.is_integer():
+                            raise OptimizationError(
+                                f"Integer parameter '{param_name}' requires integral step"
+                            )
+
+                    continuous.append(
+                        {
+                            "name": param_name,
+                            "bounds": (low, high),
+                            "type": "continuous",
+                            "is_integer": is_integer,
+                            "step": step,
+                        }
+                    )
+                    continue
+
+                if (
+                    param_type in {"categorical", "choice"}
+                    or "choices" in param_values
+                    or "values" in param_values
+                ):
+                    values = param_values.get("choices") or param_values.get("values")
+                    if not values:
+                        raise OptimizationError(
+                            f"Categorical parameter '{param_name}' requires choices/values"
+                        )
+
+                    if all(isinstance(v, bool) for v in values):
+                        categorical.append(
+                            {
+                                "name": param_name,
+                                "values": list(values),
+                                "type": "boolean",
+                            }
+                        )
+                    else:
+                        categorical.append(
+                            {
+                                "name": param_name,
+                                "values": list(values),
+                                "type": "categorical",
+                            }
+                        )
+                    continue
+
+                if param_type in {"fixed", "constant"}:
+                    if "value" not in param_values:
+                        raise OptimizationError(
+                            f"Fixed parameter '{param_name}' requires a 'value'"
+                        )
+                    fixed.append(
+                        {
+                            "name": param_name,
+                            "value": param_values["value"],
+                            "type": "fixed",
+                        }
+                    )
+                    continue
+
+                # Unknown dict format - keep as fixed to preserve backward compatibility.
+                fixed.append(
+                    {"name": param_name, "value": param_values, "type": "fixed"}
+                )
+                continue
+
             if isinstance(param_values, (list, tuple)) and len(param_values) == 2:
                 # Check for boolean parameters first (since bool is subclass of int)
                 if all(isinstance(v, bool) for v in param_values):
@@ -216,6 +319,22 @@ class BayesianOptimizer(BaseOptimizer):
 
         return {"continuous": continuous, "categorical": categorical, "fixed": fixed}
 
+    @staticmethod
+    def _build_integer_values(low: int, high: int, step: int) -> list[int]:
+        """Build a bounded integer value list, always including high."""
+        values = list(range(low, high + 1, step))
+        if not values:
+            values = [low]
+        if values[-1] != high:
+            values.append(high)
+        return values
+
+    @staticmethod
+    def _snap_float_to_step(value: float, low: float, high: float, step: float) -> float:
+        """Snap float value to step relative to low, then clamp to [low, high]."""
+        snapped = round((value - low) / step) * step + low
+        return min(max(snapped, low), high)
+
     def _config_to_array(self, config: dict[str, Any]) -> np.ndarray[Any, Any]:
         """Convert configuration dictionary to array for GP."""
         array_values = []
@@ -261,12 +380,26 @@ class BayesianOptimizer(BaseOptimizer):
             normalized_value = array[idx]
             bounds = param["bounds"]
             value = bounds[0] + normalized_value * (bounds[1] - bounds[0])
+            step = param.get("step")
 
             # Handle integer parameters
             if param.get("is_integer", False):
-                value = int(round(value))
-                # Ensure we stay within bounds after rounding
-                value = max(int(bounds[0]), min(int(bounds[1]), value))
+                low_i, high_i = int(bounds[0]), int(bounds[1])
+                if step is not None:
+                    step_i = int(step)
+                    candidates = self._build_integer_values(low_i, high_i, step_i)
+                    value = min(candidates, key=lambda candidate: abs(candidate - value))
+                else:
+                    value = int(round(value))
+                    # Ensure we stay within bounds after rounding
+                    value = max(low_i, min(high_i, value))
+            elif step is not None:
+                value = self._snap_float_to_step(
+                    float(value),
+                    float(bounds[0]),
+                    float(bounds[1]),
+                    float(step),
+                )
 
             config[param["name"]] = value
             idx += 1
@@ -296,12 +429,26 @@ class BayesianOptimizer(BaseOptimizer):
         # Random continuous parameters
         for param in self._param_mapping["continuous"]:
             bounds = param["bounds"]
+            step = param.get("step")
             if param.get("is_integer", False):
                 # For integer parameters, sample uniformly from integer range
-                value = np.random.randint(int(bounds[0]), int(bounds[1]) + 1)
+                low_i, high_i = int(bounds[0]), int(bounds[1])
+                if step is not None:
+                    step_i = int(step)
+                    candidates = self._build_integer_values(low_i, high_i, step_i)
+                    value = int(np.random.choice(candidates))
+                else:
+                    value = int(np.random.randint(low_i, high_i + 1))
             else:
                 # For continuous parameters
-                value = np.random.uniform(bounds[0], bounds[1])
+                value = float(np.random.uniform(bounds[0], bounds[1]))
+                if step is not None:
+                    value = self._snap_float_to_step(
+                        float(value),
+                        float(bounds[0]),
+                        float(bounds[1]),
+                        float(step),
+                    )
             config[param["name"]] = value
 
         # Random categorical parameters

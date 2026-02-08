@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from traigent.api.types import TrialResult, TrialStatus
+from traigent.utils.exceptions import OptimizationError
 from traigent.utils.exceptions import ValidationError
 
 # Check if sklearn is available
@@ -86,6 +87,45 @@ class TestBayesianOptimizer:
         # Should handle parameter mapping
         assert hasattr(optimizer, "_param_mapping")
         assert len(optimizer._param_mapping) > 0
+
+    def test_suggest_next_trial_with_untyped_dict_float_range(self):
+        """Untyped dict low/high ranges should be treated as bounded floats."""
+        optimizer = BayesianOptimizer(
+            {"temperature": {"low": 0.0, "high": 1.0, "step": 0.6}},
+            ["accuracy"],
+            initial_random_samples=1,
+            random_seed=42,
+        )
+
+        samples = [optimizer._random_config()["temperature"] for _ in range(100)]
+        assert all(0.0 <= value <= 1.0 for value in samples)
+        assert set(samples).issubset({0.0, 0.6, 1.0})
+        assert all(isinstance(value, float) for value in samples)
+
+    @pytest.mark.parametrize("param_type", ["int", "integer"])
+    def test_suggest_next_trial_with_typed_dict_integer_range(self, param_type):
+        """Typed int/integer dict ranges should emit bounded integer values."""
+        optimizer = BayesianOptimizer(
+            {"k": {"type": param_type, "low": 1, "high": 5, "step": 2}},
+            ["accuracy"],
+            initial_random_samples=1,
+            random_seed=42,
+        )
+
+        samples = [optimizer._random_config()["k"] for _ in range(200)]
+        assert set(samples).issubset({1, 3, 5})
+        assert all(isinstance(value, int) for value in samples)
+
+    @pytest.mark.parametrize("param_type", ["int", "integer"])
+    def test_typed_dict_integer_range_rejects_non_integral_bounds(self, param_type):
+        """Typed integer dict ranges should reject non-integral bounds."""
+        with pytest.raises(
+            OptimizationError, match="requires integral low/high bounds"
+        ):
+            BayesianOptimizer(
+                {"k": {"type": param_type, "low": 1.2, "high": 5.8}},
+                ["accuracy"],
+            )
 
     def test_initialization_with_empty_objectives(self):
         """Bayesian optimizer should accept empty objectives (weighted scoring disabled)."""
