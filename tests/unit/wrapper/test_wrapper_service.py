@@ -318,6 +318,19 @@ class TestGetConfigSpace:
         assert "domain" in tvar
         assert tvar["domain"] == {}
 
+    def test_async_declaration_handler_rejected_without_coroutine_leak(self) -> None:
+        """Async declaration handlers should fail before a coroutine object is created."""
+        svc = TraigentService()
+
+        @svc.objectives
+        async def declared_objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        with pytest.raises(
+            ValueError, match="declaration handlers must be synchronous functions"
+        ):
+            svc.get_config_space()
+
     def test_list_tvars_converted_to_enum(self) -> None:
         """Test that list-type TVAR specs are converted to enum."""
         svc = TraigentService()

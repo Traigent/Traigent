@@ -299,8 +299,14 @@ class TraigentService:
         """Resolve section value from decorator handler or constructor config."""
         if handler is None:
             return configured
+        if inspect.iscoroutinefunction(handler):
+            raise ValueError("declaration handlers must be synchronous functions")
         value = handler()
         if inspect.isawaitable(value):
+            # Defensive: close accidental coroutine objects to avoid runtime warnings.
+            close = getattr(value, "close", None)
+            if callable(close):
+                close()
             raise ValueError("declaration handlers must be synchronous functions")
         return value
 
