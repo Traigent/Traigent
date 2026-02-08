@@ -6,9 +6,8 @@ and all decorator/handler functionality.
 
 from __future__ import annotations
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -304,6 +303,20 @@ class TestGetConfigSpace:
         tvar = result["tvars"][0]
         assert tvar["name"] == "model"
         assert tvar["domain"]["values"] == ["gpt-4", "claude-3"]
+
+    def test_empty_domain_is_preserved(self) -> None:
+        """Explicit empty domain should not be dropped for bool-like TVARs."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"use_cache": {"type": "bool", "domain": {}}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["name"] == "use_cache"
+        assert "domain" in tvar
+        assert tvar["domain"] == {}
 
     def test_list_tvars_converted_to_enum(self) -> None:
         """Test that list-type TVAR specs are converted to enum."""

@@ -711,7 +711,7 @@ class OptimizedFunction:
         effective_mode = getattr(self, "_effective_execution_mode", None)
         return bool(
             effective_mode is ExecutionMode.HYBRID_API
-            and getattr(self, "hybrid_api_auto_discover_tvars", False)
+            and self.hybrid_api_auto_discover_tvars
         )
 
     def _validate_dataset(self) -> None:
@@ -1241,6 +1241,31 @@ class OptimizedFunction:
 
         return updated_algorithm, updated_max_trials, updated_timeout
 
+    def _hybrid_api_evaluator_kwargs(
+        self,
+        *,
+        force_auto_discover_tvars: bool | None = None,
+    ) -> dict[str, Any]:
+        """Build hybrid API kwargs for evaluator construction."""
+        auto_discover = (
+            force_auto_discover_tvars
+            if force_auto_discover_tvars is not None
+            else self.hybrid_api_auto_discover_tvars
+        )
+        return {
+            "hybrid_api_endpoint": self.hybrid_api_endpoint,
+            "hybrid_api_capability_id": self.hybrid_api_capability_id,
+            "hybrid_api_transport": self.hybrid_api_transport,
+            "hybrid_api_transport_type": self.hybrid_api_transport_type,
+            "hybrid_api_batch_size": self.hybrid_api_batch_size,
+            "hybrid_api_batch_parallelism": self.hybrid_api_batch_parallelism,
+            "hybrid_api_keep_alive": self.hybrid_api_keep_alive,
+            "hybrid_api_heartbeat_interval": self.hybrid_api_heartbeat_interval,
+            "hybrid_api_timeout": self.hybrid_api_timeout,
+            "hybrid_api_auth_header": self.hybrid_api_auth_header,
+            "hybrid_api_auto_discover_tvars": auto_discover,
+        }
+
     def _create_effective_evaluator(
         self,
         timeout: float | None,
@@ -1248,6 +1273,8 @@ class OptimizedFunction:
         effective_batch_size: int | None,
         effective_thread_workers: int | None,
         effective_privacy_enabled: bool,
+        *,
+        force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator. Delegates to optimization_pipeline."""
         evaluator, js_pool = create_effective_evaluator(
@@ -1263,24 +1290,8 @@ class OptimizedFunction:
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
-            hybrid_api_endpoint=getattr(self, "hybrid_api_endpoint", None),
-            hybrid_api_capability_id=getattr(self, "hybrid_api_capability_id", None),
-            hybrid_api_transport=getattr(self, "hybrid_api_transport", None),
-            hybrid_api_transport_type=getattr(
-                self, "hybrid_api_transport_type", "auto"
-            ),
-            hybrid_api_batch_size=getattr(self, "hybrid_api_batch_size", 1),
-            hybrid_api_batch_parallelism=getattr(
-                self, "hybrid_api_batch_parallelism", 1
-            ),
-            hybrid_api_keep_alive=getattr(self, "hybrid_api_keep_alive", True),
-            hybrid_api_heartbeat_interval=getattr(
-                self, "hybrid_api_heartbeat_interval", 30.0
-            ),
-            hybrid_api_timeout=getattr(self, "hybrid_api_timeout", None),
-            hybrid_api_auth_header=getattr(self, "hybrid_api_auth_header", None),
-            hybrid_api_auto_discover_tvars=getattr(
-                self, "hybrid_api_auto_discover_tvars", False
+            **self._hybrid_api_evaluator_kwargs(
+                force_auto_discover_tvars=force_auto_discover_tvars
             ),
         )
         if js_pool is not None:
@@ -1497,41 +1508,14 @@ class OptimizedFunction:
         precreated_evaluator: BaseEvaluator | None = None
 
         if hybrid_auto_discovery_enabled:
-            precreated_evaluator, js_process_pool = create_effective_evaluator(
+            precreated_evaluator = self._create_effective_evaluator(
                 timeout=timeout,
                 custom_evaluator=custom_evaluator,
                 effective_batch_size=None,
                 effective_thread_workers=None,
                 effective_privacy_enabled=effective_privacy_enabled,
-                objectives=self.objectives,
-                js_runtime_config=getattr(self, "js_runtime_config", None),
-                execution_mode=self.execution_mode,
-                mock_mode_config=self.mock_mode_config,
-                metric_functions=self.metric_functions,
-                scoring_function=self.scoring_function,
-                decorator_custom_evaluator=self.custom_evaluator,
-                hybrid_api_endpoint=getattr(self, "hybrid_api_endpoint", None),
-                hybrid_api_capability_id=getattr(
-                    self, "hybrid_api_capability_id", None
-                ),
-                hybrid_api_transport=getattr(self, "hybrid_api_transport", None),
-                hybrid_api_transport_type=getattr(
-                    self, "hybrid_api_transport_type", "auto"
-                ),
-                hybrid_api_batch_size=getattr(self, "hybrid_api_batch_size", 1),
-                hybrid_api_batch_parallelism=getattr(
-                    self, "hybrid_api_batch_parallelism", 1
-                ),
-                hybrid_api_keep_alive=getattr(self, "hybrid_api_keep_alive", True),
-                hybrid_api_heartbeat_interval=getattr(
-                    self, "hybrid_api_heartbeat_interval", 30.0
-                ),
-                hybrid_api_timeout=getattr(self, "hybrid_api_timeout", None),
-                hybrid_api_auth_header=getattr(self, "hybrid_api_auth_header", None),
-                hybrid_api_auto_discover_tvars=True,
+                force_auto_discover_tvars=True,
             )
-            if js_process_pool is not None:
-                self._js_process_pool = js_process_pool
 
             pre_discovery_space = (
                 configuration_space
@@ -1632,43 +1616,13 @@ class OptimizedFunction:
         if precreated_evaluator is not None:
             evaluator = precreated_evaluator
         else:
-            evaluator, js_process_pool = create_effective_evaluator(
+            evaluator = self._create_effective_evaluator(
                 timeout=timeout,
                 custom_evaluator=custom_evaluator,
                 effective_batch_size=effective_batch_size,
                 effective_thread_workers=effective_thread_workers,
                 effective_privacy_enabled=effective_privacy_enabled,
-                objectives=self.objectives,
-                js_runtime_config=getattr(self, "js_runtime_config", None),
-                execution_mode=self.execution_mode,
-                mock_mode_config=self.mock_mode_config,
-                metric_functions=self.metric_functions,
-                scoring_function=self.scoring_function,
-                decorator_custom_evaluator=self.custom_evaluator,
-                hybrid_api_endpoint=getattr(self, "hybrid_api_endpoint", None),
-                hybrid_api_capability_id=getattr(
-                    self, "hybrid_api_capability_id", None
-                ),
-                hybrid_api_transport=getattr(self, "hybrid_api_transport", None),
-                hybrid_api_transport_type=getattr(
-                    self, "hybrid_api_transport_type", "auto"
-                ),
-                hybrid_api_batch_size=getattr(self, "hybrid_api_batch_size", 1),
-                hybrid_api_batch_parallelism=getattr(
-                    self, "hybrid_api_batch_parallelism", 1
-                ),
-                hybrid_api_keep_alive=getattr(self, "hybrid_api_keep_alive", True),
-                hybrid_api_heartbeat_interval=getattr(
-                    self, "hybrid_api_heartbeat_interval", 30.0
-                ),
-                hybrid_api_timeout=getattr(self, "hybrid_api_timeout", None),
-                hybrid_api_auth_header=getattr(self, "hybrid_api_auth_header", None),
-                hybrid_api_auto_discover_tvars=getattr(
-                    self, "hybrid_api_auto_discover_tvars", False
-                ),
             )
-            if js_process_pool is not None:
-                self._js_process_pool = js_process_pool
 
         # Phase 7: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
