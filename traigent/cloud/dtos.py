@@ -17,6 +17,32 @@ from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
+# Canonical status strings used by backend DTO payloads.
+# Keep these aligned with cloud.models enums and backend schemas.
+EXPERIMENT_RUN_STATUS_VALUES = frozenset(
+    {"not_started", "pending", "running", "completed", "failed", "cancelled"}
+)
+CONFIGURATION_RUN_STATUS_VALUES = frozenset(
+    {"not_started", "pending", "running", "completed", "failed", "cancelled", "pruned"}
+)
+
+
+def _warn_if_unknown_status(
+    *,
+    status: str,
+    allowed: frozenset[str],
+    dto_name: str,
+) -> None:
+    """Log unknown status values while preserving backward compatibility."""
+    if status not in allowed:
+        logger.warning(
+            "%s received non-canonical status '%s'. Allowed statuses: %s",
+            dto_name,
+            status,
+            sorted(allowed),
+        )
+
+
 # Try to import optigen_schemas for validation (optional)
 try:
     from optigen_schemas.validator import SchemaValidator
@@ -439,6 +465,11 @@ class ExperimentRunDTO:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=EXPERIMENT_RUN_STATUS_VALUES,
+            dto_name="ExperimentRunDTO",
+        )
         result: dict[str, Any] = {
             "id": self.id,
             "experiment_id": self.experiment_id,
@@ -486,6 +517,11 @@ class ConfigurationRunDTO:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API submission."""
+        _warn_if_unknown_status(
+            status=self.status,
+            allowed=CONFIGURATION_RUN_STATUS_VALUES,
+            dto_name="ConfigurationRunDTO",
+        )
         result: dict[str, Any] = {
             "id": self.id,
             "experiment_run_id": self.experiment_run_id,

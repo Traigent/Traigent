@@ -21,10 +21,7 @@ from traigent.hybrid.protocol import (
     HybridExecuteResponse,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import (
-    TransportConnectionError,
-    TransportError,
-)
+from traigent.hybrid.transport import TransportConnectionError, TransportError
 from traigent.utils.logging import get_logger
 
 if TYPE_CHECKING:
@@ -310,8 +307,12 @@ class MCPTransport:
 
         try:
             data = await self._call_tool("keep_alive", {"session_id": session_id})
-            alive: bool = data.get("alive", False)
-            return alive
+            status = data.get("status")
+            if isinstance(status, str):
+                return status.lower() == "alive"
+
+            # Backward compatibility with older integrations.
+            return bool(data.get("alive", False))
         except TransportError as e:
             # Session expired or invalid
             if "not found" in str(e).lower():

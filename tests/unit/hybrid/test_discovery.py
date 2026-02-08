@@ -36,6 +36,34 @@ class TestConfigSpaceDiscovery:
                         domain={"range": [0.0, 2.0], "resolution": 0.1},
                     ),
                 ],
+                constraints={
+                    "structural": [
+                        {
+                            "id": "temp_bound",
+                            "expr": "params.temperature >= 0.0",
+                        }
+                    ]
+                },
+                objectives=[
+                    {"name": "accuracy", "direction": "maximize", "weight": 2.0},
+                    {"name": "cost", "direction": "minimize", "weight": 1.0},
+                ],
+                exploration={
+                    "strategy": "nsga2",
+                    "budgets": {"max_trials": 25, "max_spend_usd": 5.0},
+                    "convergence": {
+                        "metric": "hypervolume_improvement",
+                        "window": 5,
+                        "threshold": 0.01,
+                    },
+                },
+                promotion_policy={
+                    "dominance": "epsilon_pareto",
+                    "alpha": 0.05,
+                    "min_effect": {"accuracy": 0.02},
+                },
+                defaults={"model": "gpt-4", "temperature": 0.4},
+                measures=["accuracy", "cost"],
             )
         )
         return transport
@@ -97,6 +125,45 @@ class TestConfigSpaceDiscovery:
         assert len(tvars) == 2
 
     @pytest.mark.asyncio
+    async def test_get_optional_optimization_sections(
+        self, discovery: ConfigSpaceDiscovery
+    ) -> None:
+        """Optional optimization metadata is available after discovery."""
+        await discovery.fetch()
+        assert discovery.get_objectives() is not None
+        assert discovery.get_exploration() is not None
+        assert discovery.get_promotion_policy() is not None
+        assert discovery.get_defaults() == {"model": "gpt-4", "temperature": 0.4}
+        assert discovery.get_measures() == ["accuracy", "cost"]
+
+    @pytest.mark.asyncio
+    async def test_build_optimization_spec(
+        self, discovery: ConfigSpaceDiscovery
+    ) -> None:
+        """Build optimizer-compatible spec from config-space metadata."""
+        spec = await discovery.build_optimization_spec()
+        assert spec["configuration_space"]["model"] == ["gpt-4", "claude-3"]
+        assert spec["default_config"] == {"model": "gpt-4", "temperature": 0.4}
+        assert spec["objective_schema"] is not None
+        assert spec["promotion_policy"] is not None
+        assert spec["runtime_overrides"]["algorithm"] == "nsga2"
+        assert spec["runtime_overrides"]["max_trials"] == 25
+        assert spec["runtime_overrides"]["cost_limit"] == 5.0
+        assert (
+            spec["runtime_overrides"]["convergence_metric"] == "hypervolume_improvement"
+        )
+        assert len(spec["constraints"]) >= 1
+        assert spec["measures"] == ["accuracy", "cost"]
+
+    @pytest.mark.asyncio
+    async def test_build_tvl_artifact_alias(
+        self, discovery: ConfigSpaceDiscovery
+    ) -> None:
+        """Legacy alias delegates to build_optimization_spec()."""
+        spec = await discovery.build_tvl_artifact()
+        assert "configuration_space" in spec
+
+    @pytest.mark.asyncio
     async def test_clear_cache(
         self, discovery: ConfigSpaceDiscovery, mock_transport: MagicMock
     ) -> None:
@@ -107,6 +174,28 @@ class TestConfigSpaceDiscovery:
         # Should fetch again after cache clear
         await discovery.fetch()
         assert mock_transport.discover_config_space.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_build_optimization_spec_with_legacy_text_constraints(self) -> None:
+        """Legacy textual constraint maps are normalized for parsing."""
+        transport = MagicMock()
+        transport.discover_config_space = AsyncMock(
+            return_value=ConfigSpaceResponse(
+                schema_version="0.9",
+                capability_id="legacy_agent",
+                tvars=[
+                    TVARDefinition(
+                        name="temperature",
+                        type="float",
+                        domain={"range": [0.0, 1.0]},
+                    )
+                ],
+                constraints={"hard": ["params.temperature <= 1.0"]},
+            )
+        )
+        discovery = ConfigSpaceDiscovery(transport)
+        spec = await discovery.build_optimization_spec()
+        assert len(spec["constraints"]) == 1
 
 
 class TestConfigSpaceDiscoveryWithTools:
@@ -356,3 +445,110 @@ class TestValidateConfigAgainstTvars:
         errors = validate_config_against_tvars(config, tvars)
 
         assert any("temperature" in e and "expected float" in e for e in errors)
+
+
+class TestNormalizeConstraintsForParsing:
+    """Tests for _normalize_constraints_for_parsing static method."""
+
+    def test_none_returns_none(self) -> None:
+        """None constraints pass through."""
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(None)
+        assert result is None
+
+    def test_list_returns_list(self) -> None:
+        """List constraints pass through unchanged."""
+        constraints = [{"id": "c1", "type": "expression", "rule": "x > 0"}]
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert result is constraints
+
+    def test_non_dict_non_list_returns_none(self) -> None:
+        """Non-dict, non-list input returns None."""
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(42)  # type: ignore[arg-type]
+        assert result is None
+
+    def test_typed_constraints_pass_through(self) -> None:
+        """TVL 0.9 typed constraints with 'structural'/'derived' keys pass through."""
+        constraints = {"structural": [{"expr": "x > 0"}], "derived": []}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert result is constraints
+
+    def test_legacy_text_constraints_with_non_list_entries_skipped(self) -> None:
+        """Legacy constraints where group value is not a list are skipped."""
+        constraints = {"hard": "not_a_list", "soft": ["x > 0"]}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["rule"] == "x > 0"
+
+    def test_legacy_dict_entries_appended(self) -> None:
+        """Legacy constraint entries that are already dicts are passed through."""
+        entry = {"id": "c1", "type": "expression", "rule": "x > 0"}
+        constraints = {"hard": [entry]}
+        result = ConfigSpaceDiscovery._normalize_constraints_for_parsing(constraints)
+        assert isinstance(result, list)
+        assert result[0] is entry
+
+
+class TestDiscoveryGettersBeforeFetch:
+    """Test discovery getters return None/empty before fetch."""
+
+    def test_get_promotion_policy_before_fetch(self) -> None:
+        """get_promotion_policy returns None when not yet fetched."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_promotion_policy() is None
+
+    def test_get_objectives_before_fetch(self) -> None:
+        """get_objectives returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_objectives() is None
+
+    def test_get_exploration_before_fetch(self) -> None:
+        """get_exploration returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_exploration() is None
+
+    def test_get_defaults_before_fetch(self) -> None:
+        """get_defaults returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_defaults() is None
+
+    def test_get_measures_before_fetch(self) -> None:
+        """get_measures returns None before fetch."""
+        transport = MagicMock()
+        discovery = ConfigSpaceDiscovery(transport)
+        assert discovery.get_measures() is None
+
+
+class TestBuildOptimizationSpecDerivedConstraints:
+    """Test build_optimization_spec with derived constraints."""
+
+    @pytest.mark.asyncio
+    async def test_derived_constraints_compiled(self) -> None:
+        """Derived constraints from response are compiled into wrappers."""
+        transport = MagicMock()
+        transport.discover_config_space = AsyncMock(
+            return_value=ConfigSpaceResponse(
+                schema_version="0.9",
+                capability_id="derived_agent",
+                tvars=[
+                    TVARDefinition(
+                        name="temperature",
+                        type="float",
+                        domain={"range": [0.0, 1.0]},
+                    )
+                ],
+                constraints={
+                    "derived": [
+                        {"require": "params.temperature <= 0.9", "when": "True"}
+                    ]
+                },
+            )
+        )
+        discovery = ConfigSpaceDiscovery(transport)
+        spec = await discovery.build_optimization_spec()
+        assert len(spec["constraints"]) >= 1
+        assert spec["derived_constraints"] is not None

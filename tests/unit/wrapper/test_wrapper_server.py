@@ -187,7 +187,11 @@ class TestCreateAppRoutes:
     @pytest.fixture
     def service(self) -> TraigentService:
         """Create a TraigentService with handlers registered."""
-        svc = TraigentService(capability_id="test_svc", version="1.0")
+        svc = TraigentService(
+            capability_id="test_svc",
+            version="1.0",
+            supports_keep_alive=True,
+        )
 
         @svc.tvars
         def cfg():
@@ -305,7 +309,8 @@ class TestCreateAppRoutes:
             send,
         )
         assert send.status == 200
-        assert send.body_json["alive"] is True
+        assert send.body_json["status"] == "alive"
+        assert send.body_json["session_id"] == sid
 
     @pytest.mark.asyncio
     async def test_keep_alive_missing_session(self, app, service) -> None:
@@ -317,8 +322,10 @@ class TestCreateAppRoutes:
             _make_receive(request_body),
             send,
         )
-        assert send.status == 404
-        assert send.body_json["alive"] is False
+        # Wrapper now auto-creates keep-alive sessions for stateful integrations.
+        assert send.status == 200
+        assert send.body_json["status"] == "alive"
+        assert send.body_json["session_id"] == "nonexistent"
 
     # --- 404 for unknown routes ---
     @pytest.mark.asyncio
@@ -331,7 +338,8 @@ class TestCreateAppRoutes:
             send,
         )
         assert send.status == 404
-        assert "Not found" in send.body_json["error"]
+        assert send.body_json["error"]["code"] == "NOT_FOUND"
+        assert "Not found" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_wrong_method_returns_404(self, app) -> None:
@@ -380,7 +388,8 @@ class TestCreateAppErrorHandling:
             send,
         )
         assert send.status == 400
-        assert "Invalid JSON" in send.body_json["error"]
+        assert send.body_json["error"]["code"] == "INVALID_JSON"
+        assert "Invalid JSON" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_value_error_returns_400(self) -> None:
@@ -396,7 +405,8 @@ class TestCreateAppErrorHandling:
             send,
         )
         assert send.status == 400
-        assert "No execute handler" in send.body_json["error"]
+        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
+        assert "No execute handler" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_generic_exception_returns_500(self) -> None:
@@ -412,7 +422,8 @@ class TestCreateAppErrorHandling:
             send,
         )
         assert send.status == 500
-        assert "unexpected" in send.body_json["error"]
+        assert send.body_json["error"]["code"] == "INTERNAL_ERROR"
+        assert "unexpected" in send.body_json["error"]["message"]
 
     @pytest.mark.asyncio
     async def test_empty_body_treated_as_empty_dict(self) -> None:
@@ -430,8 +441,8 @@ class TestCreateAppErrorHandling:
             _make_receive(b""),
             send,
         )
-        # Should succeed with empty inputs
-        assert send.status == 200
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "INVALID_REQUEST"
 
 
 # ---------------------------------------------------------------------------
@@ -509,3 +520,54 @@ class TestRunServer:
         app = MagicMock()
         with pytest.raises(ValueError, match="Unknown server"):
             run_server(app, server="gunicorn")  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# _make_error_response tests
+# ---------------------------------------------------------------------------
+class TestMakeErrorResponse:
+    """Tests for _make_error_response helper."""
+
+    def test_without_details(self) -> None:
+        """Test error response without details."""
+        from traigent.wrapper.server import _make_error_response
+
+        result = _make_error_response("ERR_CODE", "Something went wrong")
+        assert result == {"error": {"code": "ERR_CODE", "message": "Something went wrong"}}
+
+    def test_with_details(self) -> None:
+        """Test error response with details included."""
+        from traigent.wrapper.server import _make_error_response
+
+        result = _make_error_response(
+            "VALIDATION_ERROR",
+            "Bad input",
+            details={"field": "temperature", "reason": "out of range"},
+        )
+        assert result["error"]["code"] == "VALIDATION_ERROR"
+        assert result["error"]["details"]["field"] == "temperature"
+
+
+# ---------------------------------------------------------------------------
+# Keep-alive 404 path test
+# ---------------------------------------------------------------------------
+class TestKeepAlive404:
+    """Test keep-alive returns 404 when session is not found."""
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_returns_404_when_session_not_found(self) -> None:
+        """Keep-alive for unknown session with keep_alive disabled returns 404."""
+        svc = TraigentService(
+            capability_id="test_svc",
+            supports_keep_alive=False,
+        )
+        app = create_app(svc)
+        request_body = json.dumps({"session_id": "nonexistent"}).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", KEEP_ALIVE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 404
+        assert send.body_json["error"]["code"] == "SESSION_NOT_FOUND"

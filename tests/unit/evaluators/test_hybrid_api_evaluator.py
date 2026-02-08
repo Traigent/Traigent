@@ -351,6 +351,9 @@ class TestDiscoverConfigSpace:
             }
         )
         mock_discovery.get_capability_id = MagicMock(return_value="discovered_cap")
+        mock_discovery.build_optimization_spec = AsyncMock(
+            return_value={"runtime_overrides": {"max_trials": 50}}
+        )
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -362,6 +365,7 @@ class TestDiscoverConfigSpace:
             "model": ["gpt-4", "claude-3"],
             "temperature": {"low": 0, "high": 1},
         }
+        assert evaluator.optimization_spec == {"runtime_overrides": {"max_trials": 50}}
 
     @pytest.mark.asyncio
     async def test_discover_updates_capability_id_when_none(
@@ -376,6 +380,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="auto_cap")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -393,6 +398,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="other")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -410,6 +416,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="cap")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -458,7 +465,6 @@ class TestEnsureLifecycleManager:
         )
 
         mock_lm = MagicMock()
-        mock_lm.create_session = MagicMock(return_value="session-abc")
         mock_lm.register = AsyncMock()
 
         ev = HybridAPIEvaluator(
@@ -474,8 +480,8 @@ class TestEnsureLifecycleManager:
             await ev._ensure_lifecycle_manager()
 
         assert ev._lifecycle_manager is mock_lm
-        assert ev._session_id == "session-abc"
-        mock_lm.register.assert_awaited_once_with("session-abc")
+        assert ev._session_id is None
+        mock_lm.register.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_idempotent(self, mock_transport: MagicMock) -> None:
@@ -484,7 +490,6 @@ class TestEnsureLifecycleManager:
             return_value=_default_capabilities(supports_keep_alive=True)
         )
         mock_lm = MagicMock()
-        mock_lm.create_session = MagicMock(return_value="s1")
         mock_lm.register = AsyncMock()
 
         ev = HybridAPIEvaluator(transport=mock_transport, keep_alive=True)
@@ -496,6 +501,27 @@ class TestEnsureLifecycleManager:
             await ev._ensure_lifecycle_manager()
             await ev._ensure_lifecycle_manager()
             mock_cls.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_registers_existing_session_id(
+        self, mock_transport: MagicMock
+    ) -> None:
+        """Registers keep-alive only after a real session_id is known."""
+        mock_transport.capabilities = AsyncMock(
+            return_value=_default_capabilities(supports_keep_alive=True)
+        )
+        mock_lm = MagicMock()
+        mock_lm.register = AsyncMock()
+        ev = HybridAPIEvaluator(transport=mock_transport, keep_alive=True)
+        ev._session_id = "session-abc"
+
+        with patch(
+            "traigent.evaluators.hybrid_api.AgentLifecycleManager",
+            return_value=mock_lm,
+        ):
+            await ev._ensure_lifecycle_manager()
+
+        mock_lm.register.assert_awaited_once_with("session-abc")
 
 
 # ---------------------------------------------------------------------------

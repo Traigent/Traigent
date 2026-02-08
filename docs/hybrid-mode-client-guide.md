@@ -510,28 +510,27 @@ import traigent
     execution_mode="hybrid_api",
     hybrid_api_endpoint="http://your-service:8080",
     capability_id="my_agent",
+    eval_dataset=my_dataset,
 
-    # Auto-discover tunables from API
-    configuration_space=None,
-
-    # Or override specific tunables
-    # configuration_space={
-    #     "model": ["fast", "accurate"],  # Subset of available
-    #     "temperature": {"low": 0.0, "high": 1.0},
-    # },
+    # Provide tunables/configuration space for optimizer search
+    configuration_space={
+        "model": ["fast", "accurate", "balanced"],
+        "temperature": (0.0, 1.0),
+    },
 
     # Optimization settings
     max_trials=50,
     cost_limit=10.0,
-    batch_size=10,
+    hybrid_api_batch_size=10,
+    hybrid_api_batch_parallelism=2,
 
     # Objectives (use your custom metric names)
-    objectives=["accuracy", "total_cost_usd", "latency_ms"],
+    objectives=["accuracy", "cost", "latency"],
 )
-def my_agent():
-    pass  # Not used in hybrid mode
+def my_agent(_query: str):
+    return ""  # Execution is delegated to the external hybrid API
 
-result = traigent.run(my_agent, dataset=my_dataset)
+result = my_agent.optimize()
 print(f"Best config: {result.best_config}")
 print(f"Best metrics: {result.best_metrics}")
 ```
