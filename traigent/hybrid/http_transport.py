@@ -94,12 +94,21 @@ class HTTPTransport:
                 max_keepalive_connections=self.max_connections,
             )
 
+            # Use HTTP/2 if h2 package is available, fall back to HTTP/1.1
+            try:
+                import h2  # noqa: F401
+
+                use_http2 = True
+            except ImportError:
+                use_http2 = False
+                logger.debug("h2 package not installed, using HTTP/1.1")
+
             self._client = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=headers,
                 timeout=httpx.Timeout(self.timeout),
                 limits=limits,
-                http2=True,  # Enable HTTP/2 for better performance
+                http2=use_http2,
             )
             self._closed = False
 

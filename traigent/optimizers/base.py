@@ -256,7 +256,17 @@ class BaseOptimizer(ABC):
         Returns:
             Cardinality count, 0 for empty, or None for continuous types.
         """
-        param_type = (definition.get("type") or "categorical").lower()
+        # Detect range dicts from hybrid discovery ({"low": x, "high": y})
+        # before falling back to "categorical" default
+        has_range = "low" in definition and "high" in definition
+        param_type = (definition.get("type") or "").lower()
+
+        if not param_type and has_range:
+            # No explicit type but has low/high → continuous float range
+            return None
+
+        if not param_type:
+            param_type = "categorical"
 
         if param_type in {"fixed", "constant"}:
             return 1
