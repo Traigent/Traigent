@@ -166,18 +166,26 @@ class TestHybridEvaluateResponse:
         """Test creating response from dictionary."""
         data = {
             "request_id": "req_123",
-            "status": "completed",
+            "status": "partial",
             "results": [{"input_id": "1", "metrics": {"accuracy": 0.95}}],
             "aggregate_metrics": {"accuracy": {"mean": 0.95, "std": 0.02, "n": 10}},
+            "error": {
+                "code": "EVALUATION_PARTIAL_FAILURE",
+                "message": "One or more items failed during evaluation",
+                "failed_inputs": ["2"],
+            },
         }
 
         response = HybridEvaluateResponse.from_dict(data)
 
         assert response.request_id == "req_123"
-        assert response.status == "completed"
+        assert response.status == "partial"
         assert len(response.results) == 1
         assert response.results[0]["metrics"]["accuracy"] == 0.95
         assert response.aggregate_metrics["accuracy"]["mean"] == 0.95
+        assert response.aggregate_metrics["accuracy"]["n"] == 10
+        assert response.error is not None
+        assert response.error["code"] == "EVALUATION_PARTIAL_FAILURE"
 
 
 class TestServiceCapabilities:
@@ -275,6 +283,28 @@ class TestTVARDefinition:
         assert tvar.name == "test_var"
         assert tvar.is_tool is True
         assert len(tvar.constraints) == 1
+
+    def test_from_dict_accepts_top_level_values(self) -> None:
+        """Top-level values are normalized into domain.values."""
+        data = {
+            "name": "model",
+            "type": "enum",
+            "values": ["gpt-4", "claude-3"],
+        }
+        tvar = TVARDefinition.from_dict(data)
+        assert tvar.domain["values"] == ["gpt-4", "claude-3"]
+
+    def test_from_dict_accepts_top_level_range(self) -> None:
+        """Top-level range/resolution are normalized into domain."""
+        data = {
+            "name": "temperature",
+            "type": "float",
+            "range": [0.0, 1.0],
+            "resolution": 0.1,
+        }
+        tvar = TVARDefinition.from_dict(data)
+        assert tvar.domain["range"] == [0.0, 1.0]
+        assert tvar.domain["resolution"] == 0.1
 
 
 class TestConfigSpaceResponse:

@@ -12,6 +12,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from traigent.utils.logging import get_logger
+
+logger = get_logger(__name__)
+
 
 @dataclass(slots=True)
 class BatchOptions:
@@ -49,6 +53,19 @@ class HybridExecuteRequest:
     session_id: str | None = None
     batch_options: BatchOptions | None = None
     timeout_ms: int = 30000
+
+    def __post_init__(self) -> None:
+        """Log malformed inputs that violate the OpenAPI contract."""
+        missing_indices: list[int] = []
+        for idx, item in enumerate(self.inputs):
+            if not isinstance(item, dict) or "input_id" not in item:
+                missing_indices.append(idx)
+
+        if missing_indices:
+            logger.warning(
+                "HybridExecuteRequest inputs missing required input_id at indices %s",
+                missing_indices,
+            )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
@@ -166,7 +183,8 @@ class HybridEvaluateResponse:
     request_id: str
     status: Literal["completed", "partial", "failed"]
     results: list[dict[str, Any]]
-    aggregate_metrics: dict[str, dict[str, float]]
+    aggregate_metrics: dict[str, dict[str, float | int]]
+    error: dict[str, Any] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HybridEvaluateResponse:
@@ -176,6 +194,7 @@ class HybridEvaluateResponse:
             status=data["status"],
             results=data.get("results", []),
             aggregate_metrics=data.get("aggregate_metrics", {}),
+            error=data.get("error"),
         )
 
 
@@ -242,10 +261,22 @@ class TVARDefinition:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TVARDefinition:
         """Create from dictionary (API response)."""
+        domain = data.get("domain", {})
+        if not isinstance(domain, dict):
+            domain = {}
+
+        # Accept wrapper-friendly top-level values/range/resolution keys.
+        if "values" in data and "values" not in domain:
+            domain["values"] = data["values"]
+        if "range" in data and "range" not in domain:
+            domain["range"] = data["range"]
+        if "resolution" in data and "resolution" not in domain:
+            domain["resolution"] = data["resolution"]
+
         return cls(
             name=data["name"],
             type=data["type"],
-            domain=data.get("domain", {}),
+            domain=domain,
             default=data.get("default"),
             agent=data.get("agent"),
             is_tool=data.get("is_tool", False),
