@@ -86,12 +86,14 @@ See `docs/features/constraint-dsl.md` for full syntax and precedence details.
 
 ### Choices Presets
 
-- `Choices.model(provider=None, tier="balanced")`
-- `Choices.prompting_strategy()`
-- `Choices.context_format()`
-- `Choices.retriever_type()`
-- `Choices.embedding_model(provider=None)`
-- `Choices.reranker_model()`
+- `Choices.model(provider=None, tier="balanced")` — provider/tier-dependent model list
+- `Choices.prompting_strategy()` — `["direct", "chain_of_thought", "react", "self_consistency"]`
+- `Choices.context_format()` — `["bullet", "numbered", "xml", "markdown", "json"]`
+- `Choices.retriever_type()` — `["similarity", "mmr", "bm25", "hybrid"]`
+- `Choices.embedding_model(provider=None)` — `["text-embedding-3-small", "text-embedding-3-large"]`
+- `Choices.reranker_model()` — `["none", "cohere-rerank-v3", "cross-encoder/ms-marco-MiniLM-L-6-v2", "llm-rerank"]`
+
+For usage examples of each preset, see [What Can You Optimize?](what-can-you-optimize.md).
 
 ## Notes
 
