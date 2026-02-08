@@ -142,6 +142,7 @@ class TraigentService:
 
         # Session management
         self._sessions: dict[str, Session] = {}
+        self._started_at: float = time.time()
 
         # Cached config space
         self._cached_tvars: dict[str, Any] | None = None
@@ -226,34 +227,59 @@ class TraigentService:
         """Get TVAR definitions.
 
         Returns:
-            Dictionary with schema_version, capability_id, and tvars.
+            Dictionary with schema_version, capability_id, and tunables.
         """
         if self._cached_tvars is None and self._tvars_handler is not None:
             tvars_dict = self._tvars_handler()
+            if not isinstance(tvars_dict, dict):
+                raise ValueError("tunables handler must return a dict")
             # Convert to TVL format if needed
             self._cached_tvars = self._normalize_tvars(tvars_dict)
 
         tvars = self._cached_tvars or {}
+        tunables = [{"name": name, **spec} for name, spec in tvars.items()]
 
         return {
             "schema_version": self.config.schema_version,
             "capability_id": self.config.capability_id,
-            "tvars": [{"name": name, **spec} for name, spec in tvars.items()],
+            "tunables": tunables,
+            "tvars": tunables,  # Backward compatibility alias
             "constraints": {},
         }
 
     def _normalize_tvars(self, tvars: dict[str, Any]) -> dict[str, Any]:
         """Normalize TVAR definitions to TVL format."""
-        normalized = {}
+        normalized: dict[str, dict[str, Any]] = {}
         for name, spec in tvars.items():
             if isinstance(spec, dict):
-                normalized[name] = spec
+                normalized_spec = dict(spec)
+                domain = normalized_spec.get("domain", {})
+                if not isinstance(domain, dict):
+                    domain = {}
+
+                # Accept wrapper-friendly top-level values/range/resolution and
+                # normalize to contract-compliant nested domain shape.
+                if "values" in normalized_spec and "values" not in domain:
+                    domain["values"] = normalized_spec.pop("values")
+                if "range" in normalized_spec and "range" not in domain:
+                    domain["range"] = normalized_spec.pop("range")
+                if "resolution" in normalized_spec and "resolution" not in domain:
+                    domain["resolution"] = normalized_spec.pop("resolution")
+
+                if domain:
+                    normalized_spec["domain"] = domain
+
+                normalized[name] = normalized_spec
             elif isinstance(spec, list):
                 # List of values -> enum type
                 normalized[name] = {"type": "enum", "domain": {"values": spec}}
             else:
                 # Scalar default value
-                normalized[name] = {"type": "str", "default": spec}
+                normalized[name] = {
+                    "type": "str",
+                    "domain": {"values": [spec]},
+                    "default": spec,
+                }
         return normalized
 
     def get_capabilities(self) -> dict[str, Any]:
@@ -268,6 +294,7 @@ class TraigentService:
             "supports_keep_alive": self.config.supports_keep_alive,
             "supports_streaming": self.config.supports_streaming,
             "max_batch_size": self.config.max_batch_size,
+            "max_payload_bytes": None,
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -276,11 +303,15 @@ class TraigentService:
         Returns:
             Dictionary with status and details.
         """
+        uptime_seconds = max(0.0, time.time() - self._started_at)
         return {
             "status": "healthy",
             "version": self.config.version,
-            "capability_id": self.config.capability_id,
-            "active_sessions": len(self._sessions),
+            "uptime_seconds": uptime_seconds,
+            "details": {
+                "capability_id": self.config.capability_id,
+                "active_sessions": len(self._sessions),
+            },
         }
 
     async def handle_execute(
@@ -305,21 +336,29 @@ class TraigentService:
         # capability_id from request (default to self.config.capability_id)
         _ = request.get("capability_id", self.config.capability_id)
         config = request.get("config", {})
-        inputs = request.get("inputs", [])
+        inputs = request.get("inputs")
         session_id = request.get("session_id")
 
+        if not isinstance(inputs, list) or len(inputs) == 0:
+            raise ValueError("inputs must be a non-empty list")
+
         # Update session if provided
-        if session_id and session_id in self._sessions:
-            self._sessions[session_id].touch()
+        if session_id:
+            self._touch_or_create_session(session_id)
 
         start_time = time.time()
         outputs: list[dict[str, Any]] = []
         total_cost = 0.0
         all_quality_metrics: list[dict[str, float]] = []
+        failed_input_ids: list[str] = []
 
         for inp in inputs:
-            input_id = inp.get("input_id", str(uuid.uuid4()))
-            data = inp.get("data", inp)
+            if isinstance(inp, dict):
+                input_id = str(inp.get("input_id", str(uuid.uuid4())))
+                data = inp.get("data", inp)
+            else:
+                input_id = str(uuid.uuid4())
+                data = inp
 
             try:
                 # Call handler
@@ -330,28 +369,38 @@ class TraigentService:
                 # Extract output and metrics
                 if isinstance(result, dict):
                     output = result.get("output", result)
-                    cost = result.get("cost_usd", 0.0)
-                    metrics = result.get("metrics", {})
+                    cost = float(result.get("cost_usd", 0.0) or 0.0)
+                    latency_ms = result.get("latency_ms")
+                    metrics = (
+                        result.get("metrics")
+                        if isinstance(result.get("metrics"), dict)
+                        else {}
+                    )
                 else:
                     output = result
                     cost = 0.0
+                    latency_ms = None
                     metrics = {}
 
                 total_cost += cost
                 if metrics:
                     all_quality_metrics.append(metrics)
 
-                outputs.append(
-                    {
-                        "input_id": input_id,
-                        "output": output,
-                        "cost_usd": cost,
-                        "metrics": metrics,
-                    }
-                )
+                output_item: dict[str, Any] = {
+                    "input_id": input_id,
+                    "output": output,
+                    "cost_usd": cost,
+                }
+                if isinstance(latency_ms, (int, float)):
+                    output_item["latency_ms"] = float(latency_ms)
+                if metrics:
+                    output_item["metrics"] = metrics
+
+                outputs.append(output_item)
 
             except Exception as e:
                 logger.error(f"Execute failed for {input_id}: {e}")
+                failed_input_ids.append(input_id)
                 outputs.append(
                     {
                         "input_id": input_id,
@@ -360,11 +409,18 @@ class TraigentService:
                 )
 
         elapsed_ms = (time.time() - start_time) * 1000
+        successful_outputs = len(outputs) - len(failed_input_ids)
+        if successful_outputs == 0 and outputs:
+            status = "failed"
+        elif failed_input_ids:
+            status = "partial"
+        else:
+            status = "completed"
 
         response: dict[str, Any] = {
             "request_id": request_id,
             "execution_id": str(uuid.uuid4()),
-            "status": "completed",
+            "status": status,
             "outputs": outputs,
             "operational_metrics": {
                 "total_cost_usd": total_cost,
@@ -372,6 +428,17 @@ class TraigentService:
                 "latency_ms": elapsed_ms,
             },
         }
+
+        if failed_input_ids:
+            response["error"] = {
+                "code": (
+                    "EXECUTION_PARTIAL_FAILURE"
+                    if status == "partial"
+                    else "EXECUTION_FAILED"
+                ),
+                "message": "One or more inputs failed during execution",
+                "failed_inputs": failed_input_ids,
+            }
 
         # Include quality metrics if available (combined mode)
         if all_quality_metrics:
@@ -405,17 +472,25 @@ class TraigentService:
         config = request.get("config", {})
         session_id = request.get("session_id")
 
+        if not isinstance(evaluations, list):
+            raise ValueError("evaluations must be a list")
+
         # Update session if provided
-        if session_id and session_id in self._sessions:
-            self._sessions[session_id].touch()
+        if session_id:
+            self._touch_or_create_session(session_id)
 
         results: list[dict[str, Any]] = []
         all_metrics: list[dict[str, float]] = []
+        failed_input_ids: list[str] = []
 
         for evaluation in evaluations:
             input_id = evaluation.get("input_id", str(uuid.uuid4()))
             output = evaluation.get("output")
+            if output is None and "output_id" in evaluation:
+                output = {"output_id": evaluation["output_id"]}
             target = evaluation.get("target")
+            if target is None and "target_id" in evaluation:
+                target = {"target_id": evaluation["target_id"]}
 
             try:
                 # Call handler
@@ -435,19 +510,40 @@ class TraigentService:
 
             except Exception as e:
                 logger.error(f"Evaluate failed for {input_id}: {e}")
+                failed_input_ids.append(input_id)
                 results.append(
                     {
                         "input_id": input_id,
+                        "metrics": {},
                         "error": str(e),
                     }
                 )
 
+        successful_results = len(results) - len(failed_input_ids)
+        if successful_results == 0 and results:
+            status = "failed"
+        elif failed_input_ids:
+            status = "partial"
+        else:
+            status = "completed"
+
         response: dict[str, Any] = {
             "request_id": request_id,
-            "status": "completed",
+            "status": status,
             "results": results,
             "aggregate_metrics": self._compute_aggregate_metrics(all_metrics),
         }
+
+        if failed_input_ids:
+            response["error"] = {
+                "code": (
+                    "EVALUATION_PARTIAL_FAILURE"
+                    if status == "partial"
+                    else "EVALUATION_FAILED"
+                ),
+                "message": "One or more items failed during evaluation",
+                "failed_inputs": failed_input_ids,
+            }
 
         return response
 
@@ -477,20 +573,22 @@ class TraigentService:
 
     def _compute_aggregate_metrics(
         self, metrics_list: list[dict[str, float]]
-    ) -> dict[str, dict[str, float]]:
+    ) -> dict[str, dict[str, float | int]]:
         """Compute aggregate statistics (mean, std, n) for each metric."""
         if not metrics_list:
             return {}
 
-        aggregates: dict[str, dict[str, float]] = {}
+        aggregates: dict[str, dict[str, float | int]] = {}
 
         # Collect values by metric name
         values_by_metric: dict[str, list[float]] = {}
         for metrics in metrics_list:
             for name, value in metrics.items():
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
                 if name not in values_by_metric:
                     values_by_metric[name] = []
-                values_by_metric[name].append(value)
+                values_by_metric[name].append(float(value))
 
         # Compute stats
         import statistics
@@ -499,7 +597,7 @@ class TraigentService:
             n = len(values)
             mean = sum(values) / n
             std = statistics.stdev(values) if n > 1 else 0.0
-            aggregates[name] = {"mean": mean, "std": std, "n": float(n)}
+            aggregates[name] = {"mean": mean, "std": std, "n": n}
 
         return aggregates
 
@@ -512,19 +610,34 @@ class TraigentService:
         Returns:
             True if session is alive, False if not found.
         """
-        if session_id not in self._sessions:
+        if not self.config.supports_keep_alive:
             return False
 
-        self._sessions[session_id].touch()
+        return self._touch_or_create_session(session_id)
+
+    def _touch_or_create_session(self, session_id: str) -> bool:
+        """Touch an existing session or create it when keep-alive is enabled."""
+        if not session_id:
+            return False
+
+        session = self._sessions.get(session_id)
+        if session is not None:
+            session.touch()
+            return True
+
+        if not self.config.supports_keep_alive:
+            return False
+
+        self._sessions[session_id] = Session(session_id=session_id)
         return True
 
-    def create_session(self) -> str:
+    def create_session(self, session_id: str | None = None) -> str:
         """Create a new session.
 
         Returns:
             New session ID.
         """
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         self._sessions[session_id] = Session(session_id=session_id)
         return session_id
 

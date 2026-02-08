@@ -284,7 +284,7 @@ class TestHTTPTransportMethods:
     async def test_keep_alive(self, transport: HTTPTransport) -> None:
         """Test keep-alive method."""
         mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
-        mock_response = {"alive": True, "session_id": "session-123"}
+        mock_response = {"status": "alive", "session_id": "session-123"}
 
         with (
             patch.object(
@@ -308,7 +308,7 @@ class TestHTTPTransportMethods:
     async def test_keep_alive_expired(self, transport: HTTPTransport) -> None:
         """Test keep-alive with expired session."""
         mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
-        mock_response = {"alive": False, "reason": "expired"}
+        mock_response = {"status": "expired", "reason": "expired"}
 
         with (
             patch.object(
@@ -327,6 +327,32 @@ class TestHTTPTransportMethods:
             alive = await transport.keep_alive("session-123")
 
         assert alive is False
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_backward_compatible_alive_field(
+        self, transport: HTTPTransport
+    ) -> None:
+        """Legacy wrappers returning {'alive': bool} are still supported."""
+        mock_caps = ServiceCapabilities(version="1.0", supports_keep_alive=True)
+        mock_response = {"alive": True, "session_id": "session-123"}
+
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(
+                transport,
+                "_request",
+                new_callable=AsyncMock,
+                return_value=mock_response,
+            ),
+        ):
+            alive = await transport.keep_alive("session-123")
+
+        assert alive is True
 
     @pytest.mark.asyncio
     async def test_keep_alive_not_supported(self, transport: HTTPTransport) -> None:

@@ -39,10 +39,7 @@ from typing import Any, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
-from traigent.config.parallel import (
-    coerce_parallel_config,
-    merge_parallel_configs,
-)
+from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
@@ -428,6 +425,25 @@ class OptimizedFunction:
         )
         self.framework_target = self._store_optional_param(
             kwargs, sentinel, "framework_target", None
+        )
+
+        # Hybrid API evaluator configuration (execution_mode="hybrid_api")
+        self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
+        self.hybrid_api_capability_id = kwargs.pop("capability_id", None)
+        self.hybrid_api_transport = kwargs.pop("hybrid_api_transport", None)
+        self.hybrid_api_transport_type = kwargs.pop("hybrid_api_transport_type", "auto")
+        self.hybrid_api_batch_size = kwargs.pop("hybrid_api_batch_size", 1)
+        self.hybrid_api_batch_parallelism = kwargs.pop(
+            "hybrid_api_batch_parallelism", 1
+        )
+        self.hybrid_api_keep_alive = bool(kwargs.pop("hybrid_api_keep_alive", True))
+        self.hybrid_api_heartbeat_interval = kwargs.pop(
+            "hybrid_api_heartbeat_interval", 30.0
+        )
+        self.hybrid_api_timeout = kwargs.pop("hybrid_api_timeout", None)
+        self.hybrid_api_auth_header = kwargs.pop("hybrid_api_auth_header", None)
+        self.hybrid_api_auto_discover_tvars = bool(
+            kwargs.pop("hybrid_api_auto_discover_tvars", False)
         )
 
         # Execution knobs
@@ -1122,6 +1138,25 @@ class OptimizedFunction:
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
+            hybrid_api_endpoint=getattr(self, "hybrid_api_endpoint", None),
+            hybrid_api_capability_id=getattr(self, "hybrid_api_capability_id", None),
+            hybrid_api_transport=getattr(self, "hybrid_api_transport", None),
+            hybrid_api_transport_type=getattr(
+                self, "hybrid_api_transport_type", "auto"
+            ),
+            hybrid_api_batch_size=getattr(self, "hybrid_api_batch_size", 1),
+            hybrid_api_batch_parallelism=getattr(
+                self, "hybrid_api_batch_parallelism", 1
+            ),
+            hybrid_api_keep_alive=getattr(self, "hybrid_api_keep_alive", True),
+            hybrid_api_heartbeat_interval=getattr(
+                self, "hybrid_api_heartbeat_interval", 30.0
+            ),
+            hybrid_api_timeout=getattr(self, "hybrid_api_timeout", None),
+            hybrid_api_auth_header=getattr(self, "hybrid_api_auth_header", None),
+            hybrid_api_auto_discover_tvars=getattr(
+                self, "hybrid_api_auto_discover_tvars", False
+            ),
         )
         if js_pool is not None:
             self._js_process_pool = js_pool
@@ -1426,6 +1461,25 @@ class OptimizedFunction:
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
+            hybrid_api_endpoint=getattr(self, "hybrid_api_endpoint", None),
+            hybrid_api_capability_id=getattr(self, "hybrid_api_capability_id", None),
+            hybrid_api_transport=getattr(self, "hybrid_api_transport", None),
+            hybrid_api_transport_type=getattr(
+                self, "hybrid_api_transport_type", "auto"
+            ),
+            hybrid_api_batch_size=getattr(self, "hybrid_api_batch_size", 1),
+            hybrid_api_batch_parallelism=getattr(
+                self, "hybrid_api_batch_parallelism", 1
+            ),
+            hybrid_api_keep_alive=getattr(self, "hybrid_api_keep_alive", True),
+            hybrid_api_heartbeat_interval=getattr(
+                self, "hybrid_api_heartbeat_interval", 30.0
+            ),
+            hybrid_api_timeout=getattr(self, "hybrid_api_timeout", None),
+            hybrid_api_auth_header=getattr(self, "hybrid_api_auth_header", None),
+            hybrid_api_auto_discover_tvars=getattr(
+                self, "hybrid_api_auto_discover_tvars", False
+            ),
         )
         if js_process_pool is not None:
             self._js_process_pool = js_process_pool

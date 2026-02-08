@@ -371,6 +371,8 @@ Execute the agent with a specific configuration on a batch of inputs.
 | `output_id` | string | No | Output identifier (for privacy-preserving mode) |
 | `cost_usd` | number | No | Cost for this input |
 | `latency_ms` | number | No | Latency for this input |
+| `metrics` | object | No | Per-input quality metrics (combined execute+evaluate mode) |
+| `error` | string | No | Error message for this input when execution partially fails |
 
 **Operational Metrics** (recommended):
 | Field | Type | Description |
@@ -432,7 +434,7 @@ Evaluate outputs against expected targets to measure quality.
 | `request_id` | string | No | Idempotency key (UUID) |
 | `capability_id` | string | Yes | Identifier for the evaluation capability |
 | `execution_id` | string | No | Reference to previous execute (for caching) |
-| `evaluations` | array | Yes | List of output+target pairs |
+| `evaluations` | array | No | List of output+target pairs (optional when using execution_id-only workflows) |
 | `config` | object | No | Optional config for evaluation parameters |
 | `session_id` | string | No | Session ID for stateful agents |
 
@@ -489,12 +491,14 @@ Evaluate outputs against expected targets to measure quality.
 | `status` | string | Yes | `"completed"`, `"partial"`, or `"failed"` |
 | `results` | array | Yes | Per-example evaluation results |
 | `aggregate_metrics` | object | Yes | Aggregated statistics per metric |
+| `error` | object | No | Error details for partial/failed evaluations (`code`, `message`, `failed_inputs`) |
 
 **Result Item**:
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `input_id` | string | Yes | Matching input identifier |
 | `metrics` | object | Yes | Quality metrics for this example |
+| `error` | string | No | Error message for this example when evaluation partially fails |
 
 **Aggregate Metric**:
 | Field | Type | Description |

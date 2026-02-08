@@ -469,11 +469,6 @@ def collect_and_submit_analytics(config: TraigentConfig) -> None:
     This function is designed to work from both sync and async contexts.
     It runs analytics submission in the background without blocking.
     """
-    from traigent.utils.env_config import is_mock_llm
-
-    if is_mock_llm():
-        return
-
     if not config.enable_usage_analytics or config.execution_mode not in {
         ExecutionMode.EDGE_ANALYTICS.value,
     }:

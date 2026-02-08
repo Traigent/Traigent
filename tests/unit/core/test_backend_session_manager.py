@@ -3,6 +3,7 @@
 Tests the extracted backend session lifecycle manager with stub backend client.
 """
 
+import re
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -266,6 +267,38 @@ class TestBackendSessionManagerTrialSubmission:
         mock_backend_client._submit_trial_result_via_session.assert_called_once()
         call_kwargs = mock_backend_client._submit_trial_result_via_session.call_args
         assert call_kwargs.kwargs["status"] == "PRUNED"
+
+    @pytest.mark.asyncio
+    async def test_submit_trial_metrics_keys_are_measuresdict_compatible(
+        self, backend_session_manager, mock_backend_client
+    ):
+        """Submitted metric keys follow MeasuresDict identifier requirements."""
+        from traigent.api.types import TrialStatus
+
+        trial = Mock(spec=TrialResult)
+        trial.trial_id = "trial-hybrid-metrics"
+        trial.config = {"param1": 1}
+        trial.metrics = {"cost": 0.05, "success_rate": 1.0, "latency": 120.0}
+        trial.is_successful = True
+        trial.status = TrialStatus.COMPLETED
+        trial.duration = 1.0
+        trial.error_message = None
+        trial.metadata = {}
+        trial.get_metric = Mock(
+            side_effect=lambda key, default=None: trial.metrics.get(key, default)
+        )
+
+        await backend_session_manager.submit_trial(
+            trial_result=trial,
+            session_id="test-session-id",
+        )
+
+        call_kwargs = (
+            mock_backend_client._submit_trial_result_via_session.call_args.kwargs
+        )
+        metrics_payload = call_kwargs["metrics"]
+        pattern = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+        assert all(pattern.match(k) for k in metrics_payload.keys())
 
 
 class TestBackendSessionManagerWeightedScores:

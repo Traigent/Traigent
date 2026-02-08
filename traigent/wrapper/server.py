@@ -29,6 +29,19 @@ HEALTH_PATH = "/traigent/v1/health"
 KEEP_ALIVE_PATH = "/traigent/v1/keep-alive"
 
 
+def _make_error_response(
+    code: str,
+    message: str,
+    *,
+    details: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build contract-compliant error payload."""
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details:
+        error["details"] = details
+    return {"error": error}
+
+
 def create_app(service: TraigentService) -> Callable[..., Any]:
     """Create ASGI application for TraigentService.
 
@@ -79,26 +92,57 @@ def create_app(service: TraigentService) -> Callable[..., Any]:
                 session_id = request.get("session_id", "")
                 alive = service.handle_keep_alive(session_id)
                 if alive:
-                    await send_json_response(send, 200, {"alive": True})
+                    await send_json_response(
+                        send,
+                        200,
+                        {
+                            "status": "alive",
+                            "session_id": session_id,
+                        },
+                    )
                 else:
-                    await send_json_response(send, 404, {"alive": False})
+                    await send_json_response(
+                        send,
+                        404,
+                        _make_error_response(
+                            "SESSION_NOT_FOUND",
+                            f"Session not found: {session_id}",
+                        ),
+                    )
 
             else:
                 await send_json_response(
-                    send, 404, {"error": f"Not found: {method} {path}"}
+                    send,
+                    404,
+                    _make_error_response(
+                        "NOT_FOUND",
+                        f"Not found: {method} {path}",
+                    ),
                 )
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in request: {e}")
-            await send_json_response(send, 400, {"error": f"Invalid JSON: {e}"})
+            await send_json_response(
+                send,
+                400,
+                _make_error_response("INVALID_JSON", f"Invalid JSON: {e}"),
+            )
 
         except ValueError as e:
             logger.error(f"Request error: {e}")
-            await send_json_response(send, 400, {"error": str(e)})
+            await send_json_response(
+                send,
+                400,
+                _make_error_response("INVALID_REQUEST", str(e)),
+            )
 
         except Exception as e:
             logger.error(f"Internal error: {e}")
-            await send_json_response(send, 500, {"error": str(e)})
+            await send_json_response(
+                send,
+                500,
+                _make_error_response("INTERNAL_ERROR", str(e)),
+            )
 
     return app
 
