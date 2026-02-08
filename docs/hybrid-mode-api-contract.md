@@ -171,7 +171,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
       "default": true
     }
   ],
-  "constraints": {}
+  "constraints": {},
   "objectives": [
     {"name": "accuracy", "direction": "maximize", "weight": 2.0},
     {"name": "cost", "direction": "minimize", "weight": 1.0}

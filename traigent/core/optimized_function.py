@@ -871,8 +871,6 @@ class OptimizedFunction:
         algorithm_kwargs: dict[str, Any],
     ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
         """Apply hybrid config-space discovery data to runtime settings."""
-        from types import SimpleNamespace
-
         from traigent.hybrid.discovery import merge_config_spaces
         from traigent.tvl.promotion_gate import PromotionGate
 
@@ -926,11 +924,10 @@ class OptimizedFunction:
         promotion_policy = discovered_spec.get("promotion_policy")
         if promotion_policy is not None:
             state["promotion_gate"] = getattr(self, "promotion_gate", None)
-            artifact_like = SimpleNamespace(
+            self.promotion_gate = PromotionGate.from_policy(
                 promotion_policy=promotion_policy,
                 objective_schema=self.objective_schema,
             )
-            self.promotion_gate = PromotionGate.from_spec_artifact(artifact_like)
 
         discovered_measures = discovered_spec.get("measures")
         if (
@@ -1508,6 +1505,9 @@ class OptimizedFunction:
         precreated_evaluator: BaseEvaluator | None = None
 
         if hybrid_auto_discovery_enabled:
+            # Discovery must happen before we resolve parallel settings because
+            # the remote config-space can override optimizer/runtime parameters.
+            # Use neutral worker settings for this bootstrap evaluator instance.
             precreated_evaluator = self._create_effective_evaluator(
                 timeout=timeout,
                 custom_evaluator=custom_evaluator,
