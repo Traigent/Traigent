@@ -13,6 +13,7 @@ import os
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from traigent.cloud.dtos import MeasuresDict
 from traigent.cloud.validators import validate_configuration_run_submission
 from traigent.config.backend_config import BackendConfig
 from traigent.utils.env_config import is_backend_offline
@@ -358,7 +359,7 @@ class TrialOperations:
             return False
 
     def _extract_measures_from_metrics(
-        self, metrics: dict[str, float]
+        self, metrics: dict[str, Any]
     ) -> tuple[Any, Any, dict[str, Any]]:
         """Extract measures and summary_stats from metrics dict.
 
@@ -517,7 +518,7 @@ class TrialOperations:
         session_id: str,
         trial_id: str,
         config: dict[str, Any],
-        metrics: dict[str, float],
+        metrics: dict[str, Any],
         status: str,
         error_message: str | None = None,
         execution_mode: str | None = None,
@@ -552,9 +553,22 @@ class TrialOperations:
             backend_status = self.client._map_to_backend_status(status)
             mode = self.client._normalize_execution_mode(execution_mode)
 
+            # Validate key naming and cardinality for metrics while preserving
+            # backward compatibility with existing payload shapes.
+            validated_metrics: dict[str, Any] = metrics
+            try:
+                validated_metrics = dict(MeasuresDict(metrics))
+            except (TypeError, ValueError) as validation_error:
+                logger.warning(
+                    "Metrics validation warning for trial %s: %s. "
+                    "Submitting unvalidated metrics for backward compatibility.",
+                    trial_id,
+                    validation_error,
+                )
+
             # Extract measures and summary_stats from metrics
             measures, summary_stats, clean_metrics = (
-                self._extract_measures_from_metrics(metrics)
+                self._extract_measures_from_metrics(validated_metrics)
             )
 
             # Build result data

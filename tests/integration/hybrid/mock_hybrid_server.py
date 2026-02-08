@@ -100,39 +100,42 @@ class MockHybridServer:
             "supports_keep_alive": self.config.supports_keep_alive,
             "supports_streaming": False,
             "max_batch_size": self.config.max_batch_size,
+            "max_payload_bytes": None,
         }
 
     def get_config_space(self) -> dict[str, Any]:
         """Return TVAR definitions for the mock agent."""
+        tunables = [
+            {
+                "name": "model",
+                "type": "enum",
+                "domain": {"values": ["fast", "accurate", "balanced"]},
+                "default": "balanced",
+            },
+            {
+                "name": "temperature",
+                "type": "float",
+                "domain": {"range": [0.0, 1.0], "resolution": 0.1},
+                "default": 0.5,
+            },
+            {
+                "name": "max_retries",
+                "type": "int",
+                "domain": {"range": [0, 5]},
+                "default": 2,
+            },
+            {
+                "name": "use_cache",
+                "type": "bool",
+                "domain": {},
+                "default": True,
+            },
+        ]
         return {
             "schema_version": "0.9",
             "capability_id": "mock_test_agent",
-            "tvars": [
-                {
-                    "name": "model",
-                    "type": "enum",
-                    "domain": {"values": ["fast", "accurate", "balanced"]},
-                    "default": "balanced",
-                },
-                {
-                    "name": "temperature",
-                    "type": "float",
-                    "domain": {"range": [0.0, 1.0], "resolution": 0.1},
-                    "default": 0.5,
-                },
-                {
-                    "name": "max_retries",
-                    "type": "int",
-                    "domain": {"range": [0, 5]},
-                    "default": 2,
-                },
-                {
-                    "name": "use_cache",
-                    "type": "bool",
-                    "domain": {},
-                    "default": True,
-                },
-            ],
+            "tunables": tunables,
+            "tvars": tunables,
         }
 
     def execute(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -386,12 +389,16 @@ class MockHybridServer:
         self.keep_alive_call_count += 1
 
         if not self.config.supports_keep_alive:
-            return {"alive": False, "error": "Keep-alive not supported"}
+            return {
+                "status": "unsupported",
+                "alive": False,
+                "error": "Keep-alive not supported",
+            }
 
         if session_id in self.active_sessions:
-            return {"alive": True, "session_id": session_id}
+            return {"status": "alive", "alive": True, "session_id": session_id}
         else:
-            return {"alive": False, "reason": "Session not found"}
+            return {"status": "expired", "alive": False, "reason": "Session not found"}
 
     def health_check(self) -> dict[str, Any]:
         """Return health status."""

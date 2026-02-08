@@ -1,9 +1,9 @@
-"""Tests for TraigentConfig type."""
+"""Tests for TraigentConfig type and execution mode helpers."""
 
 import pytest
 
-from traigent.config.types import TraigentConfig
-from traigent.utils.exceptions import ValidationError
+from traigent.config.types import TraigentConfig, validate_execution_mode
+from traigent.utils.exceptions import ConfigurationError, ValidationError
 
 
 class TestTraigentConfig:
@@ -162,3 +162,12 @@ class TestTraigentConfig:
         assert result["custom_setting"] is True
         assert result["api_version"] == "2023-07-01"
         assert result["model"] == "GPT-4o"
+
+
+class TestValidateExecutionMode:
+    """Tests for validate_execution_mode function."""
+
+    def test_invalid_mode_string_raises_configuration_error(self) -> None:
+        """Invalid mode string should raise ConfigurationError, not ValueError."""
+        with pytest.raises(ConfigurationError, match="No such mode 'nonexistent_mode'"):
+            validate_execution_mode("nonexistent_mode")

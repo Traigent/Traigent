@@ -287,12 +287,36 @@ components:
           items:
             $ref: "#/components/schemas/TunableDefinition"
         constraints:
+          description: Structural and behavioral constraints (legacy textual or typed TVL 0.9)
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+            - $ref: "#/components/schemas/TypedConstraints"
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+        objectives:
+          type: array
+          description: Optional objective definitions (TVL 0.9 compatible JSON)
+          items:
+            $ref: "#/components/schemas/ObjectiveDefinition"
+        exploration:
+          $ref: "#/components/schemas/ExplorationConfig"
+        promotion_policy:
+          $ref: "#/components/schemas/PromotionPolicy"
+        defaults:
           type: object
-          description: Structural and behavioral constraints
-          additionalProperties:
-            type: array
-            items:
-              type: string
+          description: Optional default configuration values
+          additionalProperties: true
+        measures:
+          type: array
+          description: Optional list of metric names produced by the service
+          items:
+            type: string
 
     TunableDefinition:
       type: object
@@ -350,6 +374,174 @@ components:
           type: number
           description: Step size for float types
           example: 0.1
+
+    ObjectiveDefinition:
+      type: object
+      description: Objective definition compatible with TVL 0.9 objectives section
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          description: Objective name
+          pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        direction:
+          type: string
+          description: Objective orientation
+          enum: [maximize, minimize, band]
+        weight:
+          type: number
+          description: Objective weight
+          default: 1.0
+        unit:
+          type: string
+          description: Optional objective unit
+        band:
+          $ref: "#/components/schemas/BandTarget"
+
+    BandTarget:
+      type: object
+      description: Banded objective target definition
+      required:
+        - target
+      properties:
+        target:
+          type: array
+          description: Lower/upper target band
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+        test:
+          type: string
+          description: Statistical band test
+          enum: [TOST]
+          default: TOST
+        alpha:
+          type: number
+          description: Significance level for band test
+          minimum: 0
+          maximum: 1
+          default: 0.05
+
+    ExplorationConfig:
+      type: object
+      description: Exploration strategy and budget controls (TVL 0.9 exploration section)
+      properties:
+        strategy:
+          description: Exploration strategy
+          oneOf:
+            - type: string
+            - type: object
+              properties:
+                type:
+                  type: string
+              additionalProperties: true
+        budgets:
+          $ref: "#/components/schemas/ExplorationBudgets"
+        convergence:
+          $ref: "#/components/schemas/ConvergenceCriteria"
+        parallelism:
+          type: object
+          properties:
+            max_parallel_trials:
+              type: integer
+              minimum: 1
+          additionalProperties: true
+
+    ExplorationBudgets:
+      type: object
+      description: Exploration budget limits
+      properties:
+        max_trials:
+          type: integer
+          minimum: 1
+        max_spend_usd:
+          type: number
+          minimum: 0
+        max_wallclock_s:
+          type: number
+          minimum: 0
+
+    ConvergenceCriteria:
+      type: object
+      description: Convergence stop criteria
+      required:
+        - metric
+        - window
+        - threshold
+      properties:
+        metric:
+          type: string
+        window:
+          type: integer
+          minimum: 1
+        threshold:
+          type: number
+          minimum: 0
+
+    TypedConstraints:
+      type: object
+      description: Typed TVL 0.9 constraints section
+      properties:
+        structural:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        derived:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: false
+
+    PromotionPolicy:
+      type: object
+      description: Promotion policy for epsilon-Pareto selection
+      properties:
+        dominance:
+          type: string
+          enum: [epsilon_pareto]
+          default: epsilon_pareto
+        alpha:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.05
+        min_effect:
+          type: object
+          additionalProperties:
+            type: number
+        adjust:
+          type: string
+          enum: [none, BH]
+          default: none
+        chance_constraints:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChanceConstraint"
+        tie_breakers:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [min_abs_deviation, custom]
+
+    ChanceConstraint:
+      type: object
+      required:
+        - name
+        - threshold
+        - confidence
+      properties:
+        name:
+          type: string
+        threshold:
+          type: number
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
 
     ExecuteRequest:
       type: object
@@ -511,6 +703,14 @@ components:
           type: number
           description: Latency for this input in milliseconds
           format: double
+        metrics:
+          type: object
+          description: Optional per-input quality metrics (combined execute+evaluate mode)
+          additionalProperties:
+            type: number
+        error:
+          type: string
+          description: Error message for this input when execution partially fails
 
     OperationalMetrics:
       type: object
@@ -656,6 +856,8 @@ components:
           description: Aggregated statistics per metric
           additionalProperties:
             $ref: "#/components/schemas/AggregateMetricStats"
+        error:
+          $ref: "#/components/schemas/ExecutionError"
 
     EvaluationResult:
       type: object
@@ -676,6 +878,9 @@ components:
             accuracy: 0.92
             relevance: 0.88
             fluency: 0.95
+        error:
+          type: string
+          description: Optional error message for this example when evaluation partially fails
 
     AggregateMetricStats:
       type: object
