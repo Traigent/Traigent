@@ -1,0 +1,30 @@
+flowchart LR
+    Contract["Optimization Contract<br/>config space | objectives | eval dataset"]
+
+    subgraph Loop["Traigent Optimization Loop"]
+        direction LR
+        Suggest["1. Suggest"]
+        Run["2. Run"]
+        Score["3. Score"]
+        Stop{"4. Stop?"}
+
+        Suggest --> Run --> Score --> Stop
+        Stop -- "No" --> Suggest
+    end
+
+    Outcome["Optimization Outcomes<br/>best config | pareto trade-offs | trial and cost history"]
+
+    Contract --> Suggest
+    Stop -- "Yes" --> Outcome
+
+    classDef contract fill:#e8f1ff,stroke:#1e6ddc,color:#0f172a,stroke-width:2px;
+    classDef loop fill:#fff5e8,stroke:#ea8a1a,color:#111827,stroke-width:2px;
+    classDef decision fill:#fff0dc,stroke:#d97706,color:#111827,stroke-width:2px;
+    classDef outcome fill:#e9f8ec,stroke:#2f9e44,color:#0f172a,stroke-width:2px;
+
+    class Contract contract;
+    class Suggest,Run,Score loop;
+    class Stop decision;
+    class Outcome outcome;
+
+    style Loop fill:#fff8ef,stroke:#ea8a1a,stroke-width:2px,color:#111827

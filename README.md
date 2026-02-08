@@ -46,62 +46,75 @@ Start with the curated experiments in `examples/`—each scenario ships with a R
 
 ## 🏗️ Architecture Overview
 
-![Architecture Overview](docs/demos/output/architecture.svg)
+<p align="center">
+  <img src="docs/demos/output/architecture.svg" alt="Architecture Overview" width="980">
+</p>
 
 **How it works:**
 
-1. **Suggest**: The optimizer proposes a configuration to test
-2. **Inject**: Traigent overrides your function's parameters with the proposed config
-3. **Evaluate**: Your function runs against the dataset, scored by the evaluator
-4. **Record**: Results update the optimizer's model
-5. **Continue**: Loop continues until budget/trials exhausted, then outputs results
+1. **Define the contract**: You provide configuration space, objectives, and evaluation dataset.
+2. **Run the loop**: Traigent suggests a config, runs your agent, and scores outputs on the dataset.
+3. **Check stop criteria**: If limits are not met, Traigent loops and proposes the next config.
+4. **Review outcomes**: You get best config, Pareto trade-offs, and full trial/cost history.
 
-## 🚀 Quick Example: See Tuned Variables in Action
+## 🚀 Quick Start: First Useful Run (2 Minutes)
 
-> **Want to run this now?** First [install Traigent](#-quick-installation), then use the ready-to-run quickstart examples (no API keys needed):
+This first example includes the 3 required optimization ingredients:
+
+- `configuration_space`: what Traigent is allowed to tune
+- `objectives`: what "better" means
+- `eval_dataset`: how configurations are scored
+
+> **Fastest path (no API keys):**
 >
 > ```bash
 > export TRAIGENT_MOCK_LLM=true
 > python examples/quickstart/01_simple_qa.py
 > ```
 >
-> The `examples/quickstart/` directory contains runnable versions that work without API keys.
+> The `examples/quickstart/` directory is runnable end-to-end in mock mode.
 
 ```python
+import asyncio
 import traigent
 from langchain_openai import ChatOpenAI
-from dotenv import load_dotenv
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
 
-# Load environment variables (API keys, etc.)
-load_dotenv()
 
 @traigent.optimize(
     configuration_space={
-        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],  # 🎯 Tuned Variable #1
-        "temperature": [0.1, 0.5, 0.9]                         # 🎯 Tuned Variable #2
+        "model": ["gpt-3.5-turbo", "gpt-4o-mini", "gpt-4o"],
+        "temperature": [0.1, 0.5, 0.9],
     },
-    objectives=["accuracy", "cost"],    # What to optimize for
-    # Dataset file path (relative to examples/datasets/quickstart/)
+    objectives=["accuracy", "cost"],
     evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
     execution=ExecutionOptions(execution_mode="edge_analytics"),
 )
 def simple_qa_agent(question: str) -> str:
-    """Simple Q&A agent with Tuned Variables"""
+    llm = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.7)
+    return llm.invoke(f"Question: {question}\nAnswer:").content
 
-    # These values will be automatically optimized by Traigent!
-    llm = ChatOpenAI(
-        model="gpt-3.5-turbo",     # 🎯 Traigent tests: gpt-3.5-turbo, gpt-4o-mini, gpt-4o
-        temperature=0.7            # 🎯 Traigent tests: 0.1, 0.5, 0.9
-    )
 
-    # Normal LLM invocation - Traigent intercepts and optimizes
-    response = llm.invoke(f"Question: {question}\nAnswer:")
-    print(f"🔧 Using: model={llm.model_name}, temp={llm.temperature}")
-    return response.content
-
-# That's it! Traigent will find the best model & temperature for YOUR specific use case
+result = asyncio.run(simple_qa_agent.optimize(algorithm="random", max_trials=9))
+print("Best config:", result.best_config)
+print("Best score:", result.best_score)
 ```
+
+Minimal dataset format (`JSONL`):
+
+```jsonl
+{"input": {"question": "Capital of France?"}, "output": "Paris"}
+{"input": {"question": "2+2?"}, "output": "4"}
+```
+
+## 🧭 Example Path (Beginner → Advanced)
+
+| Level | Example | What It Adds |
+|-------|---------|--------------|
+| Beginner | `examples/quickstart/01_simple_qa.py` | Core loop: config space + objectives + eval dataset |
+| Intermediate | `examples/quickstart/02_customer_support_rag.py` | RAG tuning (`k`), trade-offs, realistic workload |
+| Intermediate+ | `examples/quickstart/03_custom_objectives.py` | Explicit weights/orientations with `ObjectiveSchema` |
+| Advanced | Hybrid API mode (below) | OpenAPI-based tuning for external services (no source-code sharing) |
 
 ## 📊 Full Customer Support Example with RAG
 
@@ -466,15 +479,16 @@ def my_agent(question: str) -> str:
 
 ## 🎯 Execution Modes
 
-Traigent supports local execution with cloud modes planned:
+Traigent currently supports two production-ready execution paths:
 
-| Mode                         | Status         | Privacy            | Algorithm            | Best For          |
-| ---------------------------- | -------------- | ------------------ | -------------------- | ----------------- |
-| **Local** (`edge_analytics`) | ✅ Available   | ✅ Complete        | Random/Grid/Bayesian | All use cases     |
-| **Cloud**                    | 🚧 Coming Soon | ⚠️ Metadata        | Bayesian             | Production, teams |
-| **Hybrid**                   | 🚧 Coming Soon | ✅ Execution local | Bayesian             | Balanced approach |
+| Mode | Status | Best For | Data Boundary |
+|------|--------|----------|---------------|
+| `edge_analytics` | ✅ Available | Local optimization in your codebase | Code + data stay local |
+| `hybrid_api` | ✅ Available | Optimize external services through the Traigent OpenAPI contract | Source code stays private; tuning happens over your API boundary |
+| `cloud` | 🚧 Coming Soon | Managed orchestration | Planned |
+| `hybrid` | 🚧 Coming Soon | Mixed local/cloud workflows | Planned |
 
-> Open-source builds run in `edge_analytics` today. Keep `execution_mode` at its default unless you're on a managed backend.
+> Open-source users should start with `edge_analytics`, then move to `hybrid_api` when optimizing services that should not expose implementation details.
 
 **Quick Start - Local Mode (Recommended):**
 
@@ -489,6 +503,29 @@ Traigent supports local execution with cloud modes planned:
 def my_agent(query: str) -> str:
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.5)
     return llm.invoke(f"Answer: {query}").content
+```
+
+**Quick Start - OpenAPI Hybrid API (No Source-Code Sharing):**
+
+```python
+from traigent.api.decorators import EvaluationOptions, ExecutionOptions
+
+
+@traigent.optimize(
+    configuration_space={},  # discovered from /traigent/v1/config-space
+    objectives=["accuracy", "cost"],
+    evaluation=EvaluationOptions(eval_dataset="data/qa_samples.jsonl"),
+    execution=ExecutionOptions(
+        execution_mode="hybrid_api",
+        hybrid_api_endpoint="https://your-agent-service.example.com",
+        capability_id="customer_support_v1",
+        hybrid_api_auto_discover_tvars=True,
+    ),
+)
+def external_service_agent(query: str) -> str:
+    # Optimization trials run through the external service API.
+    # This function remains the optimization entrypoint in your SDK project.
+    return query
 ```
 
 > **Local Storage**: When using `edge_analytics` mode, Traigent creates a `.traigent_local/` directory in your project root to store optimization state, trial results, and configuration data. This directory is automatically created on first run and can be safely deleted to reset optimization state. You can customize the location using the `local_storage_path` parameter.
@@ -508,6 +545,8 @@ def my_agent(query: str) -> str:
 | `configuration_space` | `@traigent.optimize()` decorator | Parameters to test (required) |
 | `objectives` | `@traigent.optimize()` decorator | Metrics to optimize for |
 | `eval_dataset` | `@traigent.optimize()` decorator | Dataset for evaluation |
+| `execution` | `@traigent.optimize()` decorator | Execution mode and runtime transport options |
+| `hybrid_api_endpoint` | `execution=ExecutionOptions(...)` | Base URL for OpenAPI-compatible external service in `hybrid_api` mode |
 | `algorithm` | `.optimize()` method call | Search algorithm: `"random"`, `"grid"`, `"bayesian"` |
 | `max_trials` | `.optimize()` method call | Number of configurations to test |
 

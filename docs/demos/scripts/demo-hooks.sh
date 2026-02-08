@@ -52,6 +52,7 @@ echo ""
 echo -e "${CYAN}@traigent.optimize${RESET}("
 echo -e "    configuration_space={${GREEN}\"model\"${RESET}: [\"gpt-4o-mini\", \"gpt-4o\"]},"
 echo -e "    objectives=[${GREEN}\"accuracy\"${RESET}],"
+echo -e "    eval_dataset=${GREEN}\"data/callback_eval.jsonl\"${RESET},"
 echo -e "    callbacks=["
 echo -e "        ProgressBarCallback(width=${CYAN}50${RESET}),"
 echo -e "        StatisticsCallback()"
@@ -70,6 +71,7 @@ sleep 0.5
 
 echo -e "Starting optimization with ${CYAN}grid search${RESET}..."
 echo -e "Objectives: ${GREEN}accuracy${RESET}"
+echo -e "Evaluation dataset: ${GREEN}data/callback_eval.jsonl${RESET}"
 echo -e "Configuration space: ${BOLD}5 combinations${RESET}"
 echo ""
 sleep 0.5

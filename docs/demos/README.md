@@ -32,6 +32,9 @@ After running `record-demos.sh`:
 - `output/optimize.svg` - animated SVG (if svg-term available)
 - `output/hooks.svg` - animated SVG (if svg-term available)
 - `output/github-hooks.svg` - animated SVG (if svg-term available)
+- `output/optimize-still.svg` - clickable thumbnail still for README
+- `output/hooks-still.svg` - clickable thumbnail still for README
+- `output/github-hooks-still.svg` - clickable thumbnail still for README
 
 ## Prerequisites
 
@@ -41,8 +44,8 @@ After running `record-demos.sh`:
 
 ### Optional (for SVG generation)
 ```bash
-# Install svg-term-cli for animated SVG output
-npm install -g svg-term-cli
+# Install svg-term-cli locally for animated SVG + still generation
+npm install --prefix docs/demos svg-term-cli
 ```
 
 ## Directory Structure
