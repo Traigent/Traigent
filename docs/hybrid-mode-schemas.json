@@ -265,6 +265,17 @@
         "latency_ms": {
           "type": "number",
           "description": "Latency for this input in milliseconds"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Optional per-input quality metrics (combined execute+evaluate mode)",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "error": {
+          "type": "string",
+          "description": "Error message for this input when execution partially fails"
         }
       },
       "additionalProperties": false
@@ -484,6 +495,10 @@
           "additionalProperties": {
             "type": "number"
           }
+        },
+        "error": {
+          "type": "string",
+          "description": "Optional error message for this example when evaluation partially fails"
         }
       },
       "additionalProperties": false
@@ -516,6 +531,9 @@
           "additionalProperties": {
             "$ref": "#/definitions/AggregateMetricStats"
           }
+        },
+        "error": {
+          "$ref": "#/definitions/ExecutionError"
         }
       },
       "additionalProperties": false
@@ -543,6 +561,71 @@
           "type": "object",
           "description": "Additional health details",
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "KeepAliveRequest": {
+      "type": "object",
+      "title": "KeepAliveRequest",
+      "description": "Request body for session heartbeat",
+      "required": ["session_id"],
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "KeepAliveResponse": {
+      "type": "object",
+      "title": "KeepAliveResponse",
+      "description": "Response body for successful session heartbeat",
+      "required": ["status", "session_id"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["alive"],
+          "description": "Session heartbeat status"
+        },
+        "session_id": {
+          "type": "string",
+          "description": "Session identifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ErrorDetails": {
+      "type": "object",
+      "title": "ErrorDetails",
+      "description": "Structured error details",
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Error code"
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message"
+        },
+        "details": {
+          "type": "object",
+          "description": "Additional error details",
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "title": "ErrorResponse",
+      "description": "Error response wrapper",
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "$ref": "#/definitions/ErrorDetails"
         }
       },
       "additionalProperties": false

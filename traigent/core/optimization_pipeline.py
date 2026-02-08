@@ -19,7 +19,7 @@ from traigent.config.parallel import (
     merge_parallel_configs,
     resolve_parallel_config,
 )
-from traigent.config.types import TraigentConfig
+from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
 from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
 from traigent.evaluators.base import BaseEvaluator, Dataset
 from traigent.evaluators.local import LocalEvaluator
@@ -109,7 +109,14 @@ def create_traigent_config(
     """
     return TraigentConfig(
         execution_mode=cast(
-            Literal["edge_analytics", "privacy", "hybrid", "standard", "cloud"],
+            Literal[
+                "edge_analytics",
+                "privacy",
+                "hybrid",
+                "standard",
+                "cloud",
+                "hybrid_api",
+            ],
             execution_mode,
         ),
         local_storage_path=local_storage_path,
@@ -356,6 +363,17 @@ def create_effective_evaluator(
     metric_functions: dict[str, Callable[..., Any]] | None,
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
+    hybrid_api_endpoint: str | None = None,
+    hybrid_api_capability_id: str | None = None,
+    hybrid_api_transport: Any | None = None,
+    hybrid_api_transport_type: str = "auto",
+    hybrid_api_batch_size: int = 1,
+    hybrid_api_batch_parallelism: int = 1,
+    hybrid_api_keep_alive: bool = True,
+    hybrid_api_heartbeat_interval: float = 30.0,
+    hybrid_api_timeout: float | None = None,
+    hybrid_api_auth_header: str | None = None,
+    hybrid_api_auto_discover_tvars: bool = False,
 ) -> tuple[BaseEvaluator, Any]:
     """Create the appropriate evaluator for the optimization run.
 
@@ -394,6 +412,43 @@ def create_effective_evaluator(
             ),
             None,
         )
+
+    execution_mode_enum = resolve_execution_mode(execution_mode)
+    if execution_mode_enum is ExecutionMode.HYBRID_API:
+        from traigent.evaluators.hybrid_api import HybridAPIEvaluator
+
+        if hybrid_api_transport is None and not hybrid_api_endpoint:
+            raise ValueError(
+                "hybrid_api execution mode requires hybrid_api_endpoint "
+                "or a preconfigured hybrid_api_transport."
+            )
+
+        request_timeout = (
+            hybrid_api_timeout if hybrid_api_timeout is not None else timeout
+        )
+        if request_timeout is None:
+            request_timeout = 300.0
+
+        batch_size_value = max(1, int(hybrid_api_batch_size))
+        batch_parallelism_value = max(1, int(hybrid_api_batch_parallelism))
+
+        evaluator = HybridAPIEvaluator(
+            api_endpoint=hybrid_api_endpoint,
+            transport=hybrid_api_transport,
+            transport_type=cast(
+                Literal["http", "mcp", "auto"], hybrid_api_transport_type
+            ),
+            capability_id=hybrid_api_capability_id,
+            auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            batch_size=batch_size_value,
+            batch_parallelism=batch_parallelism_value,
+            keep_alive=hybrid_api_keep_alive,
+            heartbeat_interval=hybrid_api_heartbeat_interval,
+            timeout=request_timeout,
+            auth_header=hybrid_api_auth_header,
+            metrics=list(objectives),
+        )
+        return evaluator, None
 
     # Check if JS runtime is configured
     js_config = js_runtime_config

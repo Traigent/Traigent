@@ -222,7 +222,20 @@ class TestGetConfigSpace:
         tvar = result["tvars"][0]
         assert tvar["name"] == "model"
         assert tvar["type"] == "enum"
-        assert tvar["values"] == ["gpt-4"]
+        assert tvar["domain"]["values"] == ["gpt-4"]
+
+    def test_dict_tvars_without_type_preserves_domain_fields(self) -> None:
+        """Top-level domain keys should not be dropped when type is omitted."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"model": {"values": ["gpt-4", "claude-3"]}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["name"] == "model"
+        assert tvar["domain"]["values"] == ["gpt-4", "claude-3"]
 
     def test_list_tvars_converted_to_enum(self) -> None:
         """Test that list-type TVAR specs are converted to enum."""
@@ -324,6 +337,7 @@ class TestGetCapabilities:
         assert caps["supports_keep_alive"] is True
         assert caps["supports_streaming"] is False
         assert caps["max_batch_size"] == 50
+        assert caps["max_payload_bytes"] is None
 
     def test_capabilities_with_evaluate(self) -> None:
         """Test capabilities when evaluate handler is registered."""
@@ -349,8 +363,9 @@ class TestGetHealth:
         health = svc.get_health()
         assert health["status"] == "healthy"
         assert health["version"] == "1.2"
-        assert health["capability_id"] == "agent_x"
-        assert health["active_sessions"] == 0
+        assert isinstance(health["uptime_seconds"], float)
+        assert health["details"]["capability_id"] == "agent_x"
+        assert health["details"]["active_sessions"] == 0
 
     def test_health_with_sessions(self) -> None:
         """Test health status reflecting active sessions."""
@@ -358,7 +373,7 @@ class TestGetHealth:
         svc.create_session()
         svc.create_session()
         health = svc.get_health()
-        assert health["active_sessions"] == 2
+        assert health["details"]["active_sessions"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +441,7 @@ class TestHandleExecute:
         resp = await svc.handle_execute({"inputs": [{"input_id": "x1", "data": {}}]})
         assert resp["outputs"][0]["output"] == "plain_string_result"
         assert resp["outputs"][0]["cost_usd"] == 0.0
-        assert resp["outputs"][0]["metrics"] == {}
+        assert "metrics" not in resp["outputs"][0]
 
     @pytest.mark.asyncio
     async def test_handler_exception_captured(self) -> None:
@@ -438,7 +453,7 @@ class TestHandleExecute:
             raise RuntimeError("boom")
 
         resp = await svc.handle_execute({"inputs": [{"input_id": "e1", "data": {}}]})
-        assert resp["status"] == "completed"
+        assert resp["status"] == "failed"
         assert resp["outputs"][0]["input_id"] == "e1"
         assert "boom" in resp["outputs"][0]["error"]
 
@@ -521,9 +536,8 @@ class TestHandleExecute:
         def run(input_id, data, config):
             return {"output": "ok"}
 
-        resp = await svc.handle_execute({"inputs": []})
-        assert resp["status"] == "completed"
-        assert resp["outputs"] == []
+        with pytest.raises(ValueError, match="inputs must be a non-empty list"):
+            await svc.handle_execute({"inputs": []})
 
     @pytest.mark.asyncio
     async def test_input_without_input_id_gets_uuid(self) -> None:
@@ -636,7 +650,8 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate(
             {"evaluations": [{"input_id": "e1", "output": "x", "target": "y"}]}
         )
-        assert resp["status"] == "completed"
+        assert resp["status"] == "failed"
+        assert resp["results"][0]["metrics"] == {}
         assert "scoring failed" in resp["results"][0]["error"]
 
     @pytest.mark.asyncio
@@ -717,14 +732,14 @@ class TestComputeAggregateMetrics:
         result = svc._compute_aggregate_metrics([{"accuracy": 0.9}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
         assert result["accuracy"]["std"] == pytest.approx(0.0)
-        assert result["accuracy"]["n"] == 1.0
+        assert result["accuracy"]["n"] == 1
 
     def test_multiple_values(self) -> None:
         """Test aggregate stats with multiple values."""
         svc = TraigentService()
         result = svc._compute_aggregate_metrics([{"accuracy": 0.8}, {"accuracy": 1.0}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
-        assert result["accuracy"]["n"] == 2.0
+        assert result["accuracy"]["n"] == 2
         assert result["accuracy"]["std"] > 0.0
 
     def test_multiple_metric_names(self) -> None:
@@ -738,8 +753,8 @@ class TestComputeAggregateMetrics:
         )
         assert "accuracy" in result
         assert "f1" in result
-        assert result["accuracy"]["n"] == 2.0
-        assert result["f1"]["n"] == 2.0
+        assert result["accuracy"]["n"] == 2
+        assert result["f1"]["n"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +772,7 @@ class TestSessionManagement:
 
     def test_handle_keep_alive_existing_session(self) -> None:
         """Test keep alive with existing session."""
-        svc = TraigentService()
+        svc = TraigentService(supports_keep_alive=True)
         sid = svc.create_session()
         old_activity = svc._sessions[sid].last_activity
         time.sleep(0.01)
@@ -770,6 +785,13 @@ class TestSessionManagement:
         svc = TraigentService()
         result = svc.handle_keep_alive("nonexistent-id")
         assert result is False
+
+    def test_handle_keep_alive_missing_session_autocreates_when_enabled(self) -> None:
+        """When keep-alive is enabled, unknown sessions are auto-created."""
+        svc = TraigentService(supports_keep_alive=True)
+        result = svc.handle_keep_alive("nonexistent-id")
+        assert result is True
+        assert "nonexistent-id" in svc._sessions
 
 
 # ---------------------------------------------------------------------------
