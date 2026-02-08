@@ -398,7 +398,7 @@ class TraigentService:
                 if "resolution" in normalized_spec and "resolution" not in domain:
                     domain["resolution"] = normalized_spec.pop("resolution")
 
-                if domain:
+                if domain is not None:
                     normalized_spec["domain"] = domain
 
                 normalized[name] = normalized_spec
