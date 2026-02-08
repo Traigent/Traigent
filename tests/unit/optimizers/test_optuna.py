@@ -9,8 +9,11 @@ import pytest
 
 from traigent.optimizers.optuna_adapter import OptunaAdapter
 from traigent.optimizers.optuna_coordinator import OptunaCoordinator
-from traigent.optimizers.optuna_optimizer import OptunaTPEOptimizer
-from traigent.optimizers.optuna_utils import suggest_from_definition
+from traigent.optimizers.optuna_optimizer import OptunaGridOptimizer, OptunaTPEOptimizer
+from traigent.optimizers.optuna_utils import (
+    config_space_to_distributions,
+    suggest_from_definition,
+)
 from traigent.utils.exceptions import OptimizationError
 
 CONFIG_SPACE = {
@@ -105,6 +108,63 @@ def test_optuna_conditional_parameter_support():
     assert (
         suggest_from_definition(bad_trial, "max_tokens", definition, bad_config) == 128
     )
+
+
+def test_optuna_infers_float_range_dict_without_type_in_distributions():
+    config_space = {
+        "temperature": {"low": 0.0, "high": 1.0},
+        "model": ["gpt-4", "gpt-3.5"],
+    }
+    distributions = config_space_to_distributions(config_space)
+
+    temp_distribution = distributions["temperature"]
+    assert isinstance(temp_distribution, optuna.distributions.FloatDistribution)
+    assert temp_distribution.low == 0.0
+    assert temp_distribution.high == 1.0
+
+
+def test_suggest_from_definition_infers_float_range_dict_without_type():
+    trial = optuna.trial.FixedTrial({"temperature": 0.42})
+    definition = {"low": 0.0, "high": 1.0}
+
+    value = suggest_from_definition(trial, "temperature", definition, current_config={})
+    assert value == 0.42
+
+
+def test_optuna_optimizer_accepts_hybrid_float_range_dict():
+    sampler = optuna.samplers.RandomSampler(seed=42)
+    config_space = {
+        "model": ["gpt-4", "gpt-3.5"],
+        "temperature": {"low": 0.0, "high": 1.0},
+    }
+
+    optimizer = OptunaTPEOptimizer(
+        config_space,
+        ["accuracy"],
+        max_trials=1,
+        sampler=sampler,
+    )
+
+    config = optimizer.suggest_next_trial([])
+    assert config["model"] in {"gpt-4", "gpt-3.5"}
+    assert 0.0 <= config["temperature"] <= 1.0
+
+
+def test_optuna_grid_optimizer_accepts_hybrid_float_range_dict():
+    config_space = {
+        "model": ["gpt-4", "gpt-3.5"],
+        "temperature": {"low": 0.0, "high": 1.0},
+    }
+    optimizer = OptunaGridOptimizer(
+        config_space,
+        ["accuracy"],
+        max_trials=1,
+        n_bins=3,
+    )
+
+    config = optimizer.suggest_next_trial([])
+    assert config["model"] in {"gpt-4", "gpt-3.5"}
+    assert 0.0 <= config["temperature"] <= 1.0
 
 
 def test_optuna_optimizer_applies_conditional_defaults():
