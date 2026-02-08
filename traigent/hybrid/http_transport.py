@@ -345,8 +345,15 @@ class HTTPTransport:
                 self.KEEP_ALIVE_PATH,
                 json_data={"session_id": session_id},
             )
-            alive: bool = data.get("alive", False)
-            return alive
+            status = data.get("status")
+            if isinstance(status, str):
+                return status.lower() == "alive"
+
+            # Backward compatibility with older wrapper servers
+            if "alive" in data:
+                return bool(data.get("alive"))
+
+            return False
         except TransportError as e:
             # Session expired or invalid
             if e.status_code == 404:

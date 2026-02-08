@@ -166,6 +166,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._discovery: ConfigSpaceDiscovery | None = None
         self._capabilities: ServiceCapabilities | None = None
         self._session_id: str | None = None
+        self._optimization_spec: dict[str, Any] | None = None
 
     @property
     def lifecycle_manager(self) -> AgentLifecycleManager | None:
@@ -176,6 +177,11 @@ class HybridAPIEvaluator(BaseEvaluator):
     def capability_id(self) -> str | None:
         """Get the capability ID (may be auto-discovered)."""
         return self._capability_id
+
+    @property
+    def optimization_spec(self) -> dict[str, Any] | None:
+        """Optimization spec discovered from external config-space metadata."""
+        return self._optimization_spec
 
     async def _get_transport(self) -> HybridTransport:
         """Get or create the transport."""
@@ -214,6 +220,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._discovery = ConfigSpaceDiscovery(transport)
 
         config_space = await self._discovery.fetch_and_normalize()
+        self._optimization_spec = await self._discovery.build_optimization_spec()
 
         # Update capability_id if not set
         if self._capability_id is None:
@@ -237,9 +244,44 @@ class HybridAPIEvaluator(BaseEvaluator):
                 transport=transport,
                 heartbeat_interval=self._heartbeat_interval,
             )
-            self._session_id = self._lifecycle_manager.create_session()
+            logger.info("Started lifecycle manager for hybrid API evaluator")
+
+        # Register only when the external service has issued a real session_id.
+        # This avoids heartbeat failures against servers that do not pre-create
+        # sessions from client-generated identifiers.
+        if self._session_id:
             await self._lifecycle_manager.register(self._session_id)
-            logger.info(f"Started lifecycle management for session {self._session_id}")
+
+    @staticmethod
+    def _coerce_metric(value: Any, default: float = 0.0) -> float:
+        """Coerce a numeric metric value to float with a safe fallback."""
+        if isinstance(value, bool):
+            return default
+        if isinstance(value, (int, float)):
+            return float(value)
+        return default
+
+    @staticmethod
+    def _find_output_item(
+        outputs: list[dict[str, Any]],
+        input_id: str,
+    ) -> dict[str, Any]:
+        """Find output item for an input_id."""
+        for out in outputs:
+            if out.get("input_id") == input_id:
+                return out
+        return {}
+
+    @staticmethod
+    def _extract_target_fields(expected: Any) -> tuple[str, Any]:
+        """Return ('target'|'target_id', value) from expected output payload."""
+        if (
+            isinstance(expected, dict)
+            and "target_id" in expected
+            and "target" not in expected
+        ):
+            return "target_id", expected["target_id"]
+        return "target", expected
 
     async def evaluate(
         self,
@@ -470,24 +512,34 @@ class HybridAPIEvaluator(BaseEvaluator):
     ) -> list[HybridExampleResult]:
         """Process response in combined mode (quality metrics included)."""
         results: list[HybridExampleResult] = []
+        fallback_cost = self._coerce_metric(response.get_total_cost()) / max(
+            len(inputs), 1
+        )
+        fallback_latency = self._coerce_metric(
+            response.operational_metrics.get("latency_ms", 0.0)
+        )
 
         for i, inp in enumerate(inputs):
             input_id = inp["input_id"]
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_data = None
-            per_example_metrics: dict[str, float] = {}
+            output_item = self._find_output_item(response.outputs, input_id)
+            output_data = output_item.get("output")
+            if output_data is None and "output_id" in output_item:
+                output_data = {"output_id": output_item["output_id"]}
+            per_example_metrics = (
+                output_item.get("metrics", {})
+                if isinstance(output_item.get("metrics"), dict)
+                else {}
+            )
+            error = output_item.get("error")
 
-            for out in response.outputs:
-                if out.get("input_id") == input_id:
-                    output_data = out.get("output")
-                    per_example_metrics = out.get("metrics", {})
-                    break
-
-            # Get operational metrics
-            cost = response.operational_metrics.get("cost_usd", 0.0) / len(inputs)
-            latency = response.operational_metrics.get("latency_ms", 0.0)
+            # Prefer per-item metrics, fall back to aggregate execution metrics.
+            cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+            latency = self._coerce_metric(
+                output_item.get("latency_ms"), fallback_latency
+            )
 
             results.append(
                 HybridExampleResult(
@@ -497,6 +549,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     metrics=per_example_metrics,
                     cost_usd=cost,
                     latency_ms=latency,
+                    error=error if isinstance(error, str) else None,
                 )
             )
 
@@ -517,19 +570,19 @@ class HybridAPIEvaluator(BaseEvaluator):
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_data = None
-            for out in execute_response.outputs:
-                if out.get("input_id") == input_id:
-                    output_data = out.get("output")
-                    break
+            output_item = self._find_output_item(execute_response.outputs, input_id)
 
-            evaluations.append(
-                {
-                    "input_id": input_id,
-                    "output": output_data,
-                    "target": expected,
-                }
-            )
+            evaluation: dict[str, Any] = {"input_id": input_id}
+            if "output" in output_item:
+                evaluation["output"] = output_item.get("output")
+            elif "output_id" in output_item:
+                evaluation["output_id"] = output_item.get("output_id")
+            else:
+                evaluation["output"] = None
+
+            target_key, target_value = self._extract_target_fields(expected)
+            evaluation[target_key] = target_value
+            evaluations.append(evaluation)
 
         # Call evaluate
         eval_request = HybridEvaluateRequest(
@@ -544,27 +597,38 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             # Merge execute and evaluate results
             results: list[HybridExampleResult] = []
+            fallback_cost = self._coerce_metric(
+                execute_response.get_total_cost()
+            ) / max(len(inputs), 1)
+            fallback_latency = self._coerce_metric(
+                execute_response.operational_metrics.get("latency_ms", 0.0)
+            )
             for i, inp in enumerate(inputs):
                 input_id = inp["input_id"]
                 expected = self._extract_expected(batch[i])
 
                 # Find output from execute
-                output_data = None
-                for out in execute_response.outputs:
-                    if out.get("input_id") == input_id:
-                        output_data = out.get("output")
-                        break
+                output_item = self._find_output_item(execute_response.outputs, input_id)
+                output_data = output_item.get("output")
+                if output_data is None and "output_id" in output_item:
+                    output_data = {"output_id": output_item["output_id"]}
+                execute_error = output_item.get("error")
 
                 # Find metrics from evaluate
                 per_example_metrics: dict[str, float] = {}
+                eval_error: str | None = None
                 for result in eval_response.results:
                     if result.get("input_id") == input_id:
                         per_example_metrics = result.get("metrics", {})
+                        if isinstance(result.get("error"), str):
+                            eval_error = result.get("error")
                         break
 
-                # Operational metrics per example
-                cost = execute_response.get_total_cost() / len(inputs)
-                latency = execute_response.operational_metrics.get("latency_ms", 0.0)
+                # Prefer per-item operational metrics when present.
+                cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+                latency = self._coerce_metric(
+                    output_item.get("latency_ms"), fallback_latency
+                )
 
                 results.append(
                     HybridExampleResult(
@@ -574,6 +638,8 @@ class HybridAPIEvaluator(BaseEvaluator):
                         metrics=per_example_metrics,
                         cost_usd=cost,
                         latency_ms=latency,
+                        error=eval_error
+                        or (execute_error if isinstance(execute_error, str) else None),
                     )
                 )
 
@@ -591,20 +657,27 @@ class HybridAPIEvaluator(BaseEvaluator):
     ) -> list[HybridExampleResult]:
         """Process response when no evaluation is available."""
         results: list[HybridExampleResult] = []
+        fallback_cost = self._coerce_metric(response.get_total_cost()) / max(
+            len(inputs), 1
+        )
+        fallback_latency = self._coerce_metric(
+            response.operational_metrics.get("latency_ms", 0.0)
+        )
 
         for i, inp in enumerate(inputs):
             input_id = inp["input_id"]
             expected = self._extract_expected(batch[i])
 
             # Find matching output
-            output_data = None
-            for out in response.outputs:
-                if out.get("input_id") == input_id:
-                    output_data = out.get("output")
-                    break
-
-            cost = response.get_total_cost() / len(inputs)
-            latency = response.operational_metrics.get("latency_ms", 0.0)
+            output_item = self._find_output_item(response.outputs, input_id)
+            output_data = output_item.get("output")
+            if output_data is None and "output_id" in output_item:
+                output_data = {"output_id": output_item["output_id"]}
+            error = output_item.get("error")
+            cost = self._coerce_metric(output_item.get("cost_usd"), fallback_cost)
+            latency = self._coerce_metric(
+                output_item.get("latency_ms"), fallback_latency
+            )
 
             results.append(
                 HybridExampleResult(
@@ -614,6 +687,7 @@ class HybridAPIEvaluator(BaseEvaluator):
                     metrics={},  # No quality metrics
                     cost_usd=cost,
                     latency_ms=latency,
+                    error=error if isinstance(error, str) else None,
                 )
             )
 

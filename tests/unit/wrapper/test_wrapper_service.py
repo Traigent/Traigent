@@ -6,9 +6,8 @@ and all decorator/handler functionality.
 
 from __future__ import annotations
 
-import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -30,6 +29,12 @@ class TestServiceConfig:
         assert cfg.supports_streaming is False
         assert cfg.max_batch_size == 100
         assert cfg.schema_version == "0.9"
+        assert cfg.constraints is None
+        assert cfg.objectives is None
+        assert cfg.exploration is None
+        assert cfg.promotion_policy is None
+        assert cfg.defaults is None
+        assert cfg.measures is None
 
     def test_custom_values(self) -> None:
         """Test ServiceConfig with custom values."""
@@ -40,6 +45,12 @@ class TestServiceConfig:
             supports_streaming=True,
             max_batch_size=50,
             schema_version="1.0",
+            constraints={"structural": [{"expr": "params.temperature <= 1.0"}]},
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
         )
         assert cfg.capability_id == "qa_agent"
         assert cfg.version == "2.5"
@@ -47,6 +58,12 @@ class TestServiceConfig:
         assert cfg.supports_streaming is True
         assert cfg.max_batch_size == 50
         assert cfg.schema_version == "1.0"
+        assert cfg.constraints is not None
+        assert cfg.objectives is not None
+        assert cfg.exploration is not None
+        assert cfg.promotion_policy is not None
+        assert cfg.defaults == {"model": "gpt-4"}
+        assert cfg.measures == ["accuracy"]
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +123,22 @@ class TestTraigentServiceInit:
             supports_keep_alive=True,
             supports_streaming=True,
             max_batch_size=25,
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
         )
         assert svc.config.capability_id == "my_agent"
         assert svc.config.version == "3.0"
         assert svc.config.supports_keep_alive is True
         assert svc.config.supports_streaming is True
         assert svc.config.max_batch_size == 25
+        assert svc.config.objectives == [{"name": "accuracy", "direction": "maximize"}]
+        assert svc.config.exploration == {"strategy": "nsga2"}
+        assert svc.config.promotion_policy == {"dominance": "epsilon_pareto"}
+        assert svc.config.defaults == {"model": "gpt-4"}
+        assert svc.config.measures == ["accuracy"]
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +220,46 @@ class TestDecorators:
 
         assert score(None, None, {}) == {"accuracy": 1.0}
 
+    def test_declarative_spec_decorators_register_handlers(self) -> None:
+        """Objective/exploration/policy/defaults/measures decorators register."""
+        svc = TraigentService()
+
+        @svc.objectives
+        def objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        @svc.exploration
+        def exploration():
+            return {"strategy": "nsga2"}
+
+        @svc.promotion_policy
+        def promotion_policy():
+            return {"dominance": "epsilon_pareto"}
+
+        @svc.defaults
+        def defaults():
+            return {"model": "gpt-4"}
+
+        @svc.measures
+        def measures():
+            return ["accuracy"]
+
+        assert svc._objectives_handler is objectives
+        assert svc._exploration_handler is exploration
+        assert svc._promotion_policy_handler is promotion_policy
+        assert svc._defaults_handler is defaults
+        assert svc._measures_handler is measures
+
+    def test_constraints_decorator_registers_handler(self) -> None:
+        """@constraints registers the constraints declaration handler."""
+        svc = TraigentService()
+
+        @svc.constraints
+        def constraints():
+            return {"structural": [{"expr": "params.temperature <= 1.0"}]}
+
+        assert svc._constraints_handler is constraints
+
 
 # ---------------------------------------------------------------------------
 # get_config_space / _normalize_tvars tests
@@ -222,7 +289,47 @@ class TestGetConfigSpace:
         tvar = result["tvars"][0]
         assert tvar["name"] == "model"
         assert tvar["type"] == "enum"
-        assert tvar["values"] == ["gpt-4"]
+        assert tvar["domain"]["values"] == ["gpt-4"]
+
+    def test_dict_tvars_without_type_preserves_domain_fields(self) -> None:
+        """Top-level domain keys should not be dropped when type is omitted."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"model": {"values": ["gpt-4", "claude-3"]}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["name"] == "model"
+        assert tvar["domain"]["values"] == ["gpt-4", "claude-3"]
+
+    def test_empty_domain_is_preserved(self) -> None:
+        """Explicit empty domain should not be dropped for bool-like TVARs."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"use_cache": {"type": "bool", "domain": {}}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["name"] == "use_cache"
+        assert "domain" in tvar
+        assert tvar["domain"] == {}
+
+    def test_async_declaration_handler_rejected_without_coroutine_leak(self) -> None:
+        """Async declaration handlers should fail before a coroutine object is created."""
+        svc = TraigentService()
+
+        @svc.objectives
+        async def declared_objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        with pytest.raises(
+            ValueError, match="declaration handlers must be synchronous functions"
+        ):
+            svc.get_config_space()
 
     def test_list_tvars_converted_to_enum(self) -> None:
         """Test that list-type TVAR specs are converted to enum."""
@@ -302,6 +409,46 @@ class TestGetConfigSpace:
         assert tvars["options"]["type"] == "enum"
         assert tvars["label"]["type"] == "str"
 
+    def test_config_space_includes_optional_optimization_sections(self) -> None:
+        """Config-space response includes optional declarative optimization sections."""
+        svc = TraigentService(
+            capability_id="financial_qa",
+            constraints={"structural": [{"expr": "params.temperature <= 1.0"}]},
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy", "cost"],
+        )
+        result = svc.get_config_space()
+        assert result["constraints"] == {
+            "structural": [{"expr": "params.temperature <= 1.0"}]
+        }
+        assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
+        assert result["exploration"] == {"strategy": "nsga2"}
+        assert result["promotion_policy"] == {"dominance": "epsilon_pareto"}
+        assert result["defaults"] == {"model": "gpt-4"}
+        assert result["measures"] == ["accuracy", "cost"]
+
+    def test_config_space_decorator_sections_override_init_values(self) -> None:
+        """Decorator-declared sections override constructor-provided values."""
+        svc = TraigentService(
+            objectives=[{"name": "old_objective", "direction": "maximize"}],
+            defaults={"model": "old"},
+        )
+
+        @svc.objectives
+        def objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        @svc.defaults
+        def defaults():
+            return {"model": "gpt-4"}
+
+        result = svc.get_config_space()
+        assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
+        assert result["defaults"] == {"model": "gpt-4"}
+
 
 # ---------------------------------------------------------------------------
 # get_capabilities tests
@@ -324,6 +471,7 @@ class TestGetCapabilities:
         assert caps["supports_keep_alive"] is True
         assert caps["supports_streaming"] is False
         assert caps["max_batch_size"] == 50
+        assert caps["max_payload_bytes"] is None
 
     def test_capabilities_with_evaluate(self) -> None:
         """Test capabilities when evaluate handler is registered."""
@@ -349,8 +497,9 @@ class TestGetHealth:
         health = svc.get_health()
         assert health["status"] == "healthy"
         assert health["version"] == "1.2"
-        assert health["capability_id"] == "agent_x"
-        assert health["active_sessions"] == 0
+        assert isinstance(health["uptime_seconds"], float)
+        assert health["details"]["capability_id"] == "agent_x"
+        assert health["details"]["active_sessions"] == 0
 
     def test_health_with_sessions(self) -> None:
         """Test health status reflecting active sessions."""
@@ -358,7 +507,7 @@ class TestGetHealth:
         svc.create_session()
         svc.create_session()
         health = svc.get_health()
-        assert health["active_sessions"] == 2
+        assert health["details"]["active_sessions"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +575,7 @@ class TestHandleExecute:
         resp = await svc.handle_execute({"inputs": [{"input_id": "x1", "data": {}}]})
         assert resp["outputs"][0]["output"] == "plain_string_result"
         assert resp["outputs"][0]["cost_usd"] == 0.0
-        assert resp["outputs"][0]["metrics"] == {}
+        assert "metrics" not in resp["outputs"][0]
 
     @pytest.mark.asyncio
     async def test_handler_exception_captured(self) -> None:
@@ -438,7 +587,7 @@ class TestHandleExecute:
             raise RuntimeError("boom")
 
         resp = await svc.handle_execute({"inputs": [{"input_id": "e1", "data": {}}]})
-        assert resp["status"] == "completed"
+        assert resp["status"] == "failed"
         assert resp["outputs"][0]["input_id"] == "e1"
         assert "boom" in resp["outputs"][0]["error"]
 
@@ -521,9 +670,8 @@ class TestHandleExecute:
         def run(input_id, data, config):
             return {"output": "ok"}
 
-        resp = await svc.handle_execute({"inputs": []})
-        assert resp["status"] == "completed"
-        assert resp["outputs"] == []
+        with pytest.raises(ValueError, match="inputs must be a non-empty list"):
+            await svc.handle_execute({"inputs": []})
 
     @pytest.mark.asyncio
     async def test_input_without_input_id_gets_uuid(self) -> None:
@@ -636,7 +784,8 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate(
             {"evaluations": [{"input_id": "e1", "output": "x", "target": "y"}]}
         )
-        assert resp["status"] == "completed"
+        assert resp["status"] == "failed"
+        assert resp["results"][0]["metrics"] == {}
         assert "scoring failed" in resp["results"][0]["error"]
 
     @pytest.mark.asyncio
@@ -717,14 +866,14 @@ class TestComputeAggregateMetrics:
         result = svc._compute_aggregate_metrics([{"accuracy": 0.9}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
         assert result["accuracy"]["std"] == pytest.approx(0.0)
-        assert result["accuracy"]["n"] == 1.0
+        assert result["accuracy"]["n"] == 1
 
     def test_multiple_values(self) -> None:
         """Test aggregate stats with multiple values."""
         svc = TraigentService()
         result = svc._compute_aggregate_metrics([{"accuracy": 0.8}, {"accuracy": 1.0}])
         assert result["accuracy"]["mean"] == pytest.approx(0.9)
-        assert result["accuracy"]["n"] == 2.0
+        assert result["accuracy"]["n"] == 2
         assert result["accuracy"]["std"] > 0.0
 
     def test_multiple_metric_names(self) -> None:
@@ -738,8 +887,8 @@ class TestComputeAggregateMetrics:
         )
         assert "accuracy" in result
         assert "f1" in result
-        assert result["accuracy"]["n"] == 2.0
-        assert result["f1"]["n"] == 2.0
+        assert result["accuracy"]["n"] == 2
+        assert result["f1"]["n"] == 2
 
 
 # ---------------------------------------------------------------------------
@@ -757,7 +906,7 @@ class TestSessionManagement:
 
     def test_handle_keep_alive_existing_session(self) -> None:
         """Test keep alive with existing session."""
-        svc = TraigentService()
+        svc = TraigentService(supports_keep_alive=True)
         sid = svc.create_session()
         old_activity = svc._sessions[sid].last_activity
         time.sleep(0.01)
@@ -770,6 +919,13 @@ class TestSessionManagement:
         svc = TraigentService()
         result = svc.handle_keep_alive("nonexistent-id")
         assert result is False
+
+    def test_handle_keep_alive_missing_session_autocreates_when_enabled(self) -> None:
+        """When keep-alive is enabled, unknown sessions are auto-created."""
+        svc = TraigentService(supports_keep_alive=True)
+        result = svc.handle_keep_alive("nonexistent-id")
+        assert result is True
+        assert "nonexistent-id" in svc._sessions
 
 
 # ---------------------------------------------------------------------------
@@ -829,3 +985,217 @@ class TestWrapperExports:
         assert "TraigentService" in wrapper.__all__
         assert "ServiceConfig" in wrapper.__all__
         assert "Session" in wrapper.__all__
+
+
+# ---------------------------------------------------------------------------
+# Validation error paths in get_config_space
+# ---------------------------------------------------------------------------
+class TestGetConfigSpaceValidation:
+    """Tests for validation errors in get_config_space."""
+
+    def test_tvars_handler_returns_non_dict_raises(self) -> None:
+        """Tvars handler returning non-dict should raise ValueError."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return ["not", "a", "dict"]
+
+        with pytest.raises(ValueError, match="tunables handler must return a dict"):
+            svc.get_config_space()
+
+    def test_constraints_not_dict_or_list_raises(self) -> None:
+        """Constraints that are not dict or list should raise ValueError."""
+        svc = TraigentService(constraints="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="constraints must be a dict or list"):
+            svc.get_config_space()
+
+    def test_objectives_not_list_raises(self) -> None:
+        """Objectives that are not a list should raise ValueError."""
+        svc = TraigentService(objectives="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="objectives must be a list"):
+            svc.get_config_space()
+
+    def test_exploration_not_dict_raises(self) -> None:
+        """Exploration that is not a dict should raise ValueError."""
+        svc = TraigentService(exploration="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="exploration must be a dict"):
+            svc.get_config_space()
+
+    def test_promotion_policy_not_dict_raises(self) -> None:
+        """Promotion policy that is not a dict should raise ValueError."""
+        svc = TraigentService(promotion_policy="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="promotion_policy must be a dict"):
+            svc.get_config_space()
+
+    def test_defaults_not_dict_raises(self) -> None:
+        """Defaults that is not a dict should raise ValueError."""
+        svc = TraigentService(defaults="invalid")  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="defaults must be a dict"):
+            svc.get_config_space()
+
+    def test_measures_not_list_of_strings_raises(self) -> None:
+        """Measures that is not a list of strings should raise ValueError."""
+        svc = TraigentService(measures=[1, 2, 3])  # type: ignore[arg-type]
+        with pytest.raises(ValueError, match="measures must be a list of strings"):
+            svc.get_config_space()
+
+    def test_sync_handler_returning_awaitable_raises(self) -> None:
+        """Sync handler that returns an awaitable should fail with coroutine cleanup."""
+        import asyncio
+
+        svc = TraigentService()
+
+        @svc.objectives
+        def objectives():
+            # Return a coroutine without awaiting — simulates accidental async usage
+            async def inner():
+                return [{"name": "accuracy", "direction": "maximize"}]
+            return inner()
+
+        with pytest.raises(
+            ValueError, match="declaration handlers must be synchronous functions"
+        ):
+            svc.get_config_space()
+
+    def test_normalize_tvars_range_and_resolution(self) -> None:
+        """Top-level range/resolution keys should be moved into domain."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {
+                "temperature": {
+                    "type": "float",
+                    "range": [0.0, 1.5],
+                    "resolution": 0.1,
+                },
+            }
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert tvar["domain"]["range"] == [0.0, 1.5]
+        assert tvar["domain"]["resolution"] == 0.1
+
+    def test_normalize_tvars_non_dict_domain_replaced(self) -> None:
+        """Non-dict domain should be replaced with empty dict."""
+        svc = TraigentService()
+
+        @svc.tvars
+        def cfg():
+            return {"flag": {"type": "bool", "domain": "invalid"}}
+
+        result = svc.get_config_space()
+        tvar = result["tvars"][0]
+        assert isinstance(tvar["domain"], dict)
+
+
+# ---------------------------------------------------------------------------
+# handle_execute edge cases
+# ---------------------------------------------------------------------------
+class TestHandleExecuteEdgeCases:
+    """Tests for edge cases in handle_execute."""
+
+    @pytest.mark.asyncio
+    async def test_non_dict_input_gets_uuid_and_input_as_data(self) -> None:
+        """Non-dict input should get a UUID and be passed as data."""
+        svc = TraigentService()
+        received = {}
+
+        @svc.execute
+        def run(input_id, data, config):
+            received["input_id"] = input_id
+            received["data"] = data
+            return {"output": "ok"}
+
+        resp = await svc.handle_execute({"inputs": ["raw_string"]})
+        assert resp["status"] == "completed"
+        assert len(received["input_id"]) > 0  # UUID generated
+
+    @pytest.mark.asyncio
+    async def test_partial_status_on_mixed_success_and_failure(self) -> None:
+        """Partial status when some inputs succeed and some fail."""
+        svc = TraigentService()
+        call_count = 0
+
+        @svc.execute
+        def run(input_id, data, config):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 2:
+                raise RuntimeError("fail on second")
+            return {"output": f"ok-{input_id}"}
+
+        resp = await svc.handle_execute(
+            {
+                "inputs": [
+                    {"input_id": "i1", "data": {}},
+                    {"input_id": "i2", "data": {}},
+                    {"input_id": "i3", "data": {}},
+                ]
+            }
+        )
+        assert resp["status"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# handle_evaluate edge cases
+# ---------------------------------------------------------------------------
+class TestHandleEvaluateEdgeCases:
+    """Tests for edge cases in handle_evaluate."""
+
+    @pytest.mark.asyncio
+    async def test_evaluations_not_list_raises(self) -> None:
+        """Evaluations must be a list."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(ValueError, match="evaluations must be a list"):
+            await svc.handle_evaluate({"evaluations": "not_a_list"})
+
+    @pytest.mark.asyncio
+    async def test_evaluation_with_output_id(self) -> None:
+        """Evaluation with output_id instead of output."""
+        svc = TraigentService()
+        received_output = {}
+
+        @svc.evaluate
+        def score(output, target, config):
+            received_output["output"] = output
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {
+                        "input_id": "e1",
+                        "output_id": "out-123",
+                        "target": "expected",
+                    }
+                ]
+            }
+        )
+        assert received_output["output"] == {"output_id": "out-123"}
+
+    @pytest.mark.asyncio
+    async def test_bool_metrics_excluded_from_aggregation(self) -> None:
+        """Bool-type metric values should be excluded from aggregation."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 0.9, "is_valid": True}
+
+        resp = await svc.handle_evaluate(
+            {
+                "evaluations": [
+                    {"input_id": "e1", "output": "a", "target": "a"},
+                ]
+            }
+        )
+        agg = resp["aggregate_metrics"]
+        assert "accuracy" in agg
+        assert "is_valid" not in agg  # Bool excluded

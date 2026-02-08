@@ -39,10 +39,7 @@ from typing import Any, cast
 
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
-from traigent.config.parallel import (
-    coerce_parallel_config,
-    merge_parallel_configs,
-)
+from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
 from traigent.core.ci_approval import check_ci_approval
 from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
@@ -430,6 +427,25 @@ class OptimizedFunction:
             kwargs, sentinel, "framework_target", None
         )
 
+        # Hybrid API evaluator configuration (execution_mode="hybrid_api")
+        self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
+        self.hybrid_api_capability_id = kwargs.pop("capability_id", None)
+        self.hybrid_api_transport = kwargs.pop("hybrid_api_transport", None)
+        self.hybrid_api_transport_type = kwargs.pop("hybrid_api_transport_type", "auto")
+        self.hybrid_api_batch_size = kwargs.pop("hybrid_api_batch_size", 1)
+        self.hybrid_api_batch_parallelism = kwargs.pop(
+            "hybrid_api_batch_parallelism", 1
+        )
+        self.hybrid_api_keep_alive = bool(kwargs.pop("hybrid_api_keep_alive", True))
+        self.hybrid_api_heartbeat_interval = kwargs.pop(
+            "hybrid_api_heartbeat_interval", 30.0
+        )
+        self.hybrid_api_timeout = kwargs.pop("hybrid_api_timeout", None)
+        self.hybrid_api_auth_header = kwargs.pop("hybrid_api_auth_header", None)
+        self.hybrid_api_auto_discover_tvars = bool(
+            kwargs.pop("hybrid_api_auto_discover_tvars", False)
+        )
+
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
         combined_parallel, sources = merge_parallel_configs(
@@ -677,12 +693,26 @@ class OptimizedFunction:
                 else:
                     raise
         elif self.configuration_space == {}:
+            if self._allows_empty_configuration_space():
+                logger.debug(
+                    "Allowing empty local configuration_space because "
+                    "hybrid_api_auto_discover_tvars is enabled"
+                )
+                return
             # Empty config space should raise ValueError with helpful message
             raise ValueError(
                 "Configuration space cannot be empty. Please specify at least one parameter to optimize "
                 "in the @traigent.optimize decorator. Example: configuration_space={'temperature': [0.0, 0.5, 1.0], "
                 "'model': ['gpt-3.5-turbo', 'gpt-4']}"
             )
+
+    def _allows_empty_configuration_space(self) -> bool:
+        """Whether empty config space is allowed for this function."""
+        effective_mode = getattr(self, "_effective_execution_mode", None)
+        return bool(
+            effective_mode is ExecutionMode.HYBRID_API
+            and self.hybrid_api_auto_discover_tvars
+        )
 
     def _validate_dataset(self) -> None:
         """Validate dataset configuration."""
@@ -829,6 +859,114 @@ class OptimizedFunction:
             self.constraints = tvl_state["constraints"]
         if "default_config" in tvl_state:
             self.default_config = tvl_state["default_config"]
+
+    async def _apply_hybrid_discovery_overrides(
+        self,
+        evaluator: BaseEvaluator,
+        *,
+        algorithm: str | None,
+        max_trials: int | None,
+        timeout: float | None,
+        effective_config_space: dict[str, Any],
+        algorithm_kwargs: dict[str, Any],
+    ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
+        """Apply hybrid config-space discovery data to runtime settings."""
+        from traigent.hybrid.discovery import merge_config_spaces
+        from traigent.tvl.promotion_gate import PromotionGate
+
+        state: dict[str, Any] = {}
+
+        discover = getattr(evaluator, "discover_config_space", None)
+        if not callable(discover):
+            return algorithm, max_trials, timeout, effective_config_space, state
+
+        discovered_config_space = await discover()
+        if not discovered_config_space:
+            raise ValueError(
+                "Hybrid API config-space discovery returned no tunables. "
+                "Verify GET /traigent/v1/config-space."
+            )
+
+        effective_config_space = merge_config_spaces(
+            discovered_config_space,
+            effective_config_space if effective_config_space else None,
+        )
+
+        discovered_spec = getattr(evaluator, "optimization_spec", None) or {}
+        if not isinstance(discovered_spec, dict):
+            return algorithm, max_trials, timeout, effective_config_space, state
+
+        discovered_schema = discovered_spec.get("objective_schema")
+        if discovered_schema is not None:
+            state["objective_schema"] = self.objective_schema
+            self.objective_schema = discovered_schema
+
+        discovered_constraints = discovered_spec.get("constraints")
+        if isinstance(discovered_constraints, list) and discovered_constraints:
+            state["constraints"] = list(self.constraints or [])
+            self.constraints = list(self.constraints or []) + discovered_constraints
+
+        discovered_defaults = discovered_spec.get("default_config")
+        if isinstance(discovered_defaults, dict) and discovered_defaults:
+            state["default_config"] = copy.deepcopy(self.default_config)
+            self.default_config = discovered_defaults.copy()
+
+        runtime_overrides = discovered_spec.get("runtime_overrides")
+        if isinstance(runtime_overrides, dict) and runtime_overrides:
+            algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+                algorithm,
+                max_trials,
+                timeout,
+                algorithm_kwargs,
+                runtime_overrides,
+            )
+
+        promotion_policy = discovered_spec.get("promotion_policy")
+        if promotion_policy is not None:
+            state["promotion_gate"] = getattr(self, "promotion_gate", None)
+            self.promotion_gate = PromotionGate.from_policy(
+                promotion_policy=promotion_policy,
+                objective_schema=self.objective_schema,
+            )
+
+        discovered_measures = discovered_spec.get("measures")
+        if (
+            isinstance(discovered_measures, list)
+            and hasattr(evaluator, "metrics")
+            and isinstance(getattr(evaluator, "metrics", None), list)
+        ):
+            state["evaluator_metrics"] = list(evaluator.metrics)
+            merged_metrics: list[str] = []
+            for metric_name in [*self.objectives, *discovered_measures]:
+                if isinstance(metric_name, str) and metric_name not in merged_metrics:
+                    merged_metrics.append(metric_name)
+            if merged_metrics:
+                evaluator.metrics = merged_metrics
+
+        return algorithm, max_trials, timeout, effective_config_space, state
+
+    def _restore_hybrid_discovery_state(
+        self,
+        state: dict[str, Any] | None,
+        evaluator: BaseEvaluator | None = None,
+    ) -> None:
+        """Restore state mutated by hybrid discovery application."""
+        if not state:
+            return
+        if "constraints" in state:
+            self.constraints = state["constraints"]
+        if "default_config" in state:
+            self.default_config = state["default_config"]
+        if "objective_schema" in state:
+            self.objective_schema = state["objective_schema"]
+        if "promotion_gate" in state:
+            self.promotion_gate = state["promotion_gate"]
+        if (
+            evaluator is not None
+            and "evaluator_metrics" in state
+            and hasattr(evaluator, "metrics")
+        ):
+            evaluator.metrics = state["evaluator_metrics"]
 
     async def optimize(
         self,
@@ -1100,6 +1238,31 @@ class OptimizedFunction:
 
         return updated_algorithm, updated_max_trials, updated_timeout
 
+    def _hybrid_api_evaluator_kwargs(
+        self,
+        *,
+        force_auto_discover_tvars: bool | None = None,
+    ) -> dict[str, Any]:
+        """Build hybrid API kwargs for evaluator construction."""
+        auto_discover = (
+            force_auto_discover_tvars
+            if force_auto_discover_tvars is not None
+            else self.hybrid_api_auto_discover_tvars
+        )
+        return {
+            "hybrid_api_endpoint": self.hybrid_api_endpoint,
+            "hybrid_api_capability_id": self.hybrid_api_capability_id,
+            "hybrid_api_transport": self.hybrid_api_transport,
+            "hybrid_api_transport_type": self.hybrid_api_transport_type,
+            "hybrid_api_batch_size": self.hybrid_api_batch_size,
+            "hybrid_api_batch_parallelism": self.hybrid_api_batch_parallelism,
+            "hybrid_api_keep_alive": self.hybrid_api_keep_alive,
+            "hybrid_api_heartbeat_interval": self.hybrid_api_heartbeat_interval,
+            "hybrid_api_timeout": self.hybrid_api_timeout,
+            "hybrid_api_auth_header": self.hybrid_api_auth_header,
+            "hybrid_api_auto_discover_tvars": auto_discover,
+        }
+
     def _create_effective_evaluator(
         self,
         timeout: float | None,
@@ -1107,6 +1270,8 @@ class OptimizedFunction:
         effective_batch_size: int | None,
         effective_thread_workers: int | None,
         effective_privacy_enabled: bool,
+        *,
+        force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
         """Create the appropriate evaluator. Delegates to optimization_pipeline."""
         evaluator, js_pool = create_effective_evaluator(
@@ -1122,6 +1287,9 @@ class OptimizedFunction:
             metric_functions=self.metric_functions,
             scoring_function=self.scoring_function,
             decorator_custom_evaluator=self.custom_evaluator,
+            **self._hybrid_api_evaluator_kwargs(
+                force_auto_discover_tvars=force_auto_discover_tvars
+            ),
         )
         if js_pool is not None:
             self._js_process_pool = js_pool
@@ -1331,6 +1499,51 @@ class OptimizedFunction:
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
+        hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
+        effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
+        hybrid_discovery_state: dict[str, Any] | None = None
+        precreated_evaluator: BaseEvaluator | None = None
+
+        if hybrid_auto_discovery_enabled:
+            # Discovery must happen before we resolve parallel settings because
+            # the remote config-space can override optimizer/runtime parameters.
+            # Use neutral worker settings for this bootstrap evaluator instance.
+            precreated_evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=custom_evaluator,
+                effective_batch_size=None,
+                effective_thread_workers=None,
+                effective_privacy_enabled=effective_privacy_enabled,
+                force_auto_discover_tvars=True,
+            )
+
+            pre_discovery_space = (
+                configuration_space
+                if configuration_space is not None
+                else self.configuration_space
+            )
+            try:
+                (
+                    algorithm,
+                    max_trials,
+                    timeout,
+                    discovered_config_space,
+                    hybrid_discovery_state,
+                ) = await self._apply_hybrid_discovery_overrides(
+                    evaluator=precreated_evaluator,
+                    algorithm=algorithm,
+                    max_trials=max_trials,
+                    timeout=timeout,
+                    effective_config_space=pre_discovery_space or {},
+                    algorithm_kwargs=algorithm_kwargs,
+                )
+            except Exception:
+                close = getattr(precreated_evaluator, "close", None)
+                if callable(close):
+                    await close()
+                raise
+            configuration_space = discovered_config_space
+
         # Phase 1: Resolve and validate parameters
         algorithm, max_trials, effective_config_space = resolve_execution_parameters(
             algorithm,
@@ -1399,7 +1612,19 @@ class OptimizedFunction:
                 raw_invocations,
             )
 
-        # Phase 6: Create optimizer
+        # Phase 6: Determine privacy and create evaluator
+        if precreated_evaluator is not None:
+            evaluator = precreated_evaluator
+        else:
+            evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=custom_evaluator,
+                effective_batch_size=effective_batch_size,
+                effective_thread_workers=effective_thread_workers,
+                effective_privacy_enabled=effective_privacy_enabled,
+            )
+
+        # Phase 7: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials:
             optimizer_kwargs["max_trials"] = max_trials
@@ -1410,25 +1635,6 @@ class OptimizedFunction:
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
         )
-
-        # Phase 7: Determine privacy and create evaluator
-        effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
-        evaluator, js_process_pool = create_effective_evaluator(
-            timeout=timeout,
-            custom_evaluator=custom_evaluator,
-            effective_batch_size=effective_batch_size,
-            effective_thread_workers=effective_thread_workers,
-            effective_privacy_enabled=effective_privacy_enabled,
-            objectives=self.objectives,
-            js_runtime_config=getattr(self, "js_runtime_config", None),
-            execution_mode=self.execution_mode,
-            mock_mode_config=self.mock_mode_config,
-            metric_functions=self.metric_functions,
-            scoring_function=self.scoring_function,
-            decorator_custom_evaluator=self.custom_evaluator,
-        )
-        if js_process_pool is not None:
-            self._js_process_pool = js_process_pool
 
         # Update TraigentConfig with final privacy setting
         traigent_config.privacy_enabled = effective_privacy_enabled
@@ -1459,6 +1665,8 @@ class OptimizedFunction:
         except Exception as e:
             logger.error(f"Optimization failed: {e}")
             raise OptimizationError(f"Optimization failed: {e}") from e
+        finally:
+            self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
 
     async def _optimize_with_cloud_service(
         self,

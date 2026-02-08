@@ -53,6 +53,41 @@ class TestOptimizeDecorator:
 
         assert isinstance(training_function, OptimizedFunction)
 
+    def test_execution_bundle_passes_hybrid_api_transport(self):
+        """Execution bundle should preserve preconfigured transport objects."""
+        from traigent.api.decorators import ExecutionOptions
+
+        transport = Mock(name="hybrid_transport")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution=ExecutionOptions(
+                execution_mode="hybrid_api",
+                hybrid_api_transport=transport,
+            ),
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.execution_mode == "hybrid_api"
+        assert sample_function.hybrid_api_transport is transport
+
+    def test_direct_hybrid_api_transport_runtime_option_is_supported(self):
+        """Direct runtime options should accept hybrid_api_transport."""
+        transport = Mock(name="hybrid_transport_direct")
+
+        @optimize(
+            configuration_space={"x": [1, 2]},
+            execution_mode="hybrid_api",
+            hybrid_api_transport=transport,
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.hybrid_api_transport is transport
+
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""
 

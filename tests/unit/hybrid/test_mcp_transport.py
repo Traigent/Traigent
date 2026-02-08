@@ -6,20 +6,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from traigent.hybrid.mcp_transport import (
-    CONFIG_SPACE_URI,
-    HEALTH_URI,
-    MCPTransport,
-)
+from traigent.hybrid.mcp_transport import CONFIG_SPACE_URI, HEALTH_URI, MCPTransport
 from traigent.hybrid.protocol import (
     HybridEvaluateRequest,
     HybridExecuteRequest,
     ServiceCapabilities,
 )
-from traigent.hybrid.transport import (
-    TransportConnectionError,
-    TransportError,
-)
+from traigent.hybrid.transport import TransportConnectionError, TransportError
 
 
 @dataclass
@@ -596,6 +589,27 @@ class TestMCPTransportKeepAlive:
         alive = await transport.keep_alive("session-123")
 
         assert alive is False
+
+    @pytest.mark.asyncio
+    async def test_keep_alive_with_status_alive(self, transport: MCPTransport) -> None:
+        """Keep-alive with status='alive' returns True (not backward-compat path)."""
+        caps_data = {"version": "1.0", "supports_keep_alive": True}
+        caps_response = MockMCPResponse(
+            success=True,
+            data={"content": json.dumps(caps_data)},
+        )
+
+        keep_alive_response = MockMCPResponse(
+            success=True,
+            data={"status": "alive", "session_id": "session-123"},
+        )
+
+        transport._client.read_resource = AsyncMock(return_value=caps_response)
+        transport._client.call_tool = AsyncMock(return_value=keep_alive_response)
+
+        alive = await transport.keep_alive("session-123")
+
+        assert alive is True
 
 
 class TestMCPTransportClose:

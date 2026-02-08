@@ -128,6 +128,21 @@ class TestOptimizedFunctionInitialization:
                 objectives=sample_objectives,
             )
 
+    def test_empty_configuration_space_allowed_with_hybrid_discovery(
+        self, simple_function, sample_objectives
+    ):
+        """Hybrid API auto-discovery can bootstrap the config space at runtime."""
+        opt_func = OptimizedFunction(
+            func=simple_function,
+            configuration_space={},
+            objectives=sample_objectives,
+            execution_mode="hybrid_api",
+            hybrid_api_endpoint="http://localhost:8080",
+            hybrid_api_auto_discover_tvars=True,
+        )
+
+        assert opt_func.configuration_space == {}
+
     def test_invalid_objectives_type(self, simple_function, sample_config_space):
         """Test error with invalid objectives type."""
         # Now raises ValidationError from validation module

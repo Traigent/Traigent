@@ -480,14 +480,26 @@ class PromotionGate:
         Returns:
             PromotionGate if promotion policy is defined, None otherwise.
         """
-        if artifact.promotion_policy is None:
+        return cls.from_policy(
+            promotion_policy=getattr(artifact, "promotion_policy", None),
+            objective_schema=getattr(artifact, "objective_schema", None),
+        )
+
+    @classmethod
+    def from_policy(
+        cls,
+        promotion_policy: PromotionPolicy | None,
+        objective_schema: Any | None,
+    ) -> PromotionGate | None:
+        """Create a PromotionGate from policy + objective schema."""
+        if promotion_policy is None:
             return None
 
-        # Build objective specs from the artifact's objective_schema
+        # Build objective specs from the objective schema.
         objectives: list[ObjectiveSpec] = []
 
-        if artifact.objective_schema is not None:
-            for obj_def in artifact.objective_schema.objectives:
+        if objective_schema is not None:
+            for obj_def in objective_schema.objectives:
                 # obj_def is an ObjectiveDefinition, not a dict
                 band = obj_def.band  # Already a BandTarget or None
                 band_alpha = obj_def.band_alpha if obj_def.band_alpha else 0.05
@@ -501,4 +513,4 @@ class PromotionGate:
                     )
                 )
 
-        return cls(artifact.promotion_policy, objectives)
+        return cls(promotion_policy, objectives)
