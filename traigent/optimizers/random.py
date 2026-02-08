@@ -140,7 +140,7 @@ class RandomSearchOptimizer(BaseOptimizer):
 
         Args:
             param_name: Name of the parameter
-            param_def: Parameter definition (list, tuple, or single value)
+            param_def: Parameter definition (list, tuple, dict, or single value)
 
         Returns:
             Sampled parameter value
@@ -161,6 +161,18 @@ class RandomSearchOptimizer(BaseOptimizer):
             else:
                 # Float range
                 return self._random.uniform(low, high)
+
+        elif isinstance(param_def, dict) and "low" in param_def and "high" in param_def:
+            # Range dict from hybrid discovery: {"low": x, "high": y, "type": "int"}
+            low, high = param_def["low"], param_def["high"]
+            if param_def.get("type") == "int":
+                return self._random.randint(int(low), int(high))
+            else:
+                step = param_def.get("step")
+                val = self._random.uniform(float(low), float(high))
+                if step:
+                    val = round(val / step) * step
+                return round(val, 6)
 
         else:
             # Fixed parameter
