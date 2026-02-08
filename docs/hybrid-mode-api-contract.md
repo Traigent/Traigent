@@ -172,6 +172,21 @@ Returns tunable variable definitions. Traigent uses these to understand what par
     }
   ],
   "constraints": {}
+  "objectives": [
+    {"name": "accuracy", "direction": "maximize", "weight": 2.0},
+    {"name": "cost", "direction": "minimize", "weight": 1.0}
+  ],
+  "exploration": {
+    "strategy": "nsga2",
+    "budgets": {"max_trials": 50, "max_spend_usd": 10.0}
+  },
+  "promotion_policy": {
+    "dominance": "epsilon_pareto",
+    "alpha": 0.05,
+    "min_effect": {"accuracy": 0.02}
+  },
+  "defaults": {"model": "gpt-4o"},
+  "measures": ["accuracy", "cost", "latency"]
 }
 ```
 
@@ -181,6 +196,11 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 | `capability_id` | string | Yes | Unique identifier for this capability |
 | `tunables` | array | Yes | List of tunable variable definitions |
 | `constraints` | object | No | Structural and behavioral constraints |
+| `objectives` | array | No | Optional objective definitions (TVL 0.9 JSON format) |
+| `exploration` | object | No | Optional exploration strategy, budgets, and convergence |
+| `promotion_policy` | object | No | Optional promotion policy (epsilon-Pareto) |
+| `defaults` | object | No | Optional default configuration values |
+| `measures` | array[string] | No | Optional declared metric names produced by service |
 
 #### Tunable Definition
 

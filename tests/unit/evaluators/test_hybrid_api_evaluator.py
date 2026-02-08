@@ -351,6 +351,9 @@ class TestDiscoverConfigSpace:
             }
         )
         mock_discovery.get_capability_id = MagicMock(return_value="discovered_cap")
+        mock_discovery.build_optimization_spec = AsyncMock(
+            return_value={"runtime_overrides": {"max_trials": 50}}
+        )
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -362,6 +365,7 @@ class TestDiscoverConfigSpace:
             "model": ["gpt-4", "claude-3"],
             "temperature": {"low": 0, "high": 1},
         }
+        assert evaluator.optimization_spec == {"runtime_overrides": {"max_trials": 50}}
 
     @pytest.mark.asyncio
     async def test_discover_updates_capability_id_when_none(
@@ -376,6 +380,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="auto_cap")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -393,6 +398,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="other")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",
@@ -410,6 +416,7 @@ class TestDiscoverConfigSpace:
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
         mock_discovery.get_capability_id = MagicMock(return_value="cap")
+        mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
             "traigent.evaluators.hybrid_api.ConfigSpaceDiscovery",

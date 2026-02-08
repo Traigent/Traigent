@@ -166,6 +166,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._discovery: ConfigSpaceDiscovery | None = None
         self._capabilities: ServiceCapabilities | None = None
         self._session_id: str | None = None
+        self._optimization_spec: dict[str, Any] | None = None
 
     @property
     def lifecycle_manager(self) -> AgentLifecycleManager | None:
@@ -176,6 +177,11 @@ class HybridAPIEvaluator(BaseEvaluator):
     def capability_id(self) -> str | None:
         """Get the capability ID (may be auto-discovered)."""
         return self._capability_id
+
+    @property
+    def optimization_spec(self) -> dict[str, Any] | None:
+        """Optimization spec discovered from external config-space metadata."""
+        return self._optimization_spec
 
     async def _get_transport(self) -> HybridTransport:
         """Get or create the transport."""
@@ -214,6 +220,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             self._discovery = ConfigSpaceDiscovery(transport)
 
         config_space = await self._discovery.fetch_and_normalize()
+        self._optimization_spec = await self._discovery.build_optimization_spec()
 
         # Update capability_id if not set
         if self._capability_id is None:

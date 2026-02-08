@@ -319,12 +319,64 @@ class TestConfigSpaceResponse:
                 {"name": "model", "type": "enum", "domain": {"values": ["gpt-4"]}},
                 {"name": "temp", "type": "float", "domain": {"range": [0.0, 1.0]}},
             ],
+            "objectives": [
+                {"name": "accuracy", "direction": "maximize", "weight": 2.0},
+                {"name": "cost", "direction": "minimize", "weight": 1.0},
+            ],
+            "exploration": {
+                "strategy": "nsga2",
+                "budgets": {"max_trials": 50, "max_spend_usd": 10.0},
+            },
+            "promotion_policy": {
+                "dominance": "epsilon_pareto",
+                "alpha": 0.05,
+                "min_effect": {"accuracy": 0.02},
+            },
+            "defaults": {"model": "gpt-4"},
+            "measures": ["accuracy", "cost"],
         }
 
         response = ConfigSpaceResponse.from_dict(data)
         assert response.schema_version == "0.9"
         assert response.capability_id == "test_agent"
         assert len(response.tvars) == 2
+        assert response.objectives == data["objectives"]
+        assert response.exploration == data["exploration"]
+        assert response.promotion_policy == data["promotion_policy"]
+        assert response.defaults == data["defaults"]
+        assert response.measures == data["measures"]
+
+    def test_to_dict_includes_optional_optimization_sections(self) -> None:
+        """Optional optimization sections round-trip via to_dict."""
+        response = ConfigSpaceResponse(
+            schema_version="0.9",
+            capability_id="test",
+            tvars=[
+                TVARDefinition(
+                    name="model",
+                    type="enum",
+                    domain={"values": ["gpt-4"]},
+                )
+            ],
+            constraints={
+                "structural": [{"id": "c1", "expr": "params.model == 'gpt-4'"}]
+            },
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
+        )
+
+        serialized = response.to_dict()
+        assert serialized["objectives"] == [
+            {"name": "accuracy", "direction": "maximize"}
+        ]
+        assert serialized["exploration"] == {"strategy": "nsga2"}
+        assert serialized["promotion_policy"] == {"dominance": "epsilon_pareto"}
+        assert serialized["defaults"] == {"model": "gpt-4"}
+        assert serialized["measures"] == ["accuracy"]
+        assert serialized["constraints"] == response.constraints
 
     def test_to_traigent_config_space(self) -> None:
         """Test converting to Traigent config space format."""

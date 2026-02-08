@@ -329,13 +329,23 @@ class ConfigSpaceResponse:
         schema_version: TVL schema version (e.g., "0.9")
         capability_id: Identifier for the capability
         tvars: List of TVAR definitions (also accessible as 'tunables')
-        constraints: Structural and behavioral constraints
+        constraints: Structural and behavioral constraints (legacy or typed TVL 0.9)
+        objectives: Optional objective definitions (TVL 0.9 compatible JSON)
+        exploration: Optional exploration config (strategy, budgets, convergence)
+        promotion_policy: Optional promotion policy definition
+        defaults: Optional default configuration values
+        measures: Optional metric names produced by the service
     """
 
     schema_version: str
     capability_id: str
     tvars: list[TVARDefinition]
-    constraints: dict[str, list[str]] | None = None
+    constraints: dict[str, Any] | list[Any] | None = None
+    objectives: list[dict[str, Any]] | None = None
+    exploration: dict[str, Any] | None = None
+    promotion_policy: dict[str, Any] | None = None
+    defaults: dict[str, Any] | None = None
+    measures: list[str] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ConfigSpaceResponse:
@@ -353,6 +363,11 @@ class ConfigSpaceResponse:
             capability_id=data.get("capability_id", ""),
             tvars=tvars,
             constraints=data.get("constraints"),
+            objectives=data.get("objectives"),
+            exploration=data.get("exploration"),
+            promotion_policy=data.get("promotion_policy"),
+            defaults=data.get("defaults"),
+            measures=data.get("measures"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -372,13 +387,24 @@ class ConfigSpaceResponse:
             }
             for tvar in self.tvars
         ]
-        return {
+        result: dict[str, Any] = {
             "schema_version": self.schema_version,
             "capability_id": self.capability_id,
             "tunables": tvar_dicts,  # Client-facing name
             "tvars": tvar_dicts,  # Backward compatibility
             "constraints": self.constraints or {},
         }
+        if self.objectives is not None:
+            result["objectives"] = self.objectives
+        if self.exploration is not None:
+            result["exploration"] = self.exploration
+        if self.promotion_policy is not None:
+            result["promotion_policy"] = self.promotion_policy
+        if self.defaults is not None:
+            result["defaults"] = self.defaults
+        if self.measures is not None:
+            result["measures"] = self.measures
+        return result
 
     @property
     def tunables(self) -> list[TVARDefinition]:

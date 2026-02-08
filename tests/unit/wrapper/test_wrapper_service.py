@@ -30,6 +30,12 @@ class TestServiceConfig:
         assert cfg.supports_streaming is False
         assert cfg.max_batch_size == 100
         assert cfg.schema_version == "0.9"
+        assert cfg.constraints is None
+        assert cfg.objectives is None
+        assert cfg.exploration is None
+        assert cfg.promotion_policy is None
+        assert cfg.defaults is None
+        assert cfg.measures is None
 
     def test_custom_values(self) -> None:
         """Test ServiceConfig with custom values."""
@@ -40,6 +46,12 @@ class TestServiceConfig:
             supports_streaming=True,
             max_batch_size=50,
             schema_version="1.0",
+            constraints={"structural": [{"expr": "params.temperature <= 1.0"}]},
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
         )
         assert cfg.capability_id == "qa_agent"
         assert cfg.version == "2.5"
@@ -47,6 +59,12 @@ class TestServiceConfig:
         assert cfg.supports_streaming is True
         assert cfg.max_batch_size == 50
         assert cfg.schema_version == "1.0"
+        assert cfg.constraints is not None
+        assert cfg.objectives is not None
+        assert cfg.exploration is not None
+        assert cfg.promotion_policy is not None
+        assert cfg.defaults == {"model": "gpt-4"}
+        assert cfg.measures == ["accuracy"]
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +124,22 @@ class TestTraigentServiceInit:
             supports_keep_alive=True,
             supports_streaming=True,
             max_batch_size=25,
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy"],
         )
         assert svc.config.capability_id == "my_agent"
         assert svc.config.version == "3.0"
         assert svc.config.supports_keep_alive is True
         assert svc.config.supports_streaming is True
         assert svc.config.max_batch_size == 25
+        assert svc.config.objectives == [{"name": "accuracy", "direction": "maximize"}]
+        assert svc.config.exploration == {"strategy": "nsga2"}
+        assert svc.config.promotion_policy == {"dominance": "epsilon_pareto"}
+        assert svc.config.defaults == {"model": "gpt-4"}
+        assert svc.config.measures == ["accuracy"]
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +220,46 @@ class TestDecorators:
             return {"accuracy": 1.0}
 
         assert score(None, None, {}) == {"accuracy": 1.0}
+
+    def test_declarative_spec_decorators_register_handlers(self) -> None:
+        """Objective/exploration/policy/defaults/measures decorators register."""
+        svc = TraigentService()
+
+        @svc.objectives
+        def objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        @svc.exploration
+        def exploration():
+            return {"strategy": "nsga2"}
+
+        @svc.promotion_policy
+        def promotion_policy():
+            return {"dominance": "epsilon_pareto"}
+
+        @svc.defaults
+        def defaults():
+            return {"model": "gpt-4"}
+
+        @svc.measures
+        def measures():
+            return ["accuracy"]
+
+        assert svc._objectives_handler is objectives
+        assert svc._exploration_handler is exploration
+        assert svc._promotion_policy_handler is promotion_policy
+        assert svc._defaults_handler is defaults
+        assert svc._measures_handler is measures
+
+    def test_constraints_decorator_registers_handler(self) -> None:
+        """@constraints registers the constraints declaration handler."""
+        svc = TraigentService()
+
+        @svc.constraints
+        def constraints():
+            return {"structural": [{"expr": "params.temperature <= 1.0"}]}
+
+        assert svc._constraints_handler is constraints
 
 
 # ---------------------------------------------------------------------------
@@ -314,6 +382,46 @@ class TestGetConfigSpace:
         assert tvars["model"]["type"] == "enum"
         assert tvars["options"]["type"] == "enum"
         assert tvars["label"]["type"] == "str"
+
+    def test_config_space_includes_optional_optimization_sections(self) -> None:
+        """Config-space response includes optional declarative optimization sections."""
+        svc = TraigentService(
+            capability_id="financial_qa",
+            constraints={"structural": [{"expr": "params.temperature <= 1.0"}]},
+            objectives=[{"name": "accuracy", "direction": "maximize"}],
+            exploration={"strategy": "nsga2"},
+            promotion_policy={"dominance": "epsilon_pareto"},
+            defaults={"model": "gpt-4"},
+            measures=["accuracy", "cost"],
+        )
+        result = svc.get_config_space()
+        assert result["constraints"] == {
+            "structural": [{"expr": "params.temperature <= 1.0"}]
+        }
+        assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
+        assert result["exploration"] == {"strategy": "nsga2"}
+        assert result["promotion_policy"] == {"dominance": "epsilon_pareto"}
+        assert result["defaults"] == {"model": "gpt-4"}
+        assert result["measures"] == ["accuracy", "cost"]
+
+    def test_config_space_decorator_sections_override_init_values(self) -> None:
+        """Decorator-declared sections override constructor-provided values."""
+        svc = TraigentService(
+            objectives=[{"name": "old_objective", "direction": "maximize"}],
+            defaults={"model": "old"},
+        )
+
+        @svc.objectives
+        def objectives():
+            return [{"name": "accuracy", "direction": "maximize"}]
+
+        @svc.defaults
+        def defaults():
+            return {"model": "gpt-4"}
+
+        result = svc.get_config_space()
+        assert result["objectives"] == [{"name": "accuracy", "direction": "maximize"}]
+        assert result["defaults"] == {"model": "gpt-4"}
 
 
 # ---------------------------------------------------------------------------
