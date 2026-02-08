@@ -1,6 +1,7 @@
 """Tests for trial_operations.py - particularly new code paths."""
 
-from unittest.mock import Mock
+import logging
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -20,7 +21,7 @@ class TestRedactSensitiveFields:
 
     def test_redact_string_api_key(self):
         """Test that string API keys are redacted."""
-        data = {"api_key": "sk-1234567890abcdef"}  # noqa: S105 - test credential
+        data = {"api_key": "sk-1234567890abcdef"}  # noqa: S105  # pragma: allowlist secret
         result = TrialOperations._redact_sensitive_fields(data)
         assert "[REDACTED:" in result["api_key"]
         assert "chars]" in result["api_key"]
@@ -67,7 +68,7 @@ class TestRedactSensitiveFields:
         """Test that nested structures are processed."""
         data = {
             "config": {
-                "api_key": "secret123",
+                "api_key": "secret123",  # pragma: allowlist secret
                 "name": "test",
             }
         }
@@ -100,3 +101,76 @@ class TestCreateLocalhostConnector:
         ops = TrialOperations(mock_client)
         connector = ops._create_localhost_connector()
         assert connector is None
+
+
+class TestMeasuresDictValidationInSubmission:
+    """Test MeasuresDict validation warning path in submit_trial_result_via_session."""
+
+    @pytest.mark.asyncio
+    async def test_invalid_metric_key_logs_warning_and_submits_unvalidated(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Invalid metric keys trigger MeasuresDict warning but submission continues."""
+        mock_client = Mock()
+        mock_client.backend_config = Mock()
+        mock_client.backend_config.backend_base_url = "https://api.example.com"  # pragma: allowlist secret
+        mock_client.backend_config.api_base_url = "https://api.example.com"
+        mock_client.auth_manager = AsyncMock()
+        mock_client.auth_manager.augment_headers = AsyncMock(return_value={})
+        mock_client._map_to_backend_status = Mock(return_value="completed")
+        mock_client._normalize_execution_mode = Mock(return_value="edge_analytics")
+        mock_client._sanitize_error_message = Mock(return_value="")
+
+        ops = TrialOperations(mock_client)
+        ops._handle_trial_success_response = AsyncMock(return_value=True)
+
+        # Use a metric key with a hyphen — MeasuresDict rejects non-identifier keys
+        invalid_metrics = {"invalid-key": 0.95}
+
+        # Build nested async context manager mocks for aiohttp
+        mock_response = Mock()
+        mock_response.status = 200
+
+        # post() returns an async context manager yielding mock_response
+        mock_post_ctx = AsyncMock()
+        mock_post_ctx.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_post_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        mock_session = AsyncMock()
+        mock_session.post = Mock(return_value=mock_post_ctx)
+
+        # ClientSession() returns an async context manager yielding mock_session
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch(
+                "traigent.cloud.trial_operations.is_backend_offline",
+                return_value=False,
+            ),
+            patch(
+                "traigent.cloud.trial_operations.AIOHTTP_AVAILABLE",
+                True,
+            ),
+            patch(
+                "traigent.cloud.trial_operations.validate_configuration_run_submission",
+            ),
+            patch("traigent.cloud.trial_operations.aiohttp") as mock_aiohttp,
+        ):
+            mock_aiohttp.ClientSession = Mock(return_value=mock_session_ctx)
+            mock_aiohttp.ClientTimeout = Mock()
+
+            with caplog.at_level(logging.WARNING, logger="traigent.cloud.trial_operations"):
+                result = await ops.submit_trial_result_via_session(
+                    session_id="test-session",
+                    trial_id="test-trial",
+                    config={"model": "gpt-4"},
+                    metrics=invalid_metrics,
+                    status="completed",
+                )
+
+            # The warning should have been logged
+            assert any("Metrics validation warning" in msg for msg in caplog.messages)
+            # Submission should still proceed (True = success)
+            assert result is True
