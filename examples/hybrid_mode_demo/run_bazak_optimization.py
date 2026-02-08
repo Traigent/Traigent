@@ -53,6 +53,17 @@ MAX_TRIALS: Final[int] = int(
 MAX_COST_USD: Final[float] = float(
     os.getenv("BAZAK_MAX_COST_USD", "4.0")
 )  # Stop after spending $4
+MAX_REASONING_LEVEL: Final[str] = os.getenv(
+    "BAZAK_MAX_REASONING_LEVEL", "medium"
+).strip().lower()
+
+_REASONING_LEVEL_ORDER: Final[list[str]] = [
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "highest",
+]
 
 
 def _resolve_execution_mode(mode: str | None) -> str:
@@ -81,6 +92,40 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _apply_reasoning_cap(config_space: dict[str, object]) -> tuple[dict[str, object], bool]:
+    """Cap reasoning-level choices in discovered config space.
+
+    Looks for categorical parameters with "reason" in the key and values that
+    match known reasoning levels. Values above MAX_REASONING_LEVEL are removed.
+    """
+
+    if MAX_REASONING_LEVEL not in _REASONING_LEVEL_ORDER:
+        return config_space, False
+
+    max_idx = _REASONING_LEVEL_ORDER.index(MAX_REASONING_LEVEL)
+    updated = dict(config_space)
+    changed = False
+
+    for name, domain in config_space.items():
+        if "reason" not in name.lower() or not isinstance(domain, list):
+            continue
+
+        normalized: dict[str, object] = {str(v).lower(): v for v in domain}
+        known_levels = [lvl for lvl in _REASONING_LEVEL_ORDER if lvl in normalized]
+        if not known_levels:
+            continue
+
+        allowed = [
+            normalized[lvl] for lvl in _REASONING_LEVEL_ORDER if lvl in normalized
+            and _REASONING_LEVEL_ORDER.index(lvl) <= max_idx
+        ]
+        if allowed and len(allowed) != len(domain):
+            updated[name] = allowed
+            changed = True
+
+    return updated, changed
 
 
 def check_server(url: str) -> bool:
@@ -124,9 +169,15 @@ async def run_optimization() -> None:
     async with evaluator:
         print("\n[1/3] Discovering config space from BazakDemo...")
         config_space = await evaluator.discover_config_space()
+        config_space, reasoning_capped = _apply_reasoning_cap(config_space)
         print(f"      Found {len(config_space)} tunables:")
         for name, domain in config_space.items():
             print(f"        {name}: {domain}")
+        if reasoning_capped:
+            print(
+                f"      Applied reasoning cap: <= {MAX_REASONING_LEVEL} "
+                f"(BAZAK_MAX_REASONING_LEVEL)"
+            )
 
         # --- Step 2: Create optimizer + orchestrator ---
         print(f"\n[2/3] Setting up RandomSearchOptimizer (max_trials={MAX_TRIALS})...")
