@@ -5,6 +5,9 @@ Unlike run_bazak_optimization.py (black-box demo), this script exercises
 each BazakDemo API endpoint directly using the SDK's HTTPTransport and
 protocol objects, validating request/response format compliance at every step.
 
+Output shows the actual request/response payloads for each endpoint,
+then a validation summary at the end.
+
 Flow:
   Test 1: GET  /health         → status=healthy, version present
   Test 2: GET  /capabilities   → supports_evaluate, capability_ids
@@ -23,6 +26,7 @@ Usage:
 """
 
 import asyncio
+import json
 import os
 import sys
 import traceback
@@ -74,21 +78,35 @@ TEST_CONFIG: Final[dict[str, Any]] = {
 # Shared state between tests (execute → evaluate chain)
 _shared: dict[str, Any] = {}
 
+W = 70  # Output width
 
-class TestResult:
-    """Result of a single test."""
 
-    def __init__(self, name: str, passed: bool, detail: str = "") -> None:
-        self.name = name
-        self.passed = passed
-        self.detail = detail
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _json(obj: Any, indent: int = 2) -> str:
+    """Pretty-print a dict/list as JSON."""
+    return json.dumps(obj, indent=indent, default=str)
 
-    def __str__(self) -> str:
-        icon = "PASS" if self.passed else "FAIL"
-        msg = f"  [{icon}] {self.name}"
-        if self.detail:
-            msg += f"\n         {self.detail}"
-        return msg
+
+def _section(title: str) -> None:
+    """Print a section header."""
+    print()
+    print(f"{'─' * W}")
+    print(f"  {title}")
+    print(f"{'─' * W}")
+
+
+def _kv(label: str, value: Any) -> None:
+    """Print a key-value line."""
+    print(f"  {label}: {value}")
+
+
+def _block(label: str, data: Any) -> None:
+    """Print a labeled JSON block."""
+    print(f"  {label}:")
+    for line in _json(data).splitlines():
+        print(f"    {line}")
 
 
 def assert_field(data: dict, key: str, expected_type: type | None = None) -> Any:
@@ -100,9 +118,19 @@ def assert_field(data: dict, key: str, expected_type: type | None = None) -> Any
     value = data[key]
     if expected_type is not None and not isinstance(value, expected_type):
         raise AssertionError(
-            f"Field '{key}' should be {expected_type.__name__}, got {type(value).__name__}: {value!r}"
+            f"Field '{key}' should be {expected_type.__name__}, "
+            f"got {type(value).__name__}: {value!r}"
         )
     return value
+
+
+class TestResult:
+    """Result of a single test."""
+
+    def __init__(self, name: str, passed: bool, detail: str = "") -> None:
+        self.name = name
+        self.passed = passed
+        self.detail = detail
 
 
 # ---------------------------------------------------------------------------
@@ -110,14 +138,20 @@ def assert_field(data: dict, key: str, expected_type: type | None = None) -> Any
 # ---------------------------------------------------------------------------
 async def test_health(transport: HTTPTransport) -> TestResult:
     """GET /traigent/v1/health → status=healthy, version present."""
+    _section("GET /traigent/v1/health")
+
     resp = await transport.health_check()
+
+    _block("Response", {
+        "status": resp.status,
+        "version": resp.version,
+        "uptime_seconds": resp.uptime_seconds,
+        "details": resp.details,
+    })
+
     assert resp.status == "healthy", f"Expected status='healthy', got '{resp.status}'"
     assert resp.version is not None, "Missing version in health response"
-    return TestResult(
-        "GET /health",
-        True,
-        f"status={resp.status}, version={resp.version}, uptime={resp.uptime_seconds:.0f}s",
-    )
+    return TestResult("GET /health", True)
 
 
 # ---------------------------------------------------------------------------
@@ -125,6 +159,8 @@ async def test_health(transport: HTTPTransport) -> TestResult:
 # ---------------------------------------------------------------------------
 async def test_capabilities(transport: HTTPTransport) -> TestResult:
     """GET /traigent/v1/capabilities → supports_evaluate, version."""
+    _section("GET /traigent/v1/capabilities")
+
     # Clear cache so we actually hit the endpoint
     transport._capabilities = None
 
@@ -132,17 +168,22 @@ async def test_capabilities(transport: HTTPTransport) -> TestResult:
     assert isinstance(
         caps, ServiceCapabilities
     ), f"Expected ServiceCapabilities, got {type(caps)}"
+
+    _block("Response", {
+        "version": caps.version,
+        "supports_evaluate": caps.supports_evaluate,
+        "supports_keep_alive": caps.supports_keep_alive,
+        "supports_streaming": caps.supports_streaming,
+        "max_batch_size": caps.max_batch_size,
+        "max_payload_bytes": caps.max_payload_bytes,
+    })
+
     assert (
         caps.supports_evaluate is True
     ), f"BazakDemo should support evaluate, got supports_evaluate={caps.supports_evaluate}"
     assert caps.version is not None, "Missing version in capabilities"
 
-    return TestResult(
-        "GET /capabilities",
-        True,
-        f"version={caps.version}, evaluate={caps.supports_evaluate}, "
-        f"keep_alive={caps.supports_keep_alive}, max_batch={caps.max_batch_size}",
-    )
+    return TestResult("GET /capabilities", True)
 
 
 # ---------------------------------------------------------------------------
@@ -150,13 +191,38 @@ async def test_capabilities(transport: HTTPTransport) -> TestResult:
 # ---------------------------------------------------------------------------
 async def test_config_space(transport: HTTPTransport) -> TestResult:
     """GET /traigent/v1/config-space → 4 tunables with correct types."""
+    _section("GET /traigent/v1/config-space")
+
     cs_response = await transport.discover_config_space()
     assert isinstance(
         cs_response, ConfigSpaceResponse
     ), f"Expected ConfigSpaceResponse, got {type(cs_response)}"
 
-    # Validate tunable count
+    # Show the full config space
     tunables = cs_response.tvars
+    _kv("schema_version", cs_response.schema_version)
+    _kv("capability_id", cs_response.capability_id)
+    if cs_response.defaults:
+        _block("defaults", cs_response.defaults)
+    if cs_response.objectives:
+        _block("objectives", cs_response.objectives)
+
+    print()
+    print(f"  tunables ({len(tunables)}):")
+    for t in tunables:
+        print(f"    {t.name} ({t.type}):")
+        print(f"      domain:  {_json(t.domain, indent=0)}")
+        if t.default is not None:
+            print(f"      default: {t.default}")
+        if t.constraints:
+            print(f"      constraints: {t.constraints}")
+
+    # Show what optimizers receive after conversion
+    config_space = cs_response.to_traigent_config_space()
+    print()
+    _block("to_traigent_config_space()", config_space)
+
+    # Validate tunable count
     assert len(tunables) == len(EXPECTED_TUNABLES), (
         f"Expected {len(EXPECTED_TUNABLES)} tunables, got {len(tunables)}: "
         f"{[t.name for t in tunables]}"
@@ -184,19 +250,12 @@ async def test_config_space(transport: HTTPTransport) -> TestResult:
         len(temp_range) == 2
     ), f"temperature domain should have range [low, high], got {temp_range}"
 
-    # Validate config space conversion (what optimizers receive)
-    config_space = cs_response.to_traigent_config_space()
+    # Validate config space conversion
     assert len(config_space) == len(
         EXPECTED_TUNABLES
     ), f"Config space should have {len(EXPECTED_TUNABLES)} entries, got {len(config_space)}"
 
-    return TestResult(
-        "GET /config-space",
-        True,
-        f"schema={cs_response.schema_version}, "
-        f"tunables=[{', '.join(t.name for t in tunables)}], "
-        f"config_space_keys={list(config_space.keys())}",
-    )
+    return TestResult("GET /config-space", True)
 
 
 # ---------------------------------------------------------------------------
@@ -204,6 +263,8 @@ async def test_config_space(transport: HTTPTransport) -> TestResult:
 # ---------------------------------------------------------------------------
 async def test_execute(transport: HTTPTransport) -> TestResult:
     """POST /traigent/v1/execute → 3 outputs with output_id, cost, latency."""
+    _section("POST /traigent/v1/execute")
+
     request = HybridExecuteRequest(
         capability_id=CAPABILITY_ID,
         config=TEST_CONFIG,
@@ -211,19 +272,57 @@ async def test_execute(transport: HTTPTransport) -> TestResult:
         timeout_ms=60000,
     )
 
-    # Validate request serialization
+    # Show the request payload
     req_dict = request.to_dict()
+    _block("Request", req_dict)
+
     assert "request_id" in req_dict, "Request missing request_id"
     assert req_dict["capability_id"] == CAPABILITY_ID
     assert len(req_dict["inputs"]) == len(TEST_INPUTS)
 
-    # Execute via transport (POST)
+    # Execute
     resp = await transport.execute(request)
     assert isinstance(
         resp, HybridExecuteResponse
     ), f"Expected HybridExecuteResponse, got {type(resp)}"
 
-    # Validate response fields
+    # Show response header
+    print()
+    _kv("status", resp.status)
+    _kv("execution_id", resp.execution_id)
+    _kv("request_id", resp.request_id)
+    if resp.session_id:
+        _kv("session_id", resp.session_id)
+
+    # Show each output
+    print()
+    print(f"  outputs ({len(resp.outputs)}):")
+    for i, output in enumerate(resp.outputs):
+        print(f"    [{i}] input_id={output.get('input_id')}")
+        print(f"        output_id={output.get('output_id')}")
+        # Show all fields except the ones we already printed
+        extra = {
+            k: v
+            for k, v in output.items()
+            if k not in ("input_id", "output_id")
+        }
+        if extra:
+            for k, v in extra.items():
+                val_str = str(v)
+                if len(val_str) > 120:
+                    val_str = val_str[:120] + "..."
+                print(f"        {k}={val_str}")
+
+    # Show operational metrics
+    print()
+    _block("operational_metrics", resp.operational_metrics)
+    if resp.quality_metrics:
+        _block("quality_metrics", resp.quality_metrics)
+
+    total_cost = resp.get_total_cost()
+    _kv("total_cost", f"${total_cost:.6f}")
+
+    # Validate
     assert resp.status in (
         "completed",
         "partial",
@@ -231,7 +330,6 @@ async def test_execute(transport: HTTPTransport) -> TestResult:
     assert resp.execution_id, "Missing execution_id in response"
     assert resp.request_id, "Missing request_id in response"
 
-    # Validate outputs
     assert len(resp.outputs) == len(
         TEST_INPUTS
     ), f"Expected {len(TEST_INPUTS)} outputs, got {len(resp.outputs)}"
@@ -244,13 +342,11 @@ async def test_execute(transport: HTTPTransport) -> TestResult:
             "cost_usd" in output or "tokens_used" in output
         ), f"Output for {input_id} missing cost/token info"
 
-    # Validate operational metrics
     op_metrics = resp.operational_metrics
     assert op_metrics, "Missing operational_metrics"
     assert (
         "total_cost_usd" in op_metrics or "cost_usd" in op_metrics
     ), f"operational_metrics missing cost. Keys: {list(op_metrics.keys())}"
-    total_cost = resp.get_total_cost()
     assert total_cost > 0, f"Total cost should be > 0, got {total_cost}"
 
     # Save for Test 5 (evaluate needs output_ids)
@@ -258,14 +354,7 @@ async def test_execute(transport: HTTPTransport) -> TestResult:
     _shared["outputs"] = resp.outputs
     _shared["session_id"] = resp.session_id
 
-    output_ids = [o.get("output_id", "?") for o in resp.outputs]
-    return TestResult(
-        "POST /execute",
-        True,
-        f"status={resp.status}, execution_id={resp.execution_id[:16]}..., "
-        f"outputs={len(resp.outputs)}, cost=${total_cost:.6f}, "
-        f"output_ids={output_ids}",
-    )
+    return TestResult("POST /execute", True)
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +362,8 @@ async def test_execute(transport: HTTPTransport) -> TestResult:
 # ---------------------------------------------------------------------------
 async def test_evaluate(transport: HTTPTransport) -> TestResult:
     """POST /traigent/v1/evaluate → accuracy metrics from output_ids."""
+    _section("POST /traigent/v1/evaluate")
+
     if "outputs" not in _shared:
         return TestResult(
             "POST /evaluate", False, "Skipped: Test 4 (execute) must pass first"
@@ -295,26 +386,46 @@ async def test_evaluate(transport: HTTPTransport) -> TestResult:
         session_id=_shared.get("session_id"),
     )
 
-    # Validate request serialization
+    # Show the request payload
     req_dict = request.to_dict()
+    _block("Request", req_dict)
+
     assert "request_id" in req_dict
     assert req_dict["capability_id"] == CAPABILITY_ID
     assert req_dict["execution_id"] == _shared["execution_id"]
     assert len(req_dict["evaluations"]) == len(TEST_INPUTS)
 
-    # Evaluate via transport (POST)
+    # Evaluate
     resp = await transport.evaluate(request)
     assert isinstance(
         resp, HybridEvaluateResponse
     ), f"Expected HybridEvaluateResponse, got {type(resp)}"
 
-    # Validate response fields
+    # Show response header
+    print()
+    _kv("status", resp.status)
+    _kv("request_id", resp.request_id)
+
+    # Show per-example results
+    print()
+    print(f"  results ({len(resp.results)}):")
+    for i, result in enumerate(resp.results):
+        input_id = result.get("input_id", "?")
+        metrics = result.get("metrics", {})
+        print(f"    [{i}] input_id={input_id}")
+        for mk, mv in metrics.items():
+            print(f"        {mk}={mv}")
+
+    # Show aggregate metrics
+    print()
+    _block("aggregate_metrics", resp.aggregate_metrics)
+
+    # Validate
     assert resp.status == "completed", f"Expected status=completed, got '{resp.status}'"
     assert len(resp.results) == len(
         TEST_INPUTS
     ), f"Expected {len(TEST_INPUTS)} results, got {len(resp.results)}"
 
-    # Validate per-example results
     for result in resp.results:
         input_id = assert_field(result, "input_id", str)
         metrics = assert_field(result, "metrics", dict)
@@ -329,7 +440,6 @@ async def test_evaluate(transport: HTTPTransport) -> TestResult:
             1.0,
         ), f"accuracy for {input_id} should be 0 or 1, got {acc}"
 
-    # Validate aggregate metrics
     agg = resp.aggregate_metrics
     assert (
         "accuracy" in agg
@@ -343,16 +453,7 @@ async def test_evaluate(transport: HTTPTransport) -> TestResult:
         TEST_INPUTS
     ), f"aggregate_metrics.accuracy.n should be {len(TEST_INPUTS)}, got {acc_agg['n']}"
 
-    per_example = [
-        f"{r['input_id']}={r['metrics'].get('accuracy', '?')}" for r in resp.results
-    ]
-    return TestResult(
-        "POST /evaluate",
-        True,
-        f"status={resp.status}, results={len(resp.results)}, "
-        f"mean_accuracy={acc_agg['mean']:.2f}, n={acc_agg['n']}, "
-        f"per_example=[{', '.join(per_example)}]",
-    )
+    return TestResult("POST /evaluate", True)
 
 
 # ---------------------------------------------------------------------------
@@ -360,6 +461,8 @@ async def test_evaluate(transport: HTTPTransport) -> TestResult:
 # ---------------------------------------------------------------------------
 async def test_e2e_evaluator() -> TestResult:
     """Full E2E: 1 trial via HybridAPIEvaluator, meaningful metrics."""
+    _section("E2E: HybridAPIEvaluator (SDK integration)")
+
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
         capability_id=CAPABILITY_ID,
@@ -367,10 +470,16 @@ async def test_e2e_evaluator() -> TestResult:
         auto_discover_tvars=True,
     )
 
+    _kv("api_endpoint", SERVER_URL)
+    _kv("capability_id", CAPABILITY_ID)
+    _kv("config", _json(TEST_CONFIG, indent=0))
+
     async with evaluator:
         # Discover config space
         config_space = await evaluator.discover_config_space()
         assert len(config_space) > 0, "Config space is empty"
+        print()
+        _block("discovered config_space", config_space)
 
         # Build small dataset
         dataset = Dataset(
@@ -388,26 +497,23 @@ async def test_e2e_evaluator() -> TestResult:
             dataset=dataset,
         )
 
-        # Validate result
+        # Show result
         metrics = eval_result.aggregated_metrics
+        print()
+        _block("aggregated_metrics", metrics)
+        _kv("total_examples", eval_result.total_examples)
+
+        # Validate
         assert (
             "accuracy" in metrics
         ), f"E2E result missing 'accuracy'. Keys: {list(metrics.keys())}"
 
         accuracy = metrics["accuracy"]
         assert isinstance(
-            accuracy, (int, float)
+            accuracy, int | float
         ), f"accuracy should be numeric, got {type(accuracy)}"
 
-        cost = metrics.get("cost", 0)
-        examples = eval_result.total_examples
-
-    return TestResult(
-        "E2E HybridAPIEvaluator",
-        True,
-        f"accuracy={accuracy:.2f}, cost=${cost:.6f}, examples={examples}, "
-        f"metrics_keys={list(metrics.keys())}",
-    )
+    return TestResult("E2E HybridAPIEvaluator", True)
 
 
 # ---------------------------------------------------------------------------
@@ -436,7 +542,9 @@ async def run_all_tests() -> list[TestResult]:
                 result = await test_fn(transport)
                 results.append(result)
             except Exception as e:
-                results.append(TestResult(label, False, f"{type(e).__name__}: {e}"))
+                results.append(
+                    TestResult(label, False, f"{type(e).__name__}: {e}")
+                )
                 if label == "Test 4":
                     # Test 5 depends on Test 4
                     results.append(
@@ -463,30 +571,34 @@ async def run_all_tests() -> list[TestResult]:
 
 def main() -> None:
     """Run API validation and print results."""
-    print("=" * 70)
+    print("=" * W)
     print("  BazakDemo API Validation — Traigent Hybrid Protocol")
-    print("=" * 70)
-    print(f"  Server: {SERVER_URL}")
+    print("=" * W)
+    print(f"  Server:     {SERVER_URL}")
     print(f"  Capability: {CAPABILITY_ID}")
-    print(f"  Test inputs: {len(TEST_INPUTS)} examples")
-    print(f"  Config: {TEST_CONFIG}")
-    print("-" * 70)
-    print()
+    print(f"  Inputs:     {len(TEST_INPUTS)} examples")
+    print(f"  Config:     {_json(TEST_CONFIG, indent=0)}")
 
     results = asyncio.run(run_all_tests())
 
+    # --- Validation summary at the end ---
     print()
-    print("=" * 70)
-    print("  RESULTS")
-    print("=" * 70)
+    print("=" * W)
+    print("  VALIDATION SUMMARY")
+    print("=" * W)
     for r in results:
-        print(r)
-    print()
+        icon = "PASS" if r.passed else "FAIL"
+        line = f"  [{icon}] {r.name}"
+        if r.detail:
+            line += f"  — {r.detail}"
+        print(line)
 
+    print(f"{'─' * W}")
     passed = sum(1 for r in results if r.passed)
     total = len(results)
-    print(f"  {passed}/{total} tests passed")
-    print("=" * 70)
+    status = "ALL PASSED" if passed == total else f"{total - passed} FAILED"
+    print(f"  {passed}/{total} tests — {status}")
+    print("=" * W)
 
     if passed < total:
         sys.exit(1)
