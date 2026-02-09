@@ -60,6 +60,74 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
   }'
 ```
 
+## Bazak POC Scripts
+
+The Bazak POC uses two scripts in this folder:
+
+1. `test_bazak_api.py`: protocol/integration validation against live Bazak endpoints.
+2. `run_bazak_optimization.py`: full Traigent optimization run against Bazak.
+
+Run both with Traigent's virtual environment:
+
+```bash
+.venv/bin/python examples/hybrid_mode_demo/test_bazak_api.py
+.venv/bin/python examples/hybrid_mode_demo/run_bazak_optimization.py
+```
+
+Useful environment overrides:
+
+```bash
+BAZAK_BASE_URL=http://localhost:8080
+BAZAK_CAPABILITY_ID=child-age-agent
+BAZAK_DATASET_SIZE=100
+BAZAK_MAX_TRIALS=10
+BAZAK_MAX_COST_USD=4.0
+TRAIGENT_EXECUTION_MODE=hybrid
+```
+
+Example (short local validation run):
+
+```bash
+BAZAK_DATASET_SIZE=5 BAZAK_MAX_TRIALS=2 BAZAK_MAX_COST_USD=0.5 \
+TRAIGENT_EXECUTION_MODE=hybrid \
+.venv/bin/python examples/hybrid_mode_demo/run_bazak_optimization.py
+```
+
+### Verify You Are Hitting Bazak (Identity Check)
+
+Check advertised capability:
+
+```bash
+curl -sS http://localhost:8080/traigent/v1/capabilities | jq .
+```
+
+Inspect tunables from Bazak config-space:
+
+```bash
+curl -sS http://localhost:8080/traigent/v1/config-space | jq -r '.tunables[] | "\(.name)\t\(.type)\t\(.domain)"'
+```
+
+Expected tunable names for this POC:
+
+```text
+max_retries
+model
+system_prompt_version
+temperature
+```
+
+Quick exact-name check:
+
+```bash
+EXPECTED=$'max_retries\nmodel\nsystem_prompt_version\ntemperature'
+ACTUAL=$(curl -sS http://localhost:8080/traigent/v1/config-space | jq -r '.tunables[].name' | sort)
+if [ "$ACTUAL" = "$EXPECTED" ]; then
+  echo "OK: Bazak tunables match expected identity"
+else
+  echo "Mismatch in tunables"; echo "$ACTUAL"
+fi
+```
+
 ## API Endpoints
 
 | Endpoint | Method | Description |
