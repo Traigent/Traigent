@@ -11,6 +11,17 @@ Traigent's Hybrid Mode allows you to optimize any external service by implementi
 3. **Evaluate** outputs against targets
 4. **Optimize** to find the best configuration
 
+## Integration Checklist
+
+Before running optimization, verify:
+
+1. `GET /traigent/v1/capabilities` returns `version` and the correct feature flags.
+2. `GET /traigent/v1/config-space` returns a stable `capability_id` and valid `tunables`.
+3. `POST /traigent/v1/execute` enforces capability matching and returns `operational_metrics.total_cost_usd`.
+4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
+5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
+6. Auth behavior is consistent across all endpoints if `Authorization` is required.
+
 ## Privacy-Preserving Mode (Default)
 
 Traigent Hybrid Mode is designed with **privacy as the default**. Only configuration values and metrics are observed during optimization - your actual data content is never transmitted to Traigent.
@@ -68,6 +79,11 @@ def evaluate():
 
     return jsonify({...})
 ```
+
+### Capability ID Validation (Important)
+
+Your service should reject requests where `capability_id` does not match your configured capability.
+This prevents accidental cross-routing in multi-service environments and aligns with Traigent wrapper behavior.
 
 ### Session and ID Management
 
@@ -262,7 +278,8 @@ Track costs, latency, and any operational data in the execute response:
 - `retry_count` - Number of retries
 
 **Custom metrics:**
-Add any metrics specific to your service. Traigent can optimize for any numeric metric.
+Add any metrics specific to your service.
+For optimization objectives, use numeric metrics. Non-numeric operational fields are allowed for observability only.
 
 ### Quality Metrics (Evaluate Response)
 
@@ -464,6 +481,15 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 See the [test client](../examples/hybrid_mode_demo/test_client.py) for a complete testing script.
 
+### Contract Validation (Recommended)
+
+Validate your OpenAPI contract before sharing with clients:
+
+```bash
+npx @apidevtools/swagger-cli validate docs/hybrid-mode-openapi.yaml
+npx @redocly/cli lint docs/hybrid-mode-openapi.yaml
+```
+
 ### Using Traigent SDK
 
 ```python
@@ -510,6 +536,7 @@ import traigent
     execution_mode="hybrid_api",
     hybrid_api_endpoint="http://your-service:8080",
     capability_id="my_agent",
+    hybrid_api_auth_header="Bearer <token>",  # Optional
     eval_dataset=my_dataset,
 
     # Provide tunables/configuration space for optimizer search
@@ -534,6 +561,17 @@ result = my_agent.optimize()
 print(f"Best config: {result.best_config}")
 print(f"Best metrics: {result.best_metrics}")
 ```
+
+### Online Mode and Backend Visibility
+
+To ensure runs appear in Traigent backend UI:
+
+1. Set `TRAIGENT_OFFLINE_MODE=false`.
+2. Set a reachable backend (`TRAIGENT_BACKEND_URL` or `TRAIGENT_API_URL`).
+3. Set `TRAIGENT_API_KEY` (or `TRAIGENT_ACCESS_TOKEN`).
+4. Ensure network/DNS reachability to the backend from the runtime environment.
+
+If these are missing, optimization may still run locally but backend sync can be skipped.
 
 ### Optimization Objectives
 
@@ -655,6 +693,11 @@ async def execute():
         }), 504
 ```
 
+### 5. Keep Optional Fields Truly Optional
+
+Avoid sending empty optional sections in primary examples (for example, `constraints: {}`) unless they carry intent.
+Omitting optional fields makes client implementations and generated SDKs cleaner.
+
 ---
 
 ## Troubleshooting
@@ -690,6 +733,35 @@ Error: Request timed out after 30000ms
 ```
 
 **Solution**: Increase `timeout_ms` in the request or optimize your service.
+
+### `capability_id` Mismatch (400)
+
+```
+INVALID_REQUEST: capability_id mismatch
+```
+
+**Solution**: Send the exact `capability_id` returned by `GET /traigent/v1/config-space`.
+
+### Upstream Model Quota / 429
+
+```
+statusCode: 429
+code: insufficient_quota
+```
+
+**Solution**: Use a provider key/project with available quota, or switch to deterministic mock generation for local validation.
+
+### Backend Results Not Visible
+
+```
+Backend tracking unavailable ... Results will be saved locally
+```
+
+**Solution**:
+- Confirm `TRAIGENT_OFFLINE_MODE=false`
+- Confirm `TRAIGENT_BACKEND_URL` / `TRAIGENT_API_URL` points to reachable backend
+- Confirm `TRAIGENT_API_KEY` is present and valid
+- Check DNS/network reachability from the runtime host
 
 ---
 

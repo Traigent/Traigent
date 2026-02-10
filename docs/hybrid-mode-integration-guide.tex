@@ -132,6 +132,18 @@ two are optional.
   \item Statistical promotion via $\varepsilon$-Pareto dominance testing.
 \end{itemize}
 
+\subsection{Integration readiness checklist}
+
+Before production rollout, validate that:
+
+\begin{itemize}[nosep]
+  \item \texttt{GET /traigent/v1/capabilities} returns \field{version} and accurate feature flags.
+  \item \texttt{GET /traigent/v1/config-space} returns a stable \field{capability\_id} and valid \field{tunables}.
+  \item \texttt{POST /traigent/v1/execute} enforces capability matching and always returns \field{operational\_metrics.total\_cost\_usd}.
+  \item \texttt{POST /traigent/v1/evaluate} is implemented whenever \field{supports\_evaluate=true}.
+  \item Optional sections (\field{constraints}, \field{objectives}, \field{exploration}, \field{promotion\_policy}, \field{defaults}, \field{measures}) are omitted unless intentionally used.
+\end{itemize}
+
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Optimization Process}
 
@@ -139,15 +151,15 @@ The optimization loop follows four phases, repeated until a budget or
 convergence criterion is met.
 
 \begin{enumerate}[nosep]
-  \item \textbf{Discover} --- Traigent calls \texttt{GET /capabilities} and
-        \texttt{GET /config-space} to learn which parameters are tunable, their
+  \item \textbf{Discover} --- Traigent calls \texttt{GET /traigent/v1/capabilities} and
+        \texttt{GET /traigent/v1/config-space} to learn which parameters are tunable, their
         domains, and declared objectives.
   \item \textbf{Execute} --- For each trial, Traigent posts a candidate
-        configuration and a batch of inputs to \texttt{POST /execute}. Your
+        configuration and a batch of inputs to \texttt{POST /traigent/v1/execute}. Your
         service runs the agent with those settings and returns per-input
         outputs plus operational metrics (cost, latency, tokens).
   \item \textbf{Evaluate} --- If a separate evaluation endpoint is available,
-        Traigent posts output--target pairs to \texttt{POST /evaluate}. Your
+        Traigent posts output--target pairs to \texttt{POST /traigent/v1/evaluate}. Your
         service scores outputs and returns quality metrics (accuracy,
         relevance, etc.).
   \item \textbf{Optimize} --- Traigent aggregates metrics, updates its
@@ -204,14 +216,20 @@ If privacy is not a concern, you may include full content in \field{data},
 \section{Authentication (Optional)}
 
 If your service requires authentication, accept a standard
-\texttt{Authorization} header (e.g.\ bearer token). Configure the Traigent SDK
-client with:
+\texttt{Authorization} header (for example a bearer token). Configure the
+Traigent optimizer with:
 
-\begin{lstlisting}[language=json,basicstyle=\ttfamily\small]
-hybrid_api_auth_header = "Bearer <token>"
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+@traigent.optimize(
+    execution_mode="hybrid_api",
+    hybrid_api_endpoint="https://api.your-service.com",
+    capability_id="my_agent",
+    hybrid_api_auth_header="Bearer <token>",
+)
 \end{lstlisting}
 
 All endpoints must consistently enforce the same authentication policy.
+In OpenAPI, this is modelled as optional bearer auth (\texttt{bearerAuth} or anonymous).
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Endpoints}\label{sec:endpoints}
@@ -234,6 +252,9 @@ Returns service capabilities for the initial handshake.
   "max_payload_bytes": null
 }
 \end{lstlisting}
+
+\textit{Guidance}: omit optional top-level sections when they are not used.
+Avoid sending placeholder empty values unless they carry intent.
 
 \begin{center}\small
 \begin{tabularx}{\textwidth}{@{}llcX@{}}
@@ -494,12 +515,14 @@ Evaluate outputs against expected targets. Only required when
 \field{request\_id}    & string (UUID) & \optional & Idempotency key \\
 \field{capability\_id} & string        & \required & Evaluation capability identifier \\
 \field{execution\_id}  & string        & \optional & Reference to previous execute \\
-\field{evaluations}    & array         & \optional & Output--target pairs \\
+\field{evaluations}    & array         & \optional & Output--target pairs (typically non-empty) \\
 \field{config}         & object        & \optional & Evaluation parameters \\
 \field{session\_id}    & string        & \optional & Session ID for stateful agents \\
 \bottomrule
 \end{tabularx}
 \end{center}
+
+\textit{Note}: \field{capability\_id} is validated against the configured service capability.
 
 Each \textbf{Evaluation Item} contains:
 
@@ -618,9 +641,13 @@ Error body format:
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Idempotency}
 
-All \texttt{POST} requests accept a \field{request\_id} field (UUID). If the
-same \field{request\_id} is received again, the service may return the cached
-response. This enables safe retries without duplicate processing.
+\texttt{POST /execute} and \texttt{POST /evaluate} accept \field{request\_id}
+(UUID recommended). If the same \field{request\_id} is received again, the
+service may return a cached response. This enables safe retries without
+duplicate processing.
+
+The \texttt{POST /keep-alive} endpoint uses \field{session\_id} and does not
+require \field{request\_id}.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Accompanying Specifications}
@@ -649,6 +676,16 @@ openapi-generator generate -i hybrid-mode-openapi.yaml -g python -o client/
 
 // TypeScript
 openapi-generator generate -i hybrid-mode-openapi.yaml -g typescript-fetch -o client/
+\end{lstlisting}
+
+\subsection{Validation and linting}
+
+\begin{lstlisting}[basicstyle=\ttfamily\footnotesize]
+# Validate syntax and references
+npx @apidevtools/swagger-cli validate hybrid-mode-openapi.yaml
+
+# Lint for OpenAPI best practices
+npx @redocly/cli lint hybrid-mode-openapi.yaml
 \end{lstlisting}
 
 % ══════════════════════════════════════════════════════════════════════════════
