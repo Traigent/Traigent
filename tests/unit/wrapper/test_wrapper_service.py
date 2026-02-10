@@ -605,6 +605,56 @@ class TestHandleExecute:
         assert len(resp["request_id"]) > 0
 
     @pytest.mark.asyncio
+    async def test_execute_request_id_is_idempotent(self) -> None:
+        """Same request_id and payload should return cached execute response."""
+        svc = TraigentService()
+        call_count = {"n": 0}
+
+        @svc.execute
+        def run(input_id, data, config):
+            call_count["n"] += 1
+            return {"output": f"ok-{call_count['n']}"}
+
+        request = {
+            "request_id": "req-idem-1",
+            "capability_id": "default",
+            "config": {"temperature": 0.2},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+        first = await svc.handle_execute(request)
+        second = await svc.handle_execute(request)
+
+        assert call_count["n"] == 1
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_execute_request_id_payload_mismatch_raises(self) -> None:
+        """Reusing request_id with changed execute payload should fail fast."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        base_request = {
+            "request_id": "req-idem-2",
+            "capability_id": "default",
+            "config": {"temperature": 0.2},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+        await svc.handle_execute(base_request)
+
+        with pytest.raises(ValueError, match="request_id reuse"):
+            await svc.handle_execute(
+                {
+                    "request_id": "req-idem-2",
+                    "capability_id": "default",
+                    "config": {"temperature": 0.7},
+                    "inputs": [{"input_id": "i1", "data": {}}],
+                }
+            )
+
+    @pytest.mark.asyncio
     async def test_session_touch_on_execute(self) -> None:
         """Test that session is touched when session_id is provided."""
         svc = TraigentService()
@@ -820,6 +870,54 @@ class TestHandleEvaluate:
         resp = await svc.handle_evaluate({"evaluations": []})
         assert resp["results"] == []
         assert resp["aggregate_metrics"] == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_request_id_is_idempotent(self) -> None:
+        """Same request_id and payload should return cached evaluate response."""
+        svc = TraigentService()
+        call_count = {"n": 0}
+
+        @svc.evaluate
+        def score(output, target, config):
+            call_count["n"] += 1
+            return {"accuracy": 0.9}
+
+        request = {
+            "request_id": "eval-idem-1",
+            "capability_id": "default",
+            "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+        }
+        first = await svc.handle_evaluate(request)
+        second = await svc.handle_evaluate(request)
+
+        assert call_count["n"] == 1
+        assert second == first
+
+    @pytest.mark.asyncio
+    async def test_evaluate_request_id_payload_mismatch_raises(self) -> None:
+        """Reusing request_id with changed evaluate payload should fail fast."""
+        svc = TraigentService()
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        await svc.handle_evaluate(
+            {
+                "request_id": "eval-idem-2",
+                "capability_id": "default",
+                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+            }
+        )
+
+        with pytest.raises(ValueError, match="request_id reuse"):
+            await svc.handle_evaluate(
+                {
+                    "request_id": "eval-idem-2",
+                    "capability_id": "default",
+                    "evaluations": [{"input_id": "e1", "output": "a", "target": "b"}],
+                }
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -1042,8 +1140,6 @@ class TestGetConfigSpaceValidation:
 
     def test_sync_handler_returning_awaitable_raises(self) -> None:
         """Sync handler that returns an awaitable should fail with coroutine cleanup."""
-        import asyncio
-
         svc = TraigentService()
 
         @svc.objectives

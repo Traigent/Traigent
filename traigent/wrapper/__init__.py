@@ -39,10 +39,24 @@ The service automatically exposes endpoints at:
 
 # Traceability: HYBRID-MODE-OPTIMIZATION CLIENT-WRAPPER-SDK
 
+from traigent.wrapper.errors import (
+    BadRequestError,
+    HybridAPIError,
+    RateLimitError,
+    RequestTimeoutError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
 from traigent.wrapper.service import ServiceConfig, Session, TraigentService
 
 __all__ = [
     "TraigentService",
     "ServiceConfig",
     "Session",
+    "HybridAPIError",
+    "BadRequestError",
+    "UnauthorizedError",
+    "RequestTimeoutError",
+    "RateLimitError",
+    "ServiceUnavailableError",
 ]

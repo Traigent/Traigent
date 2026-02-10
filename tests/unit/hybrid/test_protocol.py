@@ -140,6 +140,7 @@ class TestHybridEvaluateRequest:
         assert request.request_id  # Auto-generated
         assert request.execution_id is None
         assert request.evaluations is None
+        assert request.timeout_ms is None
 
     def test_to_dict(self) -> None:
         """Test serialization to dictionary."""
@@ -149,6 +150,7 @@ class TestHybridEvaluateRequest:
             evaluations=[{"input_id": "1", "output": {}, "target": {}}],
             config={"setting": "value"},
             session_id="sess_456",
+            timeout_ms=45000,
         )
 
         d = request.to_dict()
@@ -157,6 +159,7 @@ class TestHybridEvaluateRequest:
         assert len(d["evaluations"]) == 1
         assert d["config"] == {"setting": "value"}
         assert d["session_id"] == "sess_456"
+        assert d["timeout_ms"] == 45000
 
 
 class TestHybridEvaluateResponse:
