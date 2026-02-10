@@ -18,6 +18,9 @@ from traigent.wrapper.server import (
     EXECUTE_PATH,
     HEALTH_PATH,
     KEEP_ALIVE_PATH,
+    _extract_trace_headers,
+    _get_timeout_ms,
+    _response_headers_with_request_id,
     create_app,
     read_body,
     run_server,
@@ -533,7 +536,9 @@ class TestMakeErrorResponse:
         from traigent.wrapper.server import _make_error_response
 
         result = _make_error_response("ERR_CODE", "Something went wrong")
-        assert result == {"error": {"code": "ERR_CODE", "message": "Something went wrong"}}
+        assert result == {
+            "error": {"code": "ERR_CODE", "message": "Something went wrong"}
+        }
 
     def test_with_details(self) -> None:
         """Test error response with details included."""
@@ -571,3 +576,62 @@ class TestKeepAlive404:
         )
         assert send.status == 404
         assert send.body_json["error"]["code"] == "SESSION_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Tests for server helper functions
+# ---------------------------------------------------------------------------
+
+
+class TestExtractTraceHeaders:
+    def test_extracts_traceparent_and_tracestate(self) -> None:
+        scope = {
+            "headers": [
+                (b"traceparent", b"00-abc-def-01"),
+                (b"tracestate", b"vendor=val"),
+                (b"content-type", b"application/json"),
+            ]
+        }
+        result = _extract_trace_headers(scope)
+        assert result == {
+            "traceparent": "00-abc-def-01",
+            "tracestate": "vendor=val",
+        }
+
+    def test_empty_headers(self) -> None:
+        assert _extract_trace_headers({"headers": []}) == {}
+
+    def test_no_headers_key(self) -> None:
+        assert _extract_trace_headers({}) == {}
+
+
+class TestResponseHeadersWithRequestId:
+    def test_adds_request_id(self) -> None:
+        result = _response_headers_with_request_id(
+            {"content-type": "application/json"}, "req-123"
+        )
+        assert result["x-traigent-request-id"] == "req-123"
+        assert result["content-type"] == "application/json"
+
+    def test_none_request_id_omits_header(self) -> None:
+        result = _response_headers_with_request_id({}, None)
+        assert "x-traigent-request-id" not in result
+
+
+class TestGetTimeoutMs:
+    def test_missing_key_returns_default(self) -> None:
+        assert _get_timeout_ms({}, default_ms=5000) == 5000
+
+    def test_null_value_returns_default(self) -> None:
+        assert _get_timeout_ms({"timeout_ms": None}, default_ms=5000) == 5000
+
+    def test_valid_value(self) -> None:
+        assert _get_timeout_ms({"timeout_ms": 3000}, default_ms=None) == 3000
+
+    def test_bool_raises(self) -> None:
+        with pytest.raises(ValueError, match="must be an integer"):
+            _get_timeout_ms({"timeout_ms": True}, default_ms=None)
+
+    def test_below_minimum_raises(self) -> None:
+        with pytest.raises(ValueError, match=">= 1000"):
+            _get_timeout_ms({"timeout_ms": 500}, default_ms=None)

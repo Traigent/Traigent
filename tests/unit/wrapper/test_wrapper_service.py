@@ -1147,6 +1147,7 @@ class TestGetConfigSpaceValidation:
             # Return a coroutine without awaiting — simulates accidental async usage
             async def inner():
                 return [{"name": "accuracy", "direction": "maximize"}]
+
             return inner()
 
         with pytest.raises(
