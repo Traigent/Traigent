@@ -84,7 +84,7 @@ def _get_timeout_ms(
     if timeout_ms < 1000:
         raise ValueError("timeout_ms must be >= 1000")
 
-    return timeout_ms
+    return int(timeout_ms)
 
 
 def create_app(service: TraigentService) -> Callable[..., Any]:

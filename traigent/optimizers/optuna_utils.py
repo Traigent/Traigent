@@ -301,9 +301,7 @@ def discretize_for_grid(
                         discrete_space[param] = list(range(low_i, high_i + 1))
                     else:
                         inferred_step = max(span // (n_bins - 1), 1)
-                        values = [
-                            low_i + idx * inferred_step for idx in range(n_bins)
-                        ]
+                        values = [low_i + idx * inferred_step for idx in range(n_bins)]
                         values[-1] = high_i
                         discrete_space[param] = values
                 continue
