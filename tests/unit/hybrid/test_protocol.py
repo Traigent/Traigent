@@ -200,6 +200,7 @@ class TestServiceCapabilities:
         assert caps.supports_streaming is False
         assert caps.max_batch_size == 100
         assert caps.max_payload_bytes is None
+        assert caps.capability_ids is None
 
     def test_from_dict(self) -> None:
         """Test creating from dictionary."""
@@ -208,6 +209,7 @@ class TestServiceCapabilities:
             "supports_evaluate": False,
             "supports_keep_alive": True,
             "max_batch_size": 50,
+            "capability_ids": ["agent_a", "agent_b"],
         }
 
         caps = ServiceCapabilities.from_dict(data)
@@ -215,6 +217,7 @@ class TestServiceCapabilities:
         assert caps.supports_evaluate is False
         assert caps.supports_keep_alive is True
         assert caps.max_batch_size == 50
+        assert caps.capability_ids == ["agent_a", "agent_b"]
 
 
 class TestTVARDefinition:

@@ -58,6 +58,7 @@ paths:
                 supports_keep_alive: false
                 supports_streaming: false
                 max_batch_size: 100
+                capability_ids: ["my_agent"]
         "500":
           description: Internal server error
           content:
@@ -316,6 +317,11 @@ components:
           type: integer
           description: Maximum request payload size (null = unlimited)
           nullable: true
+        capability_ids:
+          type: array
+          description: Optional list of capability IDs supported by this service
+          items:
+            type: string
 
     ConfigSpaceResponse:
       type: object

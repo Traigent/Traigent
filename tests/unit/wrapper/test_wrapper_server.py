@@ -226,6 +226,7 @@ class TestCreateAppRoutes:
         body = send.body_json
         assert body["version"] == "1.0"
         assert body["supports_evaluate"] is True
+        assert body["capability_ids"] == ["test_svc"]
 
     # --- GET /traigent/v1/config-space ---
     @pytest.mark.asyncio

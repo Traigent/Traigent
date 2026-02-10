@@ -443,6 +443,8 @@ class TraigentService:
             "supports_streaming": self.config.supports_streaming,
             "max_batch_size": self.config.max_batch_size,
             "max_payload_bytes": None,
+            # Explicitly advertise supported capability IDs for multi-capability clients.
+            "capability_ids": [self.config.capability_id],
         }
 
     def get_health(self) -> dict[str, Any]:

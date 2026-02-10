@@ -212,6 +212,7 @@ class ServiceCapabilities:
         supports_streaming: Whether streaming responses are supported
         max_batch_size: Maximum inputs per execute request
         max_payload_bytes: Maximum request payload size (None = unlimited)
+        capability_ids: Optional list of capability IDs exposed by the service
     """
 
     version: str
@@ -220,6 +221,7 @@ class ServiceCapabilities:
     supports_streaming: bool = False
     max_batch_size: int = 100
     max_payload_bytes: int | None = None
+    capability_ids: list[str] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ServiceCapabilities:
@@ -231,6 +233,7 @@ class ServiceCapabilities:
             supports_streaming=data.get("supports_streaming", False),
             max_batch_size=data.get("max_batch_size", 100),
             max_payload_bytes=data.get("max_payload_bytes"),
+            capability_ids=data.get("capability_ids"),
         )
 
 

@@ -131,7 +131,8 @@ Returns service capabilities for the initial handshake.
   "supports_keep_alive": false,
   "supports_streaming": false,
   "max_batch_size": 100,
-  "max_payload_bytes": null
+  "max_payload_bytes": null,
+  "capability_ids": ["my_agent"]
 }
 ```
 
@@ -143,6 +144,11 @@ Returns service capabilities for the initial handshake.
 | `supports_streaming` | boolean | No | Whether streaming responses are supported |
 | `max_batch_size` | integer | No | Maximum inputs per execute request (default: 100) |
 | `max_payload_bytes` | integer | No | Maximum request payload size (null = unlimited) |
+| `capability_ids` | array[string] | No | Optional list of capability IDs supported by this service |
+
+Notes:
+- `capability_ids` is optional and useful for multi-capability services.
+- The canonical capability used for execution/evaluation remains `capability_id` returned by `GET /traigent/v1/config-space`.
 
 ---
 

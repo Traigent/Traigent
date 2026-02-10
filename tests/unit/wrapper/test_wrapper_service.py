@@ -472,6 +472,7 @@ class TestGetCapabilities:
         assert caps["supports_streaming"] is False
         assert caps["max_batch_size"] == 50
         assert caps["max_payload_bytes"] is None
+        assert caps["capability_ids"] == ["test"]
 
     def test_capabilities_with_evaluate(self) -> None:
         """Test capabilities when evaluate handler is registered."""
@@ -483,6 +484,7 @@ class TestGetCapabilities:
 
         caps = svc.get_capabilities()
         assert caps["supports_evaluate"] is True
+        assert caps["capability_ids"] == ["default"]
 
 
 # ---------------------------------------------------------------------------

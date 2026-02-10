@@ -39,6 +39,13 @@
         "max_payload_bytes": {
           "type": ["integer", "null"],
           "description": "Maximum request payload size (null = unlimited)"
+        },
+        "capability_ids": {
+          "type": "array",
+          "description": "Optional list of capability IDs supported by this service",
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
