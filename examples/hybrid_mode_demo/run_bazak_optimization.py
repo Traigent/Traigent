@@ -53,9 +53,9 @@ MAX_TRIALS: Final[int] = int(
 MAX_COST_USD: Final[float] = float(
     os.getenv("BAZAK_MAX_COST_USD", "4.0")
 )  # Stop after spending $4
-MAX_REASONING_LEVEL: Final[str] = os.getenv(
-    "BAZAK_MAX_REASONING_LEVEL", "medium"
-).strip().lower()
+MAX_REASONING_LEVEL: Final[str] = (
+    os.getenv("BAZAK_MAX_REASONING_LEVEL", "medium").strip().lower()
+)
 
 _REASONING_LEVEL_ORDER: Final[list[str]] = [
     "minimal",
@@ -94,7 +94,9 @@ def _parse_bool_env(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _apply_reasoning_cap(config_space: dict[str, object]) -> tuple[dict[str, object], bool]:
+def _apply_reasoning_cap(
+    config_space: dict[str, object],
+) -> tuple[dict[str, object], bool]:
     """Cap reasoning-level choices in discovered config space.
 
     Looks for categorical parameters with "reason" in the key and values that
@@ -118,8 +120,9 @@ def _apply_reasoning_cap(config_space: dict[str, object]) -> tuple[dict[str, obj
             continue
 
         allowed = [
-            normalized[lvl] for lvl in _REASONING_LEVEL_ORDER if lvl in normalized
-            and _REASONING_LEVEL_ORDER.index(lvl) <= max_idx
+            normalized[lvl]
+            for lvl in _REASONING_LEVEL_ORDER
+            if lvl in normalized and _REASONING_LEVEL_ORDER.index(lvl) <= max_idx
         ]
         if allowed and len(allowed) != len(domain):
             updated[name] = allowed
