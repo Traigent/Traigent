@@ -129,7 +129,7 @@ async def generate_response(input_id: str, data: dict, config: dict) -> dict:
     return {
         "output": result,
         "cost_usd": 0.005,
-        "metrics": {"tokens_used": 150}  # Custom operational metrics
+        "metrics": {"accuracy_hint": 0.92}  # Custom quality metrics (combined mode)
     }
 
 @app.evaluate
@@ -253,9 +253,9 @@ Track costs, latency, and any operational data in the execute response:
 
 **Required metrics:**
 - `total_cost_usd` - Total cost in USD (or `cost_usd` as alias)
-- `latency_ms` - Total latency in milliseconds
 
 **Recommended metrics:**
+- `latency_ms` - Total latency in milliseconds
 - `tokens_input` - Input token count
 - `tokens_output` - Output token count
 - `cache_hit_rate` - Cache hit ratio (0.0-1.0)
@@ -436,7 +436,7 @@ curl http://localhost:8080/traigent/v1/config-space
 curl -X POST http://localhost:8080/traigent/v1/execute \
   -H "Content-Type: application/json" \
   -d '{
-    "request_id": "test-001",
+    "request_id": "550e8400-e29b-41d4-a716-446655440000",
     "capability_id": "my_agent",
     "config": {"model": "fast", "temperature": 0.5},
     "inputs": [
@@ -448,7 +448,7 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
 curl -X POST http://localhost:8080/traigent/v1/evaluate \
   -H "Content-Type: application/json" \
   -d '{
-    "request_id": "test-002",
+    "request_id": "660e8400-e29b-41d4-a716-446655440001",
     "capability_id": "my_agent",
     "evaluations": [
       {

@@ -31,7 +31,12 @@ with open("docs/hybrid-mode-schemas.json") as f:
     schemas = json.load(f)
 
 # Validate an execute response
-validate(response_data, schemas["definitions"]["ExecuteResponse"])
+execute_response_schema = {
+    "$schema": schemas.get("$schema", "https://json-schema.org/draft/2020-12/schema"),
+    "$ref": "#/definitions/ExecuteResponse",
+    "definitions": schemas["definitions"],
+}
+validate(response_data, execute_response_schema)
 ```
 
 ---
@@ -49,6 +54,13 @@ Hybrid Mode allows Traigent to optimize external agentic services by:
 All endpoints use the prefix `/traigent/v1/`.
 
 Example: `http://your-service:8080/traigent/v1/capabilities`
+
+## Authentication (Optional)
+
+If your service requires authentication, accept an `Authorization` header (for example, bearer token).
+
+Configure the Traigent SDK client with:
+- `hybrid_api_auth_header="Bearer <token>"`
 
 ---
 
@@ -126,7 +138,7 @@ Returns service capabilities for the initial handshake.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `version` | string | Yes | API version (currently "1.0") |
-| `supports_evaluate` | boolean | Yes | Whether `/evaluate` endpoint is available |
+| `supports_evaluate` | boolean | No | Whether `/evaluate` endpoint is available (default: `true`) |
 | `supports_keep_alive` | boolean | No | Whether session heartbeat is supported |
 | `supports_streaming` | boolean | No | Whether streaming responses are supported |
 | `max_batch_size` | integer | No | Maximum inputs per execute request (default: 100) |
@@ -171,7 +183,6 @@ Returns tunable variable definitions. Traigent uses these to understand what par
       "default": true
     }
   ],
-  "constraints": {},
   "objectives": [
     {"name": "accuracy", "direction": "maximize", "weight": 2.0},
     {"name": "cost", "direction": "minimize", "weight": 1.0}
@@ -602,6 +613,17 @@ Session heartbeat for stateful agents.
 }
 ```
 
+#### Response (404 Not Found)
+
+```json
+{
+  "error": {
+    "code": "SESSION_NOT_FOUND",
+    "message": "Session not found: session_abc123"
+  }
+}
+```
+
 ---
 
 ## Error Responses
@@ -613,7 +635,7 @@ All endpoints should return appropriate HTTP status codes:
 | 200 | Success |
 | 400 | Bad Request (invalid input) |
 | 401 | Unauthorized (authentication required) |
-| 404 | Not Found (unknown capability) |
+| 404 | Not Found (unknown capability, route, or session) |
 | 429 | Too Many Requests (rate limited) |
 | 500 | Internal Server Error |
 | 503 | Service Unavailable |

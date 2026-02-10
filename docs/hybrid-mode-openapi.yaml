@@ -14,10 +14,12 @@ info:
     url: https://traigent.ai/license
 
 servers:
-  - url: http://localhost:8080
+  - url: http://127.0.0.1:8080
     description: Local development server
-  - url: https://your-service.example.com
+  - url: https://api.your-service.com
     description: Production server
+  - url: https://staging.your-service.com
+    description: Staging server
 
 tags:
   - name: Discovery
@@ -28,6 +30,10 @@ tags:
     description: Output evaluation endpoints
   - name: Health
     description: Health and session management
+
+security:
+  - bearerAuth: []
+  - {}
 
 paths:
   /traigent/v1/capabilities:
@@ -52,6 +58,18 @@ paths:
                 supports_keep_alive: false
                 supports_streaming: false
                 max_batch_size: 100
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /traigent/v1/config-space:
     get:
@@ -84,7 +102,18 @@ paths:
                       range: [0.0, 2.0]
                       resolution: 0.1
                     default: 0.7
-                constraints: {}
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /traigent/v1/execute:
     post:
@@ -195,6 +224,18 @@ paths:
                 status: healthy
                 version: "1.0.0"
                 uptime_seconds: 3600.5
+        "503":
+          description: Service unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /traigent/v1/keep-alive:
     post:
@@ -210,28 +251,39 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required:
-                - session_id
-              properties:
-                session_id:
-                  type: string
-                  description: Session identifier
+              $ref: "#/components/schemas/KeepAliveRequest"
       responses:
         "200":
           description: Session alive
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [alive]
-                  session_id:
-                    type: string
+                $ref: "#/components/schemas/KeepAliveResponse"
+        "404":
+          description: Session not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "400":
+          description: Invalid request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
   schemas:
     ServiceCapabilities:
       type: object
@@ -290,6 +342,7 @@ components:
           description: Structural and behavioral constraints (legacy textual or typed TVL 0.9)
           oneOf:
             - type: object
+              minProperties: 1
               additionalProperties:
                 type: array
                 items:
@@ -749,9 +802,8 @@ components:
           description: Number of retries
       additionalProperties:
         description: Custom operational metrics
-        oneOf:
+        anyOf:
           - type: number
-          - type: integer
           - type: string
           - type: boolean
 
@@ -923,6 +975,31 @@ components:
           type: object
           description: Additional health details
           additionalProperties: true
+
+    KeepAliveRequest:
+      type: object
+      description: Request body for session heartbeat
+      required:
+        - session_id
+      properties:
+        session_id:
+          type: string
+          description: Session identifier
+
+    KeepAliveResponse:
+      type: object
+      description: Response body for successful session heartbeat
+      required:
+        - status
+        - session_id
+      properties:
+        status:
+          type: string
+          enum: [alive]
+          description: Session heartbeat status
+        session_id:
+          type: string
+          description: Session identifier
 
     ErrorResponse:
       type: object

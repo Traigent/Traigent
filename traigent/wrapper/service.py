@@ -629,12 +629,20 @@ class TraigentService:
             raise ValueError("No evaluate handler registered")
 
         request_id = request.get("request_id", str(uuid.uuid4()))
+        capability_id = request.get("capability_id", self.config.capability_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
         session_id = request.get("session_id")
 
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
+
+        # Validate capability_id matches this service
+        if capability_id != self.config.capability_id:
+            raise ValueError(
+                f"capability_id mismatch: request has '{capability_id}', "
+                f"service is '{self.config.capability_id}'"
+            )
 
         # Update session if provided
         if session_id:

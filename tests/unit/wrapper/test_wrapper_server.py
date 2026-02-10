@@ -693,6 +693,31 @@ class TestServerOpenAPIEdgeCases:
         assert send.body_json["error"]["code"] == "INVALID_JSON"
 
     @pytest.mark.asyncio
+    async def test_evaluate_capability_mismatch_returns_400(self) -> None:
+        """Mismatched capability_id on evaluate returns 400."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        body = json.dumps(
+            {
+                "capability_id": "wrong_svc",
+                "evaluations": [{"input_id": "e1", "output": {}, "target": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(body),
+            send,
+        )
+        assert send.status == 400
+        assert "mismatch" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
     async def test_evaluate_no_handler_returns_400(self) -> None:
         """Evaluate without handler returns 400."""
         svc = TraigentService(capability_id="test_svc")

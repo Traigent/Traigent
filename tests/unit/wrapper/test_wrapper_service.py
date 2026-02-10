@@ -1328,6 +1328,22 @@ class TestCapabilityIdValidation:
         resp = await svc.handle_execute({"inputs": [{"input_id": "i1", "data": {}}]})
         assert resp["status"] == "completed"
 
+    @pytest.mark.asyncio
+    async def test_evaluate_capability_id_mismatch_raises(self) -> None:
+        svc = TraigentService(capability_id="qa_agent")
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        with pytest.raises(ValueError, match="capability_id mismatch"):
+            await svc.handle_evaluate(
+                {
+                    "capability_id": "different_agent",
+                    "evaluations": [{"input_id": "e1", "output": {}, "target": {}}],
+                }
+            )
+
 
 # ---------------------------------------------------------------------------
 # OpenAPI contract: NaN/Infinity in metrics

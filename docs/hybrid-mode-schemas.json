@@ -144,6 +144,7 @@
           "oneOf": [
             {
               "type": "object",
+              "minProperties": 1,
               "additionalProperties": {
                 "type": "array",
                 "items": {
@@ -585,7 +586,20 @@
           "description": "Number of retries"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": {
+        "description": "Custom operational metrics",
+        "anyOf": [
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "boolean"
+          }
+        ]
+      }
     },
     "ExecutionError": {
       "type": ["object", "null"],
