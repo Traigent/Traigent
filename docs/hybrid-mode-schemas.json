@@ -478,7 +478,7 @@
         "request_id": {
           "type": "string",
           "format": "uuid",
-          "description": "Idempotency key for retry safety"
+          "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
         "capability_id": {
           "type": "string",
@@ -518,6 +518,7 @@
       "title": "OutputItem",
       "description": "Output for a single input. For privacy-preserving mode, output_id can be returned instead of output content - the service stores output data locally.",
       "required": ["input_id"],
+      "additionalProperties": true,
       "properties": {
         "input_id": {
           "type": "string",
@@ -551,8 +552,7 @@
           "type": "string",
           "description": "Error message for this input when execution partially fails"
         }
-      },
-      "additionalProperties": false
+      }
     },
     "OperationalMetrics": {
       "type": "object",
@@ -716,7 +716,7 @@
         "request_id": {
           "type": "string",
           "format": "uuid",
-          "description": "Idempotency key for retry safety"
+          "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
         "capability_id": {
           "type": "string",
@@ -741,6 +741,11 @@
         "session_id": {
           "type": ["string", "null"],
           "description": "Session ID for stateful agents"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "description": "Optional request timeout in milliseconds (wrapper returns 408 on timeout)",
+          "minimum": 1000
         }
       },
       "additionalProperties": false

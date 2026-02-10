@@ -39,6 +39,16 @@ execute_response_schema = {
 validate(response_data, execute_response_schema)
 ```
 
+### Publishing and Versioning (Swagger)
+
+Use `docs/hybrid-mode-openapi.yaml` as the single source of truth and publish it via Swagger UI (or Redoc) instead of ad-hoc zip bundles.
+
+- Keep `info.version` in the OpenAPI file under semantic versioning (`MAJOR.MINOR.PATCH`).
+- Publish each released spec from git tags (for example `v1.0.0`, `v1.0.1`).
+- Run validation in CI before publish:
+  - `npx @apidevtools/swagger-cli validate docs/hybrid-mode-openapi.yaml`
+  - `npx @redocly/cli lint docs/hybrid-mode-openapi.yaml`
+
 ---
 
 ## Overview
@@ -61,6 +71,8 @@ If your service requires authentication, accept an `Authorization` header (for e
 
 Configure the Traigent SDK client with:
 - `hybrid_api_auth_header="Bearer <token>"`
+
+For current contract compatibility, keep auth policy consistent across all endpoints. RBAC and stronger policy models can be layered later without changing endpoint shapes.
 
 ---
 
@@ -103,14 +115,67 @@ output_id: "out_example_001_run_abc123"    # Scoped to run
 target_id: "target_001"                    # Stable across runs
 ```
 
-### Standard Mode (Optional)
+### Full-Content Datasets (Optional)
 
-If privacy is not a concern, you can send full content:
+If privacy is not a concern, you can send full content instead of IDs:
 - Include `data` in `InputItem`
 - Include `output` in `OutputItem`
 - Include `output` and `target` in `EvaluationItem`
 
-Both modes can be mixed - for example, send input `data` but return only `output_id`.
+Both modes can be mixed — for example, send input `data` but return only `output_id`.
+
+---
+
+## Evaluation Mode Selection: Two-Phase vs Combined
+
+The SDK automatically selects how evaluation happens based on the execute response. Your service controls this by what it returns in `quality_metrics` and declares in `supports_evaluate`.
+
+| Execute Response | Capabilities | SDK Behavior |
+|------------------|-------------|--------------|
+| `quality_metrics` is non-null (contains data) | Any | **Combined Mode** — SDK uses the returned quality metrics directly. `/evaluate` is NOT called. |
+| `quality_metrics` is `null` or absent | `supports_evaluate: true` | **Two-Phase Mode** — SDK calls `POST /evaluate` separately to obtain quality metrics. |
+| `quality_metrics` is `null` or absent | `supports_evaluate: false` | **Execute-only** — Only operational metrics (cost, latency) are collected. No quality evaluation. |
+
+### Combined Mode
+
+Return quality metrics directly in the execute response to skip the separate evaluate call:
+
+```json
+{
+  "status": "completed",
+  "outputs": [
+    {
+      "input_id": "ex_001",
+      "output_id": "out_001_run_abc",
+      "cost_usd": 0.005,
+      "metrics": {"accuracy": 0.92, "relevance": 0.88}
+    }
+  ],
+  "operational_metrics": {"total_cost_usd": 0.005},
+  "quality_metrics": {"accuracy": 0.92, "relevance": 0.88}
+}
+```
+
+### Two-Phase Mode
+
+Return `quality_metrics: null` (or omit it) and set `supports_evaluate: true` in capabilities. The SDK will call `/evaluate` after `/execute`:
+
+```json
+{
+  "status": "completed",
+  "outputs": [
+    {
+      "input_id": "ex_001",
+      "output_id": "out_001_run_abc",
+      "cost_usd": 0.005
+    }
+  ],
+  "operational_metrics": {"total_cost_usd": 0.005},
+  "quality_metrics": null
+}
+```
+
+The SDK then sends the outputs to `POST /evaluate` for quality scoring.
 
 ---
 
@@ -212,7 +277,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 | `schema_version` | string | Yes | TVL schema version (currently "0.9") |
 | `capability_id` | string | Yes | Unique identifier for this capability |
 | `tunables` | array | Yes | List of tunable variable definitions |
-| `constraints` | object | No | Structural and behavioral constraints |
+| `constraints` | object \| array | No | Structural and behavioral constraints |
 | `objectives` | array | No | Optional objective definitions (TVL 0.9 JSON format) |
 | `exploration` | object | No | Optional exploration strategy, budgets, and convergence |
 | `promotion_policy` | object | No | Optional promotion policy (epsilon-Pareto) |
@@ -411,7 +476,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 | `metrics` | object | No | Per-input quality metrics (combined execute+evaluate mode) |
 | `error` | string | No | Error message for this input when execution partially fails |
 
-**Operational Metrics** (recommended):
+**Operational Metrics**:
 | Field | Type | Description |
 |-------|------|-------------|
 | `total_cost_usd` | number | Total cost in USD |
@@ -462,7 +527,8 @@ Evaluate outputs against expected targets to measure quality.
     }
   ],
   "config": null,
-  "session_id": null
+  "session_id": null,
+  "timeout_ms": 30000
 }
 ```
 
@@ -474,6 +540,7 @@ Evaluate outputs against expected targets to measure quality.
 | `evaluations` | array | No | List of output+target pairs (optional when using execution_id-only workflows) |
 | `config` | object | No | Optional config for evaluation parameters |
 | `session_id` | string | No | Session ID for stateful agents |
+| `timeout_ms` | integer | No | Optional request timeout in milliseconds (wrapper returns `408` on timeout) |
 
 **Evaluation Item**:
 | Field | Type | Required | Description |
@@ -634,17 +701,22 @@ Session heartbeat for stateful agents.
 
 ## Error Responses
 
-All endpoints should return appropriate HTTP status codes:
+All endpoints should return structured errors with explicit retry behavior:
 
-| Status | Description |
-|--------|-------------|
-| 200 | Success |
-| 400 | Bad Request (invalid input) |
-| 401 | Unauthorized (authentication required) |
-| 404 | Not Found (unknown capability, route, or session) |
-| 429 | Too Many Requests (rate limited) |
-| 500 | Internal Server Error |
-| 503 | Service Unavailable |
+| Status | Meaning | Client behavior |
+|--------|---------|-----------------|
+| 400 | Bad request / validation failure | Do not retry until payload is fixed |
+| 401 | Unauthorized | Refresh/reconfigure credentials, then retry |
+| 404 | Not found (route/session) | Do not retry blindly; re-discover or recreate state |
+| 408 | Request timeout (`timeout_ms` budget exceeded) | Safe to retry with backoff and/or higher timeout if idempotent |
+| 429 | Rate limited | Retry with backoff, honor `Retry-After` when present |
+| 500 | Internal server error | Retry with bounded backoff; alert on repeated failures |
+| 503 | Temporary service unavailability | Retry with backoff, honor `Retry-After` when present |
+
+Wrapper behavior notes:
+- Wrapper server enforces `timeout_ms` and emits `408 REQUEST_TIMEOUT` for `POST /execute` and optional `timeout_ms` on `POST /evaluate`.
+- Services can intentionally emit `401`, `429`, or `503` by raising wrapper error types (`UnauthorizedError`, `RateLimitError`, `ServiceUnavailableError`).
+- OpenAPI operation-level response lists are normative for each endpoint.
 
 Error response format:
 
@@ -660,9 +732,43 @@ Error response format:
 }
 ```
 
+## Observability and Tracing
+
+For distributed tracing, clients may send W3C trace headers:
+
+- `traceparent`
+- `tracestate`
+
+Wrapper behavior:
+- Incoming trace headers are echoed in responses.
+- Wrapper adds `x-traigent-request-id` when a request includes/produces `request_id`.
+- `request_id` is required for business-level correlation; trace headers are complementary for span-level correlation.
+
+Transport note:
+- Production contract target is `HTTPS + HTTP/2`.
+- Traigent HTTP transport supports strict enforcement via:
+  - `create_transport(..., require_http2=True)` (rejects non-HTTPS endpoints and non-HTTP/2 responses)
+- Contract v1 remains synchronous request/response; async job APIs and gRPC are future roadmap items.
+
 ---
 
 ## Data Types Summary
+
+### Stop Reasons
+
+When optimization completes, the SDK reports a `stop_reason` indicating why it stopped:
+
+| Value | Description |
+|-------|-------------|
+| `max_trials_reached` | Maximum number of trials completed |
+| `max_samples_reached` | Maximum dataset samples consumed |
+| `cost_limit` | Budget limit exceeded |
+| `timeout` | Wall-clock time limit exceeded |
+| `plateau` | Convergence criterion met (no improvement) |
+| `optimizer` | Optimizer signaled completion |
+| `condition` | Generic stop condition triggered |
+| `user_cancelled` | User cancelled the run |
+| `error` | Optimization failed due to an exception |
 
 ### Status Values
 
@@ -686,11 +792,23 @@ Error response format:
 
 ## Idempotency
 
-All POST requests support idempotency via the `request_id` field:
+All `GET` endpoints (`/capabilities`, `/config-space`, `/health`) must be side-effect free and idempotent by contract.
 
-- If a request with the same `request_id` is received again, the service may return the cached response
+`POST /execute` and `POST /evaluate` support idempotency via the `request_id` field:
+
+- If a request with the same `request_id` and the same payload is received again, the service should return the cached response.
+- If the same `request_id` is reused with a different payload, the service should return `400 INVALID_REQUEST`.
 - This enables safe retries without duplicate processing
 - Generate `request_id` as a UUID
+
+`POST /keep-alive` is session-heartbeat semantics and does not use `request_id`.
+
+Wrapper behavior:
+- `TraigentService` implements in-process idempotency caches for `execute` and `evaluate`.
+- If your server does not implement idempotency, retrying the same request can run it twice and duplicate side effects/costs.
+
+Optional extension:
+- `OPTIONS` can be implemented for method discovery/CORS convenience, but it is not required by the core hybrid contract.
 
 ---
 

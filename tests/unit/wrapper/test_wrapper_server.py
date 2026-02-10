@@ -6,11 +6,17 @@ JSON response sending, and server runner functions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from traigent.wrapper.errors import (
+    RateLimitError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
 from traigent.wrapper.server import (
     CAPABILITIES_PATH,
     CONFIG_SPACE_PATH,
@@ -29,9 +35,16 @@ from traigent.wrapper.service import TraigentService
 # ---------------------------------------------------------------------------
 # Helper to simulate ASGI scope / receive / send
 # ---------------------------------------------------------------------------
-def _make_scope(method: str, path: str) -> dict:
+def _make_scope(
+    method: str, path: str, headers: list[list[bytes]] | None = None
+) -> dict:
     """Create an ASGI HTTP scope dict."""
-    return {"type": "http", "method": method, "path": path}
+    return {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "headers": headers or [],
+    }
 
 
 def _make_receive(body: bytes = b"") -> AsyncMock:
@@ -73,6 +86,16 @@ class _SendCollector:
             if msg["type"] == "http.response.body":
                 return json.loads(msg["body"])
         raise ValueError("No response.body message found")
+
+    @property
+    def headers(self) -> dict[str, str]:
+        for msg in self.messages:
+            if msg["type"] == "http.response.start":
+                return {
+                    key.decode("latin-1").lower(): value.decode("latin-1")
+                    for key, value in msg["headers"]
+                }
+        raise ValueError("No response.start message found")
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +468,179 @@ class TestCreateAppErrorHandling:
         assert send.status == 400
         assert send.body_json["error"]["code"] == "INVALID_REQUEST"
 
+    @pytest.mark.asyncio
+    async def test_execute_timeout_returns_408(self) -> None:
+        """timeout_ms should enforce a request timeout for execute."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        async def run(input_id, data, config):
+            await asyncio.sleep(1.05)
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "timeout_ms": 1000,
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 408
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+        assert send.body_json["error"]["details"]["timeout_ms"] == 1000
+
+    @pytest.mark.asyncio
+    async def test_evaluate_timeout_returns_408(self) -> None:
+        """timeout_ms should enforce a request timeout for evaluate when provided."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.evaluate
+        async def score(output, target, config):
+            await asyncio.sleep(1.05)
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "timeout_ms": 1000,
+                "evaluations": [{"input_id": "e1", "output": {}, "target": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 408
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+        assert send.body_json["error"]["details"]["endpoint"] == EVALUATE_PATH
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_maps_to_429_with_retry_after(self) -> None:
+        """Explicit RateLimitError from handler should return HTTP 429."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RateLimitError("Quota exceeded", retry_after=30)
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 429
+        assert send.body_json["error"]["code"] == "RATE_LIMITED"
+        assert send.headers["retry-after"] == "30"
+
+    @pytest.mark.asyncio
+    async def test_service_unavailable_error_maps_to_503(self) -> None:
+        """Explicit ServiceUnavailableError should return HTTP 503."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise ServiceUnavailableError(
+                "Upstream evaluator unavailable", retry_after=5
+            )
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 503
+        assert send.body_json["error"]["code"] == "SERVICE_UNAVAILABLE"
+        assert send.headers["retry-after"] == "5"
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_error_maps_to_401(self) -> None:
+        """Explicit UnauthorizedError should return HTTP 401."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.evaluate
+        def score(output, target, config):
+            raise UnauthorizedError("Missing bearer token")
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "capability_id": "test_svc",
+                "evaluations": [{"input_id": "e1", "output": {}, "target": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 401
+        assert send.body_json["error"]["code"] == "UNAUTHORIZED"
+
+    @pytest.mark.asyncio
+    async def test_trace_headers_are_propagated(self) -> None:
+        """traceparent/tracestate headers should be echoed for observability."""
+        svc = TraigentService(capability_id="test_svc")
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        app = create_app(svc)
+        request_body = json.dumps(
+            {
+                "request_id": "req-123",
+                "capability_id": "test_svc",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send = _SendCollector()
+        await app(
+            _make_scope(
+                "POST",
+                EXECUTE_PATH,
+                headers=[
+                    [
+                        b"traceparent",
+                        b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+                    ],
+                    [b"tracestate", b"vendor=test"],
+                ],
+            ),
+            _make_receive(request_body),
+            send,
+        )
+        assert send.status == 200
+        assert send.headers["traceparent"].startswith("00-")
+        assert send.headers["tracestate"] == "vendor=test"
+        assert send.headers["x-traigent-request-id"] == "req-123"
+
 
 # ---------------------------------------------------------------------------
 # run_server tests
@@ -673,6 +869,43 @@ class TestServerOpenAPIEdgeCases:
         )
         assert send.status == 400
         assert "mismatch" in send.body_json["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_execute_request_id_idempotent_cache_hit(self) -> None:
+        """Same request_id and payload should not execute handler twice."""
+        svc = TraigentService(capability_id="test_svc")
+        call_count = {"n": 0}
+
+        @svc.execute
+        def run(input_id, data, config):
+            call_count["n"] += 1
+            return {"output": f"ok-{call_count['n']}"}
+
+        app = create_app(svc)
+        body = json.dumps(
+            {
+                "request_id": "req-idem-server-1",
+                "capability_id": "test_svc",
+                "config": {"temperature": 0.2},
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
+        send1 = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send1,
+        )
+        send2 = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(body),
+            send2,
+        )
+        assert send1.status == 200
+        assert send2.status == 200
+        assert call_count["n"] == 1
+        assert send2.body_json["execution_id"] == send1.body_json["execution_id"]
 
     @pytest.mark.asyncio
     async def test_evaluate_invalid_json_returns_400(self) -> None:

@@ -5,6 +5,7 @@ info:
     REST API contract for external agentic services integrating with Traigent optimization.
 
     Implement these endpoints to enable Traigent to optimize your service's configuration.
+    Production integrations should use HTTPS with HTTP/2.
   version: "1.0.0"
   contact:
     name: Traigent Support
@@ -12,6 +13,11 @@ info:
   license:
     name: Proprietary
     url: https://traigent.ai/license
+
+x-transport-requirements:
+  production_scheme: https
+  production_http_version: "2"
+  local_development_exception: true
 
 servers:
   - url: http://127.0.0.1:8080
@@ -45,6 +51,9 @@ paths:
         Traigent SDK calls this first to discover what features your service supports.
       tags:
         - Discovery
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       responses:
         "200":
           description: Service capabilities
@@ -81,6 +90,9 @@ paths:
         what parameters it can optimize for your service.
       tags:
         - Discovery
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       responses:
         "200":
           description: Configuration space with tunable definitions
@@ -125,6 +137,9 @@ paths:
         This is the main endpoint where your agent processes inputs using the provided configuration.
       tags:
         - Execution
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       requestBody:
         required: true
         content:
@@ -155,8 +170,26 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "408":
+          description: Request timeout exceeded timeout_ms budget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "429":
           description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Service unavailable (temporary upstream/dependency outage)
           content:
             application/json:
               schema:
@@ -177,6 +210,9 @@ paths:
         This endpoint is optional - only implement if supports_evaluate is true in capabilities.
       tags:
         - Evaluation
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       requestBody:
         required: true
         content:
@@ -193,6 +229,7 @@ paths:
                     response: "Machine learning is..."
                   target:
                     expected: "Machine learning is a type of AI..."
+              timeout_ms: 30000
       responses:
         "200":
           description: Evaluation completed
@@ -206,6 +243,36 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "408":
+          description: Request timeout exceeded timeout_ms budget
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          description: Service unavailable (temporary upstream/dependency outage)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
   /traigent/v1/health:
     get:
@@ -214,6 +281,9 @@ paths:
       description: Health check endpoint for monitoring and load balancer health checks.
       tags:
         - Health
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       responses:
         "200":
           description: Service is healthy
@@ -247,6 +317,9 @@ paths:
         Only implement if supports_keep_alive is true in capabilities.
       tags:
         - Health
+      parameters:
+        - $ref: "#/components/parameters/TraceParentHeader"
+        - $ref: "#/components/parameters/TraceStateHeader"
       requestBody:
         required: true
         content:
@@ -278,6 +351,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 
 components:
   securitySchemes:
@@ -285,10 +364,27 @@ components:
       type: http
       scheme: bearer
 
+  parameters:
+    TraceParentHeader:
+      in: header
+      name: traceparent
+      required: false
+      description: W3C Trace Context traceparent header for distributed tracing.
+      schema:
+        type: string
+    TraceStateHeader:
+      in: header
+      name: tracestate
+      required: false
+      description: W3C Trace Context tracestate header for vendor-specific trace state.
+      schema:
+        type: string
+
   schemas:
     ServiceCapabilities:
       type: object
       description: Service capabilities discovered via handshake
+      additionalProperties: false
       required:
         - version
       properties:
@@ -326,6 +422,7 @@ components:
     ConfigSpaceResponse:
       type: object
       description: Response from config-space discovery endpoint
+      additionalProperties: false
       required:
         - schema_version
         - capability_id
@@ -342,6 +439,11 @@ components:
         tunables:
           type: array
           description: List of tunable variable definitions
+          items:
+            $ref: "#/components/schemas/TunableDefinition"
+        tvars:
+          type: array
+          description: Alias for tunables (backward compatibility). SDK accepts both keys.
           items:
             $ref: "#/components/schemas/TunableDefinition"
         constraints:
@@ -380,6 +482,7 @@ components:
     TunableDefinition:
       type: object
       description: Tunable variable definition following TVL 0.9 specification
+      additionalProperties: false
       required:
         - name
         - type
@@ -613,7 +716,7 @@ components:
         request_id:
           type: string
           format: uuid
-          description: Idempotency key for retry safety
+          description: Idempotency key for retry safety (same request_id + different payload should return 400)
         capability_id:
           type: string
           description: Identifier for the agent capability to invoke
@@ -648,7 +751,7 @@ components:
         the ID to look up the actual input data locally. The input data is never
         transmitted to Traigent.
 
-        **Standard mode**: Include `data` with the actual input content.
+        **Full-content datasets**: Include `data` with the actual input content.
       required:
         - input_id
       properties:
@@ -735,7 +838,7 @@ components:
         stores the actual output locally and only shares the identifier. Traigent only
         sees the ID and associated metrics.
 
-        **Standard mode**: Include `output` with the actual output content.
+        **Full-content datasets**: Include `output` with the actual output content.
       required:
         - input_id
       properties:
@@ -822,7 +925,7 @@ components:
         request_id:
           type: string
           format: uuid
-          description: Idempotency key for retry safety
+          description: Idempotency key for retry safety (same request_id + different payload should return 400)
         capability_id:
           type: string
           description: Identifier for the evaluation capability
@@ -844,6 +947,10 @@ components:
           type: string
           description: Session ID for stateful agents
           nullable: true
+        timeout_ms:
+          type: integer
+          description: Optional request timeout in milliseconds (wrapper returns 408 on timeout)
+          minimum: 1000
 
     EvaluationItem:
       type: object
@@ -854,7 +961,7 @@ components:
         Your service looks up the actual data locally using these IDs. This ensures that
         sensitive input/output content is never transmitted to Traigent.
 
-        **Standard mode**: Include `output` and `target` with actual content.
+        **Full-content datasets**: Include `output` and `target` with actual content.
 
         Note: You can mix modes - e.g., provide `output` content but use `target_id` for expected.
       required:

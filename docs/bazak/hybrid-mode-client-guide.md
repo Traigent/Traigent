@@ -11,6 +11,11 @@ Traigent's Hybrid Mode allows you to optimize any external service by implementi
 3. **Evaluate** outputs against targets
 4. **Optimize** to find the best configuration
 
+Current transport behavior:
+- Production target is HTTPS + HTTP/2.
+- Traigent HTTP transport can enforce this with `create_transport(..., require_http2=True)`.
+- Contract v1 is synchronous request/response; async job contracts and gRPC are future-stage options.
+
 ## Integration Checklist
 
 Before running optimization, verify:
@@ -21,6 +26,7 @@ Before running optimization, verify:
 4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
 5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
 6. Auth behavior is consistent across all endpoints if `Authorization` is required.
+7. Timeout/error behavior is explicit for `400/401/404/408/429/500/503` and client retry logic is implemented.
 
 ## Privacy-Preserving Mode (Default)
 
@@ -60,16 +66,18 @@ def execute():
     return jsonify({...})
 ```
 
-**Evaluate endpoint**: Accept `output_id` and `target_id` instead of content:
+**Evaluate endpoint**: Accept `output_id` and optionally `target_id` instead of content:
 
 ```python
 @app.route("/traigent/v1/evaluate", methods=["POST"])
 def evaluate():
     results = []
     for eval_item in evaluations:
-        # Look up data locally using IDs
+        # Look up output locally using output_id
         output = get_output_locally(eval_item["output_id"])
-        target = get_target_locally(eval_item["target_id"])
+        # For ID-based datasets, target_id may be absent — use input_id to look up target
+        target_key = eval_item.get("target_id") or eval_item["input_id"]
+        target = get_target_locally(target_key)
 
         metrics = compute_metrics(output, target)
         results.append({
@@ -361,14 +369,15 @@ def execute():
     total_cost = 0.0
 
     for inp in inputs:
-        # Your agent logic here
-        result = process_input(inp["data"], config)
+        # Look up input data locally using input_id (ID-based datasets)
+        input_data = get_input_locally(inp["input_id"])
+        result = process_input(input_data, config)
         cost = calculate_cost(config)
         total_cost += cost
 
         outputs.append({
             "input_id": inp["input_id"],
-            "output": result,
+            "output_id": generate_output_id(inp["input_id"], data.get("session_id")),
             "cost_usd": cost,
         })
 
@@ -420,10 +429,12 @@ async def config_space():
 async def execute(req: ExecuteRequest):
     outputs = []
     for inp in req.inputs:
-        result = await process_input(inp["data"], req.config)
+        # Look up input data locally using input_id (ID-based datasets)
+        input_data = await get_input_locally(inp["input_id"])
+        result = await process_input(input_data, req.config)
         outputs.append({
             "input_id": inp["input_id"],
-            "output": result,
+            "output_id": generate_output_id(inp["input_id"], req.session_id),
             "cost_usd": 0.005,
         })
 
@@ -614,6 +625,12 @@ def execute():
     return jsonify(result)
 ```
 
+Required behavior:
+- Same `request_id` + same payload => return cached response, do not execute again.
+- Same `request_id` + different payload => return `400 INVALID_REQUEST`.
+
+If idempotency is not implemented on the server, retries can execute duplicate work and produce double billing/side effects.
+
 ### 2. Error Handling
 
 Return appropriate HTTP status codes and structured errors:
@@ -642,6 +659,38 @@ def execute():
         return jsonify({
             "error": {"code": "INTERNAL_ERROR", "message": str(e)}
         }), 500
+```
+
+Status-code handling matrix (recommended client behavior):
+
+| Status | Meaning | Retry strategy |
+|--------|---------|----------------|
+| `400` | Invalid payload / validation error | No retry until fixed |
+| `401` | Authentication failure | Refresh credentials then retry |
+| `404` | Route/session/capability missing | Re-discover or recreate state before retry |
+| `408` | Request timeout | Retry with backoff and/or increase `timeout_ms` |
+| `429` | Rate-limited | Retry with backoff; honor `Retry-After` |
+| `500` | Internal server error | Retry with bounded backoff |
+| `503` | Temporary outage | Retry with backoff; honor `Retry-After` |
+
+If you use `TraigentService`, you can raise explicit wrapper errors to map directly:
+
+```python
+from traigent.wrapper import (
+    RateLimitError,
+    ServiceUnavailableError,
+    UnauthorizedError,
+)
+
+@app.execute
+def run(input_id, data, config):
+    if quota_exceeded():
+        raise RateLimitError("Quota exceeded", retry_after=30)  # HTTP 429
+    if backend_down():
+        raise ServiceUnavailableError("Dependency unavailable", retry_after=10)  # HTTP 503
+    if not valid_token():
+        raise UnauthorizedError("Missing/invalid token")  # HTTP 401
+    return {"output": {"ok": True}, "cost_usd": 0.001}
 ```
 
 ### 3. Partial Results
@@ -689,14 +738,22 @@ async def execute():
     except asyncio.TimeoutError:
         return jsonify({
             "status": "failed",
-            "error": {"code": "TIMEOUT", "message": f"Request timed out after {timeout_ms}ms"}
-        }), 504
+            "error": {"code": "REQUEST_TIMEOUT", "message": f"Request timed out after {timeout_ms}ms"}
+        }), 408
 ```
 
 ### 5. Keep Optional Fields Truly Optional
 
 Avoid sending empty optional sections in primary examples (for example, `constraints: {}`) unless they carry intent.
 Omitting optional fields makes client implementations and generated SDKs cleaner.
+
+### 6. Tracing and Correlation
+
+Support W3C trace headers for observability:
+
+- Accept `traceparent` and `tracestate` request headers.
+- Propagate these headers downstream when calling model/providers.
+- Return `x-traigent-request-id` so logs can join API-level and optimizer-level events.
 
 ---
 

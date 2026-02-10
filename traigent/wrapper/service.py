@@ -33,7 +33,9 @@ Example:
 
 from __future__ import annotations
 
+import copy
 import inspect
+import json
 import math
 import re
 import time
@@ -43,6 +45,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 
 from traigent.utils.logging import get_logger
+from traigent.wrapper.errors import HybridAPIError
 
 logger = get_logger(__name__)
 
@@ -187,8 +190,32 @@ class TraigentService:
         self._sessions: dict[str, Session] = {}
         self._started_at: float = time.time()
 
+        # In-process idempotency caches keyed by request_id.
+        # Value is (payload fingerprint excluding request_id, response payload).
+        # Bounded to prevent unbounded memory growth in long-lived servers.
+        self._idempotency_cache_max_size = 1000
+        self._execute_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._evaluate_idempotency_cache: dict[str, tuple[str, dict[str, Any]]] = {}
+
         # Cached config space
         self._cached_tvars: dict[str, Any] | None = None
+
+    def _fingerprint_request(self, request: dict[str, Any]) -> str:
+        """Build stable request fingerprint for idempotency checks.
+
+        Excludes request_id because request_id is used as the dedupe key itself.
+        """
+        payload = {k: v for k, v in request.items() if k != "request_id"}
+        try:
+            return json.dumps(
+                payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            )
+        except TypeError:
+            # Fallback for non-JSON-native values in custom wrappers.
+            return repr(payload)
 
     def tvars(self, func: F) -> F:
         """Decorator to register TVAR configuration function.
@@ -482,7 +509,17 @@ class TraigentService:
         if self._execute_handler is None:
             raise ValueError("No execute handler registered")
 
-        request_id = request.get("request_id", str(uuid.uuid4()))
+        request_id = str(request.get("request_id", str(uuid.uuid4())))
+        request_fingerprint = self._fingerprint_request(request)
+        cached_execute = self._execute_idempotency_cache.get(request_id)
+        if cached_execute is not None:
+            cached_fingerprint, cached_response = cached_execute
+            if cached_fingerprint != request_fingerprint:
+                raise ValueError(
+                    "request_id reuse with different payload in execute request"
+                )
+            return copy.deepcopy(cached_response)
+
         capability_id = request.get("capability_id", self.config.capability_id)
         config = request.get("config", {})
         inputs = request.get("inputs")
@@ -561,6 +598,9 @@ class TraigentService:
 
                 outputs.append(output_item)
 
+            except HybridAPIError:
+                # Bubble up explicit transport-level errors (401/429/503/etc.)
+                raise
             except Exception as e:
                 logger.error(f"Execute failed for {input_id}: {e}")
                 failed_input_ids.append(input_id)
@@ -610,6 +650,15 @@ class TraigentService:
         if session_id:
             response["session_id"] = session_id
 
+        # Cache terminal response for idempotent retries.
+        # Evict oldest entry if cache is full.
+        if len(self._execute_idempotency_cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(self._execute_idempotency_cache))
+            del self._execute_idempotency_cache[oldest_key]
+        self._execute_idempotency_cache[request_id] = (
+            request_fingerprint,
+            copy.deepcopy(response),
+        )
         return response
 
     async def handle_evaluate(
@@ -630,7 +679,17 @@ class TraigentService:
         if self._evaluate_handler is None:
             raise ValueError("No evaluate handler registered")
 
-        request_id = request.get("request_id", str(uuid.uuid4()))
+        request_id = str(request.get("request_id", str(uuid.uuid4())))
+        request_fingerprint = self._fingerprint_request(request)
+        cached_evaluate = self._evaluate_idempotency_cache.get(request_id)
+        if cached_evaluate is not None:
+            cached_fingerprint, cached_response = cached_evaluate
+            if cached_fingerprint != request_fingerprint:
+                raise ValueError(
+                    "request_id reuse with different payload in evaluate request"
+                )
+            return copy.deepcopy(cached_response)
+
         capability_id = request.get("capability_id", self.config.capability_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
@@ -679,6 +738,9 @@ class TraigentService:
                     }
                 )
 
+            except HybridAPIError:
+                # Bubble up explicit transport-level errors (401/429/503/etc.)
+                raise
             except Exception as e:
                 logger.error(f"Evaluate failed for {input_id}: {e}")
                 failed_input_ids.append(input_id)
@@ -716,6 +778,15 @@ class TraigentService:
                 "failed_inputs": failed_input_ids,
             }
 
+        # Cache terminal response for idempotent retries.
+        # Evict oldest entry if cache is full.
+        if len(self._evaluate_idempotency_cache) >= self._idempotency_cache_max_size:
+            oldest_key = next(iter(self._evaluate_idempotency_cache))
+            del self._evaluate_idempotency_cache[oldest_key]
+        self._evaluate_idempotency_cache[request_id] = (
+            request_fingerprint,
+            copy.deepcopy(response),
+        )
         return response
 
     def _aggregate_metrics(
