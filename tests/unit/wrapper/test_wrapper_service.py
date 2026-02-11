@@ -655,6 +655,64 @@ class TestHandleExecute:
             )
 
     @pytest.mark.asyncio
+    async def test_execute_cache_eviction_fifo(self) -> None:
+        """Cache eviction should remove oldest entry when max size is reached."""
+        svc = TraigentService()
+        svc._idempotency_cache_max_size = 3  # Small cache for testing
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": f"result-{input_id}"}
+
+        # Fill cache to capacity
+        for i in range(3):
+            await svc.handle_execute({
+                "request_id": f"req-{i}",
+                "capability_id": "default",
+                "inputs": [{"input_id": f"i{i}", "data": {}}],
+            })
+
+        assert len(svc._execute_idempotency_cache) == 3
+        assert "req-0" in svc._execute_idempotency_cache
+
+        # Adding 4th entry should evict oldest (req-0)
+        await svc.handle_execute({
+            "request_id": "req-3",
+            "capability_id": "default",
+            "inputs": [{"input_id": "i3", "data": {}}],
+        })
+
+        assert len(svc._execute_idempotency_cache) == 3
+        assert "req-0" not in svc._execute_idempotency_cache
+        assert "req-1" in svc._execute_idempotency_cache
+        assert "req-3" in svc._execute_idempotency_cache
+
+    @pytest.mark.asyncio
+    async def test_fingerprint_non_json_serializable_fallback(self) -> None:
+        """Non-JSON-serializable values should fall back to repr()."""
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            return {"output": "ok"}
+
+        # Create request with non-JSON-serializable object
+        class CustomObj:
+            def __repr__(self):
+                return "CustomObj(id=42)"
+
+        request = {
+            "request_id": "req-custom",
+            "capability_id": "default",
+            "config": {"custom_param": CustomObj()},
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }
+
+        # Should not raise, should use repr() fallback
+        result = await svc.handle_execute(request)
+        assert result["status"] == "completed"
+
+    @pytest.mark.asyncio
     async def test_session_touch_on_execute(self) -> None:
         """Test that session is touched when session_id is provided."""
         svc = TraigentService()
@@ -918,6 +976,39 @@ class TestHandleEvaluate:
                     "evaluations": [{"input_id": "e1", "output": "a", "target": "b"}],
                 }
             )
+
+    @pytest.mark.asyncio
+    async def test_evaluate_cache_eviction_fifo(self) -> None:
+        """Evaluate cache eviction should remove oldest entry when max size is reached."""
+        svc = TraigentService()
+        svc._idempotency_cache_max_size = 3  # Small cache for testing
+
+        @svc.evaluate
+        def score(output, target, config):
+            return {"accuracy": 1.0}
+
+        # Fill cache to capacity
+        for i in range(3):
+            await svc.handle_evaluate({
+                "request_id": f"eval-{i}",
+                "capability_id": "default",
+                "evaluations": [{"input_id": f"e{i}", "output": "a", "target": "a"}],
+            })
+
+        assert len(svc._evaluate_idempotency_cache) == 3
+        assert "eval-0" in svc._evaluate_idempotency_cache
+
+        # Adding 4th entry should evict oldest (eval-0)
+        await svc.handle_evaluate({
+            "request_id": "eval-3",
+            "capability_id": "default",
+            "evaluations": [{"input_id": "e3", "output": "a", "target": "a"}],
+        })
+
+        assert len(svc._evaluate_idempotency_cache) == 3
+        assert "eval-0" not in svc._evaluate_idempotency_cache
+        assert "eval-1" in svc._evaluate_idempotency_cache
+        assert "eval-3" in svc._evaluate_idempotency_cache
 
 
 # ---------------------------------------------------------------------------
