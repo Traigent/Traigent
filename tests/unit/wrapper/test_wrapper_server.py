@@ -635,3 +635,159 @@ class TestGetTimeoutMs:
     def test_below_minimum_raises(self) -> None:
         with pytest.raises(ValueError, match=">= 1000"):
             _get_timeout_ms({"timeout_ms": 500}, default_ms=None)
+
+
+# ---------------------------------------------------------------------------
+# Error handling tests
+# ---------------------------------------------------------------------------
+class TestErrorHandling:
+    """Tests for HybridAPIError and timeout handling in ASGI app."""
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_caught_and_returned(self) -> None:
+        """HybridAPIError from handler should be caught and returned as JSON."""
+        from traigent.wrapper.errors import BadRequestError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise BadRequestError(
+                "Invalid input format",
+                error_code="VALIDATION_ERROR",
+                details={"field": "temperature"},
+            )
+
+        app = create_app(svc)
+        request_body = json.dumps({
+            "capability_id": "default",
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 400
+        assert send.body_json["error"]["code"] == "VALIDATION_ERROR"
+        assert "Invalid input format" in send.body_json["error"]["message"]
+        assert send.body_json["error"]["details"]["field"] == "temperature"
+
+    @pytest.mark.asyncio
+    async def test_execute_timeout_raises_request_timeout_error(self) -> None:
+        """Execute handler exceeding timeout should raise RequestTimeoutError."""
+        import asyncio
+
+        from traigent.wrapper.errors import RequestTimeoutError
+
+        svc = TraigentService()
+
+        @svc.execute
+        async def run(input_id, data, config):
+            await asyncio.sleep(2)  # Longer than timeout
+            return {"output": "done"}
+
+        app = create_app(svc)
+        request_body = json.dumps({
+            "capability_id": "default",
+            "timeout_ms": 1000,  # 1 second timeout
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 408
+        assert "timed out" in send.body_json["error"]["message"].lower()
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_with_custom_headers(self) -> None:
+        """HybridAPIError with custom headers should include them in response."""
+        from traigent.wrapper.errors import RateLimitError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RateLimitError(retry_after=60)
+
+        app = create_app(svc)
+        request_body = json.dumps({
+            "capability_id": "default",
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 429
+        assert send.body_json["error"]["code"] == "RATE_LIMITED"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_timeout_raises_request_timeout_error(self) -> None:
+        """Evaluate handler exceeding timeout should raise RequestTimeoutError."""
+        import asyncio
+
+        svc = TraigentService()
+
+        @svc.evaluate
+        async def score(output, target, config):
+            await asyncio.sleep(2)  # Longer than timeout
+            return {"accuracy": 1.0}
+
+        app = create_app(svc)
+        request_body = json.dumps({
+            "capability_id": "default",
+            "timeout_ms": 1000,  # 1 second timeout
+            "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+        }).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EVALUATE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 408
+        assert "timed out" in send.body_json["error"]["message"].lower()
+        assert send.body_json["error"]["code"] == "REQUEST_TIMEOUT"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_api_error_with_custom_headers(self) -> None:
+        """HybridAPIError with custom headers should include them in response."""
+        from traigent.wrapper.errors import RateLimitError
+
+        svc = TraigentService()
+
+        @svc.execute
+        def run(input_id, data, config):
+            raise RateLimitError(retry_after=60)
+
+        app = create_app(svc)
+        request_body = json.dumps({
+            "capability_id": "default",
+            "inputs": [{"input_id": "i1", "data": {}}],
+        }).encode()
+
+        send = _SendCollector()
+        await app(
+            _make_scope("POST", EXECUTE_PATH),
+            _make_receive(request_body),
+            send,
+        )
+
+        assert send.status == 429
+        assert send.body_json["error"]["code"] == "RATE_LIMITED"
