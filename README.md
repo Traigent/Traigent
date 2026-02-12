@@ -1262,6 +1262,7 @@ make format && make lint
 
 **Resources:**
 - **📘 Comprehensive Guide**: [docs/contributing/ADDING_NEW_INTEGRATIONS.md](docs/contributing/ADDING_NEW_INTEGRATIONS.md)
+- **⚡ Quick Reference**: [docs/contributing/QUICK_REFERENCE_LLM_INTEGRATION.md](docs/contributing/QUICK_REFERENCE_LLM_INTEGRATION.md)
 - **🔧 Scaffold Tool**: `python scripts/scaffold_llm_plugin.py --help`
 - **📋 Issue Template**: [New LLM Integration](.github/ISSUE_TEMPLATE/new_llm_integration.md)
 - **✅ PR Template**: [LLM Integration PR](.github/PULL_REQUEST_TEMPLATE/llm_integration.md)
