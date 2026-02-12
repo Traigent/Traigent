@@ -1241,6 +1241,45 @@ pytest tests/unit/test_api.py
 - **📖 Documentation**: Share your success stories
 - **🐛 Bug Fixes**: Help improve reliability
 
+### Adding New LLM Integrations
+
+Want to add support for a new LLM provider? We make it easy!
+
+**Quick Start:**
+```bash
+# 1. Run the scaffold script to generate boilerplate
+python scripts/scaffold_llm_plugin.py <provider_name>
+
+# 2. Customize the generated plugin
+# Edit: traigent/integrations/llms/<provider>_plugin.py
+
+# 3. Run tests
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/test_<provider>_plugin.py -v
+
+# 4. Format and lint
+make format && make lint
+```
+
+**Resources:**
+- **📘 Comprehensive Guide**: [docs/contributing/ADDING_NEW_INTEGRATIONS.md](docs/contributing/ADDING_NEW_INTEGRATIONS.md)
+- **🔧 Scaffold Tool**: `python scripts/scaffold_llm_plugin.py --help`
+- **📋 Issue Template**: [New LLM Integration](.github/ISSUE_TEMPLATE/new_llm_integration.md)
+- **✅ PR Template**: [LLM Integration PR](.github/PULL_REQUEST_TEMPLATE/llm_integration.md)
+
+**Current Supported LLMs:**
+- OpenAI (GPT-4, GPT-3.5, etc.)
+- Anthropic (Claude)
+- Google Gemini
+- Mistral AI
+- Cohere
+- AWS Bedrock
+- Azure OpenAI
+- Hugging Face
+- LangChain (framework wrapper)
+- LlamaIndex (framework wrapper)
+
+See the [integration guide](docs/contributing/ADDING_NEW_INTEGRATIONS.md) for step-by-step instructions!
+
 ## 📄 License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
