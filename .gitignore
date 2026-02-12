@@ -413,3 +413,10 @@ docs/design/
 artifacts/
 test-results/
 tests/optimizer_validation/viewer/bdd_graph_data.json
+
+# Discussion files (local session notes - never commit)
+discussion*.txt
+discussion.txt
+old_discussions_*/
+DISCUSSIONS_RECOUNT_*.md
+
