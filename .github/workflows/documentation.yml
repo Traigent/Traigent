@@ -27,40 +27,32 @@ jobs:
       with:
         python-version: '3.11'
 
-    - name: Basic validation
+    - name: Check required files
       run: |
-        echo "📝 Checking documentation files..."
-
-        # Check required files exist
         test -f README.md || exit 1
         test -f CONTRIBUTING.md || exit 1
 
-        # Check for broken markdown links (simple check)
-        python -c "
-import re
-from pathlib import Path
+    - name: Check for broken markdown links
+      shell: python
+      run: |
+        import re
+        import sys
+        from pathlib import Path
 
-errors = []
-for md_file in Path('.').rglob('*.md'):
-    content = md_file.read_text()
-    # Find markdown links
-    links = re.findall(r'\[([^\]]+)\]\(([^\)]+)\)', content)
-    for text, link in links:
-        if link.startswith('#'):  # Internal anchor
-            continue
-        if link.startswith('http'):  # External link
-            continue
-        # Check if local file exists
-        if not Path(link).exists() and not Path(md_file.parent / link).exists():
-            errors.append(f'{md_file}: Broken link to {link}')
+        errors = []
+        for md_file in Path(".").rglob("*.md"):
+            content = md_file.read_text()
+            links = re.findall(r"\[([^\]]+)\]\(([^\)]+)\)", content)
+            for text, link in links:
+                if link.startswith("#") or link.startswith("http"):
+                    continue
+                if not Path(link).exists() and not Path(md_file.parent / link).exists():
+                    errors.append(f"{md_file}: Broken link to {link}")
 
-if errors:
-    print('❌ Broken links found:')
-    for error in errors[:10]:  # Limit output
-        print(f'  {error}')
-    exit(1)
-else:
-    print('✅ No broken links found')
-"
-
-        echo "✅ Documentation validation passed"
+        if errors:
+            print("Broken links found:")
+            for error in errors[:10]:
+                print(f"  {error}")
+            sys.exit(1)
+        else:
+            print("No broken links found")

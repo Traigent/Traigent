@@ -136,8 +136,12 @@ def answer_with_context(context: str, question: str) -> str:
 
 
 if __name__ == "__main__":
-    print(
-        answer_with_context(
-            "Docs: Reset via Reset Password link", "How can I reset my password?"
+    try:
+        print(
+            answer_with_context(
+                "Docs: Reset via Reset Password link", "How can I reset my password?"
+            )
         )
-    )
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

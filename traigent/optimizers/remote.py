@@ -1,12 +1,12 @@
 """Remote-guided optimizer (hybrid mode scaffold).
 
-This optimizer integrates with a remote suggestion service when available,
-while safely falling back to a local optimizer. It is designed to be privacy-
-aware: only metadata (e.g., indices, metrics) should be sent upstream when
-`privacy_enabled` is True. Actual dataset content must never be transmitted.
+This optimizer integrates with a remote suggestion service when available.
+It is designed to be privacy-aware: only metadata (e.g., indices, metrics)
+should be sent upstream when `privacy_enabled` is True.
 
-Current implementation provides a scaffolding that behaves like a local
-random optimizer by default, allowing tests to mock remote behavior.
+Note: Remote optimization requires cloud or hybrid mode, which are not yet
+supported in the open-source SDK. This optimizer is reserved for future
+enterprise features.
 """
 
 # Traceability: CONC-Layer-Integration CONC-Quality-Reliability CONC-Quality-Performance FUNC-OPT-ALGORITHMS FUNC-CLOUD-HYBRID REQ-OPT-ALG-004 REQ-CLOUD-009 SYNC-CloudHybrid
@@ -26,12 +26,13 @@ logger = get_logger(__name__)
 class RemoteOptimizer(BaseOptimizer):
     """Optimizer that can request suggestions from a remote service.
 
-    - When remote is unavailable or disabled, falls back to a local
-      `RandomSearchOptimizer` for suggestion generation.
+    Note: Remote optimization requires cloud or hybrid execution mode, which
+    are not yet supported in the open-source SDK. This optimizer currently
+    uses a local RandomSearchOptimizer as a placeholder.
+
     - Async suggestion APIs are provided to align with remote access patterns.
     - Privacy: call sites can pass `remote_context={"privacy_enabled": True}` to
-      indicate indices-only behavior for any remote integration (to be handled
-      by the client layer when implemented).
+      indicate indices-only behavior for any remote integration.
     """
 
     def __init__(

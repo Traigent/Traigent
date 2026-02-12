@@ -1,5 +1,6 @@
 # Internal documentation (private feature planning)
 docs/internal/
+EXCEPTION_HANDLING_SPEC.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -197,12 +198,15 @@ resampling_configs.md
 !examples/datasets/**/*.jsonl
 # Keep use-cases datasets tracked for demo use cases
 !use-cases/**/datasets/*.jsonl
+# Keep walkthrough example datasets tracked
+!walkthrough/datasets/*.jsonl
 # Keep CI example datasets tracked
 !examples/integrations/ci-cd/**/*.jsonl
 # Keep the quickstart symlink at repo root for README examples
 !qa_samples.jsonl
 !tests/mcp/fixtures/sample_datasets.jsonl
 optimization_results/
+local_results/
 data/
 temp/
 .traigent/
@@ -222,6 +226,7 @@ scripts/run_mutmut_with_setup.sh
 
 # Temporary test scripts (development phase)
 test_phase*.py
+manual_validation_*.py
 test_multi_objective_implementation.py
 test_weighted_score_updates.py
 test_integration_weighted_scores.py
@@ -307,9 +312,12 @@ validate_*.py
 !.post_release_recommendation_fixes/templates/
 !.post_release_recommendation_fixes/templates/**
 
-# Marketing materials viewer (local development only)
+# Marketing materials viewer (removed - was local development only)
 tools/marketing-viewer/
 run_marketing_viewer.sh
+
+# Node modules in tools (regenerate with npm install)
+tools/**/node_modules/
 
 # Virtual environments (additional)
 test_env/
@@ -388,15 +396,16 @@ tests/optimizer_validation/viewer/ontology/*.ttl
 # Large test reports
 report.json
 
-# MLflow database (local development)
+# MLflow artifacts and database (local development)
+mlruns/
 mlflow.db
+.secrets.*
 
 # Trial output files (local development)
 trial_*.json
 
 # Agent instruction files (development only)
 AGENTS.md
-MAINTENANCE.md
 tests/optimizer_validation/AGENT_*.md
 tests/optimizer_validation/GIST_*.md
 tests/optimizer_validation/GPT_*.md
@@ -422,3 +431,6 @@ docs/design/
 artifacts/
 test-results/
 tests/optimizer_validation/viewer/bdd_graph_data.json
+
+# Architecture diagrams (generated locally)
+*.mmd

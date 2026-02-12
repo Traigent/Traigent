@@ -27,61 +27,53 @@ Custom Evaluator Interface:
 from __future__ import annotations
 
 import asyncio
-import base64
 import copy
-import hashlib
-import hmac
-import json
 import os
 import sys
 import threading
 import time
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
-from enum import Enum, auto
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
-from traigent.api.functions import _GLOBAL_CONFIG, get_global_parallel_config
 from traigent.api.types import OptimizationResult, OptimizationStatus
 from traigent.config import get_provider
-from traigent.config.parallel import (
-    coerce_parallel_config,
-    merge_parallel_configs,
-    resolve_parallel_config,
-)
+from traigent.config.parallel import coerce_parallel_config, merge_parallel_configs
 from traigent.config.types import ExecutionMode, TraigentConfig, resolve_execution_mode
-from traigent.core.evaluator_wrapper import CustomEvaluatorWrapper
+from traigent.core.ci_approval import check_ci_approval
+from traigent.core.config_state_manager import ConfigStateManager, OptimizationState
 from traigent.core.objectives import (
     ObjectiveSchema,
     create_default_objectives,
     normalize_objectives,
     schema_to_objective_names,
 )
+from traigent.core.optimization_pipeline import (
+    collect_orchestrator_kwargs,
+    create_effective_evaluator,
+    create_traigent_config,
+    create_workflow_traces_tracker,
+    prepare_optimization_dataset,
+    resolve_effective_parallel_config,
+    resolve_execution_parameters,
+)
 from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import BaseEvaluator, Dataset
-from traigent.evaluators.local import LocalEvaluator
 from traigent.integrations.framework_override import override_context
 from traigent.optimizers import get_optimizer
 from traigent.tvl.options import TVLOptions
 from traigent.tvl.spec_loader import load_tvl_spec
-from traigent.utils.env_config import is_mock_llm, is_production
+from traigent.utils.env_config import is_mock_llm
 from traigent.utils.exceptions import (
     AuthenticationError,
     ConfigurationError,
     OptimizationError,
-    OptimizationStateError,
     TVLValidationError,
     ValidationError,
 )
 from traigent.utils.incentives import show_upgrade_hint
 from traigent.utils.logging import get_logger
-from traigent.utils.secure_path import (
-    PathTraversalError,
-    safe_open,
-    validate_path,
-    validate_user_path,
-)
 from traigent.utils.validation import (
     validate_config_space,
     validate_dataset_path,
@@ -92,9 +84,6 @@ logger = get_logger(__name__)
 
 # Module-level flag to ensure cost warning is emitted only once per process
 _COST_WARNING_EMITTED = False
-
-# ISO 8601 timezone suffix for UTC (used in token validation)
-_UTC_TIMEZONE_SUFFIX = "+00:00"
 
 # Error message for invalid configuration space type
 _CONFIG_SPACE_TYPE_ERROR = "Configuration space must be a dictionary"
@@ -158,165 +147,6 @@ def _emit_cost_warning_once() -> None:
         except UnicodeEncodeError:
             print(msg.encode("ascii", errors="replace").decode(), file=sys.stderr)
     sys.stderr.flush()
-
-
-class OptimizationState(Enum):
-    """Lifecycle state of an OptimizedFunction.
-
-    This enum tracks where the function is in its optimization lifecycle,
-    enabling proper enforcement of configuration access rules.
-
-    States:
-        UNOPTIMIZED: Before any optimization has been run. The function uses
-            its default_config when called.
-        OPTIMIZING: During an active optimization run. Configuration should
-            be accessed via traigent.get_config() inside the function.
-        OPTIMIZED: After optimization has completed successfully. The function
-            uses best_config automatically, accessible via current_config.
-        ERROR: Optimization failed. The function reverts to default_config.
-    """
-
-    UNOPTIMIZED = auto()
-    OPTIMIZING = auto()
-    OPTIMIZED = auto()
-    ERROR = auto()
-
-
-def _is_ci_environment() -> bool:
-    """Detect if running in a CI environment (robust detection - 10 providers)."""
-    return (
-        os.getenv("CI") in ("true", "1")
-        or os.getenv("GITHUB_ACTIONS") in ("true", "1")
-        or os.getenv("JENKINS_URL") is not None
-        or os.getenv("GITLAB_CI") in ("true", "1")
-        or os.getenv("CIRCLECI") in ("true", "1")
-        or os.getenv("TRAVIS") in ("true", "1")
-        or os.getenv("BUILDKITE") in ("true", "1")
-        or os.getenv("TEAMCITY_VERSION") is not None
-        or os.getenv("AZURE_HTTP_USER_AGENT") is not None
-        or os.getenv("BITBUCKET_BUILD_NUMBER") is not None
-    )
-
-
-def _check_env_var_approval() -> bool:
-    """Check if CI run is approved via environment variable."""
-    if os.getenv("TRAIGENT_RUN_APPROVED") == "1":
-        approved_by = os.getenv("TRAIGENT_APPROVED_BY", "environment_variable")
-        logger.info(f"CI optimization approved by: {approved_by}")
-        return True
-    return False
-
-
-def _validate_legacy_token(token_data: dict[str, Any]) -> bool:
-    """Validate a legacy format approval token."""
-    if "approved_by" not in token_data or "expires_at" not in token_data:
-        return False
-    try:
-        expires_str = token_data["expires_at"]
-        expires_at = datetime.fromisoformat(
-            expires_str.replace("Z", _UTC_TIMEZONE_SUFFIX)
-        )
-        now = datetime.now()
-        if expires_at.tzinfo:
-            now = now.replace(tzinfo=UTC)
-        if expires_at > now:
-            # Sanitize user-controlled data before logging to prevent log injection
-            safe_approver = _sanitize_for_log(token_data.get("approved_by", "unknown"))
-            logger.info("CI optimization approved by legacy token: %s", safe_approver)
-            return True
-    except (ValueError, KeyError):
-        pass
-    return False
-
-
-def _sanitize_for_log(value: str, max_len: int = 50) -> str:
-    """Sanitize user-controlled data for safe logging.
-
-    Removes any characters that could be used for log injection attacks,
-    keeping only alphanumeric characters and common safe symbols.
-    """
-    return "".join(c for c in str(value)[:max_len] if c.isalnum() or c in "-_@.")
-
-
-def _validate_hmac_token(token_data: dict[str, Any]) -> bool:
-    """Validate an HMAC-signed approval token."""
-    required_fields = ["approver", "expires_iso", "nonce", "signature"]
-    if not all(field in token_data for field in required_fields):
-        return False
-
-    secret = os.getenv("TRAIGENT_APPROVAL_SECRET", "").encode()
-    if not secret:
-        logger.warning(
-            "TRAIGENT_APPROVAL_SECRET not set, cannot validate token signature"
-        )
-        # Check expiry without signature validation
-        try:
-            expires_at = datetime.fromisoformat(
-                token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
-            )
-            now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
-            if expires_at > now:
-                logger.warning(
-                    "Token approved by %s (signature not verified)",
-                    _sanitize_for_log(token_data.get("approver", "unknown")),
-                )
-                return True
-        except (ValueError, KeyError):
-            pass
-        return False
-
-    # Compute expected signature
-    payload = f"{token_data['approver']}|{token_data['expires_iso']}|{token_data['nonce']}".encode()
-    expected_sig = base64.b64encode(
-        hmac.new(secret, payload, hashlib.sha256).digest()
-    ).decode()
-
-    # Constant-time comparison
-    if not hmac.compare_digest(token_data.get("signature", ""), expected_sig):
-        logger.warning("Token signature validation failed")
-        return False
-
-    # Check expiration
-    try:
-        expires_at = datetime.fromisoformat(
-            token_data["expires_iso"].replace("Z", _UTC_TIMEZONE_SUFFIX)
-        )
-        now = datetime.now(UTC) if expires_at.tzinfo else datetime.now()
-
-        # Enforce max TTL of 24 hours from creation
-        if expires_at - now > timedelta(hours=24):
-            logger.warning("Token TTL exceeds 24 hours, rejecting")
-            return False
-        if expires_at > now:
-            logger.info(
-                "CI optimization approved by HMAC token: %s",
-                _sanitize_for_log(token_data.get("approver", "unknown")),
-            )
-            return True
-        logger.debug("Token expired")
-    except (ValueError, KeyError):
-        pass
-    return False
-
-
-def _check_token_file_approval(token_file: Path, base_dir: Path) -> bool:
-    """Check if CI run is approved via token file."""
-    if not token_file.exists():
-        return False
-
-    try:
-        with safe_open(token_file, base_dir, mode="r", encoding="utf-8") as f:
-            token_data = json.load(f)
-
-        # Try HMAC token first, then legacy format
-        if _validate_hmac_token(token_data):
-            return True
-        if _validate_legacy_token(token_data):
-            return True
-    except (ValueError, KeyError) as e:  # JSONDecodeError is subclass of ValueError
-        logger.debug(f"Invalid approval token: {e}")
-
-    return False
 
 
 class OptimizedFunction:
@@ -597,6 +427,25 @@ class OptimizedFunction:
             kwargs, sentinel, "framework_target", None
         )
 
+        # Hybrid API evaluator configuration (execution_mode="hybrid_api")
+        self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
+        self.hybrid_api_capability_id = kwargs.pop("capability_id", None)
+        self.hybrid_api_transport = kwargs.pop("hybrid_api_transport", None)
+        self.hybrid_api_transport_type = kwargs.pop("hybrid_api_transport_type", "auto")
+        self.hybrid_api_batch_size = kwargs.pop("hybrid_api_batch_size", 1)
+        self.hybrid_api_batch_parallelism = kwargs.pop(
+            "hybrid_api_batch_parallelism", 1
+        )
+        self.hybrid_api_keep_alive = bool(kwargs.pop("hybrid_api_keep_alive", True))
+        self.hybrid_api_heartbeat_interval = kwargs.pop(
+            "hybrid_api_heartbeat_interval", 30.0
+        )
+        self.hybrid_api_timeout = kwargs.pop("hybrid_api_timeout", None)
+        self.hybrid_api_auth_header = kwargs.pop("hybrid_api_auth_header", None)
+        self.hybrid_api_auto_discover_tvars = bool(
+            kwargs.pop("hybrid_api_auto_discover_tvars", False)
+        )
+
         # Execution knobs
         provided_parallel = coerce_parallel_config(kwargs.pop("parallel_config", None))
         combined_parallel, sources = merge_parallel_configs(
@@ -717,22 +566,64 @@ class OptimizedFunction:
 
     def _initialize_state_and_wrapper(self) -> None:
         """Initialize optimization state and function wrapper."""
-        # Lock for protecting state mutations
-        self._state_lock = threading.RLock()
-
-        # Lifecycle state tracking
-        self._state: OptimizationState = OptimizationState.UNOPTIMIZED
-
-        # Optimization results
-        self._optimization_results: OptimizationResult | None = None
-        self._optimization_history: list[OptimizationResult] = []
-
-        # Configuration state
-        self._current_config = self.default_config.copy()
-        self._best_config: dict[str, Any] | None = None
+        self._csm = ConfigStateManager(
+            func=self.func,
+            default_config=self.default_config,
+            local_storage_path=getattr(self, "local_storage_path", None),
+            configuration_space=getattr(self, "configuration_space", None),
+            auto_load_best=getattr(self, "_auto_load_best", False),
+            load_from=getattr(self, "_load_from", None),
+            setup_wrapper_callback=self._setup_function_wrapper,
+        )
 
         # Make function callable with current config
         self._setup_function_wrapper()
+
+    # Backward-compatible proxy properties for state managed by ConfigStateManager.
+    # Tests and internal optimization flow access these directly.
+    @property  # noqa: F811
+    def _state(self) -> OptimizationState:  # type: ignore[override]
+        return self._csm._state
+
+    @_state.setter
+    def _state(self, value: OptimizationState) -> None:
+        self._csm._state = value
+
+    @property
+    def _state_lock(self) -> threading.RLock:
+        return self._csm._state_lock
+
+    @property  # noqa: F811
+    def _optimization_results(self) -> OptimizationResult | None:  # type: ignore[override]
+        return self._csm._optimization_results
+
+    @_optimization_results.setter
+    def _optimization_results(self, value: OptimizationResult | None) -> None:
+        self._csm._optimization_results = value
+
+    @property  # noqa: F811
+    def _optimization_history(self) -> list[OptimizationResult]:  # type: ignore[override]
+        return self._csm._optimization_history
+
+    @_optimization_history.setter
+    def _optimization_history(self, value: list[OptimizationResult]) -> None:
+        self._csm._optimization_history = value
+
+    @property  # noqa: F811
+    def _current_config(self) -> dict[str, Any]:  # type: ignore[override]
+        return self._csm._current_config
+
+    @_current_config.setter
+    def _current_config(self, value: dict[str, Any]) -> None:
+        self._csm._current_config = value
+
+    @property  # noqa: F811
+    def _best_config(self) -> dict[str, Any] | None:  # type: ignore[override]
+        return self._csm._best_config
+
+    @_best_config.setter
+    def _best_config(self, value: dict[str, Any] | None) -> None:
+        self._csm._best_config = value
 
     def _estimate_search_space_size(self) -> int:
         """Best-effort estimation of configuration combinations."""
@@ -802,12 +693,26 @@ class OptimizedFunction:
                 else:
                     raise
         elif self.configuration_space == {}:
+            if self._allows_empty_configuration_space():
+                logger.debug(
+                    "Allowing empty local configuration_space because "
+                    "hybrid_api_auto_discover_tvars is enabled"
+                )
+                return
             # Empty config space should raise ValueError with helpful message
             raise ValueError(
                 "Configuration space cannot be empty. Please specify at least one parameter to optimize "
                 "in the @traigent.optimize decorator. Example: configuration_space={'temperature': [0.0, 0.5, 1.0], "
                 "'model': ['gpt-3.5-turbo', 'gpt-4']}"
             )
+
+    def _allows_empty_configuration_space(self) -> bool:
+        """Whether empty config space is allowed for this function."""
+        effective_mode = getattr(self, "_effective_execution_mode", None)
+        return bool(
+            effective_mode is ExecutionMode.HYBRID_API
+            and self.hybrid_api_auto_discover_tvars
+        )
 
     def _validate_dataset(self) -> None:
         """Validate dataset configuration."""
@@ -954,6 +859,114 @@ class OptimizedFunction:
             self.constraints = tvl_state["constraints"]
         if "default_config" in tvl_state:
             self.default_config = tvl_state["default_config"]
+
+    async def _apply_hybrid_discovery_overrides(
+        self,
+        evaluator: BaseEvaluator,
+        *,
+        algorithm: str | None,
+        max_trials: int | None,
+        timeout: float | None,
+        effective_config_space: dict[str, Any],
+        algorithm_kwargs: dict[str, Any],
+    ) -> tuple[str | None, int | None, float | None, dict[str, Any], dict[str, Any]]:
+        """Apply hybrid config-space discovery data to runtime settings."""
+        from traigent.hybrid.discovery import merge_config_spaces
+        from traigent.tvl.promotion_gate import PromotionGate
+
+        state: dict[str, Any] = {}
+
+        discover = getattr(evaluator, "discover_config_space", None)
+        if not callable(discover):
+            return algorithm, max_trials, timeout, effective_config_space, state
+
+        discovered_config_space = await discover()
+        if not discovered_config_space:
+            raise ValueError(
+                "Hybrid API config-space discovery returned no tunables. "
+                "Verify GET /traigent/v1/config-space."
+            )
+
+        effective_config_space = merge_config_spaces(
+            discovered_config_space,
+            effective_config_space if effective_config_space else None,
+        )
+
+        discovered_spec = getattr(evaluator, "optimization_spec", None) or {}
+        if not isinstance(discovered_spec, dict):
+            return algorithm, max_trials, timeout, effective_config_space, state
+
+        discovered_schema = discovered_spec.get("objective_schema")
+        if discovered_schema is not None:
+            state["objective_schema"] = self.objective_schema
+            self.objective_schema = discovered_schema
+
+        discovered_constraints = discovered_spec.get("constraints")
+        if isinstance(discovered_constraints, list) and discovered_constraints:
+            state["constraints"] = list(self.constraints or [])
+            self.constraints = list(self.constraints or []) + discovered_constraints
+
+        discovered_defaults = discovered_spec.get("default_config")
+        if isinstance(discovered_defaults, dict) and discovered_defaults:
+            state["default_config"] = copy.deepcopy(self.default_config)
+            self.default_config = discovered_defaults.copy()
+
+        runtime_overrides = discovered_spec.get("runtime_overrides")
+        if isinstance(runtime_overrides, dict) and runtime_overrides:
+            algorithm, max_trials, timeout = self._apply_tvl_runtime_overrides(
+                algorithm,
+                max_trials,
+                timeout,
+                algorithm_kwargs,
+                runtime_overrides,
+            )
+
+        promotion_policy = discovered_spec.get("promotion_policy")
+        if promotion_policy is not None:
+            state["promotion_gate"] = getattr(self, "promotion_gate", None)
+            self.promotion_gate = PromotionGate.from_policy(
+                promotion_policy=promotion_policy,
+                objective_schema=self.objective_schema,
+            )
+
+        discovered_measures = discovered_spec.get("measures")
+        if (
+            isinstance(discovered_measures, list)
+            and hasattr(evaluator, "metrics")
+            and isinstance(getattr(evaluator, "metrics", None), list)
+        ):
+            state["evaluator_metrics"] = list(evaluator.metrics)
+            merged_metrics: list[str] = []
+            for metric_name in [*self.objectives, *discovered_measures]:
+                if isinstance(metric_name, str) and metric_name not in merged_metrics:
+                    merged_metrics.append(metric_name)
+            if merged_metrics:
+                evaluator.metrics = merged_metrics
+
+        return algorithm, max_trials, timeout, effective_config_space, state
+
+    def _restore_hybrid_discovery_state(
+        self,
+        state: dict[str, Any] | None,
+        evaluator: BaseEvaluator | None = None,
+    ) -> None:
+        """Restore state mutated by hybrid discovery application."""
+        if not state:
+            return
+        if "constraints" in state:
+            self.constraints = state["constraints"]
+        if "default_config" in state:
+            self.default_config = state["default_config"]
+        if "objective_schema" in state:
+            self.objective_schema = state["objective_schema"]
+        if "promotion_gate" in state:
+            self.promotion_gate = state["promotion_gate"]
+        if (
+            evaluator is not None
+            and "evaluator_metrics" in state
+            and hasattr(evaluator, "metrics")
+        ):
+            evaluator.metrics = state["evaluator_metrics"]
 
     async def optimize(
         self,
@@ -1225,235 +1238,30 @@ class OptimizedFunction:
 
         return updated_algorithm, updated_max_trials, updated_timeout
 
-    def _resolve_execution_parameters(
+    def _hybrid_api_evaluator_kwargs(
         self,
-        algorithm: str | None,
-        max_trials: int | None,
-        configuration_space: dict[str, Any] | None,
-    ) -> tuple[str, int | None, dict[str, Any]]:
-        """Resolve and validate execution parameters.
-
-        Returns:
-            Tuple of (resolved_algorithm, resolved_max_trials, effective_config_space)
-        """
-        # Determine effective configuration space (optimize() parameter takes precedence)
-        effective_config_space = (
-            configuration_space
-            if configuration_space is not None
-            else self.configuration_space
+        *,
+        force_auto_discover_tvars: bool | None = None,
+    ) -> dict[str, Any]:
+        """Build hybrid API kwargs for evaluator construction."""
+        auto_discover = (
+            force_auto_discover_tvars
+            if force_auto_discover_tvars is not None
+            else self.hybrid_api_auto_discover_tvars
         )
-
-        # Resolve algorithm (prefer method arg, else decorator-provided)
-        resolved_algorithm: str = (
-            algorithm if algorithm else cast(str, getattr(self, "algorithm", "grid"))
-        )
-
-        # Resolve max_trials value for this run
-        resolved_max_trials = (
-            max_trials if max_trials is not None else getattr(self, "max_trials", None)
-        )
-        if resolved_max_trials is not None and resolved_max_trials < 0:
-            raise ValueError("max_trials must be non-negative")
-
-        # Validate the effective configuration space
-        if not effective_config_space or effective_config_space == {}:
-            raise ValueError(
-                "Configuration space cannot be empty. Please specify at least one parameter to optimize "
-                "either in the @traigent.optimize decorator or in the optimize() method call. "
-                "Example: optimize(configuration_space={'temperature': [0.0, 0.5, 1.0]})"
-            )
-
-        # Validate configuration space if provided
-        if configuration_space is not None:
-            validate_config_space(configuration_space)
-
-        return resolved_algorithm, resolved_max_trials, effective_config_space
-
-    def _create_traigent_config(self) -> TraigentConfig:
-        """Create and store TraigentConfig for the optimization run."""
-        traigent_config = TraigentConfig(
-            execution_mode=cast(
-                Literal["edge_analytics", "privacy", "hybrid", "standard", "cloud"],
-                self.execution_mode,
-            ),
-            local_storage_path=self.local_storage_path,
-            minimal_logging=self.minimal_logging,
-            privacy_enabled=getattr(self, "privacy_enabled", False),
-        )
-        self.traigent_config = traigent_config
-        return traigent_config
-
-    def _prepare_optimization_dataset(
-        self,
-        algorithm_kwargs: dict[str, Any],
-    ) -> tuple[Dataset, int | None, bool]:
-        """Load and prepare the optimization dataset.
-
-        Returns:
-            Tuple of (dataset, max_total_examples, samples_include_pruned)
-        """
-        dataset = self._load_dataset()
-
-        # Apply example cap if specified
-        max_examples = algorithm_kwargs.get("max_examples") or getattr(
-            self, "max_examples", None
-        )
-        if (
-            max_examples is not None
-            and isinstance(max_examples, int)
-            and max_examples > 0
-            and len(dataset.examples) > max_examples
-        ):
-            capped_dataset = Dataset(
-                examples=dataset.examples[:max_examples],
-                name=dataset.name if hasattr(dataset, "name") else "dataset",
-                description=f"{dataset.description if hasattr(dataset, 'description') else 'Dataset'} (capped to {max_examples} examples)",
-                metadata={
-                    **getattr(dataset, "metadata", {}),
-                    "original_count": len(dataset.examples),
-                    "capped_count": max_examples,
-                },
-            )
-            logger.info(
-                f"Dataset capped from {len(dataset.examples)} to {max_examples} examples"
-            )
-            dataset = capped_dataset
-
-        max_total_examples_value = algorithm_kwargs.pop("max_total_examples", None)
-        if max_total_examples_value is None:
-            max_total_examples_value = getattr(self, "max_total_examples", None)
-        else:
-            self.max_total_examples = max_total_examples_value
-
-        samples_include_pruned_value = algorithm_kwargs.pop(
-            "samples_include_pruned", None
-        )
-        if samples_include_pruned_value is None:
-            samples_include_pruned_value = getattr(self, "samples_include_pruned", True)
-        else:
-            self.samples_include_pruned = bool(samples_include_pruned_value)
-
-        return dataset, max_total_examples_value, bool(samples_include_pruned_value)
-
-    def _resolve_effective_parallel_config(
-        self,
-        algorithm_kwargs: dict[str, Any],
-    ) -> tuple[int | None, int | None, int | None]:
-        """Resolve parallel configuration settings.
-
-        Returns:
-            Tuple of (effective_parallel_trials, effective_batch_size, effective_thread_workers)
-        """
-        runtime_parallel_config = coerce_parallel_config(
-            algorithm_kwargs.pop("parallel_config", None)
-        )
-
-        global_parallel_config = get_global_parallel_config()
-        merged_parallel_config, merged_sources = merge_parallel_configs(
-            [
-                (global_parallel_config, "global"),
-                (self.parallel_config, "decorator"),
-                (runtime_parallel_config, "runtime"),
-            ]
-        )
-        if merged_sources:
-            logger.debug("Parallel configuration merge sources: %s", merged_sources)
-
-        default_thread_workers = (
-            merged_parallel_config.thread_workers
-            if merged_parallel_config.thread_workers is not None
-            else int(_GLOBAL_CONFIG.get("parallel_workers", 1))
-        )
-
-        resolved_parallel = resolve_parallel_config(
-            merged_parallel_config,
-            default_thread_workers=default_thread_workers,
-            config_space_size=self._estimate_search_space_size(),
-            detected_function_kind=(
-                "async" if asyncio.iscoroutinefunction(self.func) else "sync"
-            ),
-            sources=merged_sources,
-        )
-
-        for warning in resolved_parallel.warnings:
-            logger.warning(warning)
-
-        logger.info(
-            "Resolved parallel configuration: mode=%s, trial_concurrency=%s, example_concurrency=%s, thread_workers=%s",
-            resolved_parallel.mode,
-            resolved_parallel.trial_concurrency,
-            resolved_parallel.example_concurrency,
-            resolved_parallel.thread_workers,
-        )
-
-        return (
-            resolved_parallel.trial_concurrency,
-            resolved_parallel.example_concurrency,
-            resolved_parallel.thread_workers,
-        )
-
-    def _resolve_custom_evaluator(
-        self,
-        custom_evaluator: Callable[..., Any] | None,
-    ) -> Callable[..., Any] | None:
-        """Resolve the effective custom evaluator based on mock mode settings.
-
-        Returns:
-            The custom evaluator to use, or None if LocalEvaluator should be used.
-        """
-        mock_mode_env = is_mock_llm()
-        mock_config = self.mock_mode_config or {}
-        mock_enabled = mock_config.get("enabled", True)
-        override_evaluator = mock_config.get("override_evaluator", True)
-
-        provided_custom_evaluator = custom_evaluator or self.custom_evaluator
-        has_custom = provided_custom_evaluator is not None
-
-        # Mock mode can override custom evaluators
-        if mock_mode_env and mock_enabled and override_evaluator and has_custom:
-            logger.info(
-                "Mock mode enabled: overriding custom evaluator with LocalEvaluator"
-            )
-            return None
-
-        return provided_custom_evaluator if has_custom else None
-
-    def _build_metric_functions(self) -> dict[str, Callable[..., Any]]:
-        """Build the effective metric functions dictionary."""
-        effective_metric_functions: dict[str, Callable[..., Any]] = dict(
-            self.metric_functions or {}
-        )
-
-        if self.scoring_function is None:
-            return effective_metric_functions
-
-        # Determine target metric for scoring function
-        target_metric: str | None = None
-        if "accuracy" in self.objectives:
-            target_metric = "accuracy"
-        elif "score" in self.objectives:
-            target_metric = "score"
-
-        if target_metric and target_metric not in effective_metric_functions:
-            effective_metric_functions[target_metric] = self.scoring_function
-
-        return effective_metric_functions
-
-    def _resolve_effective_workers(
-        self,
-        effective_batch_size: int | None,
-        effective_thread_workers: int | None,
-    ) -> int:
-        """Resolve the effective number of workers, applying thread limit."""
-        effective_workers = max(1, int(effective_batch_size or 1))
-        if effective_thread_workers and effective_workers > effective_thread_workers:
-            logger.debug(
-                "Clamping example concurrency from %s to thread worker limit %s",
-                effective_workers,
-                effective_thread_workers,
-            )
-            effective_workers = effective_thread_workers
-        return effective_workers
+        return {
+            "hybrid_api_endpoint": self.hybrid_api_endpoint,
+            "hybrid_api_capability_id": self.hybrid_api_capability_id,
+            "hybrid_api_transport": self.hybrid_api_transport,
+            "hybrid_api_transport_type": self.hybrid_api_transport_type,
+            "hybrid_api_batch_size": self.hybrid_api_batch_size,
+            "hybrid_api_batch_parallelism": self.hybrid_api_batch_parallelism,
+            "hybrid_api_keep_alive": self.hybrid_api_keep_alive,
+            "hybrid_api_heartbeat_interval": self.hybrid_api_heartbeat_interval,
+            "hybrid_api_timeout": self.hybrid_api_timeout,
+            "hybrid_api_auth_header": self.hybrid_api_auth_header,
+            "hybrid_api_auto_discover_tvars": auto_discover,
+        }
 
     def _create_effective_evaluator(
         self,
@@ -1462,159 +1270,30 @@ class OptimizedFunction:
         effective_batch_size: int | None,
         effective_thread_workers: int | None,
         effective_privacy_enabled: bool,
+        *,
+        force_auto_discover_tvars: bool | None = None,
     ) -> BaseEvaluator:
-        """Create the appropriate evaluator for the optimization run."""
-        effective_evaluator = self._resolve_custom_evaluator(custom_evaluator)
-
-        if effective_evaluator:
-            if not callable(effective_evaluator):
-                raise ValueError("custom_evaluator must be callable") from None
-            return CustomEvaluatorWrapper(
-                custom_evaluator=effective_evaluator,
-                metrics=self.objectives,
-                timeout=timeout or 60.0,
-                capture_llm_metrics=True,
-            )
-
-        # Check if JS runtime is configured
-        js_config = getattr(self, "js_runtime_config", None)
-        if js_config is not None and getattr(js_config, "is_js_runtime", False):
-            from traigent.evaluators.js_evaluator import JSEvaluator
-
-            # Check if parallel execution is requested
-            js_parallel_workers = getattr(js_config, "js_parallel_workers", 1)
-            process_pool = None
-
-            if js_parallel_workers > 1:
-                from traigent.bridges.process_pool import (
-                    JSProcessPool,
-                    JSProcessPoolConfig,
-                )
-
-                pool_config = JSProcessPoolConfig(
-                    max_workers=js_parallel_workers,
-                    module_path=js_config.js_module,
-                    function_name=js_config.js_function,
-                    trial_timeout=js_config.js_timeout,
-                )
-                process_pool = JSProcessPool(pool_config)
-                self._js_process_pool = process_pool
-                logger.info(
-                    "Created JS process pool with %d workers for parallel execution",
-                    js_parallel_workers,
-                )
-
-            return JSEvaluator(
-                js_module=js_config.js_module,
-                js_function=js_config.js_function,
-                js_timeout=js_config.js_timeout,
-                process_pool=process_pool,
-            )
-
-        effective_metric_functions = self._build_metric_functions()
-        effective_workers = self._resolve_effective_workers(
-            effective_batch_size, effective_thread_workers
-        )
-
-        return LocalEvaluator(
-            metrics=self.objectives,
-            timeout=timeout or 60.0,
-            max_workers=effective_workers,
-            detailed=True,
+        """Create the appropriate evaluator. Delegates to optimization_pipeline."""
+        evaluator, js_pool = create_effective_evaluator(
+            timeout=timeout,
+            custom_evaluator=custom_evaluator,
+            effective_batch_size=effective_batch_size,
+            effective_thread_workers=effective_thread_workers,
+            effective_privacy_enabled=effective_privacy_enabled,
+            objectives=self.objectives,
+            js_runtime_config=getattr(self, "js_runtime_config", None),
             execution_mode=self.execution_mode,
-            privacy_enabled=effective_privacy_enabled,
             mock_mode_config=self.mock_mode_config,
-            metric_functions=effective_metric_functions or None,
+            metric_functions=self.metric_functions,
+            scoring_function=self.scoring_function,
+            decorator_custom_evaluator=self.custom_evaluator,
+            **self._hybrid_api_evaluator_kwargs(
+                force_auto_discover_tvars=force_auto_discover_tvars
+            ),
         )
-
-    def _create_workflow_traces_tracker(
-        self, _traigent_config: TraigentConfig  # noqa: ARG002
-    ) -> Any:
-        """Create workflow traces tracker if backend is configured.
-
-        Args:
-            _traigent_config: Traigent configuration (reserved for future use)
-
-        Returns:
-            WorkflowTracesTracker instance if backend is configured, None otherwise
-        """
-        # Check if workflow traces should be enabled
-        # Requires both backend URL and API key
-        backend_url = os.environ.get("TRAIGENT_BACKEND_URL")
-        api_key = os.environ.get("TRAIGENT_API_KEY")
-
-        # Skip if backend is not configured (but allow in mock mode for testing)
-        if not backend_url or not api_key:
-            return None
-
-        # Skip if explicitly disabled
-        if os.environ.get("TRAIGENT_TRACES_ENABLED", "").lower() == "false":
-            return None
-
-        try:
-            from traigent.integrations.observability.workflow_traces import (
-                WorkflowTracesTracker,
-            )
-
-            tracker = WorkflowTracesTracker(
-                backend_url=backend_url,
-                auth_token=api_key,
-            )
-            logger.debug(f"Auto-initialized workflow traces tracker for {backend_url}")
-            return tracker
-
-        except ImportError:
-            logger.debug(
-                "Workflow traces module not available, skipping trace collection"
-            )
-            return None
-        except Exception as exc:
-            logger.debug(f"Failed to initialize workflow traces tracker: {exc}")
-            return None
-
-    def _collect_orchestrator_kwargs(
-        self,
-        algorithm_kwargs: dict[str, Any],
-        samples_include_pruned_value: bool,
-    ) -> dict[str, Any]:
-        """Collect optional kwargs for orchestrator from algorithm_kwargs and self."""
-        kwargs: dict[str, Any] = {
-            "cache_policy": algorithm_kwargs.get("cache_policy", "allow_repeats"),
-            "samples_include_pruned": samples_include_pruned_value,
-        }
-
-        # Copy optional keys from algorithm_kwargs if present
-        optional_keys = [
-            "budget_limit",
-            "budget_metric",
-            "budget_include_pruned",
-            "plateau_window",
-            "plateau_epsilon",
-            "cost_limit",
-            "cost_approved",
-            "tie_breakers",
-            "tvl_parameter_agents",
-        ]
-        for key in optional_keys:
-            if key in algorithm_kwargs:
-                kwargs[key] = algorithm_kwargs[key]
-
-        # Copy optional attributes from self if set
-        optional_attrs = [
-            ("default_config", lambda v: v.copy()),
-            ("constraints", None),
-            ("agents", None),
-            ("agent_prefixes", None),
-            ("agent_measures", None),
-            ("global_measures", None),
-            ("promotion_gate", None),
-        ]
-        for attr, transform in optional_attrs:
-            value = getattr(self, attr, None)
-            if value is not None:
-                kwargs[attr] = transform(value) if transform else value
-
-        return kwargs
+        if js_pool is not None:
+            self._js_process_pool = js_pool
+        return evaluator
 
     def _build_optimization_orchestrator(
         self,
@@ -1628,14 +1307,23 @@ class OptimizedFunction:
         effective_parallel_trials: int | None,
         samples_include_pruned_value: bool,
         algorithm_kwargs: dict[str, Any],
+        invocations_per_example: int = 1,
     ) -> OptimizationOrchestrator:
         """Build the optimization orchestrator with all configuration."""
-        orchestrator_kwargs = self._collect_orchestrator_kwargs(
-            algorithm_kwargs, samples_include_pruned_value
+        orchestrator_kwargs = collect_orchestrator_kwargs(
+            algorithm_kwargs,
+            samples_include_pruned_value,
+            default_config=getattr(self, "default_config", None),
+            constraints=getattr(self, "constraints", None),
+            agents=getattr(self, "agents", None),
+            agent_prefixes=getattr(self, "agent_prefixes", None),
+            agent_measures=getattr(self, "agent_measures", None),
+            global_measures=getattr(self, "global_measures", None),
+            promotion_gate=getattr(self, "promotion_gate", None),
         )
 
         # Auto-initialize workflow traces tracker if backend is configured
-        workflow_traces_tracker = self._create_workflow_traces_tracker(traigent_config)
+        workflow_traces_tracker = create_workflow_traces_tracker(traigent_config)
 
         orchestrator = OptimizationOrchestrator(
             optimizer=optimizer,
@@ -1811,21 +1499,84 @@ class OptimizedFunction:
         This method orchestrates the optimization process by delegating to
         specialized helper methods for each phase of execution.
         """
-        # Phase 1: Resolve and validate parameters
-        algorithm, max_trials, effective_config_space = (
-            self._resolve_execution_parameters(
-                algorithm, max_trials, configuration_space
+        hybrid_auto_discovery_enabled = self._allows_empty_configuration_space()
+        effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
+        hybrid_discovery_state: dict[str, Any] | None = None
+        precreated_evaluator: BaseEvaluator | None = None
+
+        if hybrid_auto_discovery_enabled:
+            # Discovery must happen before we resolve parallel settings because
+            # the remote config-space can override optimizer/runtime parameters.
+            # Use neutral worker settings for this bootstrap evaluator instance.
+            precreated_evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=custom_evaluator,
+                effective_batch_size=None,
+                effective_thread_workers=None,
+                effective_privacy_enabled=effective_privacy_enabled,
+                force_auto_discover_tvars=True,
             )
+
+            pre_discovery_space = (
+                configuration_space
+                if configuration_space is not None
+                else self.configuration_space
+            )
+            try:
+                (
+                    algorithm,
+                    max_trials,
+                    timeout,
+                    discovered_config_space,
+                    hybrid_discovery_state,
+                ) = await self._apply_hybrid_discovery_overrides(
+                    evaluator=precreated_evaluator,
+                    algorithm=algorithm,
+                    max_trials=max_trials,
+                    timeout=timeout,
+                    effective_config_space=pre_discovery_space or {},
+                    algorithm_kwargs=algorithm_kwargs,
+                )
+            except Exception:
+                close = getattr(precreated_evaluator, "close", None)
+                if callable(close):
+                    await close()
+                raise
+            configuration_space = discovered_config_space
+
+        # Phase 1: Resolve and validate parameters
+        algorithm, max_trials, effective_config_space = resolve_execution_parameters(
+            algorithm,
+            max_trials,
+            configuration_space,
+            fallback_config_space=self.configuration_space,
+            fallback_algorithm=cast(str, getattr(self, "algorithm", "grid")),
+            fallback_max_trials=getattr(self, "max_trials", None),
         )
 
         # Phase 2: Create TraigentConfig and check CI approval
-        traigent_config = self._create_traigent_config()
+        traigent_config = create_traigent_config(
+            execution_mode=self.execution_mode,
+            local_storage_path=self.local_storage_path,
+            minimal_logging=self.minimal_logging,
+            privacy_enabled=getattr(self, "privacy_enabled", False),
+        )
+        self.traigent_config = traigent_config
         self._check_ci_approval()
 
         # Phase 3: Prepare dataset
+        dataset = self._load_dataset()
         dataset, max_total_examples_value, samples_include_pruned_value = (
-            self._prepare_optimization_dataset(algorithm_kwargs)
+            prepare_optimization_dataset(
+                dataset,
+                algorithm_kwargs,
+                max_examples=getattr(self, "max_examples", None),
+                max_total_examples=getattr(self, "max_total_examples", None),
+                samples_include_pruned=getattr(self, "samples_include_pruned", True),
+            )
         )
+        if max_total_examples_value is not None:
+            self.max_total_examples = max_total_examples_value
 
         # Phase 4: Try cloud execution if applicable
         cloud_result = await self._try_cloud_execution(
@@ -1836,10 +1587,44 @@ class OptimizedFunction:
 
         # Phase 5: Resolve parallel configuration
         effective_parallel_trials, effective_batch_size, effective_thread_workers = (
-            self._resolve_effective_parallel_config(algorithm_kwargs)
+            resolve_effective_parallel_config(
+                algorithm_kwargs,
+                decorator_parallel_config=self.parallel_config,
+                config_space_size=self._estimate_search_space_size(),
+                is_async_func=asyncio.iscoroutinefunction(self.func),
+            )
         )
 
-        # Phase 6: Create optimizer
+        # Phase 5.5: Pop cost-estimation params before optimizer creation
+        raw_invocations = algorithm_kwargs.pop("invocations_per_example", 1)
+        try:
+            invocations_per_example = max(1, int(raw_invocations))
+            if invocations_per_example != raw_invocations:
+                logger.debug(
+                    "invocations_per_example coerced: %r -> %d",
+                    raw_invocations,
+                    invocations_per_example,
+                )
+        except (TypeError, ValueError):
+            invocations_per_example = 1
+            logger.warning(
+                "Invalid invocations_per_example=%r, defaulting to 1",
+                raw_invocations,
+            )
+
+        # Phase 6: Determine privacy and create evaluator
+        if precreated_evaluator is not None:
+            evaluator = precreated_evaluator
+        else:
+            evaluator = self._create_effective_evaluator(
+                timeout=timeout,
+                custom_evaluator=custom_evaluator,
+                effective_batch_size=effective_batch_size,
+                effective_thread_workers=effective_thread_workers,
+                effective_privacy_enabled=effective_privacy_enabled,
+            )
+
+        # Phase 7: Create optimizer
         optimizer_kwargs = algorithm_kwargs.copy()
         if max_trials:
             optimizer_kwargs["max_trials"] = max_trials
@@ -1849,16 +1634,6 @@ class OptimizedFunction:
 
         optimizer = get_optimizer(
             algorithm, effective_config_space, self.objectives, **optimizer_kwargs
-        )
-
-        # Phase 7: Determine privacy and create evaluator
-        effective_privacy_enabled = bool(getattr(self, "privacy_enabled", False))
-        evaluator = self._create_effective_evaluator(
-            timeout=timeout,
-            custom_evaluator=custom_evaluator,
-            effective_batch_size=effective_batch_size,
-            effective_thread_workers=effective_thread_workers,
-            effective_privacy_enabled=effective_privacy_enabled,
         )
 
         # Update TraigentConfig with final privacy setting
@@ -1876,6 +1651,7 @@ class OptimizedFunction:
             effective_parallel_trials=effective_parallel_trials,
             samples_include_pruned_value=samples_include_pruned_value,
             algorithm_kwargs=algorithm_kwargs,
+            invocations_per_example=invocations_per_example,
         )
 
         # Phase 9: Run optimization and finalize
@@ -1889,6 +1665,8 @@ class OptimizedFunction:
         except Exception as e:
             logger.error(f"Optimization failed: {e}")
             raise OptimizationError(f"Optimization failed: {e}") from e
+        finally:
+            self._restore_hybrid_discovery_state(hybrid_discovery_state, evaluator)
 
     async def _optimize_with_cloud_service(
         self,
@@ -2060,613 +1838,87 @@ class OptimizedFunction:
         )
 
     def _check_ci_approval(self) -> None:
-        """Check if approval is required and granted for CI runs.
-
-        Raises:
-            OptimizationError: If running in CI without proper approval
-        """
-        # Only check in Edge Analytics mode
-        if not self.traigent_config.is_edge_analytics_mode():
-            return
-
-        # Allow mock LLM mode to run without CI approval since no real calls occur
-        if is_mock_llm():
-            msg = "Skipping CI approval in mock LLM mode"
-            if is_production():
-                logger.warning(f"{msg} while ENVIRONMENT=production.")
-            else:
-                logger.info(f"{msg}.")
-            return
-
-        if not _is_ci_environment():
-            return  # Interactive mode - no approval needed
-
-        # Check environment variable approval (primary method)
-        if _check_env_var_approval():
-            return
-
-        # Check token file approval (secondary method)
-        storage_path = self.traigent_config.get_local_storage_path()
-        if storage_path is None:
-            raise ConfigurationError("Storage path not configured")
-        storage_root = Path(storage_path).expanduser().resolve()
-        token_file = validate_path(
-            storage_root / "approval.token", storage_root, must_exist=False
-        )
-        if _check_token_file_approval(token_file, storage_root):
-            return
-
-        # No valid approval found
-        raise OptimizationError("""
-CI/CD Approval Required
-
-This optimization was triggered in a CI environment and requires approval.
-
-To approve, use one of these methods:
-
-1. Environment variable (recommended for CI):
-   export TRAIGENT_RUN_APPROVED=1
-   export TRAIGENT_APPROVED_BY="your_name"
-
-2. Approval token file:
-   echo '{"approved_by": "your_name", "expires_at": "2024-12-31T23:59:59"}' > ~/.traigent/approval.token
-
-3. GitHub Actions with environment protection:
-   Use 'environment: production' with required reviewers
-        """)
+        """Check if approval is required and granted for CI runs."""
+        check_ci_approval(self.traigent_config)
 
     def get_best_config(self) -> dict[str, Any] | None:
-        """Get the best configuration found during optimization.
-
-        Returns:
-            Best configuration dictionary, or None if no optimization run
-        """
-        if self._optimization_results:
-            best: dict[str, Any] = self._optimization_results.best_config
-            return best
-        return None
+        """Get the best configuration found during optimization."""
+        return self._csm.get_best_config()
 
     def get_optimization_results(self) -> OptimizationResult | None:
-        """Get the latest optimization results.
-
-        Returns:
-            Latest OptimizationResult, or None if no optimization run
-        """
-        return self._optimization_results
+        """Get the latest optimization results."""
+        return self._csm.get_optimization_results()
 
     def get_optimization_history(self) -> list[OptimizationResult]:
-        """Get history of all optimization runs.
-
-        Returns:
-            List of OptimizationResult objects
-        """
-        return self._optimization_history.copy()
+        """Get history of all optimization runs."""
+        return self._csm.get_optimization_history()
 
     def is_optimization_complete(self) -> bool:
-        """Check if optimization has been completed.
-
-        Returns:
-            True if optimization has been run and completed, False otherwise
-        """
-        return self._optimization_results is not None
+        """Check if optimization has been completed."""
+        return self._csm.is_optimization_complete()
 
     def reset_optimization(self) -> None:
         """Reset optimization state and restore default configuration."""
-        self._optimization_results = None
-        self._optimization_history = []
-        self._current_config = self.default_config.copy()
-        self._best_config = None
-        self._state = OptimizationState.UNOPTIMIZED
-        self._setup_function_wrapper()
-        logger.info(f"Reset optimization state for {self.func.__name__}")
+        self._csm.reset_optimization()
 
     def save_optimization_results(self, path: str) -> None:
-        """Save optimization results to file.
-
-        Args:
-            path: Path to save results to
-
-        Raises:
-            ConfigurationError: If no optimization results to save
-        """
-        if not self._optimization_results:
-            raise ConfigurationError("No optimization results to save")
-
-        from dataclasses import asdict
-
-        result_dict = asdict(self._optimization_results)
-        output_path = Path(path).expanduser()
-        base_dir = (
-            output_path.parent if output_path.is_absolute() else Path.cwd().resolve()
-        )
-        output_path = validate_path(output_path, base_dir, must_exist=False)
-        with safe_open(output_path, base_dir, mode="w", encoding="utf-8") as f:
-            json.dump(result_dict, f, indent=2, default=str)
-
-        logger.info(f"Saved optimization results to {output_path}")
+        """Save optimization results to file."""
+        self._csm.save_optimization_results(path)
 
     def load_optimization_results(self, path: str) -> None:
-        """Load optimization results from file.
-
-        Args:
-            path: Path to load results from
-
-        Raises:
-            ConfigurationError: If results cannot be loaded
-        """
-        try:
-            input_path = Path(path).expanduser()
-            base_dir = (
-                input_path.parent if input_path.is_absolute() else Path.cwd().resolve()
-            )
-            input_path = validate_path(input_path, base_dir, must_exist=True)
-            with safe_open(input_path, base_dir, mode="r", encoding="utf-8") as f:
-                result_dict = json.load(f)
-
-            # Manual reconstruction since OptimizationResult is a dataclass
-            from traigent.api.types import (
-                OptimizationResult,
-                OptimizationStatus,
-                TrialResult,
-                TrialStatus,
-            )
-
-            trials = []
-            for trial_data in result_dict.get("trials", []):
-                trial = TrialResult(
-                    trial_id=trial_data["trial_id"],
-                    config=trial_data["config"],
-                    metrics=trial_data["metrics"],
-                    status=TrialStatus(trial_data["status"]),
-                    duration=trial_data["duration"],
-                    timestamp=datetime.fromisoformat(trial_data["timestamp"]),
-                    error_message=trial_data.get("error_message"),
-                    metadata=trial_data.get("metadata", {}),
-                )
-                trials.append(trial)
-
-            self._optimization_results = OptimizationResult(
-                trials=trials,
-                best_config=result_dict["best_config"],
-                best_score=result_dict["best_score"],
-                optimization_id=result_dict["optimization_id"],
-                duration=result_dict["duration"],
-                convergence_info=result_dict["convergence_info"],
-                status=OptimizationStatus(result_dict["status"]),
-                objectives=result_dict["objectives"],
-                algorithm=result_dict["algorithm"],
-                timestamp=datetime.fromisoformat(result_dict["timestamp"]),
-                metadata=result_dict.get("metadata", {}),
-            )
-            self._optimization_history.append(self._optimization_results)
-
-            # Update current config, best_config, and state
-            if self._optimization_results.best_config:
-                self._current_config = self._optimization_results.best_config.copy()
-                self._best_config = self._optimization_results.best_config.copy()
-                self._setup_function_wrapper()
-
-            # Set state based on loaded results status
-            if self._optimization_results.status == OptimizationStatus.COMPLETED:
-                self._state = OptimizationState.OPTIMIZED
-            elif self._optimization_results.status == OptimizationStatus.FAILED:
-                self._state = OptimizationState.ERROR
-            else:
-                self._state = (
-                    OptimizationState.OPTIMIZED
-                )  # Assume optimized for loaded results
-
-            logger.info(f"Loaded optimization results from {path}")
-
-        except Exception as e:
-            raise ConfigurationError(f"Failed to load optimization results: {e}") from e
+        """Load optimization results from file."""
+        self._csm.load_optimization_results(path)
 
     @property
     def state(self) -> OptimizationState:
-        """Get the current lifecycle state of this optimized function.
-
-        Returns:
-            OptimizationState indicating current phase:
-            - UNOPTIMIZED: Before any optimization
-            - OPTIMIZING: During active optimization
-            - OPTIMIZED: After successful optimization
-            - ERROR: Optimization failed
-        """
-        return self._state
+        """Get the current lifecycle state of this optimized function."""
+        return self._csm.state
 
     @property
     def best_config(self) -> dict[str, Any] | None:
-        """Get the best configuration found during optimization.
-
-        This is the recommended way to access optimization results.
-        Returns None if optimization hasn't been run yet.
-
-        Returns:
-            The configuration that achieved the best score, or None.
-
-        Example:
-            result = traigent.optimize(my_func, ...)
-            print(result.best_config)  # Via OptimizationResult (recommended)
-            print(my_func.best_config)  # Via function property (also valid)
-        """
-        return self._best_config.copy() if self._best_config else None
+        """Get the best configuration found during optimization."""
+        return self._csm.best_config
 
     @property
     def current_config(self) -> dict[str, Any]:
-        """Get the configuration this function uses when called.
-
-        This property returns the active configuration:
-        - Before optimization: Returns default_config
-        - After optimization: Returns best_config (auto-applied)
-
-        Raises:
-            OptimizationStateError: If accessed during an active optimization.
-                Use traigent.get_config() inside your function during optimization.
-
-        Returns:
-            Copy of the current configuration dict.
-        """
-        with self._state_lock:
-            if self._state == OptimizationState.OPTIMIZING:
-                raise OptimizationStateError(
-                    "Cannot access current_config during an active optimization. "
-                    "Use traigent.get_config() to access the current trial's "
-                    "configuration within your optimized function.",
-                    current_state=self._state.name,
-                    expected_states=["UNOPTIMIZED", "OPTIMIZED", "ERROR"],
-                )
-            return self._current_config.copy()
+        """Get the configuration this function uses when called."""
+        return self._csm.current_config
 
     def _maybe_auto_load_config(self) -> None:
-        """Auto-load configuration if requested via decorator parameters or env var.
-
-        Load priority:
-        1. Explicit `load_from` parameter
-        2. TRAIGENT_CONFIG_PATH environment variable
-        3. If `auto_load_best=True`: find latest config in optimization logs
-
-        This method is called at the end of __init__ and silently skips
-        if no config is found (to allow fresh optimization runs).
-        """
-        config_path: str | None = None
-
-        # Priority 1: Explicit load_from parameter
-        if self._load_from:
-            config_path = self._load_from
-            logger.debug(f"Using explicit load_from path: {config_path}")
-
-        # Priority 2: Environment variable
-        if not config_path:
-            env_path = os.environ.get("TRAIGENT_CONFIG_PATH")
-            if env_path:
-                config_path = env_path
-                logger.debug(f"Using TRAIGENT_CONFIG_PATH: {config_path}")
-
-        # Priority 3: Auto-find latest if auto_load_best=True
-        if not config_path and self._auto_load_best:
-            config_path = self._find_latest_config_path()
-            if config_path:
-                logger.debug(f"Auto-found latest config: {config_path}")
-
-        # Load and apply if we have a path
-        if config_path:
-            try:
-                loaded_config = self._load_config_from_path(config_path)
-                if loaded_config:
-                    # Set both current and best config for consistency
-                    # This ensures best_config property and apply_best_config() work
-                    self._current_config = loaded_config.copy()
-                    self._best_config = loaded_config.copy()
-                    self._setup_function_wrapper()
-                    logger.info(
-                        f"Auto-loaded config for {self.func.__name__} from {config_path}"
-                    )
-            except Exception as e:
-                # Don't fail initialization, just warn
-                logger.warning(
-                    f"Failed to auto-load config from {config_path}: {e}. "
-                    "Function will use default configuration."
-                )
-
-    def _find_latest_config_path(self) -> str | None:
-        """Find the most recent best_config file in optimization logs.
-
-        Returns:
-            Path to latest config file, or None if not found.
-        """
-        # Check standard log locations
-        log_dirs = [
-            Path.cwd() / ".traigent" / "optimization_logs",
-            Path(os.environ.get("TRAIGENT_RESULTS_FOLDER", Path.home() / ".traigent"))
-            / "optimization_logs",
-        ]
-
-        if self.local_storage_path:
-            log_dirs.insert(0, Path(self.local_storage_path) / "optimization_logs")
-
-        func_name = getattr(self.func, "__name__", "unknown")
-
-        for log_dir in log_dirs:
-            experiments_dir = log_dir / "experiments" / func_name / "runs"
-            if not experiments_dir.exists():
-                continue
-
-            # Find most recent run directory
-            run_dirs = sorted(
-                [d for d in experiments_dir.iterdir() if d.is_dir()],
-                key=lambda d: d.stat().st_mtime,
-                reverse=True,
-            )
-
-            for run_dir in run_dirs:
-                # Check for best_config files
-                for config_file in [
-                    run_dir / "artifacts" / "best_config_v2.json",
-                    run_dir / "artifacts" / "best_config.json",
-                ]:
-                    if config_file.exists():
-                        return str(config_file)
-
-        return None
-
-    def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
-        """Load configuration from a JSON file.
-
-        Supports both slim export format and full best_config format.
-
-        Args:
-            path: Path to the config JSON file.
-
-        Returns:
-            Configuration dict, or None if loading failed.
-        """
-        try:
-            # Security: Validate user-provided path to prevent file inclusion attacks
-            config_path = validate_user_path(path, for_write=False)
-            if not config_path.exists():
-                logger.warning(f"Config file not found: {path}")
-                return None
-
-            with open(config_path, encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Handle different formats
-            if "config" in data:
-                # Slim export format: {"config": {...}, "metrics": {...}, ...}
-                return dict(data["config"])
-            elif "best_config" in data:
-                # Full result format with best_config key
-                return dict(data["best_config"])
-            elif isinstance(data, dict) and not any(
-                k in data for k in ["trials", "metrics", "metadata"]
-            ):
-                # Direct config dict
-                return dict(data)
-            else:
-                logger.warning(
-                    f"Unrecognized config format in {path}. "
-                    "Expected 'config' or 'best_config' key, or direct config dict."
-                )
-                return None
-
-        except json.JSONDecodeError as e:
-            logger.warning(f"Invalid JSON in config file {path}: {e}")
-            return None
-        except PathTraversalError as e:
-            logger.warning(f"Security: {e}")
-            return None
-        except Exception as e:
-            logger.warning(f"Error loading config from {path}: {e}")
-            return None
+        """Auto-load configuration if requested. Delegates to ConfigStateManager."""
+        self._csm.maybe_auto_load_config()
 
     def set_config(self, config: dict[str, Any]) -> None:
-        """Set current configuration manually.
-
-        Args:
-            config: Configuration to set
-        """
-        with self._state_lock:
-            self._current_config = config.copy()
-            self._setup_function_wrapper()
-        logger.debug(f"Set configuration for {self.func.__name__}: {config}")
+        """Set current configuration manually."""
+        self._csm.set_config(config)
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
-        """Apply best configuration from optimization results.
-
-        This method applies the best configuration found during optimization,
-        updating the function to use optimal parameters for subsequent calls.
-
-        Args:
-            results: OptimizationResult to use (defaults to latest optimization)
-
-        Returns:
-            True if configuration applied successfully
-
-        Raises:
-            ConfigurationError: If no optimization results are available
-
-        Example::
-
-            # After optimization
-            results = my_function.optimize()
-            # Apply best config manually (optional step)
-            my_function.apply_best_config(results.best_config)
-            # Now function uses optimal parameters
-            output = my_function("test input")
-        """
-        # Use provided results or fall back to latest optimization
-        if results is None:
-            results = self._optimization_results
-
-        if not results or not results.best_config:
-            raise ConfigurationError(
-                "No optimization results available to apply. "
-                "Please run optimization first using .optimize()"
-            )
-
-        # Update current config with best found configuration atomically
-        # If wrapper setup fails, rollback to previous config AND wrapper to avoid inconsistent state
-        with self._state_lock:
-            old_config = self._current_config.copy()
-            old_best = self._best_config.copy() if self._best_config else None
-            old_wrapped_func = self._wrapped_func  # Save old wrapper for rollback
-            try:
-                self._current_config = results.best_config.copy()
-                self._best_config = results.best_config.copy()
-                # Re-wrap function with new configuration
-                self._setup_function_wrapper()
-            except Exception:
-                # Rollback config AND wrapper on failure to keep object in consistent state
-                self._current_config = old_config
-                self._best_config = old_best
-                self._wrapped_func = old_wrapped_func
-                raise
-
-        logger.info(
-            f"Applied best config for {self.func.__name__}: {results.best_config} "
-            f"(previous: {old_config})"
+        """Apply best configuration from optimization results."""
+        return self._csm.apply_best_config(
+            results,
+            get_wrapped_func=lambda: self._wrapped_func,
+            set_wrapped_func=lambda f: setattr(self, "_wrapped_func", f),
         )
-
-        return True
 
     def export_config(
         self,
         path: str | Path,
         *,
-        format: str = "slim",  # noqa: A002 - 'format' shadows builtin but is standard API
+        format: str = "slim",  # noqa: A002
         include_metadata: bool = True,
     ) -> Path:
-        """Export the best configuration to a file for deployment or version control.
+        """Export the best configuration to a file."""
+        return self._csm.export_config(
+            path, format=format, include_metadata=include_metadata
+        )
 
-        This method exports the optimized configuration in a git-friendly format
-        that can be committed to version control and loaded in production.
+    def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
+        """Load config from a file path. Delegates to ConfigStateManager."""
+        return self._csm._load_config_from_path(path)
 
-        Args:
-            path: Output file path (will create parent directories if needed)
-            format: Export format - "slim" (~1KB, git-friendly) or "full" (includes trials)
-            include_metadata: Include function name, timestamp, and metrics in export
-
-        Returns:
-            Path to the exported file
-
-        Raises:
-            ConfigurationError: If no best configuration is available
-            PathTraversalError: If path points to a sensitive system location
-
-        Example::
-
-            # After optimization
-            results = my_function.optimize()
-
-            # Export slim config for git
-            my_function.export_config("configs/my_function_prod.json")
-
-            # Export full results for analysis
-            my_function.export_config("results/full_run.json", format="full")
-
-            # Later, in production:
-            @traigent.optimize(load_from="configs/my_function_prod.json", ...)
-            def my_function(...): ...
-        """
-        if not self._best_config:
-            raise ConfigurationError(
-                "No best configuration available to export. "
-                "Please run optimization first using .optimize() or load a config."
-            )
-
-        # Security: Validate user-provided path to prevent file inclusion attacks
-        output_path: Path = validate_user_path(path, for_write=True)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if format == "slim":
-            export_data = self._create_slim_export(include_metadata)
-        elif format == "full":
-            export_data = self._create_full_export(include_metadata)
-        else:
-            raise ConfigurationError(
-                f"Unknown export format: {format}. Use 'slim' or 'full'."
-            )
-
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(export_data, f, indent=2, default=str)
-
-        logger.info(f"Exported config for {self.func.__name__} to {output_path}")
-        return output_path
-
-    def _create_slim_export(self, include_metadata: bool) -> dict[str, Any]:
-        """Create a slim export suitable for git and deployment.
-
-        Slim format (~1KB):
-        {
-            "config": {...},
-            "metrics": {...},
-            "function_name": "...",
-            "exported_at": "...",
-            "traigent_version": "..."
-        }
-        """
-        from traigent import __version__
-
-        # _best_config is guaranteed non-None by export_config() check
-        export: dict[str, Any] = {
-            "config": dict(self._best_config) if self._best_config else {}
-        }
-
-        if include_metadata:
-            export["function_name"] = getattr(self.func, "__name__", "unknown")
-            export["exported_at"] = datetime.now().isoformat()
-            export["traigent_version"] = __version__
-
-            # Include metrics if available from latest optimization
-            if self._optimization_results and self._optimization_results.best_metrics:
-                export["metrics"] = {
-                    k: v
-                    for k, v in self._optimization_results.best_metrics.items()
-                    if not k.startswith("_")  # Exclude internal metrics
-                }
-
-        return export
-
-    def _create_full_export(self, include_metadata: bool) -> dict[str, Any]:
-        """Create a full export including trial history.
-
-        Full format includes everything from slim plus:
-        - Complete trial history
-        - Optimization parameters
-        - Configuration space
-        """
-        export = self._create_slim_export(include_metadata)
-
-        if self._optimization_results:
-            # Add trial history (serializable subset)
-            export["trials"] = [
-                {
-                    "trial_id": t.trial_id,
-                    "config": t.config,
-                    "metrics": t.metrics,
-                    "status": t.status if hasattr(t, "status") else "completed",
-                }
-                for t in (self._optimization_results.trials or [])
-            ]
-
-            # Add optimization metadata
-            export["optimization"] = {
-                "total_trials": len(self._optimization_results.trials),
-                "stop_reason": self._optimization_results.stop_reason,
-                "duration_seconds": getattr(
-                    self._optimization_results, "duration_seconds", None
-                ),
-            }
-
-        # Add configuration space
-        if self.configuration_space:
-            if hasattr(self.configuration_space, "to_dict"):
-                export["configuration_space"] = self.configuration_space.to_dict()
-            else:
-                # Already a dict
-                export["configuration_space"] = dict(self.configuration_space)
-
-        return export
+    def _find_latest_config_path(self) -> str | None:
+        """Find the latest saved config path. Delegates to ConfigStateManager."""
+        return self._csm._find_latest_config_path()
 
     def cleanup(self, *, preserve_config: bool = True) -> None:
         """Clean up optimization artifacts to free memory.

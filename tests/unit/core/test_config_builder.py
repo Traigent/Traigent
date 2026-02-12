@@ -289,19 +289,16 @@ class TestOptimizedFunctionConfig:
             assert result["is_valid"] is True, f"Failed for mode: {mode}"
 
     def test_validate_valid_execution_modes(self) -> None:
-        """Test validation passes for all valid execution modes."""
-        valid_modes = [
-            ExecutionMode.EDGE_ANALYTICS.value,
-            ExecutionMode.HYBRID.value,
-            ExecutionMode.PRIVACY.value,
-            ExecutionMode.STANDARD.value,
-            ExecutionMode.CLOUD.value,
-        ]
+        """Test validation passes for edge_analytics execution mode.
 
-        for mode in valid_modes:
-            config = OptimizedFunctionConfig(execution_mode=mode)
-            result = config.validate()
-            assert result["is_valid"] is True, f"Failed for mode: {mode}"
+        Note: Only edge_analytics is currently supported. cloud/hybrid raise
+        ConfigurationError (not yet supported), privacy/standard were removed.
+        """
+        config = OptimizedFunctionConfig(
+            execution_mode=ExecutionMode.EDGE_ANALYTICS.value
+        )
+        result = config.validate()
+        assert result["is_valid"] is True
 
     def test_validate_empty_objectives(self) -> None:
         """Test validation fails when objectives are empty."""

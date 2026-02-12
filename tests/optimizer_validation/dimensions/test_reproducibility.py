@@ -140,15 +140,13 @@ class TestRandomSeedReproducibility:
         assert not isinstance(result1, Exception)
         assert not isinstance(result2, Exception)
 
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "First run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Second run should complete at least one trial"
+        # Explicit behavior assertions
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert len(result1.trials) >= 1, "First run should complete at least one trial"
+        assert result1.stop_reason is not None, "First run should have a stop_reason"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert len(result2.trials) >= 1, "Second run should complete at least one trial"
+        assert result2.stop_reason is not None, "Second run should have a stop_reason"
 
         validation1 = result_validator(scenario1, result1)
         assert validation1.passed, validation1.summary()
@@ -182,6 +180,11 @@ class TestRandomSeedReproducibility:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "Seed 42 run should complete at least one trial"
+        assert result1.stop_reason is not None, "Seed 42 run should have a stop_reason"
 
         # Emit evidence for first run
         validation1 = result_validator(scenario1, result1)
@@ -199,16 +202,11 @@ class TestRandomSeedReproducibility:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "Seed 42 run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Seed 123 run should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Seed 123 run should complete at least one trial"
+        assert result2.stop_reason is not None, "Seed 123 run should have a stop_reason"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -258,6 +256,13 @@ class TestRandomSeedReproducibility:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "First unseeded run should complete at least one trial"
+        assert (
+            result1.stop_reason is not None
+        ), "First unseeded run should have a stop_reason"
 
         scenario2 = config_space_scenario(
             name="no_seed_2",
@@ -270,16 +275,13 @@ class TestRandomSeedReproducibility:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "First unseeded run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Second unseeded run should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Second unseeded run should complete at least one trial"
+        assert (
+            result2.stop_reason is not None
+        ), "Second unseeded run should have a stop_reason"
 
         # Results may or may not differ - this just verifies no crash
         # Emit evidence for both
@@ -383,6 +385,13 @@ class TestGridSearchDeterminism:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "Grid without seed should complete at least one trial"
+        assert (
+            result1.stop_reason is not None
+        ), "Grid without seed should have a stop_reason"
 
         # Emit evidence for first run
         validation1 = result_validator(scenario1, result1)
@@ -400,16 +409,13 @@ class TestGridSearchDeterminism:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "Grid without seed should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Grid with seed should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Grid with seed should complete at least one trial"
+        assert (
+            result2.stop_reason is not None
+        ), "Grid with seed should have a stop_reason"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -527,6 +533,13 @@ class TestOptunaSeedReproducibility:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "First Optuna random run should complete at least one trial"
+        assert (
+            result1.stop_reason is not None
+        ), "First Optuna random run should have a stop_reason"
 
         # Emit evidence for first run
         validation1 = result_validator(scenario1, result1)
@@ -547,16 +560,13 @@ class TestOptunaSeedReproducibility:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "First Optuna random run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Second Optuna random run should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Second Optuna random run should complete at least one trial"
+        assert (
+            result2.stop_reason is not None
+        ), "Second Optuna random run should have a stop_reason"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -603,6 +613,13 @@ class TestContinuousParameterReproducibility:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "First continuous param run should complete at least one trial"
+        assert (
+            result1.stop_reason is not None
+        ), "First continuous param run should have a stop_reason"
 
         # Emit evidence for first run
         validation1 = result_validator(scenario1, result1)
@@ -619,16 +636,13 @@ class TestContinuousParameterReproducibility:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "First continuous param run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Second continuous param run should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Second continuous param run should complete at least one trial"
+        assert (
+            result2.stop_reason is not None
+        ), "Second continuous param run should have a stop_reason"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)
@@ -767,6 +781,13 @@ class TestSeedEdgeCases:
 
         _, result1 = await scenario_runner(scenario1)
         assert not isinstance(result1, Exception)
+        assert hasattr(result1, "trials"), "Result1 should have trials"
+        assert (
+            len(result1.trials) >= 1
+        ), "First seed=0 run should complete at least one trial"
+        assert (
+            result1.stop_reason is not None
+        ), "First seed=0 run should have a stop_reason"
 
         # Emit evidence for first run
         validation1 = result_validator(scenario1, result1)
@@ -783,16 +804,13 @@ class TestSeedEdgeCases:
 
         _, result2 = await scenario_runner(scenario2)
         assert not isinstance(result2, Exception)
-
-        # Verify trials were executed in both runs
-        if hasattr(result1, "trials"):
-            assert (
-                len(result1.trials) >= 1
-            ), "First seed=0 run should complete at least one trial"
-        if hasattr(result2, "trials"):
-            assert (
-                len(result2.trials) >= 1
-            ), "Second seed=0 run should complete at least one trial"
+        assert hasattr(result2, "trials"), "Result2 should have trials"
+        assert (
+            len(result2.trials) >= 1
+        ), "Second seed=0 run should complete at least one trial"
+        assert (
+            result2.stop_reason is not None
+        ), "Second seed=0 run should have a stop_reason"
 
         # Emit evidence for second run
         validation2 = result_validator(scenario2, result2)

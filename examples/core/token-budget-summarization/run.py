@@ -9,17 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Force non-mock mode for Traigent
-os.environ["TRAIGENT_MOCK_LLM"] = "false"
-os.environ["TRAIGENT_OFFLINE_MODE"] = "true"
-
-# Check API key early
-if not os.getenv("ANTHROPIC_API_KEY"):
-    print("ERROR: ANTHROPIC_API_KEY not set. Export it first:")
-    print("  export ANTHROPIC_API_KEY='your-key-here'")
-    sys.exit(1)
-
-MOCK = False  # Set to True for mock mode without API calls
+MOCK = str(os.getenv("TRAIGENT_MOCK_LLM", "")).lower() in {"1", "true", "yes", "y"}
 BASE = Path(__file__).parent
 if MOCK:
     os.environ["HOME"] = str(BASE)
@@ -104,16 +94,15 @@ elif CONCURRENCY_PROFILE == "sequential":
     trial_concurrency = 1
     resolved_mode = "sequential"
 else:
-    # Parallel mode: 4 examples concurrently, 4 trials concurrently
     example_concurrency = max(1, _parse_int_env("TRAIGENT_EXAMPLE_CONCURRENCY", 4))
     trial_concurrency = max(
-        2,
+        1,
         _parse_int_env(
             "TRAIGENT_TRIAL_CONCURRENCY",
-            4,  # Parallel trials (safe with get_trial_config())
+            min(DEFAULT_WORKERS, TOTAL_CONFIGS),
         ),
     )
-    resolved_mode = "parallel"
+    resolved_mode = "auto"
 
 GLOBAL_PARALLEL_CONFIG = ParallelConfig(
     mode=resolved_mode,
@@ -142,20 +131,10 @@ if (
     )
 
 
-def _count_dataset_examples(dataset_path: str) -> int:
-    """Count lines in the evaluation dataset."""
-    try:
-        with open(dataset_path) as f:
-            return sum(1 for line in f if line.strip())
-    except Exception:
-        return 0
-
-
 def _print_results(result: OptimizationResult) -> None:
     """Pretty-print aggregated and raw optimization data."""
 
     primary = result.objectives[0] if result.objectives else None
-    eval_examples = _count_dataset_examples(DATASET)
 
     def _mean_response_time(meta: Any) -> float | None:
         if not isinstance(meta, dict):
@@ -188,10 +167,6 @@ def _print_results(result: OptimizationResult) -> None:
     else:
         df_raw["avg_response_time"] = None
 
-    # Fallback: use duration column if avg_response_time is NaN
-    if "duration" in df_raw.columns:
-        df_raw["avg_response_time"] = df_raw["avg_response_time"].fillna(df_raw["duration"])
-
     config_cols = ["max_tokens", "temperature", "style"]
 
     df = result.to_aggregated_dataframe(primary_objective=primary)
@@ -200,16 +175,15 @@ def _print_results(result: OptimizationResult) -> None:
         "temperature",
         "max_tokens",
         "style",
+        "samples_count",
         "accuracy",
         "cost",
         "duration",
+        "avg_response_time",
     ]
     cols = [c for c in preferred_cols if c in df.columns]
     if cols:
         df = df[cols]
-
-    # Add eval_examples column showing actual dataset size
-    df.insert(len(df.columns), "eval_examples", eval_examples)
 
     if df_raw["avg_response_time"].notna().any():
         response_avg = (
@@ -228,10 +202,36 @@ def _print_results(result: OptimizationResult) -> None:
         df = df.sort_values(by=primary, ascending=ascending, na_position="last")
 
     if not df.empty:
-        # Add running number as first column
-        df.insert(0, "#", range(1, len(df) + 1))
         print("\nAggregated configurations and performance:")
         print(df.to_string(index=False))
+
+    preferred_raw = [
+        "trial_id",
+        "status",
+        "model",
+        "temperature",
+        "max_tokens",
+        "style",
+        "accuracy",
+        "cost",
+        "duration",
+        "avg_response_time",
+    ]
+    cols_raw = [c for c in preferred_raw if c in df_raw.columns]
+    if cols_raw:
+        df_raw = df_raw[cols_raw]
+
+    if "avg_response_time" in df_raw.columns:
+        df_raw["avg_response_time"] = df_raw["avg_response_time"].astype(float).round(3)
+
+    if primary and primary in df_raw.columns:
+        minimize_patterns = ["cost", "latency", "error", "loss", "time", "duration"]
+        ascending = any(p in primary.lower() for p in minimize_patterns)
+        df_raw = df_raw.sort_values(by=primary, ascending=ascending, na_position="last")
+
+    if not df_raw.empty:
+        print("\nRaw (per-sample) trials:")
+        print(df_raw.to_string(index=False))
 
 
 def _mock_summarize(text: str) -> str:
@@ -286,11 +286,7 @@ def summarize_keyword(text: str) -> str:
     if MOCK:
         return _mock_summarize(text)
     assert os.getenv("ANTHROPIC_API_KEY"), "Missing ANTHROPIC_API_KEY"
-    # Use get_trial_config() for trial-specific config, fallback to get_config()
-    try:
-        cfg = traigent.get_trial_config()
-    except Exception:
-        cfg = traigent.get_config()
+    cfg = traigent.get_config()
     style = cfg.get("style", "paragraph")
     max_tokens = int(cfg.get("max_tokens", 96))
     temperature = float(cfg.get("temperature", 0.0))
@@ -299,40 +295,32 @@ def summarize_keyword(text: str) -> str:
     )
     prompt = f"Transcript:\n{text}\n\n{style_hint}\n\n{_PROMPT}"
     response = ChatAnthropic(
-        model_name="claude-sonnet-4-20250514",
-        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        model_name="claude-3-5-sonnet-20241022",
         temperature=temperature,
         max_tokens=max_tokens,
         timeout=None,
         stop=None,
     ).invoke([HumanMessage(content=prompt)])
-    raw = str(response.content).strip().lower()
-    # Match all 20 dataset categories
-    categories = [
-        "budget", "decision", "timeline", "security", "reporting", "hiring",
-        "feedback", "deployment", "documentation", "collaboration", "performance",
-        "training", "compliance", "infrastructure", "design", "technical debt",
-        "marketing", "contract", "quality", "migration"
-    ]
-    for k in categories:
-        if k in raw:
+    raw = str(response.content).strip()
+    for k in ["budget", "timeline", "decision"]:
+        if k in raw.lower():
             return k
-    return raw.split()[0][:16] if raw.split() else "unknown"
+    return raw.split()[0][:16]
 
 
 if __name__ == "__main__":
-    print("Need tight summaries under a strict token budget without losing key facts?")
-
-    async def main() -> None:
-        trials = 9 if not MOCK else 4
-        # Each trial evaluates 20 examples; with sequential execution ~2-3 min/trial
-        # Set generous timeout: 1 hour for real mode, 5 min for mock
-        timeout_seconds = 300.0 if MOCK else 3600.0
-        r = await summarize_keyword.optimize(
-            algorithm="random", max_trials=trials, timeout=timeout_seconds
+    try:
+        print(
+            "Need tight summaries under a strict token budget without losing key facts?"
         )
-        print(f"Total trials: {len(r.trials)}, Stop reason: {r.stop_reason}")
-        print({"best_config": r.best_config, "best_score": r.best_score})
-        _print_results(r)
 
-    asyncio.run(main())
+        async def main() -> None:
+            trials = 9 if not MOCK else 4
+            r = await summarize_keyword.optimize(algorithm="random", max_trials=trials)
+            print({"best_config": r.best_config, "best_score": r.best_score})
+            _print_results(r)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

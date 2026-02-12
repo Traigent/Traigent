@@ -100,13 +100,17 @@ Text: {text}
 
 
 if __name__ == "__main__":
-    import asyncio
+    try:
+        import asyncio
 
-    async def _main():
-        print("Optimizing sentiment_analysis (mock mode recommended)…")
-        res = await sentiment_analysis.optimize(max_trials=10)
-        print("Best config:", res.best_config)
-        sentiment_analysis.set_config(res.best_config)
-        print('Test ("I love this!"):', sentiment_analysis("I love this!"))
+        async def _main():
+            print("Optimizing sentiment_analysis (mock mode recommended)…")
+            res = await sentiment_analysis.optimize(max_trials=10)
+            print("Best config:", res.best_config)
+            sentiment_analysis.set_config(res.best_config)
+            print('Test ("I love this!"):', sentiment_analysis("I love this!"))
 
-    asyncio.run(_main())
+        asyncio.run(_main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

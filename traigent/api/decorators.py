@@ -180,6 +180,18 @@ class ExecutionOptions(BaseModel):
     js_function: str = "runTrial"
     js_timeout: float = 300.0
     js_parallel_workers: int = 1
+    # Hybrid API options
+    hybrid_api_endpoint: str | None = None
+    capability_id: str | None = None
+    hybrid_api_transport: Any | None = None
+    hybrid_api_transport_type: str = "auto"
+    hybrid_api_batch_size: int = 1
+    hybrid_api_batch_parallelism: int = 1
+    hybrid_api_keep_alive: bool = True
+    hybrid_api_heartbeat_interval: float = 30.0
+    hybrid_api_timeout: float | None = None
+    hybrid_api_auth_header: str | None = None
+    hybrid_api_auto_discover_tvars: bool = False
 
 
 class MockModeOptions(BaseModel):
@@ -309,6 +321,17 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "auto_override_frameworks": False,  # Requires traigent-integrations plugin
     "framework_targets": None,
     "execution_mode": "edge_analytics",
+    "hybrid_api_endpoint": None,
+    "capability_id": None,
+    "hybrid_api_transport": None,
+    "hybrid_api_transport_type": "auto",
+    "hybrid_api_batch_size": 1,
+    "hybrid_api_batch_parallelism": 1,
+    "hybrid_api_keep_alive": True,
+    "hybrid_api_heartbeat_interval": 30.0,
+    "hybrid_api_timeout": None,
+    "hybrid_api_auth_header": None,
+    "hybrid_api_auto_discover_tvars": False,
     "local_storage_path": None,
     "minimal_logging": True,
     "parallel_config": None,
@@ -377,6 +400,17 @@ class LegacyOptimizeArgs:
     auto_override_frameworks: bool | None = None
     framework_targets: list[str] | None = None
     execution_mode: str | None = None
+    hybrid_api_endpoint: str | None = None
+    capability_id: str | None = None
+    hybrid_api_transport: Any | None = None
+    hybrid_api_transport_type: str | None = None
+    hybrid_api_batch_size: int | None = None
+    hybrid_api_batch_parallelism: int | None = None
+    hybrid_api_keep_alive: bool | None = None
+    hybrid_api_heartbeat_interval: float | None = None
+    hybrid_api_timeout: float | None = None
+    hybrid_api_auth_header: str | None = None
+    hybrid_api_auto_discover_tvars: bool | None = None
     local_storage_path: str | None = None
     minimal_logging: bool | None = None
     parallel_config: ParallelConfig | dict[str, Any] | None = None
@@ -444,6 +478,17 @@ class LegacyOptimizeArgs:
             ("auto_override_frameworks", self.auto_override_frameworks),
             ("framework_targets", self.framework_targets),
             ("execution_mode", self.execution_mode),
+            ("hybrid_api_endpoint", self.hybrid_api_endpoint),
+            ("capability_id", self.capability_id),
+            ("hybrid_api_transport", self.hybrid_api_transport),
+            ("hybrid_api_transport_type", self.hybrid_api_transport_type),
+            ("hybrid_api_batch_size", self.hybrid_api_batch_size),
+            ("hybrid_api_batch_parallelism", self.hybrid_api_batch_parallelism),
+            ("hybrid_api_keep_alive", self.hybrid_api_keep_alive),
+            ("hybrid_api_heartbeat_interval", self.hybrid_api_heartbeat_interval),
+            ("hybrid_api_timeout", self.hybrid_api_timeout),
+            ("hybrid_api_auth_header", self.hybrid_api_auth_header),
+            ("hybrid_api_auto_discover_tvars", self.hybrid_api_auto_discover_tvars),
             ("local_storage_path", self.local_storage_path),
             ("minimal_logging", self.minimal_logging),
             ("parallel_config", self.parallel_config),
@@ -731,9 +776,45 @@ class JSRuntimeConfig:
         return self.runtime == "node"
 
 
+@dataclass(slots=True)
+class ResolvedExecutionOptions:
+    """Resolved execution options after merging direct and bundled settings."""
+
+    execution_mode: Any
+    hybrid_api_endpoint: Any
+    capability_id: Any
+    hybrid_api_transport: Any
+    hybrid_api_transport_type: Any
+    hybrid_api_batch_size: Any
+    hybrid_api_batch_parallelism: Any
+    hybrid_api_keep_alive: Any
+    hybrid_api_heartbeat_interval: Any
+    hybrid_api_timeout: Any
+    hybrid_api_auth_header: Any
+    hybrid_api_auto_discover_tvars: Any
+    local_storage_path: Any
+    minimal_logging: Any
+    parallel_config: Any
+    privacy_enabled: Any
+    max_total_examples: Any
+    samples_include_pruned: Any
+    js_runtime_config: JSRuntimeConfig | None
+
+
 def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
     execution_mode: Any,
+    hybrid_api_endpoint: Any,
+    capability_id: Any,
+    hybrid_api_transport: Any,
+    hybrid_api_transport_type: Any,
+    hybrid_api_batch_size: Any,
+    hybrid_api_batch_parallelism: Any,
+    hybrid_api_keep_alive: Any,
+    hybrid_api_heartbeat_interval: Any,
+    hybrid_api_timeout: Any,
+    hybrid_api_auth_header: Any,
+    hybrid_api_auto_discover_tvars: Any,
     local_storage_path: Any,
     minimal_logging: Any,
     parallel_config: Any,
@@ -741,18 +822,29 @@ def _resolve_execution_bundle_options(
     max_total_examples: Any,
     samples_include_pruned: Any,
     defaults: dict[str, Any],
-) -> tuple[Any, Any, Any, Any, Any, Any, Any, JSRuntimeConfig | None]:
+) -> ResolvedExecutionOptions:
     """Resolve execution options from bundle and validate enterprise features."""
     if execution_bundle is None:
-        return (
-            execution_mode,
-            local_storage_path,
-            minimal_logging,
-            parallel_config,
-            privacy_enabled,
-            max_total_examples,
-            samples_include_pruned,
-            None,  # js_runtime_config
+        return ResolvedExecutionOptions(
+            execution_mode=execution_mode,
+            hybrid_api_endpoint=hybrid_api_endpoint,
+            capability_id=capability_id,
+            hybrid_api_transport=hybrid_api_transport,
+            hybrid_api_transport_type=hybrid_api_transport_type,
+            hybrid_api_batch_size=hybrid_api_batch_size,
+            hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
+            hybrid_api_keep_alive=hybrid_api_keep_alive,
+            hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
+            hybrid_api_timeout=hybrid_api_timeout,
+            hybrid_api_auth_header=hybrid_api_auth_header,
+            hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
+            local_storage_path=local_storage_path,
+            minimal_logging=minimal_logging,
+            parallel_config=parallel_config,
+            privacy_enabled=privacy_enabled,
+            max_total_examples=max_total_examples,
+            samples_include_pruned=samples_include_pruned,
+            js_runtime_config=None,
         )
 
     # Validate enterprise-gated features
@@ -790,47 +882,113 @@ def _resolve_execution_bundle_options(
             "Supported values are 'python' (default) or 'node' (JavaScript)."
         )
 
-    return (
-        _resolve_option(
+    return ResolvedExecutionOptions(
+        execution_mode=_resolve_option(
             "execution_mode", execution_mode, execution_bundle.execution_mode, defaults
         ),
-        _resolve_option(
+        hybrid_api_endpoint=_resolve_option(
+            "hybrid_api_endpoint",
+            hybrid_api_endpoint,
+            execution_bundle.hybrid_api_endpoint,
+            defaults,
+        ),
+        capability_id=_resolve_option(
+            "capability_id",
+            capability_id,
+            execution_bundle.capability_id,
+            defaults,
+        ),
+        hybrid_api_transport=_resolve_option(
+            "hybrid_api_transport",
+            hybrid_api_transport,
+            execution_bundle.hybrid_api_transport,
+            defaults,
+        ),
+        hybrid_api_transport_type=_resolve_option(
+            "hybrid_api_transport_type",
+            hybrid_api_transport_type,
+            execution_bundle.hybrid_api_transport_type,
+            defaults,
+        ),
+        hybrid_api_batch_size=_resolve_option(
+            "hybrid_api_batch_size",
+            hybrid_api_batch_size,
+            execution_bundle.hybrid_api_batch_size,
+            defaults,
+        ),
+        hybrid_api_batch_parallelism=_resolve_option(
+            "hybrid_api_batch_parallelism",
+            hybrid_api_batch_parallelism,
+            execution_bundle.hybrid_api_batch_parallelism,
+            defaults,
+        ),
+        hybrid_api_keep_alive=_resolve_option(
+            "hybrid_api_keep_alive",
+            hybrid_api_keep_alive,
+            execution_bundle.hybrid_api_keep_alive,
+            defaults,
+        ),
+        hybrid_api_heartbeat_interval=_resolve_option(
+            "hybrid_api_heartbeat_interval",
+            hybrid_api_heartbeat_interval,
+            execution_bundle.hybrid_api_heartbeat_interval,
+            defaults,
+        ),
+        hybrid_api_timeout=_resolve_option(
+            "hybrid_api_timeout",
+            hybrid_api_timeout,
+            execution_bundle.hybrid_api_timeout,
+            defaults,
+        ),
+        hybrid_api_auth_header=_resolve_option(
+            "hybrid_api_auth_header",
+            hybrid_api_auth_header,
+            execution_bundle.hybrid_api_auth_header,
+            defaults,
+        ),
+        hybrid_api_auto_discover_tvars=_resolve_option(
+            "hybrid_api_auto_discover_tvars",
+            hybrid_api_auto_discover_tvars,
+            execution_bundle.hybrid_api_auto_discover_tvars,
+            defaults,
+        ),
+        local_storage_path=_resolve_option(
             "local_storage_path",
             local_storage_path,
             execution_bundle.local_storage_path,
             defaults,
         ),
-        _resolve_option(
+        minimal_logging=_resolve_option(
             "minimal_logging",
             minimal_logging,
             execution_bundle.minimal_logging,
             defaults,
         ),
-        _resolve_option(
+        parallel_config=_resolve_option(
             "parallel_config",
             parallel_config,
             execution_bundle.parallel_config,
             defaults,
         ),
-        _resolve_option(
+        privacy_enabled=_resolve_option(
             "privacy_enabled",
             privacy_enabled,
             execution_bundle.privacy_enabled,
             defaults,
         ),
-        _resolve_option(
+        max_total_examples=_resolve_option(
             "max_total_examples",
             max_total_examples,
             execution_bundle.max_total_examples,
             defaults,
         ),
-        _resolve_option(
+        samples_include_pruned=_resolve_option(
             "samples_include_pruned",
             samples_include_pruned,
             execution_bundle.samples_include_pruned,
             defaults,
         ),
-        js_runtime_config,
+        js_runtime_config=js_runtime_config,
     )
 
 
@@ -1484,6 +1642,17 @@ def optimize(
     auto_override_frameworks = combined_settings["auto_override_frameworks"]
     framework_targets = combined_settings["framework_targets"]
     execution_mode = combined_settings["execution_mode"]
+    hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
+    capability_id = combined_settings["capability_id"]
+    hybrid_api_transport = combined_settings["hybrid_api_transport"]
+    hybrid_api_transport_type = combined_settings["hybrid_api_transport_type"]
+    hybrid_api_batch_size = combined_settings["hybrid_api_batch_size"]
+    hybrid_api_batch_parallelism = combined_settings["hybrid_api_batch_parallelism"]
+    hybrid_api_keep_alive = combined_settings["hybrid_api_keep_alive"]
+    hybrid_api_heartbeat_interval = combined_settings["hybrid_api_heartbeat_interval"]
+    hybrid_api_timeout = combined_settings["hybrid_api_timeout"]
+    hybrid_api_auth_header = combined_settings["hybrid_api_auth_header"]
+    hybrid_api_auto_discover_tvars = combined_settings["hybrid_api_auto_discover_tvars"]
     local_storage_path = combined_settings["local_storage_path"]
     minimal_logging = combined_settings["minimal_logging"]
     parallel_config = combined_settings["parallel_config"]
@@ -1549,18 +1718,20 @@ def optimize(
         defaults,
     )
 
-    (
-        execution_mode,
-        local_storage_path,
-        minimal_logging,
-        parallel_config,
-        privacy_enabled,
-        max_total_examples,
-        samples_include_pruned,
-        js_runtime_config,
-    ) = _resolve_execution_bundle_options(
+    resolved_execution = _resolve_execution_bundle_options(
         execution_bundle,
         execution_mode,
+        hybrid_api_endpoint,
+        capability_id,
+        hybrid_api_transport,
+        hybrid_api_transport_type,
+        hybrid_api_batch_size,
+        hybrid_api_batch_parallelism,
+        hybrid_api_keep_alive,
+        hybrid_api_heartbeat_interval,
+        hybrid_api_timeout,
+        hybrid_api_auth_header,
+        hybrid_api_auto_discover_tvars,
         local_storage_path,
         minimal_logging,
         parallel_config,
@@ -1569,6 +1740,25 @@ def optimize(
         samples_include_pruned,
         defaults,
     )
+    execution_mode = resolved_execution.execution_mode
+    hybrid_api_endpoint = resolved_execution.hybrid_api_endpoint
+    capability_id = resolved_execution.capability_id
+    hybrid_api_transport = resolved_execution.hybrid_api_transport
+    hybrid_api_transport_type = resolved_execution.hybrid_api_transport_type
+    hybrid_api_batch_size = resolved_execution.hybrid_api_batch_size
+    hybrid_api_batch_parallelism = resolved_execution.hybrid_api_batch_parallelism
+    hybrid_api_keep_alive = resolved_execution.hybrid_api_keep_alive
+    hybrid_api_heartbeat_interval = resolved_execution.hybrid_api_heartbeat_interval
+    hybrid_api_timeout = resolved_execution.hybrid_api_timeout
+    hybrid_api_auth_header = resolved_execution.hybrid_api_auth_header
+    hybrid_api_auto_discover_tvars = resolved_execution.hybrid_api_auto_discover_tvars
+    local_storage_path = resolved_execution.local_storage_path
+    minimal_logging = resolved_execution.minimal_logging
+    parallel_config = resolved_execution.parallel_config
+    privacy_enabled = resolved_execution.privacy_enabled
+    max_total_examples = resolved_execution.max_total_examples
+    samples_include_pruned = resolved_execution.samples_include_pruned
+    js_runtime_config = resolved_execution.js_runtime_config
 
     tvl_options = _resolve_tvl_options(
         tvl_spec_value, tvl_environment_value, tvl_bundle
@@ -1670,6 +1860,17 @@ def optimize(
             auto_override_frameworks=auto_override_frameworks,
             framework_targets=framework_targets,
             execution_mode=execution_mode_enum,
+            hybrid_api_endpoint=hybrid_api_endpoint,
+            capability_id=capability_id,
+            hybrid_api_transport=hybrid_api_transport,
+            hybrid_api_transport_type=hybrid_api_transport_type,
+            hybrid_api_batch_size=hybrid_api_batch_size,
+            hybrid_api_batch_parallelism=hybrid_api_batch_parallelism,
+            hybrid_api_keep_alive=hybrid_api_keep_alive,
+            hybrid_api_heartbeat_interval=hybrid_api_heartbeat_interval,
+            hybrid_api_timeout=hybrid_api_timeout,
+            hybrid_api_auth_header=hybrid_api_auth_header,
+            hybrid_api_auto_discover_tvars=hybrid_api_auto_discover_tvars,
             local_storage_path=local_storage_path,
             minimal_logging=minimal_logging,
             max_total_examples=max_total_examples,

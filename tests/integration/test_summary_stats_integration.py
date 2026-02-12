@@ -11,6 +11,7 @@ from traigent.core.orchestrator import OptimizationOrchestrator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.evaluators.local import LocalEvaluator
 from traigent.optimizers.random import RandomSearchOptimizer
+from traigent.utils.exceptions import ConfigurationError
 
 
 class TestSummaryStatsIntegration:
@@ -141,7 +142,9 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key", backend_config=backend_config, enable_fallback=True
+            api_key="test_key",  # pragma: allowlist secret
+            backend_config=backend_config,
+            enable_fallback=True,
         )
 
         # Mock the aiohttp session
@@ -204,7 +207,9 @@ class TestSummaryStatsIntegration:
             backend_base_url="http://localhost:5000", enable_session_sync=True
         )
         backend_client = BackendIntegratedClient(
-            api_key="test_key", backend_config=backend_config, enable_fallback=True
+            api_key="test_key",  # pragma: allowlist secret
+            backend_config=backend_config,
+            enable_fallback=True,
         )
 
         # Test with Edge Analytics mode metadata
@@ -260,30 +265,41 @@ class TestExecutionModeHandling:
     """Test that execution modes are handled correctly throughout the system."""
 
     def test_traigent_config_valid_execution_modes(self):
-        """Test that TraigentConfig accepts valid execution modes."""
-        # Test valid modes (privacy maps to hybrid for backward compatibility)
-        test_cases = [
-            ("edge_analytics", "edge_analytics"),
-            ("privacy", "hybrid"),  # Legacy mode maps to hybrid + privacy_enabled=True
-            ("hybrid", "hybrid"),
-            ("standard", "standard"),
-            ("cloud", "cloud"),
-        ]
+        """Test that TraigentConfig accepts all valid enum execution modes.
 
-        for input_mode, expected_mode in test_cases:
-            config = TraigentConfig(execution_mode=input_mode)
-            assert config.execution_mode == expected_mode
+        Note: TraigentConfig resolves mode strings leniently. User-facing
+        validation happens at TraigentClient level via validate_execution_mode().
+        """
+        # edge_analytics is the primary supported mode
+        config = TraigentConfig(execution_mode="edge_analytics")
+        assert config.execution_mode == "edge_analytics"
 
-            # Privacy mode should enable privacy_enabled flag
-            if input_mode == "privacy":
-                assert config.privacy_enabled is True
+        # TraigentConfig accepts all valid enum values (lenient resolution)
+        for mode in ["cloud", "hybrid", "standard"]:
+            config = TraigentConfig(execution_mode=mode)
+            assert config.execution_mode == mode
+
+        # 'privacy' is a back-compat alias that maps to 'hybrid' + privacy_enabled
+        config = TraigentConfig(execution_mode="privacy")
+        assert config.execution_mode == "hybrid"
+        assert config.privacy_enabled is True
+
+        # validate_execution_mode provides strict validation
+        from traigent.config.types import validate_execution_mode
+
+        for mode in ["cloud", "hybrid"]:
+            with pytest.raises(ConfigurationError, match="not yet supported"):
+                validate_execution_mode(mode)
+
+        for mode in ["privacy", "standard"]:
+            with pytest.raises(ConfigurationError, match="No such mode"):
+                validate_execution_mode(mode)
 
     def test_traigent_config_invalid_execution_mode(self):
-        """Test that TraigentConfig rejects invalid execution modes."""
+        """Test that TraigentConfig rejects invalid execution mode strings."""
         for invalid_mode in ["invalid_mode", "local"]:
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(ValueError, match="execution_mode must be one of"):
                 TraigentConfig(execution_mode=invalid_mode)
-        assert "execution_mode must be one of" in str(exc_info.value)
 
     def test_evaluator_execution_mode_initialization(self):
         """Test that evaluator correctly initializes with execution_mode."""

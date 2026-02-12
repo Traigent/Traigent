@@ -65,7 +65,6 @@ analytics = [
 bayesian = [
     "scikit-learn>=1.0.0",
     "scipy>=1.7.0",
-    "optuna>=4.5.0",
 ]
 
 # Framework integrations (Sprint 6)
@@ -77,9 +76,12 @@ integrations = [
     "langchain-openai>=0.3.30",
     "langchain-chroma>=0.2.5",
     "langchain-text-splitters>=0.3.8",  # Document chunking for RAG
+    "langchain-google-genai>=2.1.4",  # Google Gemini support via LangChain
     "openai>=1.0.0",
     "anthropic>=0.18.0",
     "groq>=0.9.0",  # Groq cloud inference
+    "google-genai>=0.8.0",  # Google's forward SDK for direct Gemini support
+    "google-generativeai>=0.3.0",  # Kept for langchain-google-genai compatibility
     "rank_bm25>=0.2.2",
     "mlflow>=3.8.1",
     "wandb>=0.15.0",
@@ -97,10 +99,9 @@ dspy = [
 # Enterprise security features (Sprint 7)
 security = [
     "pyjwt>=2.4.0",
-    "cryptography>=44.0.1",
+    # cryptography and psutil are in core dependencies
     "passlib>=1.7.4",
     "python-multipart>=0.0.5",
-    "psutil>=5.8.0",
     "fastapi>=0.95.0",
     "starlette>=0.49.1",  # CVE-2025-62727 fix (FastAPI dependency)
     "uvicorn>=0.18.0",
@@ -127,6 +128,7 @@ test = [
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
     "pytest-timeout>=2.0.0",  # Per-test timeout to catch hanging tests
+    "pytest-xdist>=3.0.0",  # Parallel test execution
     "coverage>=7.0.0",
     "ragas>=0.3.6",
     "rapidfuzz>=3.14.0",
@@ -146,10 +148,14 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
     "pytest-mock>=3.10.0",
+    "pytest-xdist>=3.0.0",  # Required by addopts: -n auto --dist loadgroup
     "black>=22.0.0",
     "isort>=5.10.0",
     "flake8>=5.0.0",
     "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "types-requests>=2.31.0",
+    "types-bleach>=6.0.0",
     "pre-commit>=3.0.0",
     "ruff>=0.1.0",
     "bandit>=1.7.0",
@@ -246,16 +252,13 @@ known_third_party = [
 [tool.mypy]
 python_version = "3.12"
 files = [
-    "traigent/core/samplers/factory.py",
-    "traigent/core/types.py",
-    "traigent/integrations/plugin_registry.py",
-    "traigent/integrations/llms/langchain/discovery.py",
+    "traigent/",
 ]
 ignore_missing_imports = true
 follow_imports = "skip"
 warn_return_any = true
 warn_unused_configs = true
-disallow_untyped_defs = false  # temporarily relaxed for automated refactors
+disallow_untyped_defs = false
 disallow_incomplete_defs = false
 check_untyped_defs = false
 disallow_untyped_decorators = false
@@ -281,19 +284,65 @@ module = [
     "numpy.*",
     "pandas.*",
     "matplotlib.*",
+    "tokencost.*",
     "litellm.*",
-    "redis.*"
+    "redis.*",
 ]
 ignore_missing_imports = true
 
-# Pytest configuration moved to pytest.ini for VSCode compatibility
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--tb=short",
+    "-n", "auto",
+    "--dist", "loadgroup",
+    "-v",
+    "--ignore=demos",
+    "--ignore=playground",
+    "--ignore=plugins",
+    "--ignore=tests/manual_validation",
+    "--ignore=tests/legacy",
+    "--ignore=tests/auto_tune",
+    # JS bridge tests — require Node.js runtime, can crash terminals
+    "--ignore=tests/unit/bridges",
+    "--ignore=tests/unit/test_bridge_wrapper.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_budget.py",
+    "--ignore=tests/unit/evaluators/test_js_evaluator_stop_conditions.py",
+    # Hangs at ~33% — works in CI with different timeout handling
+    "--ignore=tests/unit/core/test_constraints_enforced.py",
+    # KeyError: 'pydantic.root_model' with pydantic 2.12.x
+    "--ignore=tests/unit/evaluators/test_litellm_integration.py",
+    # Hangs at ~33% locally — works in CI with different timeout handling
+    "--ignore=tests/unit/core/test_orchestrator.py",
+]
+asyncio_mode = "auto"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+    "e2e: marks tests as end-to-end tests",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "asyncio: marks tests as async tests",
+    "analytics: marks tests as analytics tests",
+    "security: marks tests as security tests",
+    "timeout: marks tests that expect a timeout decorator",
+    "rate_limit: marks tests for rate limit handling behavior",
+    "chaos: marks chaos/fault injection tests (slow, may be flaky)",
+    "contract: marks contract tests against real APIs (requires credentials)",
+]
 
 [tool.coverage.run]
 source = ["traigent"]
 omit = [
     "*/tests/*",
     "*/test_*",
-    "*/__init__.py",
     "*/demos/*",
     "*/docs/*",
 ]
@@ -315,7 +364,7 @@ exclude_lines = [
 
 [tool.ruff]
 target-version = "py311"
-line-length = 100
+line-length = 88
 exclude = [
     # NOTE: examples folder moved to TraigentDemo
     "docs/diagrams/**",

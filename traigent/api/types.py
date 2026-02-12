@@ -13,15 +13,15 @@ from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-import numpy as np
-import pandas as pd
-
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 # Type checking imports to avoid circular dependencies
 if TYPE_CHECKING:
+    import numpy as np
+    import pandas as pd
+
     from traigent.core.objectives import ObjectiveSchema
 
 
@@ -60,6 +60,8 @@ StopReason = Literal[
     "user_cancelled",
     "condition",  # Generic stop condition triggered
     "error",  # Optimization failed due to an exception
+    "vendor_error",  # Provider error (rate limit/quota/service)
+    "network_error",  # Connectivity failure
 ]
 
 
@@ -900,6 +902,8 @@ class OptimizationResult:
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to pandas DataFrame."""
+        import pandas as pd  # noqa: PLC0415
+
         data = []
         for trial in self.trials:
             row = {
@@ -1028,6 +1032,8 @@ class OptimizationResult:
                 - <metric>_mean for each metric present
                 - duration_mean
         """
+        import pandas as pd  # noqa: PLC0415
+
         if not self.trials:
             return pd.DataFrame()
 
@@ -1242,6 +1248,8 @@ class ConfigurationComparison:
 
     def get_best_configuration(self, metric: str) -> tuple[int, dict[str, Any]]:
         """Get the best configuration for a specific metric."""
+        import numpy as np  # noqa: PLC0415
+
         if metric not in self.comparison_metrics:
             raise ValueError(f"Metric '{metric}' not found in comparison") from None
 
@@ -1261,6 +1269,8 @@ class ParetoFront:
 
     def get_best_balanced_config(self) -> dict[str, Any]:
         """Get configuration with best balance across objectives."""
+        import numpy as np  # noqa: PLC0415
+
         # Simple implementation: closest to ideal point
         if len(self.configurations) == 0 or self.objective_values.size == 0:
             raise ValueError("No configurations in Pareto front")

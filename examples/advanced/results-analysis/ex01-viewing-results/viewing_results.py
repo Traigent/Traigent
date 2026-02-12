@@ -119,4 +119,8 @@ def sentiment_classifier(text: str) -> str:
 
 
 if __name__ == "__main__":
-    print(sentiment_classifier("I love this!"))
+    try:
+        print(sentiment_classifier("I love this!"))
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

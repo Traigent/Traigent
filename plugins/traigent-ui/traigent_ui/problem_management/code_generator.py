@@ -140,8 +140,7 @@ class {class_name}(ProblemDefinition):
             llm = ChatOpenAI(
                 model=config.model,
                 temperature=config.temperature,
-                model_kwargs={"max_tokens": config.max_tokens
-            })
+                max_tokens=config.max_tokens)
 
             # Create prompt based on problem type
             {prompt_generation}
@@ -288,7 +287,7 @@ register_problem("{name}", {class_name})
             difficulty=difficulty,
             output_type=output_type,
             example_count=len(examples),
-            model_kwargs={"max_tokens": max_tokens},
+            max_tokens=max_tokens,
             models_list=json.dumps(models),
             temperature_range=json.dumps(temp_values),
             examples_data=examples_data,
@@ -318,7 +317,7 @@ register_problem("{name}", {class_name})
             Updated module code
         """
         # Read existing module
-        module_path = Path(f"playground/langchain_problems/{problem_name}.py")
+        module_path = Path(f"traigent_ui/langchain_problems/{problem_name}.py")
         if not module_path.exists():
             raise FileNotFoundError(f"Problem module not found: {module_path}")
 

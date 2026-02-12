@@ -206,16 +206,9 @@ def _generate_covering_combos(
 
 
 def _expected_mode(combo: dict[str, Any]) -> ExecutionMode:
-    if combo.get("force_local"):
-        return ExecutionMode.EDGE_ANALYTICS
-    if combo.get("force_hybrid"):
-        return ExecutionMode.STANDARD
-    if combo.get("force_cloud"):
-        return ExecutionMode.CLOUD
-    if combo.get("privacy_flag"):
-        return ExecutionMode.STANDARD
-    if combo.get("has_api_key"):
-        return ExecutionMode.CLOUD
+    # Note: cloud/hybrid raise ConfigurationError (not yet supported)
+    # standard/privacy have been removed from the enum
+    # All paths now lead to edge_analytics (only supported mode)
     return ExecutionMode.EDGE_ANALYTICS
 
 
@@ -442,9 +435,9 @@ async def test_ctd_execution_behavior(case, monkeypatch):
     if combo.get("has_api_key"):
         api_key = TEST_KEY_PREFIX + ("x" * 12)
 
-    from traigent.traigent_client import TraigentClient as OptiGenClient
+    from traigent.traigent_client import TraigentClient
 
-    client = OptiGenClient(
+    client = TraigentClient(
         execution_mode=combo.get("explicit_mode", "auto"), api_key=api_key
     )
     assert (

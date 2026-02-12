@@ -85,7 +85,8 @@ services:
     environment:
       - TRAIGENT_MOCK_LLM=true
       - TRAIGENT_OFFLINE_MODE=true
-    command: ["streamlit", "run", "playground/traigent_control_center.py", "--server.address", "0.0.0.0"]
+    # NOTE: playground moved to TraigentDemo repository
+    command: ["echo", "Playground moved to TraigentDemo. Run: cd ../TraigentDemo && streamlit run examples/playground/traigent_control_center.py"]
 
 volumes:
   pip-cache:

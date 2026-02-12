@@ -461,6 +461,9 @@ class TestEnterpriseDeploymentManager:
         """Test graceful shutdown"""
         manager = EnterpriseDeploymentManager(DeploymentMode.CLOUD_PUBLIC)
 
+        # Override monitoring interval to 1s so the thread doesn't block on sleep
+        manager.config["monitoring_interval_seconds"] = 1
+
         # Setup SLA monitoring
         manager.setup_sla_monitoring(SLATier.STANDARD, "admin@test.com")
 

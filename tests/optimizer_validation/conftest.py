@@ -786,6 +786,9 @@ def scenario_runner(
                 parallel_config_candidate = {"trial_concurrency": parallel_trials}
                 if parallel_trials > 1:
                     parallel_config_candidate["mode"] = "parallel"
+        # Note: attribute mode + parallel trials is now unconditionally blocked.
+        # Test scenarios should not use this combination - it will raise ValueError.
+
         # Generate per-test seed for mock mode reproducibility
         # Use scenario name to create deterministic seed unique to each test
         mock_config = (

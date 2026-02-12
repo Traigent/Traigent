@@ -501,22 +501,26 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    # Handle both sync and async execution
     try:
-        asyncio.run(main())
-    except RuntimeError:
-        # Fallback for environments where asyncio is not available
-        console.print("[dim]Running in synchronous mode...[/dim]\n")
+        # Handle both sync and async execution
+        try:
+            asyncio.run(main())
+        except RuntimeError:
+            # Fallback for environments where asyncio is not available
+            console.print("[dim]Running in synchronous mode...[/dim]\n")
 
-        # Generate sample tasks
-        tasks = create_function_calling_dataset(total_tasks=20)
-        console.print(f"✅ Generated {len(tasks)} sample function calling tasks\n")
+            # Generate sample tasks
+            tasks = create_function_calling_dataset(total_tasks=20)
+            console.print(f"✅ Generated {len(tasks)} sample function calling tasks\n")
 
-        # Show configuration space
-        console.print("[bold]Traigent Configuration Space:[/bold]")
-        for key, values in FUNCTION_SEARCH_SPACE.items():
-            console.print(f"  {key}: {values}")
+            # Show configuration space
+            console.print("[bold]Traigent Configuration Space:[/bold]")
+            for key, values in FUNCTION_SEARCH_SPACE.items():
+                console.print(f"  {key}: {values}")
 
-        console.print(
-            "\n[green]This example demonstrates systematic function calling optimization![/green]"
-        )
+            console.print(
+                "\n[green]This example demonstrates systematic function calling optimization![/green]"
+            )
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

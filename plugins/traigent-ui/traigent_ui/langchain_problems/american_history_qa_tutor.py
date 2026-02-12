@@ -316,7 +316,7 @@ class AmericanHistoryQaTutor(BaseLangChainProblem):
             llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.3,
-                model_kwargs={"max_tokens": 200},
+                max_tokens=200,
             )
 
             prompt_template = ChatPromptTemplate.from_messages(
@@ -358,7 +358,7 @@ Your answers should be educational and appropriate for students.""",
             llm = ChatOpenAI(
                 model="gpt-4o-mini",  # Will be overridden by Traigent
                 temperature=0.3,  # Will be overridden by Traigent
-                model_kwargs={"max_tokens": 200},  # Will be overridden by Traigent
+                max_tokens=200,  # Will be overridden by Traigent
             )
 
             prompt_template = ChatPromptTemplate.from_messages(

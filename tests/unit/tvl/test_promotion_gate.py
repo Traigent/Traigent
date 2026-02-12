@@ -412,6 +412,28 @@ class TestBandedObjectivesEdgeCases:
 class TestFromSpecArtifact:
     """Tests for PromotionGate.from_spec_artifact using mocked ObjectiveSchema."""
 
+    def test_from_policy_returns_none_without_policy(self) -> None:
+        """from_policy returns None when policy is missing."""
+        gate = PromotionGate.from_policy(promotion_policy=None, objective_schema=None)
+        assert gate is None
+
+    def test_from_policy_with_objective_schema(self) -> None:
+        """from_policy builds objective specs without artifact duck typing."""
+        from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema
+
+        schema = ObjectiveSchema.from_objectives(
+            [ObjectiveDefinition(name="accuracy", orientation="maximize", weight=1.0)]
+        )
+
+        gate = PromotionGate.from_policy(
+            promotion_policy=PromotionPolicy(alpha=0.05),
+            objective_schema=schema,
+        )
+
+        assert gate is not None
+        assert "accuracy" in gate.objectives
+        assert gate.objectives["accuracy"].direction == "maximize"
+
     def test_no_promotion_policy_returns_none(self) -> None:
         """Returns None when artifact has no promotion policy."""
         from traigent.core.objectives import ObjectiveDefinition, ObjectiveSchema

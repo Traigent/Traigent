@@ -787,9 +787,9 @@ class TestEdgeCases:
             # Missing other required keys
         }
 
-        # type: ignore used because incomplete_metrics is intentionally partial
+        # incomplete_metrics is intentionally partial for testing
         processor.enhance_example_result(
-            example_result, incomplete_metrics, execution_time=1.0  # type: ignore
+            example_result, incomplete_metrics, execution_time=1.0  # type: ignore[arg-type]
         )
         # Should handle gracefully with .get() default to 0
         assert example_result.metrics["input_tokens"] == 10

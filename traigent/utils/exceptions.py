@@ -4,7 +4,31 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from typing import Any
+
+
+def _traigent_excepthook(exc_type, exc_value, exc_tb):
+    """Custom exception hook for clean ConfigurationError output.
+
+    Shows just the error message without full traceback for ConfigurationError,
+    unless TRAIGENT_DEBUG is set.
+    """
+    if issubclass(exc_type, ConfigurationError) and not os.getenv("TRAIGENT_DEBUG"):
+        # Clean output: just the exception type and message
+        print(
+            f"{exc_type.__module__}.{exc_type.__name__}: {exc_value}", file=sys.stderr
+        )
+        sys.exit(1)
+    else:
+        # Default behavior for other exceptions
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+
+# Install custom hook (only if not already customized)
+if sys.excepthook is sys.__excepthook__:
+    sys.excepthook = _traigent_excepthook
 
 
 class TraigentError(Exception):
@@ -17,7 +41,48 @@ class TraigentError(Exception):
 
 
 class ConfigurationError(TraigentError):
-    """Error in optimization configuration."""
+    """Error in optimization configuration.
+
+    This error is raised when:
+    - Configuration values are invalid or malformed
+    - Configuration features are not yet supported (e.g., cloud/hybrid execution modes)
+    - Required configuration is missing
+
+    Set TRAIGENT_DEBUG=1 to see full tracebacks.
+    """
+
+
+class ProviderValidationError(ConfigurationError):
+    """Raised when provider API key validation fails.
+
+    This error is raised when one or more provider API keys are invalid,
+    missing, or when the provider SDK is not installed. Validation happens
+    before optimization runs to fail fast and avoid wasted API costs.
+
+    Attributes:
+        failed_providers: List of (provider, error_type) tuples that failed.
+        details: Dict with additional error context.
+
+    Example:
+        >>> from traigent.providers import validate_providers
+        >>> results = validate_providers(["gpt-4o-mini", "claude-3-haiku-20240307"])
+        >>> # If validation fails, ProviderValidationError is raised with:
+        >>> # - List of failed providers and error types
+        >>> # - Instructions for fixing the issue
+
+    To skip provider validation:
+        - Set TRAIGENT_SKIP_PROVIDER_VALIDATION=true in environment
+        - Or use validate_providers=False in the @traigent.optimize decorator
+    """
+
+    def __init__(
+        self,
+        message: str,
+        failed_providers: list[tuple[str, str]] | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message, details)
+        self.failed_providers = failed_providers or []
 
 
 class ValidationError(TraigentError):
@@ -230,6 +295,15 @@ class RateLimitError(RetryableError):
         self, message: str = "Rate limit exceeded", retry_after: float | None = None
     ) -> None:
         super().__init__(message, retry_after=retry_after)
+
+
+class CostLimitExceeded(TraigentError):
+    """Raised when accumulated cost exceeds the configured limit."""
+
+    def __init__(self, accumulated: float, limit: float) -> None:
+        super().__init__(f"Cost limit exceeded: ${accumulated:.2f} >= ${limit:.2f} USD")
+        self.accumulated = accumulated
+        self.limit = limit
 
 
 class NetworkError(RetryableError):

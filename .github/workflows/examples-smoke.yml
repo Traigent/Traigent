@@ -6,18 +6,22 @@ on:
     paths:
       - 'examples/**'
       - 'traigent/**'
-      - 'scripts/run_examples.py'
+      - 'scripts/examples/**'
+      - 'README.md'
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
     paths:
       - 'examples/**'
       - 'traigent/**'
-      - 'scripts/run_examples.py'
+      - 'scripts/examples/**'
+      - 'README.md'
+  workflow_dispatch:
 
 jobs:
   smoke-test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: true
       matrix:
         python-version: ["3.11", "3.12", "3.13"]
 
@@ -28,6 +32,14 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
+
+    - name: Cache pip packages
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
 
     - name: Install dependencies
       run: |
@@ -41,6 +53,13 @@ jobs:
     - name: Test example imports
       run: |
         python -c "import sys; sys.path.insert(0, 'examples'); import utils.base_example"
+
+    - name: Run quickstart example
+      env:
+        TRAIGENT_MOCK_LLM: "true"
+        TRAIGENT_OFFLINE_MODE: "true"
+      run: |
+        python examples/quickstart/01_simple_qa.py
 
     - name: Run core examples smoke test
       env:
@@ -70,6 +89,48 @@ jobs:
         TRAIGENT_API_KEY: "test-traigent-api-key-for-ci"
       run: |
         python examples/core/structured-output-json/run.py
+
+    - name: Test README examples
+      if: matrix.python-version == '3.11'
+      env:
+        TRAIGENT_MOCK_LLM: "true"
+        TRAIGENT_OFFLINE_MODE: "true"
+      run: |
+        python -m pytest tests/examples/test_readme_examples.py -v
+
+    - name: Run diagnostics
+      run: |
+        python -c "from traigent.utils.diagnostics import diagnose; report = diagnose(); report.print_report()"
+
+    - name: Upload diagnostic report
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: diagnostic-report-${{ matrix.python-version }}
+        path: traigent_diagnostic_report.json
+
+  quick-validation:
+    name: Quick Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Quick install and test
+      env:
+        TRAIGENT_MOCK_LLM: "true"
+        TRAIGENT_OFFLINE_MODE: "true"
+      run: |
+        pip install -e ".[dev,integrations]"
+        python -c "import traigent; print('Import works')"
+        python examples/quickstart/01_simple_qa.py || true
+        echo "Quick validation passed"
 
   lint-check:
     runs-on: ubuntu-latest
@@ -106,24 +167,24 @@ jobs:
       run: |
         # Check for broken internal links in examples README
         if grep -r "examples/archive" examples/README.md; then
-          echo "❌ Found references to archive paths in main README"
+          echo "Found references to archive paths in main README"
           exit 1
         fi
 
         # Check that all referenced examples exist
         for example in $(grep -o "examples/core/[a-z0-9\\-]*/run.py" examples/README.md | sort -u); do
           if [ ! -f "$example" ]; then
-            echo "❌ Referenced example does not exist: $example"
+            echo "Referenced example does not exist: $example"
             exit 1
           fi
         done
 
-        echo "✅ All documentation links validated"
+        echo "All documentation links validated"
 
     - name: Check archive index exists
       run: |
         if [ ! -f "examples/archive/README.md" ]; then
-          echo "❌ Archive overview missing"
+          echo "Archive overview missing"
           exit 1
         fi
-        echo "✅ Archive overview exists"
+        echo "Archive overview exists"

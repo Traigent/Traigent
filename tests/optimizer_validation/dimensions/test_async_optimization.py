@@ -125,6 +125,9 @@ class TestAsyncFunctionOptimization:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify timeout stopped optimization early (max_trials=20, timeout=3s)
         if hasattr(result, "trials"):
@@ -180,6 +183,9 @@ class TestAsyncFunctionOptimization:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify continuous parameters are within specified ranges
         if hasattr(result, "trials"):
@@ -252,6 +258,9 @@ class TestConcurrentExecution:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify trials completed - should get multiple trials from parallel execution
         if hasattr(result, "trials"):
@@ -308,6 +317,9 @@ class TestConcurrentExecution:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify each trial has a valid and complete config
         if hasattr(result, "trials"):
@@ -432,6 +444,9 @@ class TestBatchProcessing:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
 
         # Verify config consistency - each trial should have a complete, valid config
         if hasattr(result, "trials"):
@@ -666,5 +681,9 @@ class TestAsyncWithAllAlgorithms:
         _, result = await scenario_runner(scenario)
 
         assert not isinstance(result, Exception), f"Unexpected error: {result}"
+        assert hasattr(result, "trials"), "Result should have trials"
+        assert len(result.trials) >= 1, "Should complete at least one trial"
+        assert result.stop_reason is not None, "Should have a stop reason"
+
         validation = result_validator(scenario, result)
         assert validation.passed, validation.summary()

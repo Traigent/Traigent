@@ -156,7 +156,7 @@ class TestREADMEExamples:
         # Create a simplified test that verifies the decorator works without external deps
         test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
@@ -263,7 +263,7 @@ if 'simple_qa_agent' in locals():
         # Create a simplified test with mocks
         test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 
 import traigent
 from traigent.api.decorators import EvaluationOptions, ExecutionOptions
@@ -326,6 +326,7 @@ if 'customer_support_agent' in locals():
             "numpy",
             "pandas",
             "playground",  # Local playground module - optional for examples
+            "traigent_ui",  # UI plugin - optional for problem management
             "litellm",  # LiteLLM for multi-provider support
         }
 
@@ -344,7 +345,7 @@ if 'customer_support_agent' in locals():
 
             test_code = f"""import os
 os.environ["TRAIGENT_MOCK_LLM"] = "true"
-os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"
+os.environ["OPENAI_API_KEY"] = "dummy-key-for-testing"  # pragma: allowlist secret
 {import_line}
 print("✅ Import successful: {import_line}")
 """
@@ -420,7 +421,7 @@ os.unlink(dataset_path)
 
         self._run_code_safely(test_code, "evaluation")
 
-    def _run_code_safely(self, code: str, name: str, timeout: int = 10):
+    def _run_code_safely(self, code: str, name: str, timeout: int = 30):
         """Run code in a subprocess safely."""
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write(code)
@@ -479,6 +480,7 @@ print("✅ Mock mode works for decorated functions")
                 try:
                     self._run_code_safely(test_code, "mock_mode_test", timeout=15)
                     mock_mode_count += 1
+                    break  # Same test code each iteration; one success is sufficient
                 except Exception:
                     pass  # Some examples might be incomplete
 

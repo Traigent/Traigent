@@ -1,20 +1,20 @@
 # Traigent Execution Modes Guide
 
-> **Current status:** Open-source builds support `edge_analytics` (local) only. Cloud and hybrid are roadmap-ready but require a managed backend.
+> **Current status:** Traigent executes your code locally. The default is `execution_mode="edge_analytics"` (local). `execution_mode="cloud"` and `execution_mode="hybrid"` are reserved for Traigent Cloud and are not yet supported in this build; they will raise `NotYetSupported` when optimization runs.
 
 ## Overview
 
-Use `edge_analytics` for all OSS runs. This guide focuses on local mode and notes roadmap items for awareness.
+Use `edge_analytics` (default) to run locally. Use `cloud` or `hybrid` only when Traigent Cloud is available for your build/deployment.
+
+To run fully local (no Traigent backend communication), set `TRAIGENT_OFFLINE_MODE=true`.
 
 ## Modes at a Glance
 
-| Mode | OSS availability | Privacy | Notes |
+| Mode | OSS availability | Status | Notes |
 | --- | --- | --- | --- |
-| `edge_analytics` | ✅ Available | ✅ Data stays local | Default and supported today |
-| `cloud` | 🚧 Roadmap | ⚠️ Metadata shared | Managed backend only (not shipped) |
-| `hybrid` | 🚧 Roadmap | ✅ I/O local, metadata shared | Managed backend only (not shipped) |
-
-> **Legacy alias:** `privacy` maps to `hybrid` and sets `privacy_enabled=True`, but hybrid execution is still a managed-backend feature.
+| `edge_analytics` | ✅ Available | ✅ Supported | Local execution |
+| `hybrid` | ✅ Available | 🚧 Not yet supported | Raises `NotYetSupported` when optimization runs |
+| `cloud` | ✅ Available | 🚧 Not yet supported | Raises `NotYetSupported` when optimization runs |
 
 ## Local Mode (`edge_analytics`)
 
@@ -60,14 +60,12 @@ def my_agent(query: str) -> str:
 - CI smoke tests and demos (`TRAIGENT_MOCK_LLM=true`)
 - Budget-conscious experiments
 
-## Roadmap (Awareness Only)
+## Roadmap Notes
 
-- `cloud`: Managed orchestration with Bayesian search, team history, dashboards.
-- `hybrid`: Local execution with cloud-guided trial selection and privacy toggles.
-- Until a managed backend is provisioned, keep `execution_mode="edge_analytics"` in OSS builds.
+Some fully managed backend capabilities (for example, cloud-executed trials / agent optimization) require a provisioned backend and may not be available in OSS builds yet. In this build, only `execution_mode="edge_analytics"` is supported.
 
 ## Privacy-Safe Analytics
 
-Edge Analytics can submit aggregated, privacy-safe usage stats when a Traigent API key is configured. No prompts, inputs, outputs, or code are transmitted in OSS local mode.
+Edge Analytics can submit aggregated, privacy-safe usage stats when a Traigent API key is configured. No prompts, inputs, outputs, or code are transmitted in OSS local mode. Set `TRAIGENT_OFFLINE_MODE=true` to disable any backend communication.
 
 To disable usage analytics in managed setups, pass `enable_usage_analytics=False` via `traigent.initialize(config=TraigentConfig(...))`. In OSS, leave the Traigent API key unset to skip analytics submission entirely.

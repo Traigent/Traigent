@@ -197,6 +197,67 @@ class TestRandomSearchOptimizer:
         value = optimizer._sample_parameter("x", "fixed")
         assert value == "fixed"
 
+    def test_sample_parameter_float_dict_step_clamps_to_bounds(self):
+        """Float dict ranges with step should never sample outside [low, high]."""
+        optimizer = RandomSearchOptimizer(
+            {"x": {"low": 0.0, "high": 1.0, "step": 0.6}},
+            ["accuracy"],
+            random_seed=123,
+        )
+
+        samples = [
+            optimizer._sample_parameter("x", optimizer.config_space["x"])
+            for _ in range(200)
+        ]
+
+        assert all(0.0 <= value <= 1.0 for value in samples)
+        assert set(samples).issubset({0.0, 0.6, 1.0})
+
+    def test_sample_parameter_untyped_float_dict_stays_float(self):
+        """Untyped low/high dict ranges should be treated as float ranges."""
+        optimizer = RandomSearchOptimizer(
+            {"temperature": {"low": 0.0, "high": 1.0}},
+            ["accuracy"],
+            random_seed=11,
+        )
+
+        samples = [
+            optimizer._sample_parameter(
+                "temperature", optimizer.config_space["temperature"]
+            )
+            for _ in range(25)
+        ]
+
+        assert all(0.0 <= value <= 1.0 for value in samples)
+        assert all(isinstance(value, float) for value in samples)
+
+    @pytest.mark.parametrize("param_type", ["int", "integer"])
+    def test_suggest_next_trial_integer_dict_types_sample_int_values(
+        self, param_type
+    ):
+        """Integer dict ranges should emit integer values for both type aliases."""
+        optimizer = RandomSearchOptimizer(
+            {"x": {"type": param_type, "low": 1, "high": 3}},
+            ["accuracy"],
+            max_trials=3,
+            random_seed=7,
+        )
+
+        values = [optimizer.suggest_next_trial([])["x"] for _ in range(3)]
+        assert set(values) == {1, 2, 3}
+        assert all(isinstance(value, int) for value in values)
+
+    @pytest.mark.parametrize("param_type", ["int", "integer"])
+    def test_sample_parameter_integer_dict_requires_integral_bounds(self, param_type):
+        """Integer dict ranges should reject non-integral bounds."""
+        optimizer = RandomSearchOptimizer(
+            {"x": {"type": param_type, "low": 0.0, "high": 1.5}},
+            ["accuracy"],
+        )
+
+        with pytest.raises(OptimizationError, match="requires integral low/high"):
+            optimizer._sample_parameter("x", optimizer.config_space["x"])
+
     def test_should_stop(self):
         """Test stop condition checking."""
         optimizer = RandomSearchOptimizer({"x": [0, 1]}, ["accuracy"], max_trials=5)

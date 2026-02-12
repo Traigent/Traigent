@@ -1,0 +1,10 @@
+{"input": {"question": "What is 2+2?"}, "output": "4"}
+{"input": {"question": "What is the capital of France?"}, "output": "Paris"}
+{"input": {"question": "What color is the sky?"}, "output": "blue"}
+{"input": {"question": "How many days are in a week?"}, "output": "7"}
+{"input": {"question": "What is the largest planet?"}, "output": "Jupiter"}
+{"input": {"question": "What causes ocean tides?"}, "output": "The gravitational pull of the moon and sun"}
+{"input": {"question": "Why is the sky blue?"}, "output": "Rayleigh scattering of sunlight by atmosphere"}
+{"input": {"question": "How does photosynthesis work?"}, "output": "Plants convert light energy to chemical energy using chlorophyll"}
+{"input": {"question": "Explain opportunity cost with an example"}, "output": "The value of the next best alternative foregone when making a choice"}
+{"input": {"question": "What is the difference between weather and climate?"}, "output": "Weather is short-term atmospheric conditions; climate is long-term patterns"}

@@ -223,35 +223,39 @@ def draft_email(brief: str) -> str:
 
 
 if __name__ == "__main__":
-    import time
+    try:
+        import time
 
-    print("=" * 60)
-    print("Prompt Style Optimization Example")
-    print("=" * 60)
-    print("\nObjective: style_accuracy (maximize)")
-    print("Configuration space:")
-    print("  - style: bulleted, paragraph")
-    print("  - tone: formal, friendly")
-    print("  - temperature: 0.0, 0.2")
-    print("Total configurations: 8 (2 x 2 x 2)")
-    print(
-        f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
-    )
-    print("-" * 60)
-
-    async def main() -> None:
-        start_time = time.time()
-        trials = 9 if not MOCK else 8  # 8 covers all config combinations
-        result = await draft_email.optimize(algorithm="grid", max_trials=trials)
-        elapsed = time.time() - start_time
-
-        print("\n" + "=" * 60)
-        print("OPTIMIZATION COMPLETE")
         print("=" * 60)
-        print(f"Best config: {result.best_config}")
-        print(f"Best score: {result.best_score:.2f}")
-        print(f"Total trials: {len(result.trials)}")
-        print(f"Runtime: {elapsed:.2f}s")
-        _print_results(result)
+        print("Prompt Style Optimization Example")
+        print("=" * 60)
+        print("\nObjective: style_accuracy (maximize)")
+        print("Configuration space:")
+        print("  - style: bulleted, paragraph")
+        print("  - tone: formal, friendly")
+        print("  - temperature: 0.0, 0.2")
+        print("Total configurations: 8 (2 x 2 x 2)")
+        print(
+            f"Mode: {'MOCK (no LLM API calls)' if MOCK else 'REAL (requires ANTHROPIC_API_KEY)'}"
+        )
+        print("-" * 60)
 
-    asyncio.run(main())
+        async def main() -> None:
+            start_time = time.time()
+            trials = 9 if not MOCK else 8  # 8 covers all config combinations
+            result = await draft_email.optimize(algorithm="grid", max_trials=trials)
+            elapsed = time.time() - start_time
+
+            print("\n" + "=" * 60)
+            print("OPTIMIZATION COMPLETE")
+            print("=" * 60)
+            print(f"Best config: {result.best_config}")
+            print(f"Best score: {result.best_score:.2f}")
+            print(f"Total trials: {len(result.trials)}")
+            print(f"Runtime: {elapsed:.2f}s")
+            _print_results(result)
+
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nCancelled by user.")
+        raise SystemExit(130) from None

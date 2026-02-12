@@ -5,17 +5,16 @@ include README.md
 include LICENSE
 include NOTICE
 include CHANGELOG.md
-include INSTALLATION.md
 include CONTRIBUTING.md
-include CODE_OF_CONDUCT.md
 include SECURITY.md
+include DISCLAIMER.md
+include MAINTENANCE.md
 
 # Requirements files
 include requirements/*.txt
 
 # Configuration files
 include pyproject.toml
-include tox.ini
 
 # Include package data
 recursive-include traigent *.py

@@ -4,7 +4,7 @@ Comprehensive coverage of Traigent capabilities to guide splitting the package i
 
 | Area | Capabilities / Options | Config / Entry Points | Dependencies / Extras | Plugin Scope Note |
 | --- | --- | --- | --- | --- |
-| Injection and config delivery | Context, parameter, attribute, seamless injection; default_config; auto framework overrides and explicit framework_targets; allow_parallel_attribute opt-in | optimize decorator via `injection.*`, `default_config`, `injection_mode`, `config_param` | Core | Keep in base |
+| Injection and config delivery | Context, parameter, attribute, seamless injection; default_config; auto framework overrides and explicit framework_targets; attribute mode blocked for parallel trials | optimize decorator via `injection.*`, `default_config`, `injection_mode`, `config_param` | Core | Keep in base |
 | Execution modes and storage | Edge analytics, hybrid/privacy, standard, cloud; local_storage_path, minimal_logging, privacy_enabled; repetitions aggregation | `execution.*`, env `TRAIGENT_RESULTS_FOLDER`, `TRAIGENT_MOCK_LLM` | Core | Base |
 | Optimization algorithms | Random, Grid, Bayesian (scikit-optimize), Optuna (TPE, Random, CMAES, Grid, NSGAII), Parallel/Adaptive/Interactive, Remote/Cloud | Runtime `algorithm`, `max_trials`, `timeout`, `cache_policy` | bayesian extra, core optuna | Base: optuna/random/grid; plugin candidates: bayesian, parallel batch, remote/cloud, interactive |
 | Objectives and multi-objective | ObjectiveSchema with weights/orientation, banded objectives, aggregation modes (sum, harmonic, chebyshev); multi-objective via Optuna NSGA-II and MultiObjectiveBatchOptimizer | `objectives`, `ObjectiveSchema`, TVL bands | Optuna for NSGA-II | Multi-objective/banded to plugins |
@@ -24,7 +24,7 @@ Comprehensive coverage of Traigent capabilities to guide splitting the package i
 | Security | JWT validation, encryption, headers, rate limiter, tenant/session management | Used in cloud/enterprise paths | security extra | Plugin/enterprise |
 | Cloud/backend | Backend client/session sync, remote optimizers, cloud execution modes | `execution.execution_mode`, backend env vars | Core deps | Plugin/enterprise |
 | CLI and developer tools | traigent optimize/results/plot/auth/hooks; persistence manager saves runs | CLI flags; `get_available_strategies` | Core | Base (could split UI commands later) |
-| UI and playground | Streamlit control center and demos | Run via `streamlit run playground/traigent_control_center.py` | playground extra | Plugin/UI bundle |
+| UI and demos | Interactive Streamlit UI and advanced examples | See [TraigentDemo](https://github.com/Traigent/TraigentDemo) repository | Separate repo | Plugin/UI bundle |
 | Storage and persistence | Local results (.traigent_local), locking, resume, cost logs | `execution.local_storage_path`, CLI results | Core | Base |
 
 Sources reviewed: README, docs/feature_matrices/*, traigent/api/decorators.py, traigent/config/types.py, traigent/core/orchestrator.py, pyproject.toml, integrations inventory, hooks, integrations modules.

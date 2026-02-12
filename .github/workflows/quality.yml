@@ -44,7 +44,10 @@ jobs:
     - name: Linting with ruff
       run: |
         ruff check traigent/ --output-format=github
-        ruff check traigent/ --statistics
+
+    - name: Ruff statistics
+      run: |
+        ruff check traigent/ --statistics || true
 
     - name: Type checking with mypy
       run: |
@@ -76,6 +79,10 @@ jobs:
     - name: Pre-commit hooks
       run: |
         pre-commit run --all-files || true
+
+    - name: Test assertion quality lint
+      run: |
+        python -m tests.optimizer_validation.tools.lint_test_assertions --format github || true
 
     - name: Package structure validation
       run: |
