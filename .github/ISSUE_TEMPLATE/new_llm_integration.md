@@ -132,7 +132,8 @@ def my_llm_task(messages):
 
 ## Resources
 
-- **Documentation**: [Adding New Integrations Guide](../../docs/contributing/ADDING_NEW_INTEGRATIONS.md)
+- **Complete Guide**: [Adding New Integrations Guide](../../docs/contributing/ADDING_NEW_INTEGRATIONS.md)
+- **Quick Reference**: [Quick Reference Guide](../../docs/contributing/QUICK_REFERENCE_LLM_INTEGRATION.md)
 - **Examples**: See existing plugins in `traigent/integrations/llms/`
 - **Scaffold Tool**: `python scripts/scaffold_llm_plugin.py [provider_name] --help`
 - **Testing Guide**: Use `TRAIGENT_MOCK_LLM=true` for development without API costs
