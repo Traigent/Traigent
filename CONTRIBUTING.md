@@ -55,6 +55,29 @@ When reporting issues, include:
 - Steps to reproduce
 - Expected vs actual behavior
 
+## Adding New LLM Integrations
+
+Want to add support for a new LLM provider like Groq, Together AI, or Perplexity?
+
+**Quick Start:**
+```bash
+# 1. Run the scaffold script
+python scripts/scaffold_llm_plugin.py <provider_name>
+
+# 2. Customize the generated files
+# 3. Run tests with mock mode
+TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/test_<provider>_plugin.py -v
+
+# 4. Format and lint
+make format && make lint
+```
+
+**Resources:**
+- 📘 **Complete Guide**: [docs/contributing/ADDING_NEW_INTEGRATIONS.md](docs/contributing/ADDING_NEW_INTEGRATIONS.md)
+- 🔧 **Scaffold Tool**: `python scripts/scaffold_llm_plugin.py --help`
+- 📋 **Issue Template**: Use [New LLM Integration](.github/ISSUE_TEMPLATE/new_llm_integration.md)
+- ✅ **PR Template**: Use [LLM Integration PR](.github/PULL_REQUEST_TEMPLATE/llm_integration.md)
+
 ## Questions?
 
 Open a GitHub issue with the `question` label.
