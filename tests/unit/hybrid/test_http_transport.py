@@ -31,6 +31,7 @@ class TestHTTPTransportInit:
         assert transport.timeout == 300.0
         assert transport.max_connections == 10
         assert transport._auth_header is None
+        assert transport.require_http2 is False
 
     def test_init_with_custom_values(self) -> None:
         """Test initialization with custom values."""
@@ -39,11 +40,26 @@ class TestHTTPTransportInit:
             timeout=60.0,
             max_connections=5,
             auth_header="Bearer token123",
+            require_http2=False,
         )
         assert transport.base_url == "http://example.com"
         assert transport.timeout == 60.0
         assert transport.max_connections == 5
         assert transport._auth_header == "Bearer token123"
+
+    def test_init_require_http2_requires_https(self) -> None:
+        """Strict HTTP/2 mode requires an HTTPS base URL."""
+        with pytest.raises(ValueError, match="https:// base_url"):
+            HTTPTransport(base_url="http://localhost:8080", require_http2=True)
+
+    def test_init_with_require_http2_on_https(self) -> None:
+        """Strict HTTP/2 mode accepts HTTPS endpoints."""
+        transport = HTTPTransport(
+            base_url="https://api.example.com",
+            require_http2=True,
+        )
+        assert transport.base_url == "https://api.example.com"
+        assert transport.require_http2 is True
 
     def test_init_strips_trailing_slash(self) -> None:
         """Test that trailing slash is stripped from base_url."""
@@ -147,6 +163,41 @@ class TestHTTPTransportErrorHandling:
             with pytest.raises(TransportRateLimitError) as exc_info:
                 await transport._request("GET", "/test")
             assert exc_info.value.retry_after is None
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_408(self, transport: HTTPTransport) -> None:
+        """Test handling of HTTP 408 timeout responses."""
+        mock_response = MagicMock()
+        mock_response.status_code = 408
+        mock_response.text = "Request Timeout"
+        mock_response.http_version = "HTTP/2"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        with patch.object(transport, "_get_client", return_value=mock_client):
+            with pytest.raises(TransportTimeoutError) as exc_info:
+                await transport._request("GET", "/test")
+            assert exc_info.value.status_code == 408
+
+    @pytest.mark.asyncio
+    async def test_require_http2_rejects_http11_response(self) -> None:
+        """Strict HTTP/2 mode rejects HTTP/1.1 responses."""
+        transport = HTTPTransport(
+            base_url="https://api.example.com",
+            require_http2=True,
+        )
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.http_version = "HTTP/1.1"
+        mock_response.text = "{}"
+
+        mock_client = AsyncMock()
+        mock_client.request = AsyncMock(return_value=mock_response)
+
+        with patch.object(transport, "_get_client", return_value=mock_client):
+            with pytest.raises(TransportError, match="HTTP/2 is required"):
+                await transport._request("GET", "/test")
 
     @pytest.mark.asyncio
     async def test_server_error_500(self, transport: HTTPTransport) -> None:
@@ -753,6 +804,39 @@ class TestHTTPTransportAdditionalMethods:
         # Verify timeout_override was passed
         call_args = mock_request.call_args
         assert call_args.kwargs.get("timeout_override") == 60.0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_with_timeout(self, transport: HTTPTransport) -> None:
+        """Test evaluate uses request timeout when provided."""
+        from traigent.hybrid.protocol import HybridEvaluateRequest
+
+        mock_caps = ServiceCapabilities(version="1.0", supports_evaluate=True)
+        mock_response = {
+            "request_id": "req-123",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+        }
+
+        mock_request = AsyncMock(return_value=mock_response)
+        with (
+            patch.object(
+                transport,
+                "capabilities",
+                new_callable=AsyncMock,
+                return_value=mock_caps,
+            ),
+            patch.object(transport, "_request", mock_request),
+        ):
+            request = HybridEvaluateRequest(
+                capability_id="test_agent",
+                evaluations=[{"input_id": "1", "output": {}, "target": {}}],
+                timeout_ms=45000,
+            )
+            await transport.evaluate(request)
+
+        call_args = mock_request.call_args
+        assert call_args.kwargs.get("timeout_override") == 45.0
 
 
 class TestHTTPTransportContextManager:

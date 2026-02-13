@@ -60,6 +60,7 @@ class HTTPTransport:
         timeout: float = 300.0,
         max_connections: int = 10,
         auth_header: str | None = None,
+        require_http2: bool = False,
     ) -> None:
         """Initialize HTTP transport.
 
@@ -68,11 +69,15 @@ class HTTPTransport:
             timeout: Request timeout in seconds (default 300)
             max_connections: Maximum concurrent HTTP connections (default 10)
             auth_header: Optional Authorization header value
+            require_http2: Enforce HTTPS + HTTP/2 responses (strict mode)
         """
         self.base_url = base_url.rstrip("/")
+        if require_http2 and not self.base_url.startswith("https://"):
+            raise ValueError("require_http2=True requires an https:// base_url")
         self.timeout = timeout
         self.max_connections = max_connections
         self._auth_header = auth_header
+        self.require_http2 = require_http2
         self._client: httpx.AsyncClient | None = None
         self._capabilities: ServiceCapabilities | None = None
         self._closed = False
@@ -154,6 +159,16 @@ class HTTPTransport:
                 timeout=timeout,
             )
 
+            if self.require_http2 and response.http_version != "HTTP/2":
+                raise TransportError(
+                    (
+                        "HTTP/2 is required, but upstream responded with "
+                        f"{response.http_version}"
+                    ),
+                    status_code=426,
+                    response_body=response.text,
+                )
+
             # Handle HTTP errors
             if response.status_code == 401:
                 raise TransportAuthError(
@@ -179,6 +194,12 @@ class HTTPTransport:
                 raise TransportRateLimitError(
                     "Rate limit exceeded",
                     retry_after=retry_after,
+                    response_body=response.text,
+                )
+            elif response.status_code in (408, 504):
+                raise TransportTimeoutError(
+                    f"Request timed out: HTTP {response.status_code}",
+                    status_code=response.status_code,
                     response_body=response.text,
                 )
             elif response.status_code >= 500:
@@ -312,10 +333,16 @@ class HTTPTransport:
                 "External service does not support separate evaluate endpoint"
             )
 
+        timeout_s = (
+            request.timeout_ms / 1000.0
+            if request.timeout_ms is not None and request.timeout_ms > 0
+            else None
+        )
         data = await self._request(
             "POST",
             self.EVALUATE_PATH,
             json_data=request.to_dict(),
+            timeout_override=timeout_s,
         )
         return HybridEvaluateResponse.from_dict(data)
 

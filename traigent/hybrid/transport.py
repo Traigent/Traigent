@@ -197,6 +197,7 @@ def create_transport(
     auth_header: str | None = None,
     timeout: float = 300.0,
     max_connections: int = 10,
+    require_http2: bool = False,
     # MCP options
     mcp_client: ProductionMCPClient | None = None,
     mcp_config: MCPServerConfig | None = None,
@@ -213,6 +214,7 @@ def create_transport(
         auth_header: Optional Authorization header value for HTTP
         timeout: Request timeout in seconds (default 300)
         max_connections: Maximum concurrent HTTP connections (default 10)
+        require_http2: Enforce HTTPS + HTTP/2 responses for HTTP transport
 
         mcp_client: Existing ProductionMCPClient instance
         mcp_config: MCPServerConfig for creating new MCP client
@@ -246,6 +248,7 @@ def create_transport(
             auth_header=auth_header,
             timeout=timeout,
             max_connections=max_connections,
+            require_http2=require_http2,
         )
 
     elif transport_type == "mcp":
