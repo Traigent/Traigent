@@ -12,6 +12,7 @@ Classes:
 
 from __future__ import annotations
 
+import asyncio
 import math
 import time
 import uuid
@@ -419,6 +420,10 @@ class TrialLifecycle:
         except APIKeyError:
             # Fail fast on API key errors - don't continue running trials
             # Re-raise to stop the entire optimization loop
+            raise
+
+        except asyncio.CancelledError:
+            # SonarQube S7497: CancelledError must always be re-raised
             raise
 
         except Exception as exc:

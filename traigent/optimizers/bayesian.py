@@ -487,9 +487,17 @@ class BayesianOptimizer(BaseOptimizer):
             logger.debug("Evaluating acquisition function for all models")
 
             # Get all unique models from config space
+            if not self._param_mapping["categorical"]:
+                logger.warning(
+                    "No categorical parameters found - falling back to random"
+                )
+                return self._random_config()
             model_values = self._param_mapping["categorical"][0][
                 "values"
             ]  # Assuming 'model' is first
+            if not model_values:
+                logger.warning("Empty categorical values - falling back to random")
+                return self._random_config()
 
             candidate_info: dict[Any, dict[str, Any]] = {}
             for model_val in model_values:
