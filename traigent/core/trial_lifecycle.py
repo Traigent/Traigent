@@ -126,7 +126,7 @@ class TrialLifecycle:
         cache_policy = orchestrator.config.get("cache_policy", "allow_repeats")
         if cache_policy != "allow_repeats":
             dataset_name = getattr(dataset, "name", "unnamed_dataset")
-            filtered_configs = orchestrator.cache_policy_handler.apply_policy(
+            filtered_configs = orchestrator.cache_policy_handler.apply_policy(  # type: ignore[has-type]
                 [config],
                 cache_policy,
                 function_name or "unknown_function",
@@ -148,7 +148,7 @@ class TrialLifecycle:
                 config.get("_optuna_trial_id") if isinstance(config, dict) else None
             )
 
-        config_for_run = prepare_evaluation_config(config)
+        config_for_run = prepare_evaluation_config(config)  # type: ignore[arg-type]
 
         # Phase 2: Enforce pre-evaluation constraints
         try:

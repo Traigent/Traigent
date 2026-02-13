@@ -666,21 +666,25 @@ class TestHandleExecute:
 
         # Fill cache to capacity
         for i in range(3):
-            await svc.handle_execute({
-                "request_id": f"req-{i}",
-                "capability_id": "default",
-                "inputs": [{"input_id": f"i{i}", "data": {}}],
-            })
+            await svc.handle_execute(
+                {
+                    "request_id": f"req-{i}",
+                    "capability_id": "default",
+                    "inputs": [{"input_id": f"i{i}", "data": {}}],
+                }
+            )
 
         assert len(svc._execute_idempotency_cache) == 3
         assert "req-0" in svc._execute_idempotency_cache
 
         # Adding 4th entry should evict oldest (req-0)
-        await svc.handle_execute({
-            "request_id": "req-3",
-            "capability_id": "default",
-            "inputs": [{"input_id": "i3", "data": {}}],
-        })
+        await svc.handle_execute(
+            {
+                "request_id": "req-3",
+                "capability_id": "default",
+                "inputs": [{"input_id": "i3", "data": {}}],
+            }
+        )
 
         assert len(svc._execute_idempotency_cache) == 3
         assert "req-0" not in svc._execute_idempotency_cache
@@ -989,21 +993,27 @@ class TestHandleEvaluate:
 
         # Fill cache to capacity
         for i in range(3):
-            await svc.handle_evaluate({
-                "request_id": f"eval-{i}",
-                "capability_id": "default",
-                "evaluations": [{"input_id": f"e{i}", "output": "a", "target": "a"}],
-            })
+            await svc.handle_evaluate(
+                {
+                    "request_id": f"eval-{i}",
+                    "capability_id": "default",
+                    "evaluations": [
+                        {"input_id": f"e{i}", "output": "a", "target": "a"}
+                    ],
+                }
+            )
 
         assert len(svc._evaluate_idempotency_cache) == 3
         assert "eval-0" in svc._evaluate_idempotency_cache
 
         # Adding 4th entry should evict oldest (eval-0)
-        await svc.handle_evaluate({
-            "request_id": "eval-3",
-            "capability_id": "default",
-            "evaluations": [{"input_id": "e3", "output": "a", "target": "a"}],
-        })
+        await svc.handle_evaluate(
+            {
+                "request_id": "eval-3",
+                "capability_id": "default",
+                "evaluations": [{"input_id": "e3", "output": "a", "target": "a"}],
+            }
+        )
 
         assert len(svc._evaluate_idempotency_cache) == 3
         assert "eval-0" not in svc._evaluate_idempotency_cache

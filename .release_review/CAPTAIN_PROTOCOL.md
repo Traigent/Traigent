@@ -10,9 +10,9 @@ The goal is to drive the repo to release readiness by reviewing/fixing component
 ## Model Policy (Fixed Tool → Model Mapping)
 
 Configure the tools to use these models/settings for consistency:
-- **Claude Code (captain + any Claude workers)**: **Claude Opus 4.5**
-- **Codex CLI**: **ChatGPT 5.2 (GPT-5.2)** with **reasoning/effort = `xhigh`**
-- **GitHub Copilot CLI**: **Gemini 3.0**
+- **Claude Code (captain + any Claude workers)**: **Claude Opus 4.6**
+- **Codex CLI**: **GPT-5.3** with **reasoning/effort = `xhigh`** (`codex exec -m GPT-5.3-Codex`)
+- **GitHub Copilot CLI**: **Gemini 3 Pro**
 
 If a CLI cannot explicitly select the requested model, the captain must note the actual model used in the component's **Evidence** field in `.release_review/PRE_RELEASE_REVIEW_TRACKING.md`.
 
@@ -20,13 +20,13 @@ If a CLI cannot explicitly select the requested model, the captain must note the
 
 | Tier | Models | Strengths | Best For |
 |------|--------|-----------|----------|
-| **Tier 1** | Claude Opus 4.5, ChatGPT 5.2 (xhigh) | Deep reasoning, complex analysis, thoroughness | Security-critical code, complex orchestration, cross-cutting concerns, P0 components |
-| **Tier 2** | Gemini 3.0 | Fast, good at targeted edits, solid comprehension | Config files, docs, simpler components, P2/P3 items |
+| **Tier 1** | Claude Opus 4.6, GPT-5.3 (xhigh) | Deep reasoning, complex analysis, thoroughness | Security-critical code, complex orchestration, cross-cutting concerns, P0 components |
+| **Tier 2** | Gemini 3 Pro | Fast, good at targeted edits, solid comprehension | Config files, docs, simpler components, P2/P3 items |
 
 **Assignment Guidelines**:
-- **ChatGPT 5.2**: Most thorough but slowest. Use for complex/large components where depth matters more than speed.
-- **Claude Opus 4.5**: Excellent balance of depth and speed. Good for security analysis, orchestration review, captain duties.
-- **Gemini 3.0**: Faster, slightly less thorough. Good for packaging, docs, smaller scopes.
+- **GPT-5.3**: Most thorough but slowest. Use for complex/large components where depth matters more than speed.
+- **Claude Opus 4.6**: Excellent balance of depth and speed. Good for security analysis, orchestration review, captain duties.
+- **Gemini 3 Pro**: Faster, slightly less thorough. Good for packaging, docs, smaller scopes.
 
 ### Cross-Model Review Policy
 
@@ -34,9 +34,9 @@ For P0/P1 components, the **secondary reviewer MUST be a different model** than 
 
 | Lead Model | Secondary Reviewer |
 |------------|-------------------|
-| ChatGPT 5.2 (Codex) | Claude Opus 4.5 |
-| Claude Opus 4.5 | ChatGPT 5.2 (Codex) |
-| Gemini 3.0 (Copilot) | Claude Opus 4.5 or ChatGPT 5.2 |
+| GPT-5.3 (Codex) | Claude Opus 4.6 |
+| Claude Opus 4.6 | GPT-5.3 (Codex) |
+| Gemini 3 Pro (Copilot) | Claude Opus 4.6 or GPT-5.3 |
 
 This ensures diverse perspectives catch issues a single model might miss.
 
@@ -63,30 +63,30 @@ Round 1 (e.g., v0.8.0):
 ┌─────────────────────┬─────────────┬─────────────┬─────────────┐
 │ Category            │ Primary     │ Secondary   │ Spot-Check  │
 ├─────────────────────┼─────────────┼─────────────┼─────────────┤
-│ Security/Core       │ Claude      │ GPT-5.2     │ Gemini      │
-│ Integrations        │ GPT-5.2     │ Claude      │ Gemini      │
-│ Packaging/CI        │ Gemini      │ Claude      │ GPT-5.2     │
-│ Docs/Examples       │ Gemini      │ GPT-5.2     │ Claude      │
+│ Security/Core       │ Claude      │ GPT-5.3     │ Gemini      │
+│ Integrations        │ GPT-5.3     │ Claude      │ Gemini      │
+│ Packaging/CI        │ Gemini      │ Claude      │ GPT-5.3     │
+│ Docs/Examples       │ Gemini      │ GPT-5.3     │ Claude      │
 └─────────────────────┴─────────────┴─────────────┴─────────────┘
 
 Round 2 (e.g., v0.9.0 or re-review):
 ┌─────────────────────┬─────────────┬─────────────┬─────────────┐
 │ Category            │ Primary     │ Secondary   │ Spot-Check  │
 ├─────────────────────┼─────────────┼─────────────┼─────────────┤
-│ Security/Core       │ GPT-5.2     │ Gemini      │ Claude      │
-│ Integrations        │ Claude      │ Gemini      │ GPT-5.2     │
-│ Packaging/CI        │ Claude      │ GPT-5.2     │ Gemini      │
-│ Docs/Examples       │ GPT-5.2     │ Claude      │ Gemini      │
+│ Security/Core       │ GPT-5.3     │ Gemini      │ Claude      │
+│ Integrations        │ Claude      │ Gemini      │ GPT-5.3     │
+│ Packaging/CI        │ Claude      │ GPT-5.3     │ Gemini      │
+│ Docs/Examples       │ GPT-5.3     │ Claude      │ Gemini      │
 └─────────────────────┴─────────────┴─────────────┴─────────────┘
 
 Round 3 (rotate again):
 ┌─────────────────────┬─────────────┬─────────────┬─────────────┐
 │ Category            │ Primary     │ Secondary   │ Spot-Check  │
 ├─────────────────────┼─────────────┼─────────────┼─────────────┤
-│ Security/Core       │ Gemini      │ Claude      │ GPT-5.2     │
-│ Integrations        │ Gemini      │ GPT-5.2     │ Claude      │
-│ Packaging/CI        │ GPT-5.2     │ Gemini      │ Claude      │
-│ Docs/Examples       │ Claude      │ Gemini      │ GPT-5.2     │
+│ Security/Core       │ Gemini      │ Claude      │ GPT-5.3     │
+│ Integrations        │ Gemini      │ GPT-5.3     │ Claude      │
+│ Packaging/CI        │ GPT-5.3     │ Gemini      │ Claude      │
+│ Docs/Examples       │ Claude      │ Gemini      │ GPT-5.3     │
 └─────────────────────┴─────────────┴─────────────┴─────────────┘
 ```
 
@@ -98,7 +98,7 @@ Use the automation script to generate rotations:
 from rotation_scheduler import RotationScheduler
 
 scheduler = RotationScheduler(
-    models=["Claude Opus 4.5", "GPT-5.2", "Gemini 3.0"],
+    models=["Claude Opus 4.6", "GPT-5.3", "Gemini 3 Pro"],
     categories=["Security/Core", "Integrations", "Packaging/CI", "Docs/Examples"]
 )
 
@@ -120,15 +120,15 @@ Maintain `.release_review/<version>/ROTATION_HISTORY.md`. The rotation scheduler
 ## v0.8.0 (Round 1)
 | Category | Primary | Secondary | Issues Found |
 |----------|---------|-----------|--------------|
-| Security/Core | Claude | GPT-5.2 | 2 |
-| Integrations | GPT-5.2 | Claude | 0 |
+| Security/Core | Claude | GPT-5.3 | 2 |
+| Integrations | GPT-5.3 | Claude | 0 |
 | Packaging/CI | Gemini | Claude | 4 |
-| Docs/Examples | Gemini | GPT-5.2 | 0 |
+| Docs/Examples | Gemini | GPT-5.3 | 0 |
 
 ## v0.9.0 (Round 2) - Rotated
 | Category | Primary | Secondary | Issues Found |
 |----------|---------|-----------|--------------|
-| Security/Core | GPT-5.2 | Gemini | TBD |
+| Security/Core | GPT-5.3 | Gemini | TBD |
 | Integrations | Claude | Gemini | TBD |
 | ... | ... | ... | ... |
 ```
@@ -143,7 +143,7 @@ Maintain `.release_review/<version>/ROTATION_HISTORY.md`. The rotation scheduler
 
 #### Constraints
 
-- **Tier 1 models** (Claude Opus, GPT-5.2) should always review P0 components
+- **Tier 1 models** (Claude Opus, GPT-5.3) should always review P0 components
 - **Tier 2 models** (Gemini) can be primary for P2/P3 but need Tier 1 secondary for P0/P1
 - Captain can override rotation if a model has known weakness for specific component type
 - Document any rotation overrides in tracking file
@@ -450,7 +450,7 @@ Rules:
 - `format=legacy` is only for backfilled historical entries; it may use `UNKNOWN` values.
 
 Example (single line is required in the Evidence column):
-`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.2/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
+`{"format":"standard","commits":["abc1234"],"tests":{"command":"TRAIGENT_MOCK_LLM=true pytest tests/unit/integrations/ -q","status":"PASS","passed":42,"total":42},"models":"Codex/GPT-5.3/xhigh","reviewer":"codex + @captain","timestamp":"2025-12-13T14:30:00Z","followups":"#1234","accepted_risks":"None"}`
 
 ## Iteration Limits and Escalation
 
@@ -638,18 +638,18 @@ Use these templates when invoking sub-agents.
 
 Because CLI flags differ across installs, treat these as patterns:
 
-- **Claude Code (Opus 4.5)**: captain and any Claude worker sessions use Opus 4.5; use for orchestration + deep patch review.
-- **Codex CLI (GPT-5.2, xhigh)**: use for heavy code comprehension and surgical refactors within a component scope.
-- **Copilot CLI (Gemini 3.0)**: use for quick suggestions/explanations and small targeted edits; avoid repo-wide changes.
+- **Claude Code (Opus 4.6)**: captain and any Claude worker sessions use Opus 4.6; use for orchestration + deep patch review.
+- **Codex CLI (GPT-5.3, xhigh)**: use for heavy code comprehension and surgical refactors within a component scope.
+- **Copilot CLI (Gemini 3 Pro)**: use for quick suggestions/explanations and small targeted edits; avoid repo-wide changes.
 
 ## Message to Send to Claude Code CLI (Copy/Paste)
 
 You are the release-review captain for this repo.
 
 Model policy for all work:
-- Claude Code (you): **Opus 4.5**
-- Codex CLI: **ChatGPT 5.2 (GPT-5.2)** with **xhigh** effort
-- GitHub Copilot CLI: **Gemini 3.0**
+- Claude Code (you): **Opus 4.6**
+- Codex CLI: **GPT-5.3** with **xhigh** effort (`codex exec -m GPT-5.3-Codex`)
+- GitHub Copilot CLI: **Gemini 3 Pro**
 
 1) Read these files and treat them as canonical:
 - `.release_review/PRE_RELEASE_REVIEW_PLAN.md`
@@ -683,7 +683,7 @@ Model policy for all work:
 
 ## LESSONS LEARNED (v0.8.0 Review)
 
-The following additions were identified during the v0.8.0 release review and incorporated based on feedback from multiple models (Claude Opus 4.5, GPT-5.2).
+The following additions were identified during the v0.8.0 release review and incorporated based on feedback from multiple models (Claude Opus 4.6, GPT-5.3).
 
 ---
 
@@ -776,8 +776,8 @@ Captain maintains `.release_review/<version>/TRACE_LOG.md`:
 
 | Timestamp | Agent | Component | Action | Status | Artifact Link |
 |-----------|-------|-----------|--------|--------|---------------|
-| 2025-12-13T10:00:00Z | Claude Opus 4.5 | core/orchestrator | spawn | started | - |
-| 2025-12-13T10:15:00Z | Claude Opus 4.5 | core/orchestrator | complete | passed | [findings](artifacts/core/claude/20251213_findings.md) |
+| 2025-12-13T10:00:00Z | Claude Opus 4.6 | core/orchestrator | spawn | started | - |
+| 2025-12-13T10:15:00Z | Claude Opus 4.6 | core/orchestrator | complete | passed | [findings](artifacts/core/claude/20251213_findings.md) |
 ```
 
 ---
@@ -1068,15 +1068,15 @@ After release approval, captain generates:
 
 ## Release Approval
 - **Version**: v0.8.0
-- **Approved by**: Captain (Claude Opus 4.5)
+- **Approved by**: Captain (Claude Opus 4.6)
 - **Approval Time**: 2025-12-13T21:00:00Z
 - **Final Commit**: abc123def456
 
 ## Agent Contributions
 | Agent | Components | Issues Found | Fixes Applied | False Positives |
 |-------|------------|--------------|---------------|-----------------|
-| Claude Opus 4.5 | 10 | 3 | 3 | 0 |
-| GPT-5.2 | 8 | 1 | 1 | 0 |
+| Claude Opus 4.6 | 10 | 3 | 3 | 0 |
+| GPT-5.3 | 8 | 1 | 1 | 0 |
 
 ## Spot-Check Results
 - **Components verified**: 6/30 (20%)
@@ -1110,6 +1110,6 @@ For real-time visibility, captain can maintain:
 | Component | Agent | Status | Blockers |
 |-----------|-------|--------|----------|
 | core/orchestrator | Claude | ✅ Done | - |
-| integrations | GPT-5.2 | 🔄 In Progress | - |
-| security | Claude | ⏸️ Blocked | Conflict with GPT-5.2 |
+| integrations | GPT-5.3 | 🔄 In Progress | - |
+| security | Claude | ⏸️ Blocked | Conflict with GPT-5.3 |
 ```

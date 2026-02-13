@@ -21,7 +21,9 @@ class TestRedactSensitiveFields:
 
     def test_redact_string_api_key(self):
         """Test that string API keys are redacted."""
-        data = {"api_key": "sk-1234567890abcdef"}  # noqa: S105  # pragma: allowlist secret
+        data = {
+            "api_key": "sk-1234567890abcdef"  # pragma: allowlist secret
+        }  # noqa: S105
         result = TrialOperations._redact_sensitive_fields(data)
         assert "[REDACTED:" in result["api_key"]
         assert "chars]" in result["api_key"]

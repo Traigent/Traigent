@@ -48,19 +48,11 @@ except ImportError:
 from traigent.evaluators.base import Dataset
 from traigent.utils.exceptions import ValidationError as ValidationException
 from traigent.utils.logging import get_logger
-from traigent.utils.retry import (
-    NetworkError,
-    RetryConfig,
-    RetryHandler,
-    RetryStrategy,
-)
+from traigent.utils.retry import NetworkError, RetryConfig, RetryHandler, RetryStrategy
 from traigent.utils.validation import CoreValidators, validate_or_raise
 
 from .backend_bridges import bridge
-from .models import (
-    AgentSpecification,
-    OptimizationRequest,
-)
+from .models import AgentSpecification, OptimizationRequest
 
 logger = get_logger(__name__)
 
@@ -384,7 +376,7 @@ class ProductionMCPClient:
                         return fallback_response
 
                 self._operation_results[operation_id] = response
-                return response
+                return response  # type: ignore[no-any-return]
 
         finally:
             # Clean up operation tracking
@@ -685,10 +677,11 @@ class ProductionMCPClient:
                     f"Failed to create agent: {agent_response.error_message}"
                 )
 
+            _agent_raw = agent_response.data
             agent_data = (
-                json.loads(agent_response.data)
-                if isinstance(agent_response.data, str)
-                else agent_response.data
+                json.loads(_agent_raw)  # type: ignore[arg-type]
+                if isinstance(_agent_raw, str)
+                else (_agent_raw or {})
             )
             agent_id = (agent_data or {}).get("agent_id")
 
@@ -703,10 +696,11 @@ class ProductionMCPClient:
                     f"Failed to upload dataset: {dataset_response.error_message}"
                 )
 
+            _dataset_raw = dataset_response.data
             dataset_data = (
-                json.loads(dataset_response.data)
-                if isinstance(dataset_response.data, str)
-                else dataset_response.data
+                json.loads(_dataset_raw)  # type: ignore[arg-type]
+                if isinstance(_dataset_raw, str)
+                else (_dataset_raw or {})
             )
             example_set_id = (dataset_data or {}).get("example_set_id")
 
@@ -721,10 +715,9 @@ class ProductionMCPClient:
                     f"Failed to create experiment: {experiment_response.error_message}"
                 )
 
+            _exp_raw = experiment_response.data
             experiment_data = (
-                json.loads(experiment_response.data)
-                if isinstance(experiment_response.data, str)
-                else experiment_response.data
+                json.loads(_exp_raw) if isinstance(_exp_raw, str) else (_exp_raw or {})  # type: ignore[arg-type]
             )
             experiment_id = (experiment_data or {}).get("experiment_id")
             if not experiment_id:
@@ -741,10 +734,9 @@ class ProductionMCPClient:
                     f"Failed to start experiment run: {run_response.error_message}"
                 )
 
+            _run_raw = run_response.data
             run_data = (
-                json.loads(run_response.data)
-                if isinstance(run_response.data, str)
-                else run_response.data
+                json.loads(_run_raw) if isinstance(_run_raw, str) else (_run_raw or {})  # type: ignore[arg-type]
             )
             experiment_run_id = (run_data or {}).get("experiment_run_id")
 

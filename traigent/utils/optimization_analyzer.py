@@ -610,7 +610,7 @@ class OptimizationAnalyzer:
         # Plot Pareto front
         if len(pareto_points) > 0:
             # Sort for line plot
-            sorted_indices = np.argsort(pareto_points[:, 0])
+            sorted_indices = np.argsort(pareto_points[:, 0])  # type: ignore[call-overload]
             pareto_sorted = pareto_points[sorted_indices]
 
             ax.scatter(
