@@ -143,6 +143,7 @@ class HybridEvaluateRequest:
         evaluations: List of output+target pairs to evaluate
         config: Optional config for evaluation-time parameters
         session_id: Session ID for stateful agents
+        timeout_ms: Optional server-side timeout budget in milliseconds
     """
 
     capability_id: str
@@ -151,6 +152,7 @@ class HybridEvaluateRequest:
     evaluations: list[dict[str, Any]] | None = None
     config: dict[str, Any] | None = None
     session_id: str | None = None
+    timeout_ms: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dictionary."""
@@ -166,6 +168,8 @@ class HybridEvaluateRequest:
             result["config"] = self.config
         if self.session_id is not None:
             result["session_id"] = self.session_id
+        if self.timeout_ms is not None:
+            result["timeout_ms"] = self.timeout_ms
         return result
 
 

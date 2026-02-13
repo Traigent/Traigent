@@ -182,14 +182,14 @@ class RandomSearchOptimizer(BaseOptimizer):
                     )
 
                 low_i, high_i = int(low_f), int(high_f)
-                step = int(step_f)
+                int_step = int(step_f)
                 if low_i > high_i:
                     raise OptimizationError(
                         f"Invalid integer range for parameter '{param_name}': "
                         f"low ({low_i}) must be <= high ({high_i})"
                     )
 
-                values = list(range(low_i, high_i + 1, step))
+                values = list(range(low_i, high_i + 1, int_step))
                 if values[-1] != high_i:
                     values.append(high_i)
                 return self._random.choice(values)
