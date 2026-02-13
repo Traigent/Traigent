@@ -232,9 +232,7 @@ class TestRandomSearchOptimizer:
         assert all(isinstance(value, float) for value in samples)
 
     @pytest.mark.parametrize("param_type", ["int", "integer"])
-    def test_suggest_next_trial_integer_dict_types_sample_int_values(
-        self, param_type
-    ):
+    def test_suggest_next_trial_integer_dict_types_sample_int_values(self, param_type):
         """Integer dict ranges should emit integer values for both type aliases."""
         optimizer = RandomSearchOptimizer(
             {"x": {"type": param_type, "low": 1, "high": 3}},

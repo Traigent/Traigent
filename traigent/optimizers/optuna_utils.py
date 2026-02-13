@@ -249,8 +249,10 @@ def discretize_for_grid(
                 if span <= 100:
                     discrete_space[param] = list(range(low, high + 1))
                 else:
-                    step = max(span // (n_bins - 1), 1)
-                    discrete_space[param] = [low + idx * step for idx in range(n_bins)]
+                    grid_step = max(span // (n_bins - 1), 1)
+                    discrete_space[param] = [
+                        low + idx * grid_step for idx in range(n_bins)
+                    ]
             else:
                 interval = (float(high) - float(low)) / (n_bins - 1)
                 discrete_space[param] = [
@@ -284,28 +286,28 @@ def discretize_for_grid(
                     raise OptimizationError(
                         f"Integer parameter '{param}' requires low <= high"
                     )
-                step = definition.get("step")
-                if step is not None:
-                    step_i = int(step)
+                int_step_raw = definition.get("step")
+                if int_step_raw is not None:
+                    step_i = int(int_step_raw)
                     if step_i <= 0:
                         raise OptimizationError(
                             f"Integer parameter '{param}' requires positive 'step'"
                         )
-                    values = list(range(low_i, high_i + 1, step_i))
-                    if values[-1] != high_i:
-                        values.append(high_i)
-                    discrete_space[param] = values
+                    int_values = list(range(low_i, high_i + 1, step_i))
+                    if int_values[-1] != high_i:
+                        int_values.append(high_i)
+                    discrete_space[param] = int_values
                 else:
                     span = high_i - low_i
                     if span <= 100:
                         discrete_space[param] = list(range(low_i, high_i + 1))
                     else:
                         inferred_step = max(span // (n_bins - 1), 1)
-                        values = [
+                        int_values = [
                             low_i + idx * inferred_step for idx in range(n_bins)
                         ]
-                        values[-1] = high_i
-                        discrete_space[param] = values
+                        int_values[-1] = high_i
+                        discrete_space[param] = int_values
                 continue
 
             if param_type in {"float", "double", "loguniform", "qloguniform"}:
@@ -320,31 +322,31 @@ def discretize_for_grid(
                     raise OptimizationError(
                         f"Float parameter '{param}' requires low <= high"
                     )
-                step = definition.get("step")
-                if step is not None:
-                    step_f = float(step)
+                float_step_raw = definition.get("step")
+                if float_step_raw is not None:
+                    step_f = float(float_step_raw)
                     if step_f <= 0:
                         raise OptimizationError(
                             f"Float parameter '{param}' requires positive 'step'"
                         )
-                    values: list[float] = []
+                    float_values: list[float] = []
                     current = low_f
                     # Bound iteration to avoid pathological loops for tiny steps.
                     for _ in range(100_000):
                         if current > high_f + (step_f / 2):
                             break
-                        values.append(round(current, 12))
+                        float_values.append(round(current, 12))
                         current += step_f
-                    if not values:
-                        values = [round(low_f, 12)]
-                    if values[-1] < high_f:
-                        values.append(round(high_f, 12))
-                    discrete_space[param] = values
+                    if not float_values:
+                        float_values = [round(low_f, 12)]
+                    if float_values[-1] < high_f:
+                        float_values.append(round(high_f, 12))
+                    discrete_space[param] = float_values
                 else:
                     interval = (high_f - low_f) / (n_bins - 1)
-                    values = [low_f + idx * interval for idx in range(n_bins)]
-                    values[-1] = high_f
-                    discrete_space[param] = values
+                    float_values = [low_f + idx * interval for idx in range(n_bins)]
+                    float_values[-1] = high_f
+                    discrete_space[param] = float_values
                 continue
 
             raise OptimizationError(
