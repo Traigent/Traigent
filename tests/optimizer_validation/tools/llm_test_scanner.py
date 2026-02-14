@@ -92,7 +92,7 @@ class MutationSuggestion:
 # ---------------------------------------------------------------------------
 
 # Numbers commonly used in test setup that aren't "magic"
-_COMMON_NUMBERS = frozenset({0, 1, -1, 2, 3, 5, 10, 100, 0.0, 1.0, 0.5})
+_COMMON_NUMBERS = frozenset({0, 1, -1, 2, 3, 5, 10, 100, 0.5})
 
 
 class SmellDetector(ast.NodeVisitor):
@@ -155,9 +155,7 @@ class SmellDetector(ast.NodeVisitor):
                 )
             )
 
-    def _check_eager_test(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> None:
+    def _check_eager_test(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         """Test verifying multiple distinct behaviors."""
         # Heuristic 1: name contains 2+ "and" segments
         if node.name.count("_and_") >= 2:
@@ -189,9 +187,7 @@ class SmellDetector(ast.NodeVisitor):
                     test_name=node.name,
                     line_number=node.lineno,
                     severity="medium",
-                    description=(
-                        f"scenario_runner called {runner_calls} times"
-                    ),
+                    description=(f"scenario_runner called {runner_calls} times"),
                     suggested_fix="Split into separate tests, one per run",
                 )
             )
@@ -225,9 +221,7 @@ class SmellDetector(ast.NodeVisitor):
                 )
             )
 
-    def _check_empty_test(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> None:
+    def _check_empty_test(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         """Test with no assertions at all."""
         has_assert = any(isinstance(n, ast.Assert) for n in ast.walk(node))
         if has_assert:
@@ -238,9 +232,7 @@ class SmellDetector(ast.NodeVisitor):
             isinstance(n, ast.With)
             and any(
                 isinstance(item.context_expr, ast.Call)
-                and isinstance(
-                    getattr(item.context_expr, "func", None), ast.Attribute
-                )
+                and isinstance(getattr(item.context_expr, "func", None), ast.Attribute)
                 and getattr(item.context_expr.func, "attr", "") == "raises"
                 for item in n.items
             )
@@ -369,9 +361,7 @@ class OracleStrengthAnalyzer:
         func_source = "\n".join(
             source_lines[node.lineno - 1 : node.end_lineno or node.lineno]
         )
-        if "validation.passed" in func_source and not (
-            checked & CRITICAL_RESULT_ATTRS
-        ):
+        if "validation.passed" in func_source and not (checked & CRITICAL_RESULT_ATTRS):
             weak.append("validator-reliance-only")
 
         # Not-isinstance as sole guard
@@ -416,9 +406,7 @@ class OracleStrengthAnalyzer:
         for child in ast.walk(node):
             if isinstance(child, ast.Assert):
                 for attr in ast.walk(child):
-                    if isinstance(attr, ast.Attribute) and isinstance(
-                        attr.attr, str
-                    ):
+                    if isinstance(attr, ast.Attribute) and isinstance(attr.attr, str):
                         checked.add(attr.attr)
         return checked
 
@@ -762,7 +750,12 @@ class LLMTestScanner:
         # Oracle score histogram
         lines.append("  Oracle Score Distribution:")
         bins = s.get("score_histogram", {})
-        for label in ["0.0-0.3 (very weak)", "0.3-0.6 (weak)", "0.6-0.8 (moderate)", "0.8-1.0 (strong)"]:
+        for label in [
+            "0.0-0.3 (very weak)",
+            "0.3-0.6 (weak)",
+            "0.6-0.8 (moderate)",
+            "0.8-1.0 (strong)",
+        ]:
             count = bins.get(label, 0)
             bar = "#" * min(count, 60)
             lines.append(f"    {label:22s} {count:4d} {bar}")
@@ -778,22 +771,14 @@ class LLMTestScanner:
         if weakest:
             lines.append("  Top 10 Weakest Oracles:")
             lines.append("  " + "-" * 68)
-            for fp, rep in weakest:
-                lines.append(
-                    f"    {rep.oracle_score:.2f}  {rep.test_name}"
-                )
+            for _fp, rep in weakest:
+                lines.append(f"    {rep.oracle_score:.2f}  {rep.test_name}")
                 if rep.weak_patterns:
-                    lines.append(
-                        f"          patterns: {', '.join(rep.weak_patterns)}"
-                    )
+                    lines.append(f"          patterns: {', '.join(rep.weak_patterns)}")
             lines.append("")
 
         # LLM suggestions
-        all_sug = [
-            sug
-            for r in scan["results"]
-            for sug in r["mutation_suggestions"]
-        ]
+        all_sug = [sug for r in scan["results"] for sug in r["mutation_suggestions"]]
         if all_sug:
             lines.append(f"  LLM Suggestions ({len(all_sug)} tests):")
             lines.append("  " + "-" * 68)
@@ -818,9 +803,7 @@ class LLMTestScanner:
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 if node.name == test_name and node.end_lineno:
-                    return "\n".join(
-                        source_lines[node.lineno - 1 : node.end_lineno]
-                    )
+                    return "\n".join(source_lines[node.lineno - 1 : node.end_lineno])
         return None
 
     @staticmethod
@@ -836,7 +819,11 @@ class LLMTestScanner:
         for r in results:
             for s in r["test_smells"]:
                 total_smells += 1
-                key = s.smell_type.value if isinstance(s.smell_type, TestSmell) else str(s.smell_type)
+                key = (
+                    s.smell_type.value
+                    if isinstance(s.smell_type, TestSmell)
+                    else str(s.smell_type)
+                )
                 smell_counts[key] = smell_counts.get(key, 0) + 1
 
             for rep in r["oracle_reports"]:

@@ -12,8 +12,6 @@ import ast
 import textwrap
 from pathlib import Path
 
-import pytest
-
 from tests.optimizer_validation.tools.llm_test_scanner import (
     LLMTestScanner,
     MutationGuidedAnalyzer,
@@ -338,7 +336,13 @@ class TestMutationGuidedAnalyzer:
             test_name="test_x",
             oracle_score=0.9,
             weak_patterns=[],
-            checked_attributes={"trials", "best_config", "best_score", "stop_reason", "status"},
+            checked_attributes={
+                "trials",
+                "best_config",
+                "best_score",
+                "stop_reason",
+                "status",
+            },
             missing_critical_checks=set(),
             assertion_count=5,
             has_behavior_verification=True,
@@ -443,6 +447,7 @@ class TestLLMTestScanner:
         report = scanner.format_report(result, "json")
 
         import json
+
         data = json.loads(report)
         assert "scanned_files" in data
         assert "summary" in data

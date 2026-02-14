@@ -10,6 +10,7 @@ and MCP client operations.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -170,6 +171,8 @@ class IntegrationManager:
             logger.info("Integration manager initialized successfully")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to initialize integration manager: {e}")
             return False
@@ -247,6 +250,8 @@ class IntegrationManager:
 
             return result
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to start optimization integration: {e}")
             self._integration_stats["failed_integrations"] += 1
@@ -283,6 +288,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Local integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -383,6 +390,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Privacy-first integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -451,6 +460,8 @@ class IntegrationManager:
                 },
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Cloud SaaS integration failed: {e}")
             return IntegrationResult(success=False, error_message=str(e))
@@ -546,6 +557,8 @@ class IntegrationManager:
 
             return cast(TrialSuggestion | None, suggestion)
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to get next trial for session {session_id}: {e}")
             return None
@@ -603,6 +616,8 @@ class IntegrationManager:
 
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to submit trial results: {e}")
             return False
@@ -648,6 +663,8 @@ class IntegrationManager:
             logger.info(f"Finalized session {session_id}")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to finalize session {session_id}: {e}")
             return False
@@ -682,6 +699,8 @@ class IntegrationManager:
             logger.info(f"Cancelled session {session_id}")
             return True
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Failed to cancel session {session_id}: {e}")
             return False
@@ -742,6 +761,8 @@ class IntegrationManager:
             # Check lifecycle manager
             health_status["components"]["lifecycle_manager"] = "healthy"
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             health_status["integration_manager"] = "unhealthy"
             health_status["error"] = str(e)
@@ -763,6 +784,8 @@ class IntegrationManager:
             self._initialized = False
             logger.info("Integration manager cleanup completed")
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error(f"Error during integration manager cleanup: {e}")
 
