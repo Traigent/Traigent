@@ -206,7 +206,9 @@ class EncryptionManager:
                 "This is only safe in test/mock mode."
             )
             iv = os.urandom(12)
-            ciphertext = b"mock_" + data_bytes
+            ciphertext = (
+                b"mock_" + data_bytes
+            )  # NOSONAR — test-only, gated by TRAIGENT_MOCK_LLM
             tag = os.urandom(16)
 
         return {
@@ -292,9 +294,9 @@ class EncryptionManager:
                 "Using mock decryption - cryptography library not available. "
                 "This is only safe in test/mock mode."
             )
-            if ciphertext.startswith(b"mock_"):
+            if ciphertext.startswith(b"mock_"):  # NOSONAR — test-only mock decryption
                 return ciphertext[5:]
-            if ciphertext.startswith(b"encrypted_"):
+            if ciphertext.startswith(b"encrypted_"):  # NOSONAR — legacy mock compat
                 return ciphertext[10:]
             return ciphertext
 
