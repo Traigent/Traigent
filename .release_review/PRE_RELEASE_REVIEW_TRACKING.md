@@ -8,7 +8,7 @@ Evidence must be machine-validated JSON (see `.release_review/CAPTAIN_PROTOCOL.m
 
 ## Roles
 
-- Release captain: Claude Code (Opus 4.5)
+- Release captain: Claude Code (Opus 4.6)
 - Human release owner (final sign-off): TBD
 - Target release date: TBD
 - Branch/tag: `release-review/v0.10.0` (baseline: `v0.10.0-rc1` @ 989203c)
@@ -18,10 +18,10 @@ Evidence must be machine-validated JSON (see `.release_review/CAPTAIN_PROTOCOL.m
 
 | Category | Primary | Secondary | Spot-Check |
 |----------|---------|-----------|------------|
-| Security/Core | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 |
-| Integrations | GPT-5.2 | Gemini 3.0 | Claude Opus 4.5 |
-| Packaging/CI | Gemini 3.0 | Claude Opus 4.5 | GPT-5.2 |
-| Docs/Examples | Claude Opus 4.5 | GPT-5.2 | Gemini 3.0 |
+| Security/Core | Claude Opus 4.6 | GPT-5.3 | Gemini 3 Pro |
+| Integrations | GPT-5.3 | Gemini 3 Pro | Claude Opus 4.6 |
+| Packaging/CI | Gemini 3 Pro | Claude Opus 4.6 | GPT-5.3 |
+| Docs/Examples | Claude Opus 4.6 | GPT-5.3 | Gemini 3 Pro |
 
 ## Session Handoff Protocol
 

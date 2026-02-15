@@ -33,6 +33,7 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import inspect
 import json
@@ -601,6 +602,8 @@ class TraigentService:
             except HybridAPIError:
                 # Bubble up explicit transport-level errors (401/429/503/etc.)
                 raise
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Execute failed for {input_id}: {e}")
                 failed_input_ids.append(input_id)
@@ -740,6 +743,8 @@ class TraigentService:
 
             except HybridAPIError:
                 # Bubble up explicit transport-level errors (401/429/503/etc.)
+                raise
+            except asyncio.CancelledError:
                 raise
             except Exception as e:
                 logger.error(f"Evaluate failed for {input_id}: {e}")

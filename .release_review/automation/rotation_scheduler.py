@@ -91,14 +91,14 @@ class RotationScheduler:
 
     # Default models (in capability order)
     DEFAULT_MODELS = [
-        "Claude Opus 4.5",
-        "GPT-5.2",
-        "Gemini 3.0",
+        "Claude Opus 4.6",
+        "GPT-5.3",
+        "Gemini 3 Pro",
     ]
 
     # Model capability tiers
-    TIER_1_MODELS = {"Claude Opus 4.5", "GPT-5.2"}
-    TIER_2_MODELS = {"Gemini 3.0"}
+    TIER_1_MODELS = {"Claude Opus 4.6", "GPT-5.3"}
+    TIER_2_MODELS = {"Gemini 3 Pro"}
 
     # Categories that require Tier 1 primary reviewer
     CRITICAL_CATEGORIES = {"Security/Core"}

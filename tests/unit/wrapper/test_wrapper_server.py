@@ -659,10 +659,12 @@ class TestErrorHandling:
             )
 
         app = create_app(svc)
-        request_body = json.dumps({
-            "capability_id": "default",
-            "inputs": [{"input_id": "i1", "data": {}}],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "capability_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
 
         send = _SendCollector()
         await app(
@@ -691,11 +693,13 @@ class TestErrorHandling:
             return {"output": "done"}
 
         app = create_app(svc)
-        request_body = json.dumps({
-            "capability_id": "default",
-            "timeout_ms": 1000,  # 1 second timeout
-            "inputs": [{"input_id": "i1", "data": {}}],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "capability_id": "default",
+                "timeout_ms": 1000,  # 1 second timeout
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
 
         send = _SendCollector()
         await app(
@@ -720,10 +724,12 @@ class TestErrorHandling:
             raise RateLimitError(retry_after=60)
 
         app = create_app(svc)
-        request_body = json.dumps({
-            "capability_id": "default",
-            "inputs": [{"input_id": "i1", "data": {}}],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "capability_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
 
         send = _SendCollector()
         await app(
@@ -748,11 +754,13 @@ class TestErrorHandling:
             return {"accuracy": 1.0}
 
         app = create_app(svc)
-        request_body = json.dumps({
-            "capability_id": "default",
-            "timeout_ms": 1000,  # 1 second timeout
-            "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "capability_id": "default",
+                "timeout_ms": 1000,  # 1 second timeout
+                "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
+            }
+        ).encode()
 
         send = _SendCollector()
         await app(
@@ -777,10 +785,12 @@ class TestErrorHandling:
             raise RateLimitError(retry_after=60)
 
         app = create_app(svc)
-        request_body = json.dumps({
-            "capability_id": "default",
-            "inputs": [{"input_id": "i1", "data": {}}],
-        }).encode()
+        request_body = json.dumps(
+            {
+                "capability_id": "default",
+                "inputs": [{"input_id": "i1", "data": {}}],
+            }
+        ).encode()
 
         send = _SendCollector()
         await app(

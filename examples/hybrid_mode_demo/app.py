@@ -81,6 +81,7 @@ def capabilities():
             "supports_keep_alive": False,  # Set True for stateful agents
             "supports_streaming": False,
             "max_batch_size": 100,
+            "capability_ids": ["demo_agent"],
         }
     )
 
@@ -354,6 +355,7 @@ def evaluate():
     return jsonify(
         {
             "request_id": request_id,
+            "execution_id": data.get("execution_id"),
             "status": "completed",
             "results": results,
             "aggregate_metrics": aggregate_metrics,

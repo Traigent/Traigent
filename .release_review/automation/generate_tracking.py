@@ -20,7 +20,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 # Priority scoring weights (same as protocol)
 WEIGHT_CENTRALITY = 0.40
 WEIGHT_SEVERITY = 0.35
@@ -235,7 +234,7 @@ def generate_tracking_file(
     # Roles section
     lines.append("## Roles")
     lines.append("")
-    lines.append("- Release captain: Claude Code (Opus 4.5)")
+    lines.append("- Release captain: Claude Code (Opus 4.6)")
     lines.append("- Human release owner (final sign-off): TBD")
     lines.append("- Target release date: TBD")
     lines.append(f"- Branch/tag: `release-review/{version}` (baseline: `{version}-rc1` @ {git_sha})")

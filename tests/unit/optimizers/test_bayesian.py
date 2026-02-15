@@ -831,6 +831,66 @@ class TestBayesianOptimizer:
             assert 0.0 <= config["x"] <= 1.0
             assert 0.0 <= config["y"] <= 1.0
 
+    def test_categorical_only_empty_categorical_mapping_falls_back(self):
+        """When _param_mapping['categorical'] is empty, should fall back to random."""
+        # Create categorical-only config space
+        config_space = {"model": ["gpt-4", "gpt-3.5"], "mode": ["fast", "slow"]}
+        optimizer = BayesianOptimizer(
+            config_space, ["accuracy"], initial_random_samples=2, random_seed=42
+        )
+
+        # Build enough history to trigger GP-based suggestion
+        history = [
+            TrialResult(
+                f"t{i}",
+                {"model": "gpt-4", "mode": "fast"},
+                {"accuracy": 0.7 + i * 0.05},
+                TrialStatus.COMPLETED,
+                1.0,
+                datetime.now(),
+            )
+            for i in range(3)
+        ]
+
+        # Clear categorical mapping to trigger the fallback
+        optimizer._param_mapping["categorical"] = []
+
+        config = optimizer.suggest_next_trial(history)
+        assert isinstance(config, dict)
+
+    def test_categorical_only_empty_values_falls_back(self):
+        """When first categorical param has empty values, should fall back to random."""
+        config_space = {"model": ["gpt-4", "gpt-3.5"], "mode": ["fast", "slow"]}
+        optimizer = BayesianOptimizer(
+            config_space, ["accuracy"], initial_random_samples=2, random_seed=42
+        )
+
+        history = [
+            TrialResult(
+                f"t{i}",
+                {"model": "gpt-4", "mode": "fast"},
+                {"accuracy": 0.7 + i * 0.05},
+                TrialStatus.COMPLETED,
+                1.0,
+                datetime.now(),
+            )
+            for i in range(3)
+        ]
+
+        fallback_config = {"model": "gpt-4", "mode": "fast"}
+        # Patch both _config_to_array (for history) and _random_config (for fallback)
+        with (
+            patch.object(
+                optimizer, "_config_to_array", return_value=np.array([0.5, 0.5])
+            ),
+            patch.object(optimizer, "_random_config", return_value=fallback_config),
+        ):
+            # Set first categorical param to have empty values
+            optimizer._param_mapping["categorical"] = [{"name": "model", "values": []}]
+
+            config = optimizer.suggest_next_trial(history)
+            assert config == fallback_config
+
 
 class TestBayesianOptimizerNotInstalled:
     """Test behavior when scikit-learn is not installed."""

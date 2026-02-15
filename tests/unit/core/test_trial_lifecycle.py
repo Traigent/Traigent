@@ -940,3 +940,33 @@ class TestRunSequentialTrial:
         call_kwargs = orchestrator._abandon_optuna_trial.call_args[1]
         assert "trial_rejected_by_constraint" in call_kwargs.get("reason", "")
         assert call_kwargs.get("status") == TrialStatus.PRUNED
+
+
+# =============================================================================
+# CancelledError Propagation Tests
+# =============================================================================
+
+
+class TestCancelledErrorPropagation:
+    """Verify that asyncio.CancelledError is re-raised (SonarQube S7497)."""
+
+    @pytest.mark.asyncio
+    async def test_execute_trial_with_tracing_propagates_cancelled_error(self):
+        """CancelledError during evaluation must propagate through _execute_trial_with_tracing."""
+        import asyncio
+
+        orchestrator = MockOrchestrator()
+        # Make the evaluator raise CancelledError
+        orchestrator.evaluator = MagicMock()
+        orchestrator.evaluator.evaluate = AsyncMock(side_effect=asyncio.CancelledError)
+
+        lifecycle = TrialLifecycle(orchestrator)
+
+        with pytest.raises(asyncio.CancelledError):
+            await lifecycle.run_trial(
+                func=lambda x: "result",
+                config={"temperature": 0.5},
+                dataset=create_mock_dataset(),
+                trial_number=0,
+                session_id=None,
+            )

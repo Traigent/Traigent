@@ -1,5 +1,13 @@
 # Start Release Review
 
+> **DEPRECATED**: Use the `/release-review` Claude Code skill instead.
+> Example: `/release-review v0.11.0`
+> See `.claude/skills/release-review/SKILL.md` for the full workflow.
+
+---
+
+*The prompts below are kept for reference. For new reviews, use the skill.*
+
 Copy and paste this prompt to your Claude Code CLI to start a release review.
 
 ---

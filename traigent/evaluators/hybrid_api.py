@@ -9,6 +9,7 @@ hybrid API protocol.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -372,6 +373,8 @@ class HybridAPIEvaluator(BaseEvaluator):
                             "successful": sum(1 for r in example_results if r.success),
                         },
                     )
+                except asyncio.CancelledError:
+                    raise
                 except Exception as e:
                     logger.warning(f"Progress callback error: {e}")
 
@@ -645,6 +648,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
             return results
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.warning(f"Evaluate call failed, using execute-only: {e}")
             return self._process_execute_only_response(batch, inputs, execute_response)
