@@ -156,6 +156,8 @@ class OptimizedFunction:
     including methods to run optimization, get results, and analyze performance.
     """
 
+    _csm: ConfigStateManager
+
     def __init__(
         self,
         func: Callable[..., Any],
@@ -591,11 +593,11 @@ class OptimizedFunction:
 
     @property
     def _state_lock(self) -> threading.RLock:
-        return self._csm._state_lock
+        return self._csm._state_lock  # type: ignore[no-any-return]
 
     @property  # noqa: F811
     def _optimization_results(self) -> OptimizationResult | None:  # type: ignore[override]
-        return self._csm._optimization_results
+        return self._csm._optimization_results  # type: ignore[no-any-return]
 
     @_optimization_results.setter
     def _optimization_results(self, value: OptimizationResult | None) -> None:
@@ -603,7 +605,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _optimization_history(self) -> list[OptimizationResult]:  # type: ignore[override]
-        return self._csm._optimization_history
+        return self._csm._optimization_history  # type: ignore[no-any-return]
 
     @_optimization_history.setter
     def _optimization_history(self, value: list[OptimizationResult]) -> None:
@@ -611,7 +613,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _current_config(self) -> dict[str, Any]:  # type: ignore[override]
-        return self._csm._current_config
+        return self._csm._current_config  # type: ignore[no-any-return]
 
     @_current_config.setter
     def _current_config(self, value: dict[str, Any]) -> None:
@@ -619,7 +621,7 @@ class OptimizedFunction:
 
     @property  # noqa: F811
     def _best_config(self) -> dict[str, Any] | None:  # type: ignore[override]
-        return self._csm._best_config
+        return self._csm._best_config  # type: ignore[no-any-return]
 
     @_best_config.setter
     def _best_config(self, value: dict[str, Any] | None) -> None:
@@ -1408,7 +1410,7 @@ class OptimizedFunction:
         )
 
         # Show upgrade hints after optimization completion (Edge Analytics mode only)
-        if self.traigent_config.is_edge_analytics_mode():
+        if self.traigent_config.is_edge_analytics_mode():  # type: ignore[has-type]
             try:
                 show_upgrade_hint(
                     "session_complete",
@@ -1418,7 +1420,7 @@ class OptimizedFunction:
             except Exception as e:
                 logger.debug(f"Failed to show upgrade hint: {e}")
 
-        return result
+        return result  # type: ignore[no-any-return]
 
     async def _try_cloud_execution(
         self,
@@ -1843,19 +1845,19 @@ class OptimizedFunction:
 
     def get_best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization."""
-        return self._csm.get_best_config()
+        return self._csm.get_best_config()  # type: ignore[no-any-return]
 
     def get_optimization_results(self) -> OptimizationResult | None:
         """Get the latest optimization results."""
-        return self._csm.get_optimization_results()
+        return self._csm.get_optimization_results()  # type: ignore[no-any-return]
 
     def get_optimization_history(self) -> list[OptimizationResult]:
         """Get history of all optimization runs."""
-        return self._csm.get_optimization_history()
+        return self._csm.get_optimization_history()  # type: ignore[no-any-return]
 
     def is_optimization_complete(self) -> bool:
         """Check if optimization has been completed."""
-        return self._csm.is_optimization_complete()
+        return self._csm.is_optimization_complete()  # type: ignore[no-any-return]
 
     def reset_optimization(self) -> None:
         """Reset optimization state and restore default configuration."""
@@ -1877,12 +1879,12 @@ class OptimizedFunction:
     @property
     def best_config(self) -> dict[str, Any] | None:
         """Get the best configuration found during optimization."""
-        return self._csm.best_config
+        return self._csm.best_config  # type: ignore[no-any-return]
 
     @property
     def current_config(self) -> dict[str, Any]:
         """Get the configuration this function uses when called."""
-        return self._csm.current_config
+        return self._csm.current_config  # type: ignore[no-any-return]
 
     def _maybe_auto_load_config(self) -> None:
         """Auto-load configuration if requested. Delegates to ConfigStateManager."""
@@ -1894,7 +1896,7 @@ class OptimizedFunction:
 
     def apply_best_config(self, results: OptimizationResult | None = None) -> bool:
         """Apply best configuration from optimization results."""
-        return self._csm.apply_best_config(
+        return self._csm.apply_best_config(  # type: ignore[no-any-return]
             results,
             get_wrapped_func=lambda: self._wrapped_func,
             set_wrapped_func=lambda f: setattr(self, "_wrapped_func", f),
@@ -1908,17 +1910,17 @@ class OptimizedFunction:
         include_metadata: bool = True,
     ) -> Path:
         """Export the best configuration to a file."""
-        return self._csm.export_config(
+        return self._csm.export_config(  # type: ignore[no-any-return]
             path, format=format, include_metadata=include_metadata
         )
 
     def _load_config_from_path(self, path: str) -> dict[str, Any] | None:
         """Load config from a file path. Delegates to ConfigStateManager."""
-        return self._csm._load_config_from_path(path)
+        return self._csm._load_config_from_path(path)  # type: ignore[no-any-return]
 
     def _find_latest_config_path(self) -> str | None:
         """Find the latest saved config path. Delegates to ConfigStateManager."""
-        return self._csm._find_latest_config_path()
+        return self._csm._find_latest_config_path()  # type: ignore[no-any-return]
 
     def cleanup(self, *, preserve_config: bool = True) -> None:
         """Clean up optimization artifacts to free memory.

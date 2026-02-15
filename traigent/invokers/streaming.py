@@ -10,10 +10,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from traigent.invokers.base import (
-    InvocationResult,
-    StreamingChunk,
-)
+from traigent.invokers.base import InvocationResult, StreamingChunk
 from traigent.invokers.local import LocalInvoker
 from traigent.utils.exceptions import InvocationError
 from traigent.utils.logging import get_logger
@@ -193,16 +190,22 @@ class StreamingInvoker(LocalInvoker):
         """
         # Handle async iterators
         if hasattr(response, "__aiter__"):
-            async for chunk in response:
-                if self.chunk_timeout:
-                    try:
-                        yield chunk
-                    except TimeoutError as e:
-                        raise InvocationError(
-                            f"Chunk timeout after {self.chunk_timeout}s"
-                        ) from e
-                else:
-                    yield chunk
+            aiter = response.__aiter__()
+            while True:
+                try:
+                    if self.chunk_timeout:
+                        chunk = await asyncio.wait_for(
+                            aiter.__anext__(), timeout=self.chunk_timeout
+                        )
+                    else:
+                        chunk = await aiter.__anext__()
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as e:
+                    raise InvocationError(
+                        f"Chunk timeout after {self.chunk_timeout}s"
+                    ) from e
+                yield chunk
 
         # Handle sync iterators (wrap in async)
         elif hasattr(response, "__iter__") and not isinstance(response, (str, bytes)):

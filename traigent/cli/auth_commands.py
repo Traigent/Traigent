@@ -289,7 +289,9 @@ class TraigentAuthCLI:
         try:
             # Authenticate
             console.print("\n[yellow]Authenticating...[/yellow]")
-            credentials = await self._authenticate_with_backend(email, password)
+            credentials = await self._authenticate_with_backend(
+                email, password  # type: ignore[arg-type]
+            )
 
             # Store credentials
             self._save_credentials(credentials)

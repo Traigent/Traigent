@@ -145,9 +145,14 @@ class LocalStorageManager:
         Raises:
             TimeoutError: If lock cannot be acquired within timeout
         """
+        safe_lock_name = sanitize_identifier(lock_name)
         lock_dir = self.storage_path / ".locks"
         lock_dir.mkdir(exist_ok=True, parents=True)
-        lock_path = lock_dir / f"{lock_name}.lock"
+        lock_path = validate_path(
+            lock_dir / f"{safe_lock_name}.lock",
+            self.storage_path,
+            must_exist=False,
+        )
 
         start_time = time.time()
         backoff = 0.01
@@ -170,12 +175,9 @@ class LocalStorageManager:
             except FileExistsError:
                 # Lock is held by another process
                 if time.time() - start_time > timeout:
-                    logger.warning(
-                        f"Could not acquire lock {lock_name} after {timeout}s"
-                    )
-                    # Degrade gracefully - continue without lock
-                    yield
-                    break
+                    raise TimeoutError(
+                        f"Could not acquire lock '{lock_name}' after {timeout}s"
+                    ) from None
                 time.sleep(backoff)
                 backoff = min(backoff * 2, 0.5)  # Exponential backoff with cap
 
@@ -362,7 +364,11 @@ class LocalStorageManager:
 
     def delete_session(self, session_id: str) -> bool:
         """Delete a session from storage."""
-        session_file = self.storage_path / "sessions" / f"{session_id}.json"
+        session_file = validate_path(
+            self.storage_path / "sessions" / f"{session_id}.json",
+            self.storage_path,
+            must_exist=False,
+        )
 
         if session_file.exists():
             try:

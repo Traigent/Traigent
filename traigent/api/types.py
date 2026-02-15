@@ -1306,7 +1306,7 @@ class ParetoFront:
             distances = np.linalg.norm(normalized - 1.0, axis=1)
             best_idx = np.argmin(distances)
 
-        return self.configurations[best_idx]
+        return self.configurations[best_idx]  # type: ignore[no-any-return]
 
     def plot_trade_offs(self, x_objective: str, y_objective: str) -> None:
         """Plot trade-offs between two objectives."""

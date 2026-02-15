@@ -60,7 +60,7 @@ class DataClassification(Enum):
     INTERNAL = "internal"
     CONFIDENTIAL = "confidential"
     RESTRICTED = "restricted"
-    TOP_SECRET = "top_secret"
+    TOP_SECRET = "top_secret"  # pragma: allowlist secret
 
 
 class EncryptionLevel(Enum):
@@ -191,13 +191,24 @@ class EncryptionManager:
                     "Encryption operation failed. Cannot proceed without proper encryption."
                 ) from None
         else:
-            # Mock encryption for testing (only when cryptography library is unavailable)
+            # Mock encryption: ONLY allowed in test/mock mode
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
+                "true",
+                "1",
+            )
+            if not mock_mode:
+                raise RuntimeError(
+                    "Encryption requires the 'cryptography' package. "
+                    "Install it with: pip install 'traigent[security]'"
+                )
             logger.warning(
                 "Using mock encryption - cryptography library not available. "
-                "Do NOT use in production."
+                "This is only safe in test/mock mode."
             )
             iv = os.urandom(12)
-            ciphertext = b"encrypted_" + data_bytes
+            ciphertext = (
+                b"mock_" + data_bytes
+            )  # NOSONAR — test-only, gated by TRAIGENT_MOCK_LLM
             tag = os.urandom(16)
 
         return {
@@ -269,12 +280,23 @@ class EncryptionManager:
                     "Decryption operation failed. Data integrity cannot be verified."
                 ) from None
         else:
-            # Mock decryption for testing (only when cryptography library is unavailable)
+            # Mock decryption: ONLY allowed in test/mock mode
+            mock_mode = os.environ.get("TRAIGENT_MOCK_LLM", "").lower() in (
+                "true",
+                "1",
+            )
+            if not mock_mode:
+                raise RuntimeError(
+                    "Decryption requires the 'cryptography' package. "
+                    "Install it with: pip install 'traigent[security]'"
+                )
             logger.warning(
                 "Using mock decryption - cryptography library not available. "
-                "Do NOT use in production."
+                "This is only safe in test/mock mode."
             )
-            if ciphertext.startswith(b"encrypted_"):
+            if ciphertext.startswith(b"mock_"):  # NOSONAR — test-only mock decryption
+                return ciphertext[5:]
+            if ciphertext.startswith(b"encrypted_"):  # NOSONAR — legacy mock compat
                 return ciphertext[10:]
             return ciphertext
 

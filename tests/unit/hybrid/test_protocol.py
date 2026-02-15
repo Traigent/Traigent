@@ -426,3 +426,68 @@ class TestHealthCheckResponse:
         """Test default status when not provided."""
         response = HealthCheckResponse.from_dict({})
         assert response.status == "unhealthy"
+
+
+class TestExecuteResponseMissingExecutionId:
+    """Test HybridExecuteResponse fallback when execution_id is missing."""
+
+    def test_missing_execution_id_generates_fallback(self) -> None:
+        """Missing execution_id should generate a UUID fallback."""
+        data = {
+            "request_id": "req_abc",
+            "status": "completed",
+            "outputs": [],
+            "operational_metrics": {},
+        }
+
+        response = HybridExecuteResponse.from_dict(data)
+
+        assert response.request_id == "req_abc"
+        # execution_id should be a generated UUID string
+        assert response.execution_id is not None
+        assert len(response.execution_id) == 36  # UUID format
+
+
+class TestEvaluateResponseExecutionId:
+    """Test HybridEvaluateResponse execution_id field."""
+
+    def test_from_dict_with_execution_id(self) -> None:
+        """Execution_id is preserved from response dict."""
+        data = {
+            "request_id": "req_1",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+            "execution_id": "exec_999",
+        }
+        response = HybridEvaluateResponse.from_dict(data)
+        assert response.execution_id == "exec_999"
+
+    def test_from_dict_without_execution_id(self) -> None:
+        """Missing execution_id defaults to None."""
+        data = {
+            "request_id": "req_2",
+            "status": "completed",
+            "results": [],
+            "aggregate_metrics": {},
+        }
+        response = HybridEvaluateResponse.from_dict(data)
+        assert response.execution_id is None
+
+
+class TestServiceCapabilitiesCapabilityIds:
+    """Test ServiceCapabilities capability_ids field."""
+
+    def test_from_dict_with_capability_ids(self) -> None:
+        """capability_ids is parsed from response dict."""
+        data = {
+            "version": "1.0",
+            "capability_ids": ["agent_a", "agent_b"],
+        }
+        caps = ServiceCapabilities.from_dict(data)
+        assert caps.capability_ids == ["agent_a", "agent_b"]
+
+    def test_from_dict_without_capability_ids(self) -> None:
+        """Missing capability_ids defaults to None."""
+        caps = ServiceCapabilities.from_dict({"version": "1.0"})
+        assert caps.capability_ids is None
