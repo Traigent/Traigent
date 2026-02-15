@@ -273,7 +273,7 @@ class MetricsTracker:
                     return cast(
                         float | None, d.get(key, {}).get(subkey, actual_default)
                     )
-                return d.get(key, actual_default)
+                return cast(float | None, d.get(key, actual_default))
             except (AttributeError, TypeError):
                 return actual_default
 

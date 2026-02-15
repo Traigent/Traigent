@@ -1,7 +1,7 @@
 # Makefile for Traigent SDK Development
 # Run 'make help' to see available commands
 
-.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues
+.PHONY: help install install-dev test test-unit test-integration test-coverage lint format security clean analyze test-validation test-validation-unit test-validation-failures test-validation-traced jaeger-start jaeger-stop analyze-traces sonar-scan sonar-local-start sonar-local-stop sonar-local-down sonar-local-clean sonar-local sonar-local-issues test-quality test-quality-ci test-quality-llm
 
 # Variables
 PYTHON ?= .venv/bin/python
@@ -206,6 +206,37 @@ sonar-local:  ## Run SonarQube analysis locally (requires sonar-local-start firs
 		-Dsonar.login=$$SONAR_LOCAL_TOKEN
 	@echo ""
 	@echo "View results at: http://localhost:9000/dashboard?id=traigent-local"
+
+# Test quality analysis
+test-quality:  ## Run test quality analysis pipeline (local)
+	@echo "=== Test Quality Pipeline ==="
+	@echo ""
+	@echo "[1/3] Running assertion linter..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_test_assertions 2>&1 || true
+	@echo ""
+	@echo "[2/3] Running test weakness analyzer..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.test_weakness_analyzer --output text 2>&1 || true
+	@echo ""
+	@echo "[3/3] Running LLM test scanner (AST-only)..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner -d $(TEST_DIR)/optimizer_validation -o text
+	@echo ""
+	@echo "Test quality pipeline complete"
+
+test-quality-ci:  ## Run test quality checks for CI (strict mode)
+	@echo "=== CI Test Quality Gates ==="
+	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner \
+		-d $(TEST_DIR)/optimizer_validation -o json -s /tmp/test_quality_report.json
+	@echo "Test quality report saved to /tmp/test_quality_report.json"
+
+test-quality-llm:  ## Run test quality with LLM suggestions (requires API key)
+	@if [ -z "$$OPENAI_API_KEY" ]; then \
+		echo "Error: OPENAI_API_KEY not set"; \
+		exit 1; \
+	fi
+	$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner \
+		-d $(TEST_DIR)/optimizer_validation --enable-llm -o text \
+		-s $(TEST_DIR)/optimizer_validation/llm_suggestions.json
+	@echo "LLM suggestions saved to $(TEST_DIR)/optimizer_validation/llm_suggestions.json"
 
 sonar-local-issues:  ## Show issues from local SonarQube
 	@if [ -z "$$SONAR_LOCAL_TOKEN" ]; then \

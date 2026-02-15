@@ -114,9 +114,16 @@ class HybridExecuteResponse:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> HybridExecuteResponse:
         """Create from dictionary (API response)."""
+        execution_id = data.get("execution_id")
+        if execution_id is None:
+            execution_id = str(uuid.uuid4())
+            logger.warning(
+                "ExecuteResponse missing required execution_id; generated fallback %s",
+                execution_id,
+            )
         return cls(
             request_id=data["request_id"],
-            execution_id=data.get("execution_id", str(uuid.uuid4())),
+            execution_id=execution_id,
             status=data["status"],
             outputs=data.get("outputs", []),
             operational_metrics=data.get("operational_metrics", {}),
@@ -188,6 +195,7 @@ class HybridEvaluateResponse:
     status: Literal["completed", "partial", "failed"]
     results: list[dict[str, Any]]
     aggregate_metrics: dict[str, dict[str, float | int]]
+    execution_id: str | None = None
     error: dict[str, Any] | None = None
 
     @classmethod
@@ -198,6 +206,7 @@ class HybridEvaluateResponse:
             status=data["status"],
             results=data.get("results", []),
             aggregate_metrics=data.get("aggregate_metrics", {}),
+            execution_id=data.get("execution_id"),
             error=data.get("error"),
         )
 
@@ -224,6 +233,7 @@ class ServiceCapabilities:
     supports_streaming: bool = False
     max_batch_size: int = 100
     max_payload_bytes: int | None = None
+    capability_ids: list[str] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ServiceCapabilities:
@@ -235,6 +245,7 @@ class ServiceCapabilities:
             supports_streaming=data.get("supports_streaming", False),
             max_batch_size=data.get("max_batch_size", 100),
             max_payload_bytes=data.get("max_payload_bytes"),
+            capability_ids=data.get("capability_ids"),
         )
 
 

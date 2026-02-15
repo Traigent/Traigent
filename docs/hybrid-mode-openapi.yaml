@@ -6,19 +6,13 @@ info:
 
     Implement these endpoints to enable Traigent to optimize your service's configuration.
     Production integrations should use HTTPS with HTTP/2.
-  version: "1.0.0"
+  version: 1.0.0
   contact:
     name: Traigent Support
     url: https://github.com/traigent/traigent-sdk
   license:
     name: Proprietary
     url: https://traigent.ai/license
-
-x-transport-requirements:
-  production_scheme: https
-  production_http_version: "2"
-  local_development_exception: true
-
 servers:
   - url: http://127.0.0.1:8080
     description: Local development server
@@ -26,7 +20,8 @@ servers:
     description: Production server
   - url: https://staging.your-service.com
     description: Staging server
-
+security:
+  - bearerAuth: []
 tags:
   - name: Discovery
     description: Service discovery and capability endpoints
@@ -36,11 +31,6 @@ tags:
     description: Output evaluation endpoints
   - name: Health
     description: Health and session management
-
-security:
-  - bearerAuth: []
-  - {}
-
 paths:
   /traigent/v1/capabilities:
     get:
@@ -48,39 +38,43 @@ paths:
       summary: Get service capabilities
       description: |
         Returns the service capabilities for the initial handshake.
-        Traigent SDK calls this first to discover what features your service supports.
+        Traigent calls this first to discover what features your service supports.
       tags:
         - Discovery
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       responses:
-        "200":
+        '200':
           description: Service capabilities
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ServiceCapabilities"
+                $ref: '#/components/schemas/ServiceCapabilities'
               example:
-                version: "1.0"
+                version: '1.0'
                 supports_evaluate: true
                 supports_keep_alive: false
                 supports_streaming: false
                 max_batch_size: 100
-                capability_ids: ["my_agent"]
-        "500":
+                capability_ids:
+                  - my_agent
+        '401':
+          description: Unauthorized (missing or invalid bearer token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNAUTHORIZED
+                  message: Bearer token is missing or invalid
+        '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
   /traigent/v1/config-space:
     get:
       operationId: getConfigSpace
@@ -91,43 +85,51 @@ paths:
       tags:
         - Discovery
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       responses:
-        "200":
+        '200':
           description: Configuration space with tunable definitions
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ConfigSpaceResponse"
+                $ref: '#/components/schemas/ConfigSpaceResponse'
               example:
-                schema_version: "0.9"
-                capability_id: "my_agent"
+                schema_version: '0.9'
+                capability_id: my_agent
                 tunables:
                   - name: model
                     type: enum
                     domain:
-                      values: ["gpt-4o", "claude-3-sonnet", "llama-70b"]
-                    default: "gpt-4o"
+                      values:
+                        - gpt-4o
+                        - claude-3-sonnet
+                        - llama-70b
+                    default: gpt-4o
                   - name: temperature
                     type: float
                     domain:
-                      range: [0.0, 2.0]
+                      range:
+                        - 0
+                        - 2
                       resolution: 0.1
                     default: 0.7
-        "500":
+        '401':
+          description: Unauthorized (missing or invalid bearer token)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNAUTHORIZED
+                  message: Bearer token is missing or invalid
+        '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
   /traigent/v1/execute:
     post:
       operationId: execute
@@ -135,72 +137,110 @@ paths:
       description: |
         Execute the agent with a specific configuration on a batch of inputs.
         This is the main endpoint where your agent processes inputs using the provided configuration.
+
+        **Server implementation (privacy-preserving mode):**
+        1. For each input, use `input_id` to look up the actual query from your local dataset (e.g., an observability platform like Langfuse, an evaluation dataset, or any local data store)
+        2. Run your agent with the provided `config` parameters
+        3. Store the response locally, keyed by a generated `output_id`
+        4. Return `output_id` + cost/latency per input (do NOT return response text)
+
+        **Two-phase vs Combined mode:**
+        - Return `quality_metrics: null` → Traigent calls `/traigent/v1/evaluate` separately (recommended)
+        - Return `quality_metrics` with data → Traigent uses those metrics directly, skips `/traigent/v1/evaluate`
       tags:
         - Execution
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/ExecuteRequest"
+              $ref: '#/components/schemas/ExecuteRequest'
             example:
-              request_id: "550e8400-e29b-41d4-a716-446655440000"
-              capability_id: "my_agent"
+              request_id: 550e8400-e29b-41d4-a716-446655440000
+              capability_id: my_agent
               config:
-                model: "gpt-4o"
+                model: gpt-4o
                 temperature: 0.5
               inputs:
-                - input_id: "ex_001"
-                  data:
-                    query: "What is machine learning?"
+                - input_id: case_001
               timeout_ms: 30000
       responses:
-        "200":
+        '200':
           description: Execution completed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ExecuteResponse"
-        "400":
-          description: Invalid request
+                $ref: '#/components/schemas/ExecuteResponse'
+              example:
+                request_id: 550e8400-e29b-41d4-a716-446655440000
+                execution_id: exec_20240115_001
+                status: completed
+                outputs:
+                  - input_id: case_001
+                    output_id: out_001_run_abc
+                    cost_usd: 0.0012
+                    latency_ms: 245.5
+                operational_metrics:
+                  total_cost_usd: 0.0012
+                  latency_ms: 245.5
+                  tokens_used: 1250
+                  tokens_input: 800
+                  tokens_output: 450
+                quality_metrics: null
+        '400':
+          description: Invalid request (e.g., missing required fields, invalid config values)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_CONFIG
+                  message: 'Invalid configuration: temperature must be between 0 and 2'
+        '401':
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "408":
+                $ref: '#/components/schemas/ErrorResponse'
+        '408':
           description: Request timeout exceeded timeout_ms budget
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "429":
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            Idempotency conflict — request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: IDEMPOTENCY_CONFLICT
+                  message: request_id 550e8400-... already used with different payload
+        '429':
           description: Rate limited
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: Service unavailable (temporary upstream/dependency outage)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable (temporary upstream/dependency outage)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /traigent/v1/evaluate:
     post:
       operationId: evaluate
@@ -211,69 +251,125 @@ paths:
       tags:
         - Evaluation
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/EvaluateRequest"
+              $ref: '#/components/schemas/EvaluateRequest'
             example:
-              request_id: "660e8400-e29b-41d4-a716-446655440001"
-              capability_id: "my_agent"
-              execution_id: "exec_123456"
+              request_id: 660e8400-e29b-41d4-a716-446655440001
+              capability_id: my_agent
+              execution_id: exec_123456
               evaluations:
-                - input_id: "ex_001"
+                - input_id: ex_001
                   output:
-                    response: "Machine learning is..."
+                    response: Machine learning is...
                   target:
-                    expected: "Machine learning is a type of AI..."
+                    expected: Machine learning is a type of AI...
               timeout_ms: 30000
       responses:
-        "200":
+        '200':
           description: Evaluation completed
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EvaluateResponse"
-        "400":
-          description: Invalid request
+                $ref: '#/components/schemas/EvaluateResponse'
+              examples:
+                with-execution-id:
+                  summary: Evaluate with execution_id (typical two-phase flow)
+                  value:
+                    request_id: 660e8400-e29b-41d4-a716-446655440001
+                    execution_id: exec_20240115_001
+                    status: completed
+                    results:
+                      - input_id: case_001
+                        metrics:
+                          accuracy: 0.92
+                          relevance: 0.88
+                          fluency: 0.95
+                    aggregate_metrics:
+                      accuracy:
+                        mean: 0.92
+                        std: 0.05
+                        'n': 10
+                      relevance:
+                        mean: 0.88
+                        std: 0.07
+                        'n': 10
+                without-execution-id:
+                  summary: Evaluate without execution_id (standalone evaluation)
+                  value:
+                    request_id: 770e8400-e29b-41d4-a716-446655440002
+                    execution_id: null
+                    status: completed
+                    results:
+                      - input_id: case_002
+                        metrics:
+                          accuracy: 0.89
+                          relevance: 0.91
+                    aggregate_metrics:
+                      accuracy:
+                        mean: 0.89
+                        std: 0.03
+                        'n': 5
+                      relevance:
+                        mean: 0.91
+                        std: 0.04
+                        'n': 5
+        '400':
+          description: Invalid request (e.g., missing required fields, unknown execution_id)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: execution_id exec_unknown not found
+        '401':
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "408":
+                $ref: '#/components/schemas/ErrorResponse'
+        '408':
           description: Request timeout exceeded timeout_ms budget
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "429":
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: |
+            Idempotency conflict — request_id was already used with a different payload. Retrying with the same request_id and identical payload returns the cached 200 response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: IDEMPOTENCY_CONFLICT
+                  message: request_id 660e8400-... already used with different payload
+        '429':
           description: Rate limited
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "503":
-          description: Service unavailable (temporary upstream/dependency outage)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
           description: Internal server error
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Service unavailable (temporary upstream/dependency outage)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
   /traigent/v1/health:
     get:
       operationId: getHealth
@@ -282,32 +378,35 @@ paths:
       tags:
         - Health
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       responses:
-        "200":
+        '200':
           description: Service is healthy
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/HealthCheckResponse"
+                $ref: '#/components/schemas/HealthCheckResponse'
               example:
                 status: healthy
-                version: "1.0.0"
+                version: 1.0.0
                 uptime_seconds: 3600.5
-        "503":
-          description: Service unavailable
+        '401':
+          description: Unauthorized (missing or invalid bearer token)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: UNAUTHORIZED
+                  message: Bearer token is missing or invalid
+        '503':
+          description: Service unavailable (dependency outage)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
   /traigent/v1/keep-alive:
     post:
       operationId: keepAlive
@@ -318,68 +417,76 @@ paths:
       tags:
         - Health
       parameters:
-        - $ref: "#/components/parameters/TraceParentHeader"
-        - $ref: "#/components/parameters/TraceStateHeader"
+        - $ref: '#/components/parameters/TraceParentHeader'
+        - $ref: '#/components/parameters/TraceStateHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: "#/components/schemas/KeepAliveRequest"
+              $ref: '#/components/schemas/KeepAliveRequest'
+            example:
+              session_id: sess_abc123
       responses:
-        "200":
+        '200':
           description: Session alive
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/KeepAliveResponse"
-        "404":
-          description: Session not found or expired
+                $ref: '#/components/schemas/KeepAliveResponse'
+              example:
+                status: alive
+                session_id: sess_abc123
+        '400':
+          description: Invalid request (e.g., missing session_id)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "400":
-          description: Invalid request
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "500":
-          description: Internal server error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: INVALID_REQUEST
+                  message: session_id is required
+        '401':
           description: Unauthorized
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/ErrorResponse"
-
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found or expired
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-
   parameters:
     TraceParentHeader:
       in: header
       name: traceparent
       required: false
-      description: W3C Trace Context traceparent header for distributed tracing.
+      description: 'W3C Trace Context traceparent header for distributed tracing. Format: {version}-{trace-id}-{parent-id}-{trace-flags}. When present, create a child span for the endpoint handler and propagate the context to downstream calls (e.g., LLM APIs). See the OpenTelemetry Integration section in the README for recommended span names and attributes.'
       schema:
         type: string
+      example: 00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01
     TraceStateHeader:
       in: header
       name: tracestate
       required: false
-      description: W3C Trace Context tracestate header for vendor-specific trace state.
+      description: W3C Trace Context tracestate header for vendor-specific trace state. Used for opaque routing keys only — not for high-cardinality customer or session identifiers (use span attributes instead).
       schema:
         type: string
-
+      example: traigent=us-east-1
   schemas:
     ServiceCapabilities:
       type: object
@@ -391,94 +498,108 @@ components:
         version:
           type: string
           description: API version (e.g., "1.0")
-          example: "1.0"
+          maxLength: 16
+          example: '1.0'
         supports_evaluate:
           type: boolean
           description: Whether separate evaluate endpoint is available
           default: true
+          example: true
         supports_keep_alive:
           type: boolean
           description: Whether keep-alive heartbeat is supported
           default: false
+          example: false
         supports_streaming:
           type: boolean
           description: Whether streaming responses are supported
           default: false
+          example: false
         max_batch_size:
           type: integer
           description: Maximum inputs per execute request
           default: 100
           minimum: 1
+          maximum: 100000
+          example: 100
         max_payload_bytes:
           type: integer
           description: Maximum request payload size (null = unlimited)
           nullable: true
+          example: 10485760
         capability_ids:
           type: array
           description: Optional list of capability IDs supported by this service
+          maxItems: 100
           items:
             type: string
-
-    ConfigSpaceResponse:
+            maxLength: 256
+    ErrorDetails:
       type: object
-      description: Response from config-space discovery endpoint
-      additionalProperties: false
+      description: Error details
       required:
-        - schema_version
-        - capability_id
-        - tunables
+        - code
+        - message
       properties:
-        schema_version:
+        code:
           type: string
-          description: TVL schema version
-          example: "0.9"
-        capability_id:
+          description: Error code
+          maxLength: 64
+          example: INVALID_CONFIG
+        message:
           type: string
-          description: Identifier for the capability
-          example: "my_agent"
-        tunables:
-          type: array
-          description: List of tunable variable definitions
-          items:
-            $ref: "#/components/schemas/TunableDefinition"
-        tvars:
-          type: array
-          description: Alias for tunables (backward compatibility). SDK accepts both keys.
-          items:
-            $ref: "#/components/schemas/TunableDefinition"
-        constraints:
-          description: Structural and behavioral constraints (legacy textual or typed TVL 0.9)
-          oneOf:
-            - type: object
-              minProperties: 1
-              additionalProperties:
-                type: array
-                items:
-                  type: string
-            - $ref: "#/components/schemas/TypedConstraints"
-            - type: array
-              items:
-                type: object
-                additionalProperties: true
-        objectives:
-          type: array
-          description: Optional objective definitions (TVL 0.9 compatible JSON)
-          items:
-            $ref: "#/components/schemas/ObjectiveDefinition"
-        exploration:
-          $ref: "#/components/schemas/ExplorationConfig"
-        promotion_policy:
-          $ref: "#/components/schemas/PromotionPolicy"
-        defaults:
+          description: Human-readable error message
+          maxLength: 2048
+          example: 'Invalid configuration: temperature must be between 0 and 2'
+        details:
           type: object
-          description: Optional default configuration values
-          additionalProperties: true
-        measures:
-          type: array
-          description: Optional list of metric names produced by the service
-          items:
+          description: Additional error details (must not contain sensitive data such as API keys or stack traces)
+          maxProperties: 20
+          additionalProperties:
             type: string
-
+            maxLength: 1024
+    ErrorResponse:
+      type: object
+      description: Error response format
+      required:
+        - error
+      properties:
+        error:
+          description: Structured error details
+          $ref: '#/components/schemas/ErrorDetails'
+    TunableDomain:
+      type: object
+      description: Domain specification for tunable variable
+      properties:
+        values:
+          type: array
+          description: Allowed values (for enum and str types)
+          maxItems: 1000
+          items:
+            nullable: true
+            oneOf:
+              - type: string
+              - type: number
+              - type: boolean
+          example:
+            - gpt-4o
+            - claude-3-sonnet
+        range:
+          type: array
+          description: '[min, max] range (for int and float types)'
+          items:
+            type: number
+          minItems: 2
+          maxItems: 2
+          example:
+            - 0
+            - 2
+        resolution:
+          type: number
+          description: Step size for float types
+          minimum: 0
+          exclusiveMinimum: true
+          example: 0.1
     TunableDefinition:
       type: object
       description: Tunable variable definition following TVL 0.9 specification
@@ -490,77 +611,62 @@ components:
         name:
           type: string
           description: Variable name (must be valid Python identifier)
-          pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
-          example: "temperature"
+          pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+          maxLength: 128
+          example: temperature
         type:
           type: string
           description: Variable type
-          enum: [bool, int, float, str, enum]
-          example: "float"
+          enum:
+            - bool
+            - int
+            - float
+            - str
+            - enum
+          example: float
         domain:
-          $ref: "#/components/schemas/TunableDomain"
+          description: Domain specification defining the range of valid values
+          $ref: '#/components/schemas/TunableDomain'
         default:
           description: Default value (type depends on tunable type)
         agent:
           type: string
           description: Agent name for multi-agent grouping
+          maxLength: 128
+          example: retriever
         is_tool:
           type: boolean
           description: True if this tunable configures an MCP tool
           default: false
+          example: false
         constraints:
           type: array
           description: Conditional constraints
+          maxItems: 20
           items:
             type: string
-          example: ["requires model == gpt-4"]
-
-    TunableDomain:
+            maxLength: 512
+          example:
+            - requires model == gpt-4
+    TypedConstraints:
       type: object
-      description: Domain specification for tunable variable
+      description: Typed TVL 0.9 constraints section
       properties:
-        values:
+        structural:
           type: array
-          description: Allowed values (for enum and str types)
-          items: {}
-          example: ["gpt-4o", "claude-3-sonnet"]
-        range:
-          type: array
-          description: "[min, max] range (for int and float types)"
+          description: Structural constraints on tunable combinations (e.g., mutual exclusion, dependency)
+          maxItems: 50
           items:
-            type: number
-          minItems: 2
-          maxItems: 2
-          example: [0.0, 2.0]
-        resolution:
-          type: number
-          description: Step size for float types
-          example: 0.1
-
-    ObjectiveDefinition:
-      type: object
-      description: Objective definition compatible with TVL 0.9 objectives section
-      required:
-        - name
-      properties:
-        name:
-          type: string
-          description: Objective name
-          pattern: "^[a-zA-Z_][a-zA-Z0-9_]*$"
-        direction:
-          type: string
-          description: Objective orientation
-          enum: [maximize, minimize, band]
-        weight:
-          type: number
-          description: Objective weight
-          default: 1.0
-        unit:
-          type: string
-          description: Optional objective unit
-        band:
-          $ref: "#/components/schemas/BandTarget"
-
+            type: object
+            additionalProperties: true
+        derived:
+          type: array
+          description: Derived constraints computed from tunable values (e.g., total cost bounds)
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: false
     BandTarget:
       type: object
       description: Banded objective target definition
@@ -574,57 +680,79 @@ components:
             type: number
           minItems: 2
           maxItems: 2
+          example:
+            - 0.85
+            - 0.95
         test:
           type: string
           description: Statistical band test
-          enum: [TOST]
+          enum:
+            - TOST
           default: TOST
+          example: TOST
         alpha:
           type: number
           description: Significance level for band test
           minimum: 0
           maximum: 1
           default: 0.05
-
-    ExplorationConfig:
+          example: 0.05
+    ObjectiveDefinition:
       type: object
-      description: Exploration strategy and budget controls (TVL 0.9 exploration section)
+      description: Objective definition compatible with TVL 0.9 objectives section
+      required:
+        - name
       properties:
-        strategy:
-          description: Exploration strategy
-          oneOf:
-            - type: string
-            - type: object
-              properties:
-                type:
-                  type: string
-              additionalProperties: true
-        budgets:
-          $ref: "#/components/schemas/ExplorationBudgets"
-        convergence:
-          $ref: "#/components/schemas/ConvergenceCriteria"
-        parallelism:
-          type: object
-          properties:
-            max_parallel_trials:
-              type: integer
-              minimum: 1
-          additionalProperties: true
-
+        name:
+          type: string
+          description: Objective name
+          pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+          maxLength: 128
+          example: accuracy
+        direction:
+          type: string
+          description: Objective orientation
+          enum:
+            - maximize
+            - minimize
+            - band
+          example: maximize
+        weight:
+          type: number
+          description: Objective weight
+          minimum: 0
+          default: 1
+          example: 1
+        unit:
+          type: string
+          description: Optional objective unit
+          maxLength: 64
+          example: percent
+        band:
+          description: Target band for banded objectives (required when direction is 'band')
+          $ref: '#/components/schemas/BandTarget'
     ExplorationBudgets:
       type: object
       description: Exploration budget limits
       properties:
         max_trials:
           type: integer
+          description: Maximum number of trial configurations to evaluate
           minimum: 1
+          maximum: 100000
+          example: 20
         max_spend_usd:
           type: number
+          description: Maximum total spend in USD across all trials
           minimum: 0
+          maximum: 100000
+          example: 5
         max_wallclock_s:
           type: number
+          description: Maximum wall-clock time in seconds for the optimization run
           minimum: 0
-
+          maximum: 604800
+          example: 3600
     ConvergenceCriteria:
       type: object
       description: Convergence stop criteria
@@ -635,62 +763,55 @@ components:
       properties:
         metric:
           type: string
+          description: Name of the metric to monitor for convergence
+          pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+          maxLength: 128
+          example: accuracy
         window:
           type: integer
+          description: Number of recent trials to evaluate for convergence
           minimum: 1
+          maximum: 1000
+          example: 5
         threshold:
           type: number
+          description: Maximum allowed improvement within the window to declare convergence
           minimum: 0
-
-    TypedConstraints:
+          example: 0.01
+    ExplorationConfig:
       type: object
-      description: Typed TVL 0.9 constraints section
+      description: Exploration strategy and budget controls (TVL 0.9 exploration section)
       properties:
-        structural:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        derived:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-      additionalProperties: false
-
-    PromotionPolicy:
-      type: object
-      description: Promotion policy for epsilon-Pareto selection
-      properties:
-        dominance:
-          type: string
-          enum: [epsilon_pareto]
-          default: epsilon_pareto
-        alpha:
-          type: number
-          minimum: 0
-          maximum: 1
-          default: 0.05
-        min_effect:
+        strategy:
+          description: Exploration strategy (string name or object with type and parameters)
+          oneOf:
+            - type: string
+              example: bayesian
+            - type: object
+              properties:
+                type:
+                  type: string
+              additionalProperties: true
+        budgets:
+          description: Budget limits for the exploration run
+          $ref: '#/components/schemas/ExplorationBudgets'
+        convergence:
+          description: Convergence stop criteria for early termination
+          $ref: '#/components/schemas/ConvergenceCriteria'
+        parallelism:
           type: object
-          additionalProperties:
-            type: number
-        adjust:
-          type: string
-          enum: [none, BH]
-          default: none
-        chance_constraints:
-          type: array
-          items:
-            $ref: "#/components/schemas/ChanceConstraint"
-        tie_breakers:
-          type: object
-          additionalProperties:
-            type: string
-            enum: [min_abs_deviation, custom]
-
+          description: Parallelism settings for trial execution
+          properties:
+            max_parallel_trials:
+              type: integer
+              description: Maximum number of trials to run concurrently
+              minimum: 1
+              maximum: 128
+              example: 4
+          additionalProperties: false
     ChanceConstraint:
       type: object
+      description: Probabilistic constraint requiring a metric to meet a threshold with specified confidence
       required:
         - name
         - threshold
@@ -698,50 +819,135 @@ components:
       properties:
         name:
           type: string
+          description: Name of the metric this constraint applies to
+          pattern: ^[a-zA-Z_][a-zA-Z0-9_]*$
+          maxLength: 128
+          example: accuracy
         threshold:
           type: number
+          description: Minimum acceptable metric value
+          example: 0.85
         confidence:
           type: number
+          description: Required probability of meeting the threshold (0 to 1)
           minimum: 0
           maximum: 1
-
-    ExecuteRequest:
+          example: 0.95
+    PromotionPolicy:
       type: object
-      description: Request to execute agent with configuration on inputs
-      required:
-        - capability_id
-        - config
-        - inputs
+      description: Promotion policy for epsilon-Pareto selection
       properties:
-        request_id:
+        dominance:
           type: string
-          format: uuid
-          description: Idempotency key for retry safety (same request_id + different payload should return 400)
+          description: Dominance criterion for comparing configurations
+          enum:
+            - epsilon_pareto
+          default: epsilon_pareto
+        alpha:
+          type: number
+          description: Significance level for statistical tests
+          minimum: 0
+          maximum: 1
+          default: 0.05
+          example: 0.05
+        min_effect:
+          type: object
+          description: Minimum practical effect size per metric (metric_name → threshold)
+          maxProperties: 50
+          additionalProperties:
+            type: number
+        adjust:
+          type: string
+          description: Multiple comparison adjustment method
+          enum:
+            - none
+            - BH
+          default: none
+        chance_constraints:
+          type: array
+          description: Probabilistic constraints on metric outcomes
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/ChanceConstraint'
+        tie_breakers:
+          type: object
+          description: Tie-breaking strategy per metric when configurations are statistically equivalent
+          additionalProperties:
+            type: string
+            enum:
+              - min_abs_deviation
+              - custom
+    ConfigSpaceResponse:
+      type: object
+      description: Response from config-space discovery endpoint
+      additionalProperties: false
+      required:
+        - schema_version
+        - capability_id
+        - tunables
+      properties:
+        schema_version:
+          type: string
+          description: TVL schema version
+          maxLength: 16
+          example: '0.9'
         capability_id:
           type: string
-          description: Identifier for the agent capability to invoke
-        config:
-          type: object
-          description: Configuration parameters (tunable values)
-          additionalProperties: true
-        inputs:
+          description: Identifier for the capability
+          maxLength: 256
+          example: my_agent
+        tunables:
           type: array
-          description: List of input examples to process
+          description: List of tunable variable definitions
+          maxItems: 200
           items:
-            $ref: "#/components/schemas/InputItem"
-          minItems: 1
-        session_id:
-          type: string
-          description: Session ID for stateful agents
-          nullable: true
-        batch_options:
-          $ref: "#/components/schemas/BatchOptions"
-        timeout_ms:
-          type: integer
-          description: Request timeout in milliseconds
-          default: 30000
-          minimum: 1000
-
+            $ref: '#/components/schemas/TunableDefinition'
+        tvars:
+          type: array
+          description: |
+            Deprecated: Use 'tunables' instead. Alias for tunables (backward compatibility). Traigent accepts both keys.
+          deprecated: true
+          maxItems: 200
+          items:
+            $ref: '#/components/schemas/TunableDefinition'
+        constraints:
+          description: Structural and behavioral constraints (legacy textual or typed TVL 0.9)
+          oneOf:
+            - type: object
+              minProperties: 1
+              additionalProperties:
+                type: array
+                items:
+                  type: string
+            - $ref: '#/components/schemas/TypedConstraints'
+            - type: array
+              items:
+                type: object
+                additionalProperties: true
+        objectives:
+          type: array
+          description: Optional objective definitions (TVL 0.9 compatible JSON)
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/ObjectiveDefinition'
+        exploration:
+          description: Exploration strategy, budgets, and convergence settings
+          $ref: '#/components/schemas/ExplorationConfig'
+        promotion_policy:
+          description: Promotion policy for selecting optimal configurations
+          $ref: '#/components/schemas/PromotionPolicy'
+        defaults:
+          type: object
+          description: Optional default configuration values
+          additionalProperties: true
+          maxProperties: 200
+        measures:
+          type: array
+          description: Optional list of metric names produced by the service
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 128
     InputItem:
       type: object
       description: |
@@ -760,16 +966,15 @@ components:
           description: |
             Unique identifier for this input. In privacy-preserving mode, your
             service uses this ID to look up the actual input data locally.
-          example: "ex_001"
+          maxLength: 256
+          example: ex_001
         data:
           type: object
           description: |
-            Input data (structure defined by your agent). Optional in privacy-preserving
-            mode where the service looks up data by input_id.
+            Input data (structure defined by your agent). Optional in privacy-preserving mode where the service looks up data by input_id.
           additionalProperties: true
           example:
-            query: "What is machine learning?"
-
+            query: What is machine learning?
     BatchOptions:
       type: object
       description: Options for batch execution control
@@ -779,16 +984,198 @@ components:
           description: Maximum concurrent executions within batch
           default: 1
           minimum: 1
+          maximum: 128
+          example: 4
         fail_fast:
           type: boolean
           description: Stop batch on first failure
           default: false
+          example: false
         timeout_per_item_ms:
           type: integer
           description: Per-item timeout (0 = use request timeout)
           default: 0
           minimum: 0
+          maximum: 600000
+          example: 5000
+    ExecuteRequest:
+      type: object
+      description: Request to execute agent with configuration on inputs
+      required:
+        - request_id
+        - capability_id
+        - config
+        - inputs
+      properties:
+        request_id:
+          type: string
+          format: uuid
+          description: Idempotency key for retry safety. Required for all requests. Retrying with the same request_id and different payload returns 409.
+          example: 550e8400-e29b-41d4-a716-446655440000
+        capability_id:
+          type: string
+          description: Identifier for the agent capability to invoke
+          maxLength: 256
+          example: my_agent
+        config:
+          type: object
+          description: Configuration parameters (tunable values matching config-space definitions)
+          additionalProperties: true
+        inputs:
+          type: array
+          description: List of input examples to process
+          items:
+            $ref: '#/components/schemas/InputItem'
+          minItems: 1
+          maxItems: 10000
+        session_id:
+          type: string
+          description: Session ID for stateful agents
+          maxLength: 256
+          nullable: true
+          example: sess_abc123
+        batch_options:
+          description: Optional batch processing configuration
+          $ref: '#/components/schemas/BatchOptions'
+        timeout_ms:
+          type: integer
+          description: Request timeout in milliseconds
+          default: 30000
+          minimum: 1000
+          maximum: 600000
+          example: 30000
+    OutputItem:
+      type: object
+      description: |
+        Output for a single input.
 
+        **Privacy-preserving mode**: Return `output_id` instead of `output`. Your service stores the actual output locally and only shares the identifier. Traigent only sees the ID and associated metrics.
+
+        **Full-content datasets**: Include `output` with the actual output content.
+      required:
+        - input_id
+      properties:
+        input_id:
+          type: string
+          description: Matching input identifier
+          maxLength: 256
+          example: case_001
+        output:
+          type: object
+          description: |
+            Agent output (structure defined by your agent). Optional in privacy-preserving mode where only output_id is returned.
+          additionalProperties: true
+        output_id:
+          type: string
+          description: |
+            Unique identifier for this output. Used in privacy-preserving mode where
+            the actual output content is stored locally by the service.
+          maxLength: 256
+          example: out_001_run_abc
+        cost_usd:
+          type: number
+          description: Cost for this input in USD
+          format: double
+          minimum: 0
+          example: 0.0012
+        latency_ms:
+          type: number
+          description: Latency for this input in milliseconds
+          format: double
+          minimum: 0
+          example: 245.5
+        metrics:
+          type: object
+          description: Optional per-input quality metrics (combined execute+evaluate mode)
+          additionalProperties:
+            type: number
+        error:
+          type: string
+          description: Error message for this input when execution partially fails
+          maxLength: 2048
+          example: Upstream timeout after 5000ms
+    OperationalMetrics:
+      type: object
+      description: Aggregate operational metrics from execution
+      required:
+        - total_cost_usd
+      properties:
+        total_cost_usd:
+          type: number
+          description: Total cost in USD
+          format: double
+          minimum: 0
+          example: 0.005
+        cost_usd:
+          type: number
+          description: Alias for total_cost_usd (deprecated — use total_cost_usd)
+          format: double
+          minimum: 0
+          deprecated: true
+          example: 0.005
+        latency_ms:
+          type: number
+          description: Total latency in milliseconds
+          format: double
+          minimum: 0
+          example: 330
+        tokens_used:
+          type: integer
+          description: Total tokens consumed
+          minimum: 0
+          example: 1250
+        tokens_input:
+          type: integer
+          description: Input tokens
+          minimum: 0
+          example: 800
+        tokens_output:
+          type: integer
+          description: Output tokens
+          minimum: 0
+          example: 450
+        cache_hits:
+          type: integer
+          description: Number of cache hits
+          minimum: 0
+          example: 0
+        retry_count:
+          type: integer
+          description: Number of retries
+          minimum: 0
+          example: 0
+      additionalProperties:
+        description: Custom operational metrics
+        anyOf:
+          - type: number
+          - type: string
+            maxLength: 256
+          - type: boolean
+    ExecutionError:
+      type: object
+      description: Execution error details
+      nullable: true
+      properties:
+        code:
+          type: string
+          description: Error code
+          maxLength: 64
+          example: PARTIAL_FAILURE
+        message:
+          type: string
+          description: Error message
+          maxLength: 2048
+          example: 2 of 5 inputs failed due to upstream timeout
+        failed_inputs:
+          type: array
+          description: List of failed input IDs
+          maxItems: 10000
+          items:
+            type: string
+            maxLength: 256
+          example:
+            - case_003
+            - case_005
     ExecuteResponse:
       type: object
       description: Response from agent execution
@@ -802,156 +1189,43 @@ components:
         request_id:
           type: string
           description: Echoed request ID for correlation
+          example: 550e8400-e29b-41d4-a716-446655440000
         execution_id:
           type: string
           description: Unique ID for this execution (used in evaluate)
+          maxLength: 256
+          example: exec_20240115_001
         status:
           type: string
           description: Execution status
-          enum: [completed, partial, failed]
+          enum:
+            - completed
+            - partial
+            - failed
         outputs:
           type: array
           description: Per-input results
           items:
-            $ref: "#/components/schemas/OutputItem"
+            $ref: '#/components/schemas/OutputItem'
+          maxItems: 10000
         operational_metrics:
-          $ref: "#/components/schemas/OperationalMetrics"
+          description: Aggregate operational metrics from the execution batch
+          $ref: '#/components/schemas/OperationalMetrics'
         quality_metrics:
           type: object
-          description: Quality metrics if using combined mode
+          description: Quality metrics if using combined mode (execute + evaluate in one call). Null or absent when using two-phase mode.
           additionalProperties:
             type: number
           nullable: true
         session_id:
           type: string
           description: Session ID for stateful agents
+          maxLength: 256
           nullable: true
+          example: sess_abc123
         error:
-          $ref: "#/components/schemas/ExecutionError"
-
-    OutputItem:
-      type: object
-      description: |
-        Output for a single input.
-
-        **Privacy-preserving mode**: Return `output_id` instead of `output`. Your service
-        stores the actual output locally and only shares the identifier. Traigent only
-        sees the ID and associated metrics.
-
-        **Full-content datasets**: Include `output` with the actual output content.
-      required:
-        - input_id
-      properties:
-        input_id:
-          type: string
-          description: Matching input identifier
-        output:
-          type: object
-          description: |
-            Agent output (structure defined by your agent). Optional in privacy-preserving
-            mode where only output_id is returned.
-          additionalProperties: true
-        output_id:
-          type: string
-          description: |
-            Unique identifier for this output. Used in privacy-preserving mode where
-            the actual output content is stored locally by the service.
-          example: "out_001_run_abc"
-        cost_usd:
-          type: number
-          description: Cost for this input in USD
-          format: double
-        latency_ms:
-          type: number
-          description: Latency for this input in milliseconds
-          format: double
-        metrics:
-          type: object
-          description: Optional per-input quality metrics (combined execute+evaluate mode)
-          additionalProperties:
-            type: number
-        error:
-          type: string
-          description: Error message for this input when execution partially fails
-
-    OperationalMetrics:
-      type: object
-      description: Aggregate operational metrics from execution
-      required:
-        - total_cost_usd
-      properties:
-        total_cost_usd:
-          type: number
-          description: Total cost in USD
-          format: double
-          example: 0.005
-        cost_usd:
-          type: number
-          description: Alias for total_cost_usd
-          format: double
-        latency_ms:
-          type: number
-          description: Total latency in milliseconds
-          format: double
-          example: 330
-        tokens_used:
-          type: integer
-          description: Total tokens consumed
-        tokens_input:
-          type: integer
-          description: Input tokens
-        tokens_output:
-          type: integer
-          description: Output tokens
-        cache_hits:
-          type: integer
-          description: Number of cache hits
-        retry_count:
-          type: integer
-          description: Number of retries
-      additionalProperties:
-        description: Custom operational metrics
-        anyOf:
-          - type: number
-          - type: string
-          - type: boolean
-
-    EvaluateRequest:
-      type: object
-      description: Request to evaluate outputs against targets
-      required:
-        - capability_id
-      properties:
-        request_id:
-          type: string
-          format: uuid
-          description: Idempotency key for retry safety (same request_id + different payload should return 400)
-        capability_id:
-          type: string
-          description: Identifier for the evaluation capability
-        execution_id:
-          type: string
-          description: Reference to previous execute (for caching)
-          nullable: true
-        evaluations:
-          type: array
-          description: List of output+target pairs to evaluate
-          items:
-            $ref: "#/components/schemas/EvaluationItem"
-        config:
-          type: object
-          description: Optional config for evaluation parameters
-          additionalProperties: true
-          nullable: true
-        session_id:
-          type: string
-          description: Session ID for stateful agents
-          nullable: true
-        timeout_ms:
-          type: integer
-          description: Optional request timeout in milliseconds (wrapper returns 408 on timeout)
-          minimum: 1000
-
+          description: Error details when status is partial or failed
+          $ref: '#/components/schemas/ExecutionError'
     EvaluationItem:
       type: object
       description: |
@@ -970,6 +1244,8 @@ components:
         input_id:
           type: string
           description: Matching input identifier
+          maxLength: 256
+          example: case_001
         output:
           type: object
           description: |
@@ -978,10 +1254,9 @@ components:
         output_id:
           type: string
           description: |
-            Reference to output stored locally by the service. Used in privacy-preserving
-            mode where actual output content is not transmitted. The service looks up
-            the output by this ID when performing evaluation.
-          example: "out_001_run_abc"
+            Reference to output stored locally by the service. Used in privacy-preserving mode where actual output content is not transmitted. The service looks up the output by this ID when performing evaluation.
+          maxLength: 256
+          example: out_001_run_abc
         target:
           type: object
           description: |
@@ -990,40 +1265,57 @@ components:
         target_id:
           type: string
           description: |
-            Reference to expected output stored locally by the service. Used in privacy-preserving
-            mode where actual target content is not transmitted. The service looks up
-            the expected output by this ID when performing evaluation.
-          example: "target_001"
-
-    EvaluateResponse:
+            Reference to expected output stored locally by the service. Used in privacy-preserving mode where actual target content is not transmitted. The service looks up the expected output by this ID when performing evaluation.
+          maxLength: 256
+          example: target_001
+    EvaluateRequest:
       type: object
-      description: Response from evaluation
+      description: Request to evaluate outputs against targets
       required:
         - request_id
-        - status
-        - results
-        - aggregate_metrics
+        - capability_id
+        - evaluations
       properties:
         request_id:
           type: string
-          description: Echoed request ID
-        status:
+          format: uuid
+          description: Idempotency key for retry safety. Required for all requests. Retrying with the same request_id and different payload returns 409.
+          example: 660e8400-e29b-41d4-a716-446655440001
+        capability_id:
           type: string
-          description: Evaluation status
-          enum: [completed, partial, failed]
-        results:
+          description: Identifier for the evaluation capability
+          maxLength: 256
+          example: my_agent
+        execution_id:
+          type: string
+          description: Reference to previous execute (for caching/correlation)
+          maxLength: 256
+          nullable: true
+          example: exec_20240115_001
+        evaluations:
           type: array
-          description: Per-example evaluation results
+          description: List of output+target pairs to evaluate
+          minItems: 1
+          maxItems: 10000
           items:
-            $ref: "#/components/schemas/EvaluationResult"
-        aggregate_metrics:
+            $ref: '#/components/schemas/EvaluationItem'
+        config:
           type: object
-          description: Aggregated statistics per metric
-          additionalProperties:
-            $ref: "#/components/schemas/AggregateMetricStats"
-        error:
-          $ref: "#/components/schemas/ExecutionError"
-
+          description: Optional config for evaluation parameters
+          additionalProperties: true
+          nullable: true
+        session_id:
+          type: string
+          description: Session ID for stateful agents
+          maxLength: 256
+          nullable: true
+          example: sess_abc123
+        timeout_ms:
+          type: integer
+          description: Optional request timeout in milliseconds (wrapper returns 408 on timeout)
+          minimum: 1000
+          maximum: 600000
+          example: 30000
     EvaluationResult:
       type: object
       description: Evaluation result for a single example
@@ -1034,6 +1326,8 @@ components:
         input_id:
           type: string
           description: Matching input identifier
+          maxLength: 256
+          example: case_001
         metrics:
           type: object
           description: Quality metrics for this example
@@ -1046,27 +1340,80 @@ components:
         error:
           type: string
           description: Optional error message for this example when evaluation partially fails
-
+          maxLength: 2048
+          example: Target not found for input case_003
     AggregateMetricStats:
       type: object
       description: Aggregated statistics for a metric
       required:
         - mean
         - std
-        - n
+        - 'n'
       properties:
         mean:
           type: number
           description: Mean value across all examples
           format: double
+          example: 0.92
         std:
           type: number
           description: Standard deviation
           format: double
-        n:
+          minimum: 0
+          example: 0.05
+        'n':
           type: integer
           description: Number of examples
-
+          minimum: 0
+          example: 10
+        min:
+          type: number
+          description: Minimum value across all examples
+          format: double
+        max:
+          type: number
+          description: Maximum value across all examples
+          format: double
+    EvaluateResponse:
+      type: object
+      description: Response from evaluation
+      required:
+        - request_id
+        - status
+        - results
+        - aggregate_metrics
+      properties:
+        request_id:
+          type: string
+          description: Echoed request ID
+          example: 660e8400-e29b-41d4-a716-446655440001
+        execution_id:
+          type: string
+          description: Echoed execution_id from the request, enabling trace correlation between execute and evaluate phases. When the request includes execution_id, the response MUST echo it back. When the request omits execution_id, this field is null.
+          maxLength: 256
+          nullable: true
+          example: exec_20240115_001
+        status:
+          type: string
+          description: Evaluation status
+          enum:
+            - completed
+            - partial
+            - failed
+        results:
+          type: array
+          description: Per-example evaluation results
+          items:
+            $ref: '#/components/schemas/EvaluationResult'
+          maxItems: 10000
+        aggregate_metrics:
+          type: object
+          description: Aggregated statistics per metric
+          additionalProperties:
+            $ref: '#/components/schemas/AggregateMetricStats'
+        error:
+          description: Error details when status is partial or failed
+          $ref: '#/components/schemas/ExecutionError'
     HealthCheckResponse:
       type: object
       description: Response from health check endpoint
@@ -1076,19 +1423,26 @@ components:
         status:
           type: string
           description: Health status
-          enum: [healthy, degraded, unhealthy]
+          enum:
+            - healthy
+            - degraded
+            - unhealthy
         version:
           type: string
           description: Service version
+          maxLength: 32
+          example: 1.0.0
         uptime_seconds:
           type: number
           description: Service uptime in seconds
           format: double
+          minimum: 0
+          example: 86400.5
         details:
           type: object
           description: Additional health details
           additionalProperties: true
-
+          maxProperties: 20
     KeepAliveRequest:
       type: object
       description: Request body for session heartbeat
@@ -1098,7 +1452,8 @@ components:
         session_id:
           type: string
           description: Session identifier
-
+          maxLength: 256
+          example: sess_abc123
     KeepAliveResponse:
       type: object
       description: Response body for successful session heartbeat
@@ -1108,53 +1463,16 @@ components:
       properties:
         status:
           type: string
-          enum: [alive]
+          enum:
+            - alive
+            - expired
           description: Session heartbeat status
         session_id:
           type: string
           description: Session identifier
-
-    ErrorResponse:
-      type: object
-      description: Error response format
-      required:
-        - error
-      properties:
-        error:
-          $ref: "#/components/schemas/ErrorDetails"
-
-    ErrorDetails:
-      type: object
-      description: Error details
-      required:
-        - code
-        - message
-      properties:
-        code:
-          type: string
-          description: Error code
-          example: "INVALID_CONFIG"
-        message:
-          type: string
-          description: Human-readable error message
-        details:
-          type: object
-          description: Additional error details
-          additionalProperties: true
-
-    ExecutionError:
-      type: object
-      description: Execution error details
-      nullable: true
-      properties:
-        code:
-          type: string
-          description: Error code
-        message:
-          type: string
-          description: Error message
-        failed_inputs:
-          type: array
-          description: List of failed input IDs
-          items:
-            type: string
+          maxLength: 256
+          example: sess_abc123
+x-transport-requirements:
+  production_scheme: https
+  production_http_version: '2'
+  local_development_exception: true
