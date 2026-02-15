@@ -496,7 +496,7 @@ class OptimizationAnalyzer:
                     best_values.append(value)
 
         if not values:
-            logger.warning(f"No values found for objective: {objective}")
+            logger.warning("No values found for objective: %s", objective)
             return None
 
         # Create plot
@@ -577,7 +577,7 @@ class OptimizationAnalyzer:
                 obj2_values.append(metrics[objectives[1]])
 
         if not obj1_values:
-            logger.warning(f"No values found for objectives: {objectives}")
+            logger.warning("No values found for objectives: %s", objectives)
             return None
 
         # Compute Pareto front
