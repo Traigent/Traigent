@@ -88,6 +88,25 @@ class TestOptimizeDecorator:
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
 
+    def test_decorator_max_trials_reaches_optimized_function(self):
+        """Regression: max_trials from decorator must reach OptimizedFunction.
+
+        Bug: max_trials went into combined_settings via record_option but was
+        never extracted, so OptimizedFunction always got the default of 50.
+        """
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            max_trials=10,
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert sample_function.max_trials == 10, (
+            f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
+        )
+
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""
 

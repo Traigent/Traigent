@@ -1673,6 +1673,8 @@ def optimize(
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    # Optimizer limits
+    max_trials_value = combined_settings["max_trials"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1894,6 +1896,8 @@ def optimize(
             js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
+            # Optimizer limits (extracted from combined_settings)
+            max_trials=max_trials_value,
             **combined_runtime_overrides,
         )
 

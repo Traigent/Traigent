@@ -286,9 +286,16 @@ def evaluate():
         output = eval_item.get("output", {})
         target = eval_item.get("target", {})
 
-        # Extract text for comparison
-        output_text = str(output.get("response", ""))
-        target_text = str(target.get("expected", ""))
+        # Extract text for comparison - handle both dict and string formats
+        if isinstance(output, dict):
+            output_text = str(output.get("response", ""))
+        else:
+            output_text = str(output or "")
+
+        if isinstance(target, dict):
+            target_text = str(target.get("expected", target.get("answer", "")))
+        else:
+            target_text = str(target or "")
 
         # --------------------------------------------------------
         # Calculate quality metrics
