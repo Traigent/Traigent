@@ -133,7 +133,7 @@ class MockHybridServer:
         ]
         return {
             "schema_version": "0.9",
-            "capability_id": "mock_test_agent",
+            "tunable_id": "mock_test_agent",
             "tunables": tunables,
             "tvars": tunables,
         }

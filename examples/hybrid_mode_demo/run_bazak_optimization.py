@@ -164,7 +164,7 @@ async def run_optimization() -> None:
     # --- Step 1: Create evaluator and discover config space ---
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
-        capability_id=CAPABILITY_ID,
+        tunable_id=CAPABILITY_ID,
         batch_size=50,
         auto_discover_tvars=True,
     )
@@ -213,10 +213,13 @@ async def run_optimization() -> None:
         print("\n[3/3] Running optimization...")
         print("-" * 70)
 
+        async def hybrid_demo_agent():
+            """Placeholder — execution is handled by HybridAPIEvaluator."""
+
         result = await orchestrator.optimize(
-            func=lambda: None,  # Not used in hybrid mode
+            func=hybrid_demo_agent,
             dataset=dataset,
-            function_name="bazak-child-age-agent",
+            function_name="hybrid_demo_agent",
         )
 
         # --- Report ---

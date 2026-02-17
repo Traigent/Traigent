@@ -38,7 +38,7 @@ class HybridExecuteRequest:
 
     Attributes:
         request_id: Idempotency key for retry safety (UUID)
-        capability_id: Identifier for the agent capability to invoke
+        tunable_id: Identifier for the tunable to invoke
         config: Configuration parameters (TVAR values)
         inputs: List of input examples to process
         session_id: Session ID for stateful agents (echoed from previous response)
@@ -46,7 +46,7 @@ class HybridExecuteRequest:
         timeout_ms: Request timeout in milliseconds
     """
 
-    capability_id: str
+    tunable_id: str
     config: dict[str, Any]
     inputs: list[dict[str, Any]]
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -71,7 +71,7 @@ class HybridExecuteRequest:
         """Convert to JSON-serializable dictionary."""
         result: dict[str, Any] = {
             "request_id": self.request_id,
-            "capability_id": self.capability_id,
+            "tunable_id": self.tunable_id,
             "config": self.config,
             "inputs": self.inputs,
             "timeout_ms": self.timeout_ms,
@@ -145,7 +145,7 @@ class HybridEvaluateRequest:
 
     Attributes:
         request_id: Idempotency key for retry safety
-        capability_id: Identifier for the evaluation capability
+        tunable_id: Identifier for the tunable to evaluate
         execution_id: Reference to previous execute (avoids resending outputs)
         evaluations: List of output+target pairs to evaluate
         config: Optional config for evaluation-time parameters
@@ -153,7 +153,7 @@ class HybridEvaluateRequest:
         timeout_ms: Optional server-side timeout budget in milliseconds
     """
 
-    capability_id: str
+    tunable_id: str
     request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     execution_id: str | None = None
     evaluations: list[dict[str, Any]] | None = None
@@ -165,7 +165,7 @@ class HybridEvaluateRequest:
         """Convert to JSON-serializable dictionary."""
         result: dict[str, Any] = {
             "request_id": self.request_id,
-            "capability_id": self.capability_id,
+            "tunable_id": self.tunable_id,
         }
         if self.execution_id is not None:
             result["execution_id"] = self.execution_id
@@ -233,7 +233,7 @@ class ServiceCapabilities:
     supports_streaming: bool = False
     max_batch_size: int = 100
     max_payload_bytes: int | None = None
-    capability_ids: list[str] | None = None
+    tunable_ids: list[str] | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ServiceCapabilities:
@@ -245,7 +245,7 @@ class ServiceCapabilities:
             supports_streaming=data.get("supports_streaming", False),
             max_batch_size=data.get("max_batch_size", 100),
             max_payload_bytes=data.get("max_payload_bytes"),
-            capability_ids=data.get("capability_ids"),
+            tunable_ids=data.get("tunable_ids"),
         )
 
 
@@ -272,6 +272,7 @@ class TVARDefinition:
     agent: str | None = None
     is_tool: bool = False
     constraints: list[str] | None = None
+    scale: Literal["linear", "log"] = "linear"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> TVARDefinition:
@@ -296,6 +297,7 @@ class TVARDefinition:
             agent=data.get("agent"),
             is_tool=data.get("is_tool", False),
             constraints=data.get("constraints"),
+            scale=data.get("scale", "linear"),
         )
 
     def to_traigent_config_space(self) -> Any:
@@ -315,20 +317,25 @@ class TVARDefinition:
             return [True, False]
         elif self.type == "int":
             range_spec = self.domain.get("range", [0, 100])
-            return {
+            result: dict[str, Any] = {
                 "low": range_spec[0],
                 "high": range_spec[1],
                 "type": "int",
             }
+            if self.scale == "log":
+                result["log"] = True
+            return result
         elif self.type == "float":
             range_spec = self.domain.get("range", [0.0, 1.0])
-            result: dict[str, Any] = {
+            result_f: dict[str, Any] = {
                 "low": range_spec[0],
                 "high": range_spec[1],
             }
             if "resolution" in self.domain:
-                result["step"] = self.domain["resolution"]
-            return result
+                result_f["step"] = self.domain["resolution"]
+            if self.scale == "log":
+                result_f["log"] = True
+            return result_f
         elif self.type == "str":
             return self.domain.get("values", [])
         else:
@@ -342,7 +349,7 @@ class ConfigSpaceResponse:
 
     Attributes:
         schema_version: TVL schema version (e.g., "0.9")
-        capability_id: Identifier for the capability
+        tunable_id: Identifier for the tunable
         tvars: List of TVAR definitions (also accessible as 'tunables')
         constraints: Structural and behavioral constraints (legacy or typed TVL 0.9)
         objectives: Optional objective definitions (TVL 0.9 compatible JSON)
@@ -353,7 +360,7 @@ class ConfigSpaceResponse:
     """
 
     schema_version: str
-    capability_id: str
+    tunable_id: str
     tvars: list[TVARDefinition]
     constraints: dict[str, Any] | list[Any] | None = None
     objectives: list[dict[str, Any]] | None = None
@@ -375,7 +382,7 @@ class ConfigSpaceResponse:
         ]
         return cls(
             schema_version=data.get("schema_version", "0.9"),
-            capability_id=data.get("capability_id", ""),
+            tunable_id=data.get("tunable_id", ""),
             tvars=tvars,
             constraints=data.get("constraints"),
             objectives=data.get("objectives"),
@@ -399,12 +406,13 @@ class ConfigSpaceResponse:
                 **({"agent": tvar.agent} if tvar.agent else {}),
                 **({"is_tool": tvar.is_tool} if tvar.is_tool else {}),
                 **({"constraints": tvar.constraints} if tvar.constraints else {}),
+                **({"scale": tvar.scale} if tvar.scale != "linear" else {}),
             }
             for tvar in self.tvars
         ]
         result: dict[str, Any] = {
             "schema_version": self.schema_version,
-            "capability_id": self.capability_id,
+            "tunable_id": self.tunable_id,
             "tunables": tvar_dicts,  # Client-facing name
             "tvars": tvar_dicts,  # Backward compatibility
             "constraints": self.constraints or {},

@@ -13,9 +13,11 @@ def test_decorator_privacy_alias_maps_to_hybrid():
         return v
 
     # execution_mode should map to hybrid with privacy
-    assert (
-        getattr(f, "execution_mode", None) == "hybrid" or True
-    )  # compat: some wrappers store on instance
+    assert getattr(f, "execution_mode", None) in (
+        "hybrid",
+        "privacy",
+        None,
+    )  # compat: some wrappers may store different values
 
     # The optimized function exposes traigent_config on optimize() path; just ensure callable and configured
     async def run():

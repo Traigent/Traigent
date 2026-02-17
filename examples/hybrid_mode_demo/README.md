@@ -54,7 +54,7 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
   -H "Content-Type: application/json" \
   -d '{
     "request_id": "test-001",
-    "capability_id": "demo_agent",
+    "tunable_id": "demo_agent",
     "config": {"model": "accurate", "temperature": 0.7},
     "inputs": [{"input_id": "ex_001", "data": {"query": "What is AI?"}}]
   }'
@@ -151,7 +151,7 @@ import traigent
 @traigent.optimize(
     execution_mode="hybrid_api",
     hybrid_api_endpoint="http://localhost:8080",
-    capability_id="demo_agent",
+    tunable_id="demo_agent",
     batch_size=10,
     max_trials=20,
 )

@@ -81,7 +81,7 @@ def capabilities():
             "supports_keep_alive": False,  # Set True for stateful agents
             "supports_streaming": False,
             "max_batch_size": 100,
-            "capability_ids": ["demo_agent"],
+            "tunable_ids": ["demo_agent"],
         }
     )
 
@@ -102,7 +102,7 @@ def config_space():
     return jsonify(
         {
             "schema_version": "0.9",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "tunables": TUNABLES,
             "constraints": {},
         }
@@ -125,7 +125,7 @@ def execute():
     Request format:
         {
             "request_id": "uuid",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "config": {"model": "fast", "temperature": 0.5, ...},
             "inputs": [{"input_id": "ex_001", "data": {"query": "..."}}]
         }
@@ -249,7 +249,7 @@ def evaluate():
     Request format:
         {
             "request_id": "uuid",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
             "evaluations": [
                 {"input_id": "ex_001", "output": {...}, "target": {...}}
             ]
@@ -383,7 +383,7 @@ def health():
         {
             "status": "healthy",
             "version": "1.0.0",
-            "capability_id": "demo_agent",
+            "tunable_id": "demo_agent",
         }
     )
 

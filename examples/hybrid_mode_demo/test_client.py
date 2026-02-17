@@ -75,7 +75,7 @@ def test_execute():
 
     request_data = {
         "request_id": "test-001",
-        "capability_id": "demo_agent",
+        "tunable_id": "demo_agent",
         "config": {
             "model": "accurate",
             "temperature": 0.7,
@@ -130,7 +130,7 @@ def test_evaluate(execution_id: str):
 
     request_data = {
         "request_id": "test-002",
-        "capability_id": "demo_agent",
+        "tunable_id": "demo_agent",
         "execution_id": execution_id,
         "evaluations": [
             {

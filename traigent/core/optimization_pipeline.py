@@ -364,7 +364,7 @@ def create_effective_evaluator(
     scoring_function: Callable[..., Any] | None,
     decorator_custom_evaluator: Callable[..., Any] | None,
     hybrid_api_endpoint: str | None = None,
-    hybrid_api_capability_id: str | None = None,
+    hybrid_api_tunable_id: str | None = None,
     hybrid_api_transport: Any | None = None,
     hybrid_api_transport_type: str = "auto",
     hybrid_api_batch_size: int = 1,
@@ -438,7 +438,7 @@ def create_effective_evaluator(
             transport_type=cast(
                 Literal["http", "mcp", "auto"], hybrid_api_transport_type
             ),
-            capability_id=hybrid_api_capability_id,
+            tunable_id=hybrid_api_tunable_id,
             auto_discover_tvars=hybrid_api_auto_discover_tvars,
             batch_size=batch_size_value,
             batch_parallelism=batch_parallelism_value,
