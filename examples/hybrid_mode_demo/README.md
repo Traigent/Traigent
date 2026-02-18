@@ -37,7 +37,7 @@ The server will start on `http://localhost:8080`.
 In another terminal:
 
 ```bash
-python test_client.py
+python test_mastra_js_api.py
 ```
 
 Or test manually with curl:
@@ -235,7 +235,7 @@ def evaluate():
 | File | Description |
 |------|-------------|
 | `app.py` | Main Flask application with all endpoints |
-| `test_client.py` | Test script to verify all endpoints |
+| `test_mastra_js_api.py` | Test script to verify all endpoints |
 | `requirements.txt` | Python dependencies |
 
 ## Next Steps
