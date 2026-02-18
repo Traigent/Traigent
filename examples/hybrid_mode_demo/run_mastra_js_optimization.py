@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run Traigent optimization against the BazakDemo child-age-agent.
+"""Run Traigent optimization against the JS-Mastra demo server.
 
 Uses Traigent's OptimizationOrchestrator with RandomSearchOptimizer — NOT a
 brute-force grid.  The orchestrator handles:
@@ -9,18 +9,18 @@ brute-force grid.  The orchestrator handles:
   - Full trial history and convergence tracking
 
 Flow:
-  1. HybridAPIEvaluator discovers config space (TVARs) from BazakDemo
+  1. HybridAPIEvaluator discovers config space (TVARs) from the demo server
   2. RandomSearchOptimizer samples configs from that space
   3. OptimizationOrchestrator runs the loop (evaluate, record, stop)
   4. Reports best config, metrics, stop reason
 
 Prerequisites:
-  - BazakDemo server running at http://localhost:8080
-    (cd BazakDemo_Apis_Mastra_JS && node src/api/server.js)
-  - OPENAI_API_KEY set in BazakDemo's .env
+  - JS-Mastra demo server running at http://localhost:8080
+    (cd JS-Mastra-APIs-Validation && npm run api:dev)
+  - OPENAI_API_KEY set in the demo server's .env
 
 Usage:
-    .venv/bin/python examples/hybrid_mode_demo/run_bazak_optimization.py
+    .venv/bin/python examples/hybrid_mode_demo/run_mastra_js_optimization.py
 """
 
 import asyncio
@@ -42,19 +42,19 @@ from traigent.evaluators import HybridAPIEvaluator
 from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
-SERVER_URL: Final[str] = os.getenv("BAZAK_BASE_URL", "http://localhost:8080")
-CAPABILITY_ID: Final[str] = os.getenv("BAZAK_CAPABILITY_ID", "child-age-agent")
+SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "http://localhost:8080")
+TUNABLE_ID: Final[str | None] = os.getenv("MASTRA_JS_TUNABLE_ID")  # None = auto-select first
 DATASET_SIZE: Final[int] = int(
-    os.getenv("BAZAK_DATASET_SIZE", "100")
+    os.getenv("MASTRA_JS_DATASET_SIZE", "100")
 )  # case_001 through case_100
 MAX_TRIALS: Final[int] = int(
-    os.getenv("BAZAK_MAX_TRIALS", "10")
+    os.getenv("MASTRA_JS_MAX_TRIALS", "10")
 )  # Let Traigent decide which configs to try
 MAX_COST_USD: Final[float] = float(
-    os.getenv("BAZAK_MAX_COST_USD", "4.0")
+    os.getenv("MASTRA_JS_MAX_COST_USD", "4.0")
 )  # Stop after spending $4
 MAX_REASONING_LEVEL: Final[str] = (
-    os.getenv("BAZAK_MAX_REASONING_LEVEL", "medium").strip().lower()
+    os.getenv("MASTRA_JS_MAX_REASONING_LEVEL", "medium").strip().lower()
 )
 
 _REASONING_LEVEL_ORDER: Final[list[str]] = [
@@ -132,7 +132,7 @@ def _apply_reasoning_cap(
 
 
 def check_server(url: str) -> bool:
-    """Verify BazakDemo is running."""
+    """Verify demo server is running."""
     try:
         resp = requests.get(f"{url}/traigent/v1/health", timeout=3)
         return resp.status_code == 200
@@ -140,8 +140,29 @@ def check_server(url: str) -> bool:
         return False
 
 
+def discover_tunable_id(url: str) -> str:
+    """GET /capabilities and return the selected tunable_id."""
+    resp = requests.get(f"{url}/traigent/v1/capabilities", timeout=5)
+    resp.raise_for_status()
+    tunable_ids = resp.json().get("tunable_ids", [])
+    if not tunable_ids:
+        raise RuntimeError("Server returned no tunable_ids in /capabilities")
+    print(f"      Available tunables: {tunable_ids}")
+    if TUNABLE_ID:
+        if TUNABLE_ID not in tunable_ids:
+            raise RuntimeError(
+                f"MASTRA_JS_TUNABLE_ID={TUNABLE_ID!r} not found. "
+                f"Available: {tunable_ids}"
+            )
+        selected = TUNABLE_ID
+    else:
+        selected = tunable_ids[0]
+    print(f"      Selected: {selected}")
+    return selected
+
+
 def build_dataset() -> Dataset:
-    """Build the full 100-case dataset using BazakDemo's input_ids."""
+    """Build the full dataset using the demo server's input_ids."""
     return Dataset(
         [
             EvaluationExample(input_data={"input_id": f"case_{i:03d}"})
@@ -151,26 +172,27 @@ def build_dataset() -> Dataset:
 
 
 async def run_optimization() -> None:
-    """Run Traigent optimization loop against BazakDemo."""
+    """Run Traigent optimization loop against the demo server."""
     if not check_server(SERVER_URL):
-        print(f"ERROR: BazakDemo not running at {SERVER_URL}")
-        print("Start it: cd BazakDemo_Apis_Mastra_JS && node src/api/server.js")
+        print(f"ERROR: Demo server not running at {SERVER_URL}")
+        print("Start it: cd JS-Mastra-APIs-Validation && npm run api:dev")
         sys.exit(1)
 
     print("=" * 70)
-    print("  Traigent Optimization — BazakDemo child-age-agent")
+    print("  Traigent Optimization — JS-Mastra Demo")
     print("=" * 70)
 
-    # --- Step 1: Create evaluator and discover config space ---
+    # --- Step 1: Discover tunable and create evaluator ---
+    tunable_id = discover_tunable_id(SERVER_URL)
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
-        tunable_id=CAPABILITY_ID,
+        tunable_id=tunable_id,
         batch_size=50,
         auto_discover_tvars=True,
     )
 
     async with evaluator:
-        print("\n[1/3] Discovering config space from BazakDemo...")
+        print("\n[1/3] Discovering config space...")
         config_space = await evaluator.discover_config_space()
         config_space, reasoning_capped = _apply_reasoning_cap(config_space)
         print(f"      Found {len(config_space)} tunables:")
@@ -179,7 +201,7 @@ async def run_optimization() -> None:
         if reasoning_capped:
             print(
                 f"      Applied reasoning cap: <= {MAX_REASONING_LEVEL} "
-                f"(BAZAK_MAX_REASONING_LEVEL)"
+                f"(MASTRA_JS_MAX_REASONING_LEVEL)"
             )
 
         # --- Step 2: Create optimizer + orchestrator ---
