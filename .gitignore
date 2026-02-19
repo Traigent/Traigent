@@ -202,8 +202,10 @@ resampling_configs.md
 # Keep the quickstart symlink at repo root for README examples
 !qa_samples.jsonl
 !tests/mcp/fixtures/sample_datasets.jsonl
-# Keep tech demo curated dataset
+# Keep tech demo curated datasets
 !paper_experiments/tech_demo_text2sql/spider_100.jsonl
+!paper_experiments/tech_demo_text2sql/spider_500_train.jsonl
+!paper_experiments/tech_demo_text2sql/spider_100_test.jsonl
 optimization_results/
 data/
 temp/
