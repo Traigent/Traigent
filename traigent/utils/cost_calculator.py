@@ -342,6 +342,14 @@ def _normalize_model_for_fallback(model: str) -> str:
     return normalized.lower() if normalized else model.lower()
 
 
+# Legacy model name aliases for fallback pricing lookup.
+# Maps names not in FALLBACK_MODEL_PRICING to their closest canonical equivalent.
+_FALLBACK_ALIASES: dict[str, str] = {
+    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
+}
+
+
 def _fallback_cost_from_tokens(
     model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
@@ -356,6 +364,12 @@ def _fallback_cost_from_tokens(
         Tuple of (input_cost, output_cost). Returns (0.0, 0.0) if model not found.
     """
     base_model = _normalize_model_for_fallback(model)
+
+    # Resolve legacy aliases before lookup
+    for alias, canonical in _FALLBACK_ALIASES.items():
+        if base_model == alias.lower():
+            base_model = canonical.lower()
+            break
 
     # Try exact match first (case-insensitive via normalized base_model)
     pricing = None
@@ -1041,3 +1055,16 @@ def get_cost_calculator(logger=None) -> CostCalculator:
             if _global_calculator is None:
                 _global_calculator = CostCalculator(logger=logger)
     return _global_calculator
+
+
+def get_model_pricing_per_1k(model_name: str, logger=None) -> tuple[float, float]:
+    """Get model pricing rates in USD per 1K tokens.
+
+    Returns a tuple ``(input_per_1k, output_per_1k)`` via the canonical cost
+    pipeline (litellm first, fallback pricing second). Unknown models return
+    ``(0.0, 0.0)``.
+    """
+    calculator = get_cost_calculator(logger=logger)
+    input_per_1k, _ = calculator._calculate_from_tokens(1000, 0, model_name)
+    _, output_per_1k = calculator._calculate_from_tokens(0, 1000, model_name)
+    return float(input_per_1k), float(output_per_1k)
