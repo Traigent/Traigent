@@ -13,29 +13,48 @@ from pathlib import Path
 from typing import Any
 
 from traigent.hooks.config import HooksConfig, load_hooks_config
+from traigent.utils.cost_calculator import FALLBACK_MODEL_PRICING
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
-# Model cost estimates per 1K tokens (input + output average)
-MODEL_COST_PER_1K: dict[str, float] = {
-    # OpenAI models
-    "gpt-4o-mini": 0.00015,  # $0.15/M input, $0.60/M output average
-    "gpt-4o": 0.005,  # $5/M input, $15/M output average
-    "gpt-4-turbo": 0.01,  # $10/M input, $30/M output average
-    "gpt-4": 0.03,  # $30/M input, $60/M output average
-    "gpt-4-32k": 0.06,  # $60/M input, $120/M output average
-    "gpt-3.5-turbo": 0.0005,  # $0.5/M input, $1.5/M output average
-    # Claude models
-    "claude-3-haiku": 0.00025,  # Very affordable
-    "claude-3-haiku-20240307": 0.00025,
-    "claude-3-sonnet": 0.003,  # Mid-tier
-    "claude-3-sonnet-20240229": 0.003,
-    "claude-3-opus": 0.015,  # Premium
-    "claude-3-opus-20240229": 0.015,
-    "claude-3-5-sonnet": 0.003,
-    "claude-3-5-sonnet-20241022": 0.003,
-}
+
+def _build_model_cost_per_1k() -> dict[str, float]:
+    """Derive MODEL_COST_PER_1K from the canonical FALLBACK_MODEL_PRICING.
+
+    Computes a blended (input+output)/2 average per-1K-token cost for each
+    model, then adds short-name aliases so that user configs in traigent.yml
+    using names like ``"gpt-4"`` or ``"claude-3-haiku"`` still resolve.
+    """
+    result: dict[str, float] = {}
+    for model, pricing in FALLBACK_MODEL_PRICING.items():
+        avg_per_token = (
+            pricing["input_cost_per_token"] + pricing["output_cost_per_token"]
+        ) / 2
+        result[model] = avg_per_token * 1000
+
+    # Compatibility aliases — short names that users may configure.
+    # Maps legacy/short names to their closest canonical equivalent.
+    _aliases = {
+        "gpt-4": "gpt-4-turbo",
+        "gpt-4-32k": "gpt-4-turbo",
+        "claude-3-haiku": "claude-3-haiku-20240307",
+        "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
+        "claude-3-opus": "claude-3-opus-20240229",
+        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+    }
+    for alias, canonical in _aliases.items():
+        if alias not in result and canonical in result:
+            result[alias] = result[canonical]
+
+    return result
+
+
+# Model cost estimates per 1K tokens (input + output average).
+# Derived from the canonical FALLBACK_MODEL_PRICING in cost_calculator.py.
+MODEL_COST_PER_1K: dict[str, float] = _build_model_cost_per_1k()
 
 # Default tokens per query estimate
 DEFAULT_TOKENS_PER_QUERY = 1000
