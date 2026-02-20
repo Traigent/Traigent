@@ -50,13 +50,17 @@ except (ImportError, KeyError):
 # Backward compatibility alias
 TOKENCOST_AVAILABLE = LITELLM_AVAILABLE
 
+# Canonical model name constants (referenced in FALLBACK_MODEL_PRICING and aliases)
+_GPT35_TURBO = "gpt-3.5-turbo"
+_GPT4O = "gpt-4o"
+
 # Fallback pricing for models not in litellm's database (per-token costs)
 FALLBACK_MODEL_PRICING = {
     # OpenAI
-    "gpt-4o": {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 10.0e-6},
+    _GPT4O: {"input_cost_per_token": 2.5e-6, "output_cost_per_token": 10.0e-6},
     "gpt-4o-mini": {"input_cost_per_token": 0.15e-6, "output_cost_per_token": 0.6e-6},
     "gpt-4-turbo": {"input_cost_per_token": 10.0e-6, "output_cost_per_token": 30.0e-6},
-    "gpt-3.5-turbo": {"input_cost_per_token": 0.5e-6, "output_cost_per_token": 1.5e-6},
+    _GPT35_TURBO: {"input_cost_per_token": 0.5e-6, "output_cost_per_token": 1.5e-6},
     # Anthropic
     "claude-3-5-sonnet-20241022": {
         "input_cost_per_token": 3.0e-6,
@@ -197,6 +201,36 @@ def _is_model_known_to_litellm(model: str) -> bool:
     return False
 
 
+def _try_litellm_prompt_cost(
+    model: str, prompt: str | list[dict[str, Any]] | None, tokens: int
+) -> tuple[float | None, int]:
+    """Attempt prompt cost calculation via litellm.
+
+    Args:
+        model: The model name
+        prompt: Input prompt (string, message list, or None)
+        tokens: Current token count (updated if prompt is provided)
+
+    Returns:
+        Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
+        determine pricing and the caller should fall through to the fallback.
+    """
+    model_known = _is_model_known_to_litellm(model)
+    if prompt is not None:
+        if isinstance(prompt, list):
+            tokens = litellm.token_counter(model=model, messages=prompt)
+        else:
+            tokens = litellm.token_counter(model=model, text=prompt)
+    prompt_cost, _ = litellm.cost_per_token(
+        model=model, prompt_tokens=tokens, completion_tokens=0
+    )
+    if prompt_cost > 0:
+        return float(prompt_cost), tokens
+    if model_known:
+        return 0.0, tokens
+    return None, tokens
+
+
 def calculate_prompt_cost(
     prompt: str | list[dict[str, Any]] | None, model: str
 ) -> float:
@@ -216,33 +250,16 @@ def calculate_prompt_cost(
             litellm or the fallback pricing table.
     """
     tokens = 0
-    model_known = False
 
     if LITELLM_AVAILABLE:
-        model_known = _is_model_known_to_litellm(model)
         try:
-            # Count tokens first (guard against None prompt)
-            if prompt is not None:
-                if isinstance(prompt, list):
-                    tokens = litellm.token_counter(model=model, messages=prompt)
-                else:
-                    tokens = litellm.token_counter(model=model, text=prompt)
-
-            # Get cost for input tokens only (0 completion tokens)
-            prompt_cost, _ = litellm.cost_per_token(
-                model=model, prompt_tokens=tokens, completion_tokens=0
-            )
-            if prompt_cost > 0:
-                return float(prompt_cost)
-            # Zero cost from litellm - if model is known, allow 0.0
-            if model_known:
-                return 0.0
+            result, tokens = _try_litellm_prompt_cost(model, prompt, tokens)
+            if result is not None:
+                return result
         except Exception:
-            # litellm failed - log for diagnostics and fall through to fallback
             logger.debug(
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
-            pass
 
     # Estimate tokens from prompt if we don't have a count
     if tokens == 0 and prompt is not None:
@@ -265,6 +282,33 @@ def calculate_prompt_cost(
     )
 
 
+def _try_litellm_completion_cost(
+    model: str, completion: str | None, tokens: int
+) -> tuple[float | None, int]:
+    """Attempt completion cost calculation via litellm.
+
+    Args:
+        model: The model name
+        completion: Completion text (or None)
+        tokens: Current token count (updated if completion is provided)
+
+    Returns:
+        Tuple of (cost_or_None, token_count). Cost is None when litellm cannot
+        determine pricing and the caller should fall through to the fallback.
+    """
+    model_known = _is_model_known_to_litellm(model)
+    if completion is not None:
+        tokens = litellm.token_counter(model=model, text=completion)
+    _, completion_cost = litellm.cost_per_token(
+        model=model, prompt_tokens=0, completion_tokens=tokens
+    )
+    if completion_cost > 0:
+        return float(completion_cost), tokens
+    if model_known:
+        return 0.0, tokens
+    return None, tokens
+
+
 def calculate_completion_cost(completion: str | None, model: str) -> float:
     """Calculate OUTPUT cost only using litellm.
 
@@ -282,30 +326,16 @@ def calculate_completion_cost(completion: str | None, model: str) -> float:
             litellm or the fallback pricing table.
     """
     tokens = 0
-    model_known = False
 
     if LITELLM_AVAILABLE:
-        model_known = _is_model_known_to_litellm(model)
         try:
-            # Count tokens (guard against None completion)
-            if completion is not None:
-                tokens = litellm.token_counter(model=model, text=completion)
-
-            # Get cost for output tokens only (0 prompt tokens)
-            _, completion_cost = litellm.cost_per_token(
-                model=model, prompt_tokens=0, completion_tokens=tokens
-            )
-            if completion_cost > 0:
-                return float(completion_cost)
-            # Zero cost from litellm - if model is known, allow 0.0
-            if model_known:
-                return 0.0
+            result, tokens = _try_litellm_completion_cost(model, completion, tokens)
+            if result is not None:
+                return result
         except Exception:
-            # litellm failed - log for diagnostics and fall through to fallback
             logger.debug(
                 "litellm cost calculation failed for model %r", model, exc_info=True
             )
-            pass
 
     # Estimate tokens from completion if we don't have a count
     if tokens == 0 and completion is not None:
@@ -350,6 +380,43 @@ _FALLBACK_ALIASES: dict[str, str] = {
 }
 
 
+def _find_fallback_pricing(
+    base_model: str,
+) -> tuple[dict[str, float] | None, str | None]:
+    """Find pricing entry for a normalized model name via exact then prefix match.
+
+    Args:
+        base_model: Lower-cased, normalized model name
+
+    Returns:
+        Tuple of (pricing_dict, matched_key) or (None, None) if not found.
+    """
+    # Exact match (case-insensitive via normalized base_model)
+    for key, value in FALLBACK_MODEL_PRICING.items():
+        if key.lower() == base_model:
+            return value, key
+
+    # Prefix matching - prefer LONGEST matching key
+    best_match_len = 0
+    pricing = None
+    matched_key = None
+    for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
+        key_lower = model_key.lower()
+        # Check if base_model starts with key or key starts with base_model
+        if base_model.startswith(key_lower):
+            if len(key_lower) > best_match_len:
+                best_match_len = len(key_lower)
+                pricing = model_pricing
+                matched_key = model_key
+        elif key_lower.startswith(base_model):
+            if len(base_model) > best_match_len:
+                best_match_len = len(base_model)
+                pricing = model_pricing
+                matched_key = model_key
+
+    return pricing, matched_key
+
+
 def _fallback_cost_from_tokens(
     model: str, input_tokens: int, output_tokens: int, *, _quiet: bool = False
 ) -> tuple[float, float]:
@@ -371,31 +438,7 @@ def _fallback_cost_from_tokens(
             base_model = canonical.lower()
             break
 
-    # Try exact match first (case-insensitive via normalized base_model)
-    pricing = None
-    matched_key = None
-    for key, value in FALLBACK_MODEL_PRICING.items():
-        if key.lower() == base_model:
-            pricing = value
-            matched_key = key
-            break
-
-    # Try prefix matching - prefer LONGEST matching key
-    if not pricing:
-        best_match_len = 0
-        for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
-            key_lower = model_key.lower()
-            # Check if base_model starts with key or key starts with base_model
-            if base_model.startswith(key_lower):
-                if len(key_lower) > best_match_len:
-                    best_match_len = len(key_lower)
-                    pricing = model_pricing
-                    matched_key = model_key
-            elif key_lower.startswith(base_model):
-                if len(base_model) > best_match_len:
-                    best_match_len = len(base_model)
-                    pricing = model_pricing
-                    matched_key = model_key
+    pricing, matched_key = _find_fallback_pricing(base_model)
 
     if pricing:
         # Warn-once per model to avoid log spam
@@ -408,9 +451,10 @@ def _fallback_cost_from_tokens(
                     model,
                     matched_key,
                 )
-        input_cost = input_tokens * pricing["input_cost_per_token"]
-        output_cost = output_tokens * pricing["output_cost_per_token"]
-        return input_cost, output_cost
+        return (
+            input_tokens * pricing["input_cost_per_token"],
+            output_tokens * pricing["output_cost_per_token"],
+        )
 
     return 0.0, 0.0
 
@@ -547,7 +591,7 @@ class CostBreakdown:
 
     def __post_init__(self) -> None:
         """Ensure total cost is sum of input and output costs."""
-        if self.total_cost == 0.0:
+        if not self.total_cost:
             self.total_cost = self.input_cost + self.output_cost
         if self.total_tokens == 0:
             self.total_tokens = self.input_tokens + self.output_tokens
@@ -572,10 +616,10 @@ class CostCalculator:
         "claude-sonnet": "claude-3-5-sonnet-latest",
         "claude-opus": "claude-3-opus-latest",
         # OpenAI models are usually fine as-is but add common aliases
-        "gpt-3.5": "gpt-3.5-turbo",
-        "gpt-4": "gpt-4o",
-        "gpt4": "gpt-4o",
-        "gpt3.5": "gpt-3.5-turbo",
+        "gpt-3.5": _GPT35_TURBO,
+        "gpt-4": _GPT4O,
+        "gpt4": _GPT4O,
+        "gpt3.5": _GPT35_TURBO,
         "gpt-4o-mini": "gpt-4o-mini",  # GPT-4o mini model for cost-effective usage
         # Common alternative spellings
         "claude3-haiku": "claude-3-haiku-20240307",
@@ -587,9 +631,9 @@ class CostCalculator:
     FAMILY_DEFAULTS = {
         "claude-3": "claude-3-5-sonnet-latest",  # Most capable general model
         "claude": "claude-3-5-sonnet-latest",
-        "gpt-4": "gpt-4o",  # Latest GPT-4 variant
-        "gpt": "gpt-4o",  # Default to latest
-        "gpt-3.5": "gpt-3.5-turbo",  # Standard 3.5 model
+        "gpt-4": _GPT4O,  # Latest GPT-4 variant
+        "gpt": _GPT4O,  # Default to latest
+        "gpt-3.5": _GPT35_TURBO,  # Standard 3.5 model
     }
 
     def __init__(self, logger=None, enable_caching: bool = True) -> None:
@@ -933,7 +977,9 @@ class CostCalculator:
                     return float(input_cost), float(output_cost)
                 except Exception:
                     # Model not in litellm, try direct lookup or fallback
-                    pass
+                    logger.debug(
+                        "litellm.cost_per_token unavailable for model %r", model
+                    )
 
             # Try direct lookup in litellm.model_cost
             normalized = self._normalize_model_name(model)
