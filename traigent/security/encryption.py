@@ -1179,11 +1179,7 @@ class DataProtectionManager:
         Returns:
             Unprotected data as string
         """
-        if protected_result.get("is_encrypted", False):
-            # Decrypt if encrypted, but return the protected/anonymized version
-            return cast(str, protected_result["protected_data"])
-        else:
-            return cast(str, protected_result["protected_data"])
+        return cast(str, protected_result["protected_data"])
 
 
 @dataclass

@@ -123,8 +123,6 @@ class ErrorHandler:
     @classmethod
     def handle_error(cls, error: Exception) -> None:
         """Handle an error with helpful suggestions."""
-        str(error)
-
         # Check for known error patterns
         for _pattern_name, pattern_info in cls.ERROR_PATTERNS.items():
             check_func = pattern_info["check"]
