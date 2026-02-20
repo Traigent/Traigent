@@ -27,6 +27,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from traigent.tuned_variables.dataflow_strategy import DataFlowDetectionStrategy
 from traigent.tuned_variables.detection_strategies import (
     ASTDetectionStrategy,
     DetectionStrategy,
@@ -48,8 +49,8 @@ class TunedVariableDetector:
 
     Args:
         strategies: List of detection strategies. If None, defaults to
-            ``[ASTDetectionStrategy()]``. Strategies must be stateless
-            or thread-safe.
+            ``[ASTDetectionStrategy(), DataFlowDetectionStrategy()]``.
+            Strategies must be stateless or thread-safe.
     """
 
     def __init__(
@@ -57,7 +58,8 @@ class TunedVariableDetector:
         strategies: list[DetectionStrategy] | None = None,
     ) -> None:
         self._strategies: list[DetectionStrategy] = strategies or [
-            ASTDetectionStrategy()
+            ASTDetectionStrategy(),
+            DataFlowDetectionStrategy(),
         ]
 
     def detect_from_source(
