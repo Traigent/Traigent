@@ -628,5 +628,6 @@ class TestPlatformRegistry:
         )
         assert isinstance(executor, OpenAIAgentExecutor)
         assert (
-            executor.platform_config["api_key"] == "test-key"  # pragma: allowlist secret
+            executor.platform_config["api_key"]
+            == "test-key"  # pragma: allowlist secret
         )

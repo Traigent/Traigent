@@ -615,7 +615,7 @@ class TestEdgeCases:
         mod.__name__ = "m"
 
         def no_tags_func() -> None:
-            """A function with a docstring but no Tags: line."""
+            """A plain function with a docstring but no tag annotations."""
             pass  # test fixture — no implementation needed
 
         no_tags_func.__module__ = "m"
@@ -625,7 +625,6 @@ class TestEdgeCases:
         info = callables["no_tags_func"]
         assert info.tags == (), f"Expected empty tags, got: {info.tags}"
         assert info.docstring is not None
-        assert "Tags:" not in info.docstring
 
     def test_discover_include_private_preserves_public(
         self, test_module: ModuleType
