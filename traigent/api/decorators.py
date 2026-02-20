@@ -1849,6 +1849,12 @@ def optimize(
                 constraints, config_space_var_names
             )
 
+        # Remove keys from runtime overrides that are passed explicitly below
+        # to avoid "got multiple values for keyword argument" errors.
+        # TVL budget application can inject max_trials into runtime_overrides
+        # (via _apply_tvl_artifact), but we pass it explicitly as well.
+        combined_runtime_overrides.pop("max_trials", None)
+
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
