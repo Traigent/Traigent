@@ -143,7 +143,9 @@ class TestAutoConfigResult:
         kwargs = result.to_decorator_kwargs()
         assert kwargs == {}
 
-    def test_to_decorator_kwargs_with_tvars(self) -> None:
+    def test_to_decorator_kwargs_returns_live_objects(self) -> None:
+        from traigent.api.parameter_ranges import Choices, Range
+
         result = AutoConfigResult(
             tvars=(
                 TVarSpec(
@@ -165,16 +167,138 @@ class TestAutoConfigResult:
         kwargs = result.to_decorator_kwargs()
         assert "configuration_space" in kwargs
         assert "objectives" in kwargs
+
+        # Must return actual ParameterRange objects, not dicts
+        temp = kwargs["configuration_space"]["temperature"]
+        assert isinstance(temp, Range)
+        assert temp.low == pytest.approx(0.0)
+        assert temp.high == pytest.approx(1.0)
+
+        model = kwargs["configuration_space"]["model"]
+        assert isinstance(model, Choices)
+        assert "gpt-4o" in model.values
+
+        assert kwargs["objectives"] == ["accuracy", "cost"]
+
+    def test_to_decorator_kwargs_with_safety(self) -> None:
+        from traigent.api.safety import SafetyConstraint
+
+        result = AutoConfigResult(
+            safety_constraints=(
+                SafetySpec(
+                    metric_name="faithfulness",
+                    operator=">=",
+                    threshold=0.85,
+                ),
+                SafetySpec(
+                    metric_name="hallucination_rate",
+                    operator="<=",
+                    threshold=0.15,
+                ),
+            ),
+        )
+        kwargs = result.to_decorator_kwargs()
+        assert "safety_constraints" in kwargs
+        constraints = kwargs["safety_constraints"]
+        assert len(constraints) == 2
+        for c in constraints:
+            assert isinstance(c, SafetyConstraint)
+
+    def test_to_dict_kwargs_returns_dicts(self) -> None:
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            objectives=(ObjectiveSpec(name="accuracy"),),
+        )
+        kwargs = result.to_dict_kwargs()
         assert kwargs["configuration_space"]["temperature"] == {
             "type": "Range",
             "low": 0.0,
             "high": 1.0,
         }
-        assert kwargs["configuration_space"]["model"] == {
-            "type": "Choices",
-            "values": ["gpt-4o"],
-        }
-        assert kwargs["objectives"] == ["accuracy", "cost"]
+        assert kwargs["objectives"] == ["accuracy"]
+
+    def test_to_tvl_spec_basic(self) -> None:
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            objectives=(
+                ObjectiveSpec(name="accuracy", orientation="maximize", weight=0.6),
+            ),
+        )
+        spec = result.to_tvl_spec(module_name="test_agent")
+        assert spec["header"]["module"] == "test_agent"
+        assert "tvars" in spec
+        assert "objectives" in spec
+        assert spec["objectives"][0]["name"] == "accuracy"
+        assert spec["objectives"][0]["direction"] == "maximize"
+
+    def test_to_tvl_spec_with_safety(self) -> None:
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            safety_constraints=(
+                SafetySpec(metric_name="faithfulness", operator=">=", threshold=0.85),
+            ),
+        )
+        spec = result.to_tvl_spec()
+        assert "safety" in spec
+        assert spec["safety"][0]["metric"] == "faithfulness"
+        assert spec["safety"][0]["threshold"] == pytest.approx(0.85)
+
+    def test_to_tvl_spec_with_structural_constraints(self) -> None:
+        result = AutoConfigResult(
+            tvars=(
+                TVarSpec(
+                    name="temperature",
+                    range_type="Range",
+                    range_kwargs={"low": 0.0, "high": 1.0},
+                ),
+            ),
+            structural_constraints=(
+                StructuralConstraintSpec(
+                    description="Low temp for factual models",
+                    constraint_code="implies(model.equals('gpt-4o'), temperature.lte(1.0))",
+                    requires_tvars=("model", "temperature"),
+                ),
+            ),
+        )
+        spec = result.to_tvl_spec()
+        assert "constraints" in spec
+        structural = spec["constraints"]["structural"]
+        assert len(structural) == 1
+        assert structural[0]["description"] == "Low temp for factual models"
+        assert "implies" in structural[0]["code"]
+        assert structural[0]["requires"] == ["model", "temperature"]
+
+    def test_reconstruct_range_unknown_type(self) -> None:
+        from traigent.config_generator.types import _reconstruct_range
+
+        tvar = TVarSpec(name="x", range_type="UnknownRange")
+        with pytest.raises(ValueError, match="Unknown range type"):
+            _reconstruct_range(tvar)
+
+    def test_reconstruct_safety_unknown_metric(self) -> None:
+        from traigent.config_generator.types import _reconstruct_safety
+
+        sc = SafetySpec(metric_name="made_up_metric", operator=">=", threshold=0.5)
+        with pytest.raises(ValueError, match="Unknown safety metric"):
+            _reconstruct_safety(sc)
 
     def test_to_python_code_basic(self) -> None:
         result = AutoConfigResult(

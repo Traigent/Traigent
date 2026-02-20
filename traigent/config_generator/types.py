@@ -104,10 +104,37 @@ class AutoConfigResult:
     llm_cost_usd: float = 0.0
 
     def to_decorator_kwargs(self) -> dict[str, Any]:
-        """Convert to kwargs suitable for ``@traigent.optimize(...)``."""
+        """Convert to kwargs suitable for ``@traigent.optimize(...)``.
+
+        Returns actual ``ParameterRange`` and ``SafetyConstraint`` objects
+        that can be passed directly to the decorator.
+        """
         kwargs: dict[str, Any] = {}
 
-        # configuration_space
+        if self.tvars:
+            config_space: dict[str, Any] = {}
+            for tvar in self.tvars:
+                config_space[tvar.name] = _reconstruct_range(tvar)
+            kwargs["configuration_space"] = config_space
+
+        if self.objectives:
+            kwargs["objectives"] = [obj.name for obj in self.objectives]
+
+        if self.safety_constraints:
+            kwargs["safety_constraints"] = [
+                _reconstruct_safety(sc) for sc in self.safety_constraints
+            ]
+
+        return kwargs
+
+    def to_dict_kwargs(self) -> dict[str, Any]:
+        """Convert to serializable kwargs dict (for JSON/TVL export).
+
+        Same shape as ``to_decorator_kwargs`` but with plain dicts
+        instead of live objects.
+        """
+        kwargs: dict[str, Any] = {}
+
         if self.tvars:
             config_space: dict[str, Any] = {}
             for tvar in self.tvars:
@@ -117,11 +144,63 @@ class AutoConfigResult:
                 }
             kwargs["configuration_space"] = config_space
 
-        # objectives
         if self.objectives:
             kwargs["objectives"] = [obj.name for obj in self.objectives]
 
         return kwargs
+
+    def to_tvl_spec(self, module_name: str = "auto_generated") -> dict[str, Any]:
+        """Convert to a TVL 0.9 spec dict (YAML-serializable).
+
+        Leverages ``ConfigSpace.to_tvl_spec()`` for tvar/constraint
+        conversion and appends objectives + safety sections.
+        """
+        # Lazy import to avoid circular dependency
+        from traigent.api.config_space import ConfigSpace
+
+        # Build a ConfigSpace from live ParameterRange objects
+        decorator_kwargs = self.to_decorator_kwargs()
+        config_space = ConfigSpace.from_decorator_args(
+            configuration_space=decorator_kwargs.get("configuration_space"),
+        )
+
+        spec: dict[str, Any] = config_space.to_tvl_spec()
+        spec["header"] = {"module": module_name}
+
+        # Append structural constraints from the pipeline (stored as code
+        # strings, not live Constraint objects, so we add them directly).
+        if self.structural_constraints:
+            structural = [
+                {
+                    "description": sc.description,
+                    "code": sc.constraint_code,
+                    "requires": list(sc.requires_tvars),
+                }
+                for sc in self.structural_constraints
+            ]
+            spec.setdefault("constraints", {})["structural"] = structural
+
+        if self.objectives:
+            spec["objectives"] = [
+                {
+                    "name": obj.name,
+                    "direction": obj.orientation,
+                    "weight": obj.weight,
+                }
+                for obj in self.objectives
+            ]
+
+        if self.safety_constraints:
+            spec["safety"] = [
+                {
+                    "metric": sc.metric_name,
+                    "operator": sc.operator,
+                    "threshold": sc.threshold,
+                }
+                for sc in self.safety_constraints
+            ]
+
+        return spec
 
     def to_python_code(self) -> str:
         """Generate copy-pasteable ``@traigent.optimize(...)`` Python code."""
@@ -180,3 +259,55 @@ def _metric_expression(metric_name: str) -> str:
     if metric_name in _FACTORY_METRICS:
         return f"{metric_name}()"
     return metric_name
+
+
+def _reconstruct_range(tvar: TVarSpec) -> Any:
+    """Reconstruct a live ``ParameterRange`` from a ``TVarSpec``.
+
+    Uses lazy imports to avoid circular dependency with ``traigent.api``.
+    """
+    from traigent.api.parameter_ranges import Choices, IntRange, LogRange, Range
+
+    constructors = {
+        "Range": Range,
+        "IntRange": IntRange,
+        "LogRange": LogRange,
+        "Choices": Choices,
+    }
+    cls = constructors.get(tvar.range_type)
+    if cls is None:
+        raise ValueError(f"Unknown range type: {tvar.range_type!r}")
+    return cls(**tvar.range_kwargs, name=tvar.name)
+
+
+def _reconstruct_safety(sc: SafetySpec) -> Any:
+    """Reconstruct a live ``SafetyConstraint`` from a ``SafetySpec``.
+
+    Uses lazy imports to avoid circular dependency with ``traigent.api``.
+    """
+    from traigent.api.safety import (
+        bias_score,
+        faithfulness,
+        hallucination_rate,
+        safety_score,
+        toxicity_score,
+    )
+
+    metrics: dict[str, Any] = {
+        "faithfulness": faithfulness,
+        "hallucination_rate": hallucination_rate,
+        "toxicity_score": toxicity_score,
+        "bias_score": bias_score,
+        "safety_score": safety_score,
+    }
+    metric_or_factory = metrics.get(sc.metric_name)
+    if metric_or_factory is None:
+        raise ValueError(f"Unknown safety metric: {sc.metric_name!r}")
+
+    # Factory metrics need to be called to get an instance
+    metric = (
+        metric_or_factory() if sc.metric_name in _FACTORY_METRICS else metric_or_factory
+    )
+    if sc.operator == ">=":
+        return metric.above(sc.threshold)  # type: ignore[union-attr]
+    return metric.below(sc.threshold)  # type: ignore[union-attr]

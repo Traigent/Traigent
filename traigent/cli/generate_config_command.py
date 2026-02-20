@@ -44,7 +44,7 @@ import click
     "--output",
     "-o",
     "output_format",
-    type=click.Choice(["table", "python", "json"], case_sensitive=False),
+    type=click.Choice(["table", "python", "json", "tvl"], case_sensitive=False),
     default="table",
     show_default=True,
     help="Output format.",
@@ -55,6 +55,19 @@ import click
     default=None,
     help="Comma-separated subsystems to run (e.g., tvars,objectives,safety).",
 )
+@click.option(
+    "--apply",
+    "apply_decorator",
+    is_flag=True,
+    default=False,
+    help="Apply the generated config as a decorator on the target function.",
+)
+@click.option(
+    "--no-backup",
+    is_flag=True,
+    default=False,
+    help="Skip creating .bak backup when using --apply.",
+)
 def generate_config(
     path: Path,
     function_name: str | None,
@@ -63,6 +76,8 @@ def generate_config(
     budget: float,
     output_format: str,
     subsystems_str: str | None,
+    apply_decorator: bool,
+    no_backup: bool,
 ) -> None:
     """Generate a complete @traigent.optimize() configuration.
 
@@ -109,11 +124,35 @@ def generate_config(
         click.echo(f"Error: {exc}", err=True)
         raise SystemExit(1) from None
 
+    # --apply: insert/update decorator on the target function
+    if apply_decorator:
+        if not function_name:
+            click.echo(
+                "Error: --apply requires --function/-f to specify which function "
+                "to decorate.",
+                err=True,
+            )
+            raise SystemExit(1)
+        from traigent.config_generator.apply import apply_config
+
+        modified = apply_config(
+            path,
+            result,
+            function_name,
+            backup=not no_backup,
+        )
+        click.echo(f"Applied @traigent.optimize() to {function_name} in {modified}")
+        if not no_backup:
+            click.echo(f"Backup saved to {path.with_suffix('.py.bak')}")
+        return
+
     # Format and display
     if output_format == "python":
         _output_python(result)
     elif output_format == "json":
         _output_json(result)
+    elif output_format == "tvl":
+        _output_tvl(result, path)
     else:
         _output_table(result)
 
@@ -180,70 +219,82 @@ def _output_json(result):
     click.echo(json.dumps(data, indent=2))
 
 
+def _output_tvl(result, path: Path):
+    """Write a .tvl.yml spec file next to the source file."""
+    try:
+        import yaml
+    except ImportError:
+        click.echo(
+            "Error: PyYAML is required for TVL export. "
+            "Install it with: pip install pyyaml",
+            err=True,
+        )
+        raise SystemExit(1) from None
+
+    spec = result.to_tvl_spec(module_name=path.stem)
+    tvl_path = path.with_suffix(".tvl.yml")
+    tvl_path.write_text(yaml.dump(spec, default_flow_style=False, sort_keys=False))
+    click.echo(f"TVL spec written to: {tvl_path}")
+
+
+def _print_section(title: str, items, formatter) -> None:
+    """Print a titled section with separator lines."""
+    if not items:
+        return
+    click.echo(f"\n{'=' * 60}")
+    click.echo(title)
+    click.echo(f"{'=' * 60}")
+    for item in items:
+        formatter(item)
+
+
 def _output_table(result):
     """Print a human-readable table summary."""
     if result.agent_type:
         click.echo(f"\nAgent type: {result.agent_type}")
 
-    # TVars
-    if result.tvars:
-        click.echo(f"\n{'='*60}")
-        click.echo("Tunable Variables")
-        click.echo(f"{'='*60}")
-        for t in result.tvars:
-            click.echo(f"  {t.name}: {t.to_range_code()}  [{t.source}]")
+    _print_section(
+        "Tunable Variables",
+        result.tvars,
+        lambda t: click.echo(f"  {t.name}: {t.to_range_code()}  [{t.source}]"),
+    )
+    _print_section(
+        "Objectives",
+        result.objectives,
+        lambda o: click.echo(f"  {o.name} ({o.orientation}, weight={o.weight:.2f})"),
+    )
+    _print_section(
+        "Safety Constraints",
+        result.safety_constraints,
+        lambda sc: click.echo(f"  {sc.metric_name} {sc.operator} {sc.threshold}"),
+    )
+    _print_section(
+        "Structural Constraints",
+        result.structural_constraints,
+        lambda c: (
+            click.echo(f"  {c.description}"),
+            click.echo(f"    Code: {c.constraint_code.splitlines()[0]}"),
+        ),
+    )
+    _print_section(
+        "Benchmarks",
+        result.benchmarks,
+        lambda b: click.echo(f"  {b.name}: {b.description[:80]}"),
+    )
+    _print_section(
+        "Recommended Additional TVars",
+        result.recommendations,
+        lambda r: (
+            click.echo(f"  [{r.impact_estimate}] {r.name}: {r.to_range_code()}"),
+            click.echo(f"    {r.reasoning}"),
+        ),
+    )
+    _print_section(
+        "Warnings",
+        result.warnings,
+        lambda w: click.echo(f"  ! {w}"),
+    )
 
-    # Objectives
-    if result.objectives:
-        click.echo(f"\n{'='*60}")
-        click.echo("Objectives")
-        click.echo(f"{'='*60}")
-        for o in result.objectives:
-            click.echo(f"  {o.name} ({o.orientation}, weight={o.weight:.2f})")
-
-    # Safety constraints
-    if result.safety_constraints:
-        click.echo(f"\n{'='*60}")
-        click.echo("Safety Constraints")
-        click.echo(f"{'='*60}")
-        for sc in result.safety_constraints:
-            click.echo(f"  {sc.metric_name} {sc.operator} {sc.threshold}")
-
-    # Structural constraints
-    if result.structural_constraints:
-        click.echo(f"\n{'='*60}")
-        click.echo("Structural Constraints")
-        click.echo(f"{'='*60}")
-        for c in result.structural_constraints:
-            click.echo(f"  {c.description}")
-            click.echo(f"    Code: {c.constraint_code.splitlines()[0]}")
-
-    # Benchmarks
-    if result.benchmarks:
-        click.echo(f"\n{'='*60}")
-        click.echo("Benchmarks")
-        click.echo(f"{'='*60}")
-        for b in result.benchmarks:
-            click.echo(f"  {b.name}: {b.description[:80]}")
-
-    # Recommendations
-    if result.recommendations:
-        click.echo(f"\n{'='*60}")
-        click.echo("Recommended Additional TVars")
-        click.echo(f"{'='*60}")
-        for r in result.recommendations:
-            click.echo(f"  [{r.impact_estimate}] {r.name}: {r.to_range_code()}")
-            click.echo(f"    {r.reasoning}")
-
-    # Warnings
-    if result.warnings:
-        click.echo(f"\n{'='*60}")
-        click.echo("Warnings")
-        click.echo(f"{'='*60}")
-        for w in result.warnings:
-            click.echo(f"  ! {w}")
-
-    # LLM stats
     if result.llm_calls_made > 0:
         click.echo(
             f"\nLLM: {result.llm_calls_made} calls, "
