@@ -1673,9 +1673,6 @@ def optimize(
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
-    # Optimizer limits
-    max_trials_value = combined_settings["max_trials"]
-
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
     evaluation_bundle = _coerce_bundle(
@@ -1780,6 +1777,11 @@ def optimize(
         default_config,
         eval_dataset,
         combined_runtime_overrides,
+    )
+
+    # Optimizer limits – prefer runtime override (e.g. from TVL budget) over default
+    max_trials_value = combined_runtime_overrides.pop(
+        "max_trials", combined_settings["max_trials"]
     )
 
     if samples_include_pruned is None:
