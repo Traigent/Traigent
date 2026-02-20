@@ -164,6 +164,7 @@ def execute():
         model = config.get("model", "balanced")
 
         # In production, this would call your actual LLM/agent
+        query = inp.get("data", {}).get("query", "")
 
         # Calculate cost based on model tier
         cost_per_query = {
