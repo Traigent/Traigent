@@ -138,6 +138,15 @@ PARAMETER_MAPPINGS: dict[str, dict[str, str]] = {
         "top_p": "top_p",
         "top_k": "top_k",
     },
+    # PydanticAI mappings — discovery/documentation only.
+    # IMPORTANT: PydanticAI requires these params inside the `model_settings` dict,
+    # NOT as top-level kwargs. Actual injection must go through
+    # PydanticAIPlugin.apply_overrides() which handles the nesting.
+    "pydantic_ai.Agent": {
+        "temperature": "temperature",
+        "max_tokens": "max_tokens",
+        "top_p": "top_p",
+    },
     # Mock classes for testing
     "MockOpenAI": {
         "model": "model",
@@ -269,6 +278,14 @@ METHOD_MAPPINGS: dict[str, dict[str, list[str]]] = {
             "stream",
             "tools",
         ],
+    },
+    # PydanticAI methods — params are injected via model_settings dict
+    # (see PydanticAIPlugin.apply_overrides for actual nesting logic)
+    "pydantic_ai.Agent": {
+        "run": ["temperature", "max_tokens", "top_p"],
+        "run_sync": ["temperature", "max_tokens", "top_p"],
+        "run_stream": ["temperature", "max_tokens", "top_p"],
+        "run_stream_sync": ["temperature", "max_tokens", "top_p"],
     },
 }
 
