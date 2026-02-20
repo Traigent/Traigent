@@ -192,9 +192,7 @@ class RandomSearchOptimizer(BaseOptimizer):
                 if int_step < 1:
                     int_step = 1
                 values = list(range(low_i, high_i + 1, int_step))
-                if not values:
-                    values = [low_i]
-                elif values[-1] != high_i:
+                if values[-1] != high_i:
                     values.append(high_i)
                 return self._random.choice(values)
 
