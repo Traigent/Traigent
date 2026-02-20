@@ -1815,6 +1815,9 @@ register_edge_analytics_commands(cli)
 
 cli.add_command(auth)
 cli.add_command(hooks)
+from traigent.cli.detect_tvars_command import detect_tvars  # noqa: E402
+
+cli.add_command(detect_tvars)
 
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter
