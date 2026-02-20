@@ -96,6 +96,11 @@ dspy = [
     "dspy-ai>=2.5.0",
 ]
 
+# PydanticAI agent framework integration
+pydanticai = [
+    "pydantic-ai>=1,<2",
+]
+
 # Enterprise security features (Sprint 7)
 security = [
     "pyjwt>=2.4.0",
@@ -188,7 +193,7 @@ cloud = [
 
 # All optional features combined (playground/examples moved to TraigentDemo)
 all = [
-    "traigent[analytics,bayesian,integrations,security,visualization,test,tracing,hybrid]"
+    "traigent[analytics,bayesian,integrations,pydanticai,security,visualization,test,tracing,hybrid]"
 ]
 
 # Enterprise bundle with all features (playground/examples moved to TraigentDemo)

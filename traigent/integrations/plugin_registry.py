@@ -70,6 +70,7 @@ class PluginRegistry:
             ("traigent.integrations.llms.gemini_plugin", "GeminiPlugin"),
             ("traigent.integrations.llms.cohere_plugin", "CoherePlugin"),
             ("traigent.integrations.llms.huggingface_plugin", "HuggingFacePlugin"),
+            ("traigent.integrations.pydantic_ai.plugin", "PydanticAIPlugin"),
             ("traigent.integrations.vector_stores.chromadb_plugin", "ChromaDBPlugin"),
             ("traigent.integrations.vector_stores.pinecone_plugin", "PineconePlugin"),
             ("traigent.integrations.vector_stores.weaviate_plugin", "WeaviatePlugin"),
