@@ -262,7 +262,7 @@ Traigent optimizer with:
 @traigent.optimize(
     execution_mode="hybrid_api",
     hybrid_api_endpoint="https://api.your-service.com",
-    capability_id="my_agent",
+    tunable_id="my_agent",
     hybrid_api_auth_header="Bearer <token>",
 )
 \end{lstlisting}
@@ -292,7 +292,7 @@ Returns service capabilities for the initial handshake.
   "supports_streaming": false,
   "max_batch_size": 100,
   "max_payload_bytes": null,
-  "capability_ids": ["my_agent"]
+  "tunable_ids": ["my_agent"]
 }
 \end{lstlisting}
 
@@ -337,7 +337,7 @@ parameter search space.
 \begin{lstlisting}[language=json]
 {
   "schema_version": "0.9",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "tunables": [
     {
       "name": "model",
@@ -421,7 +421,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 \begin{lstlisting}[language=json]
 {
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "config": {
     "model": "gpt-4o",
     "temperature": 0.5,
@@ -550,7 +550,7 @@ Evaluate outputs against expected targets. Only required when
 \begin{lstlisting}[language=json]
 {
   "request_id": "660e8400-e29b-41d4-a716-446655440001",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "execution_id": "exec_123456",
   "evaluations": [
     {

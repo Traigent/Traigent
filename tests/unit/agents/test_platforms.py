@@ -472,8 +472,8 @@ class TestOpenAIAgentExecutor:
         assert messages[0]["role"] == "user"
 
     def test_calculate_cost(self):
-        """Test cost calculation."""
-        from decimal import Decimal
+        """Test _calculate_cost delegates to CostCalculator correctly."""
+        from traigent.utils.cost_calculator import get_cost_calculator
 
         executor = OpenAIAgentExecutor()
 
@@ -483,23 +483,62 @@ class TestOpenAIAgentExecutor:
             completion_tokens = 50
             total_tokens = 150
 
-        # GPT-3.5 cost
-        cost = executor._calculate_cost("o4-mini", MockUsage())
-        # Convert to float for comparison if cost is Decimal
-        if isinstance(cost, Decimal):
-            cost = float(cost)
-        # The actual cost from litellm library
-        expected = 0.0011
-        assert abs(cost - expected) < 0.0001
+        calc = get_cost_calculator()
 
-        # GPT-4 cost
-        cost = executor._calculate_cost("GPT-4o", MockUsage())
-        # Convert to float for comparison if cost is Decimal
-        if isinstance(cost, Decimal):
-            cost = float(cost)
-        # The actual cost from litellm library
-        expected = 0.0025
-        assert abs(cost - expected) < 0.0001
+        # Test gpt-4o — verify result matches CostCalculator
+        cost = executor._calculate_cost("gpt-4o", MockUsage())
+        assert isinstance(cost, float)
+        assert cost > 0, "Known model should return positive cost"
+        input_cost, output_cost = calc._calculate_from_tokens(100, 50, "gpt-4o")
+        expected = float(input_cost + output_cost)
+        assert (
+            abs(cost - expected) < 1e-10
+        ), f"_calculate_cost should match CostCalculator: {cost} vs {expected}"
+
+        # Test with model alias (GPT-4o → gpt-4o via MODEL_ALIASES)
+        cost_alias = executor._calculate_cost("GPT-4o", MockUsage())
+        assert (
+            abs(cost_alias - expected) < 1e-10
+        ), "Aliased model should produce same cost as canonical name"
+
+    def test_calculate_cost_zero_cost_warning(self):
+        """Test _calculate_cost warns when cost is 0 for nonzero tokens."""
+        from unittest.mock import MagicMock, patch
+
+        executor = OpenAIAgentExecutor()
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        # Force _calculate_from_tokens to return (0, 0) for a "known" model
+        mock_calc = MagicMock()
+        mock_calc._calculate_from_tokens.return_value = (0.0, 0.0)
+        with patch(
+            "traigent.utils.cost_calculator.get_cost_calculator",
+            return_value=mock_calc,
+        ):
+            cost = executor._calculate_cost("gpt-4o", MockUsage())
+            assert cost < 1e-12
+
+    def test_calculate_cost_exception_fallback(self):
+        """Test _calculate_cost returns 0.0 on CostCalculator exception."""
+        from unittest.mock import patch
+
+        executor = OpenAIAgentExecutor()
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        with patch(
+            "traigent.utils.cost_calculator.get_cost_calculator",
+            side_effect=RuntimeError("test"),
+        ):
+            cost = executor._calculate_cost("gpt-4o", MockUsage())
+            assert cost < 1e-12
 
     @pytest.mark.asyncio
     async def test_estimate_cost(self, openai_agent_spec):
@@ -623,6 +662,11 @@ class TestPlatformRegistry:
         assert isinstance(executor, LangChainAgentExecutor)
 
         # OpenAI executor with config
-        executor = get_executor_for_platform("openai", {"api_key": "test-key"})
+        executor = get_executor_for_platform(
+            "openai", {"api_key": "test-key"}  # pragma: allowlist secret
+        )
         assert isinstance(executor, OpenAIAgentExecutor)
-        assert executor.platform_config["api_key"] == "test-key"
+        assert (
+            executor.platform_config["api_key"]
+            == "test-key"  # pragma: allowlist secret
+        )

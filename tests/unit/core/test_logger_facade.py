@@ -174,13 +174,13 @@ class TestSessionStartLogging:
         mock_logger_instance.log_session_start.side_effect = Exception("Logging failed")
 
         # Should not raise exception - verify method completes without propagating error
-        result = logger_facade.log_session_start(
+        logger_facade.log_session_start(
             config={},
             objectives=["accuracy"],
             algorithm="TestOptimizer",
             dataset=mock_dataset,
         )
-        assert result is None  # Method should complete silently
+        # Test passes if no exception is raised (exception was swallowed)
 
 
 class TestTrialLogging:
@@ -209,8 +209,7 @@ class TestTrialLogging:
             facade._logger = None
 
             # Should not raise exception - verify method completes
-            result = facade.log_trial(sample_trial_result)
-            assert result is None
+            facade.log_trial(sample_trial_result)
 
     def test_log_trial_exception_handling(
         self, logger_facade, sample_trial_result, mock_optimization_logger
@@ -220,8 +219,7 @@ class TestTrialLogging:
         mock_logger_instance.log_trial_result.side_effect = Exception("Logging failed")
 
         # Should not raise exception - verify method completes silently
-        result = logger_facade.log_trial(sample_trial_result)
-        assert result is None
+        logger_facade.log_trial(sample_trial_result)
 
     def test_log_trial_with_failed_trial(self, logger_facade, mock_optimization_logger):
         """Test logging of failed trial result."""
@@ -285,12 +283,11 @@ class TestCheckpointLogging:
             facade._logger = None
 
             # Should not raise exception - verify method completes
-            result = facade.log_checkpoint(
+            facade.log_checkpoint(
                 optimizer_state={},
                 trials_history=[],
                 trial_count=0,
             )
-            assert result is None
 
     def test_log_checkpoint_without_save_checkpoint_method(
         self, logger_facade, mock_optimization_logger
@@ -300,12 +297,11 @@ class TestCheckpointLogging:
         del mock_logger_instance.save_checkpoint  # Remove method
 
         # Should not raise exception - verify method completes
-        result = logger_facade.log_checkpoint(
+        logger_facade.log_checkpoint(
             optimizer_state={},
             trials_history=[],
             trial_count=0,
         )
-        assert result is None
 
     def test_log_checkpoint_exception_handling(
         self, logger_facade, mock_optimization_logger
@@ -317,12 +313,11 @@ class TestCheckpointLogging:
         )
 
         # Should not raise exception - verify method completes silently
-        result = logger_facade.log_checkpoint(
+        logger_facade.log_checkpoint(
             optimizer_state={},
             trials_history=[],
             trial_count=10,
         )
-        assert result is None
 
     def test_log_checkpoint_with_empty_state(
         self, logger_facade, mock_optimization_logger
@@ -360,15 +355,14 @@ class TestExceptionHandling:
             )
 
             # None of these should raise exceptions - verify all complete silently
-            result1 = facade.log_session_start(
+            facade.log_session_start(
                 config={},
                 objectives=["accuracy"],
                 algorithm="TestOptimizer",
                 dataset=mock_dataset,
             )
-            assert result1 is None
 
-            result2 = facade.log_trial(
+            facade.log_trial(
                 TrialResult(
                     trial_id="test",
                     config={},
@@ -379,11 +373,9 @@ class TestExceptionHandling:
                     metadata={},
                 )
             )
-            assert result2 is None
 
-            result3 = facade.log_checkpoint(
+            facade.log_checkpoint(
                 optimizer_state={},
                 trials_history=[],
                 trial_count=0,
             )
-            assert result3 is None

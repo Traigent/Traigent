@@ -132,7 +132,7 @@ async def run_optimization() -> None:
     # Create evaluator pointing to Flask server
     evaluator = HybridAPIEvaluator(
         api_endpoint=SERVER_URL,
-        capability_id="demo_agent",
+        tunable_id="demo_agent",
         batch_size=5,
         auto_discover_tvars=True,
     )

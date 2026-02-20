@@ -23,7 +23,7 @@ class TestConfigSpaceDiscovery:
         transport.discover_config_space = AsyncMock(
             return_value=ConfigSpaceResponse(
                 schema_version="0.9",
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 tvars=[
                     TVARDefinition(
                         name="model",
@@ -81,7 +81,7 @@ class TestConfigSpaceDiscovery:
         response = await discovery.fetch()
 
         assert response.schema_version == "0.9"
-        assert response.capability_id == "test_agent"
+        assert response.tunable_id == "test_agent"
         assert len(response.tvars) == 2
         mock_transport.discover_config_space.assert_called_once()
 
@@ -107,13 +107,13 @@ class TestConfigSpaceDiscovery:
         assert config_space["temperature"]["step"] == 0.1
 
     @pytest.mark.asyncio
-    async def test_get_capability_id(self, discovery: ConfigSpaceDiscovery) -> None:
-        """Test getting capability ID."""
+    async def test_get_tunable_id(self, discovery: ConfigSpaceDiscovery) -> None:
+        """Test getting tunable ID."""
         # Before fetch
-        assert discovery.get_capability_id() is None
+        assert discovery.get_tunable_id() is None
 
         await discovery.fetch()
-        assert discovery.get_capability_id() == "test_agent"
+        assert discovery.get_tunable_id() == "test_agent"
 
     @pytest.mark.asyncio
     async def test_get_tvars(self, discovery: ConfigSpaceDiscovery) -> None:
@@ -182,7 +182,7 @@ class TestConfigSpaceDiscovery:
         transport.discover_config_space = AsyncMock(
             return_value=ConfigSpaceResponse(
                 schema_version="0.9",
-                capability_id="legacy_agent",
+                tunable_id="legacy_agent",
                 tvars=[
                     TVARDefinition(
                         name="temperature",
@@ -208,7 +208,7 @@ class TestConfigSpaceDiscoveryWithTools:
         transport.discover_config_space = AsyncMock(
             return_value=ConfigSpaceResponse(
                 schema_version="0.9",
-                capability_id="multi_agent",
+                tunable_id="multi_agent",
                 tvars=[
                     TVARDefinition(
                         name="search_tool",
@@ -533,7 +533,7 @@ class TestBuildOptimizationSpecDerivedConstraints:
         transport.discover_config_space = AsyncMock(
             return_value=ConfigSpaceResponse(
                 schema_version="0.9",
-                capability_id="derived_agent",
+                tunable_id="derived_agent",
                 tvars=[
                     TVARDefinition(
                         name="temperature",

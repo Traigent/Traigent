@@ -129,7 +129,7 @@ def evaluator(mock_transport: MagicMock) -> HybridAPIEvaluator:
     """Create a HybridAPIEvaluator with an injected mock transport."""
     return HybridAPIEvaluator(
         transport=mock_transport,
-        capability_id="test_cap",
+        tunable_id="test_cap",
         batch_size=10,
         keep_alive=False,
     )
@@ -189,7 +189,7 @@ class TestHybridAPIEvaluatorInit:
         ev = HybridAPIEvaluator(
             api_endpoint="http://example.com",
             transport_type="http",
-            capability_id="my_cap",
+            tunable_id="my_cap",
             auto_discover_tvars=False,
             batch_size=5,
             batch_parallelism=3,
@@ -200,7 +200,7 @@ class TestHybridAPIEvaluatorInit:
         )
         assert ev._api_endpoint == "http://example.com"
         assert ev._transport_type == "http"
-        assert ev._capability_id == "my_cap"
+        assert ev._tunable_id == "my_cap"
         assert ev._auto_discover is False
         assert ev._batch_size == 5
         assert ev._batch_parallelism == 3
@@ -245,9 +245,9 @@ class TestProperties:
         evaluator._lifecycle_manager = sentinel
         assert evaluator.lifecycle_manager is sentinel
 
-    def test_capability_id_property(self, evaluator: HybridAPIEvaluator) -> None:
-        """capability_id returns internal _capability_id."""
-        assert evaluator.capability_id == "test_cap"
+    def test_tunable_id_property(self, evaluator: HybridAPIEvaluator) -> None:
+        """tunable_id returns internal _tunable_id."""
+        assert evaluator.tunable_id == "test_cap"
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ class TestDiscoverConfigSpace:
                 "temperature": {"low": 0, "high": 1},
             }
         )
-        mock_discovery.get_capability_id = MagicMock(return_value="discovered_cap")
+        mock_discovery.get_tunable_id = MagicMock(return_value="discovered_cap")
         mock_discovery.build_optimization_spec = AsyncMock(
             return_value={"runtime_overrides": {"max_trials": 50}}
         )
@@ -368,18 +368,18 @@ class TestDiscoverConfigSpace:
         assert evaluator.optimization_spec == {"runtime_overrides": {"max_trials": 50}}
 
     @pytest.mark.asyncio
-    async def test_discover_updates_capability_id_when_none(
+    async def test_discover_updates_tunable_id_when_none(
         self, mock_transport: MagicMock
     ) -> None:
-        """If capability_id is None, discovery updates it."""
+        """If tunable_id is None, discovery updates it."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id=None,
+            tunable_id=None,
             keep_alive=False,
         )
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
-        mock_discovery.get_capability_id = MagicMock(return_value="auto_cap")
+        mock_discovery.get_tunable_id = MagicMock(return_value="auto_cap")
         mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
@@ -388,16 +388,16 @@ class TestDiscoverConfigSpace:
         ):
             await ev.discover_config_space()
 
-        assert ev._capability_id == "auto_cap"
+        assert ev._tunable_id == "auto_cap"
 
     @pytest.mark.asyncio
-    async def test_discover_keeps_existing_capability_id(
+    async def test_discover_keeps_existing_tunable_id(
         self, evaluator: HybridAPIEvaluator, mock_transport: MagicMock
     ) -> None:
-        """If capability_id is set, discovery does not overwrite it."""
+        """If tunable_id is set, discovery does not overwrite it."""
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
-        mock_discovery.get_capability_id = MagicMock(return_value="other")
+        mock_discovery.get_tunable_id = MagicMock(return_value="other")
         mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
@@ -406,7 +406,7 @@ class TestDiscoverConfigSpace:
         ):
             await evaluator.discover_config_space()
 
-        assert evaluator._capability_id == "test_cap"
+        assert evaluator._tunable_id == "test_cap"
 
     @pytest.mark.asyncio
     async def test_discover_reuses_discovery_instance(
@@ -415,7 +415,7 @@ class TestDiscoverConfigSpace:
         """ConfigSpaceDiscovery is created once and reused."""
         mock_discovery = MagicMock()
         mock_discovery.fetch_and_normalize = AsyncMock(return_value={})
-        mock_discovery.get_capability_id = MagicMock(return_value="cap")
+        mock_discovery.get_tunable_id = MagicMock(return_value="cap")
         mock_discovery.build_optimization_spec = AsyncMock(return_value={})
 
         with patch(
@@ -751,7 +751,7 @@ class TestExecuteBatch:
         """When execute response has quality_metrics, uses combined mode."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -782,7 +782,7 @@ class TestExecuteBatch:
         """When no quality_metrics and supports_evaluate, calls evaluate endpoint."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -813,7 +813,7 @@ class TestExecuteBatch:
         """When no quality_metrics and no evaluate support, returns outputs only."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -843,7 +843,7 @@ class TestExecuteBatch:
         """TransportError produces error HybridExampleResults for all examples."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         mock_transport.execute = AsyncMock(
@@ -875,7 +875,7 @@ class TestExecuteBatch:
         """Session ID is updated when response returns a new one."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         ev._session_id = "old_session"
@@ -899,7 +899,7 @@ class TestExecuteBatch:
         """When session_id changes and lifecycle_manager exists, re-registers."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         ev._session_id = "old"
@@ -927,7 +927,7 @@ class TestExecuteBatch:
         """Uses input_id from the input data if present."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -963,7 +963,7 @@ class TestEvaluateOutputs:
         """Merges execute outputs with evaluate metrics."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -1005,7 +1005,7 @@ class TestEvaluateOutputs:
         """Falls back to execute-only when evaluate call fails."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         exec_response = _make_execute_response(
@@ -1034,7 +1034,7 @@ class TestEvaluateOutputs:
         """Handles case where output input_id doesn't match."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         # outputs have different input_id than expected
@@ -1070,7 +1070,7 @@ class TestProcessCombinedResponse:
         """Processes combined response with metrics per output."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         response = _make_execute_response(
@@ -1102,7 +1102,7 @@ class TestProcessCombinedResponse:
         """When output input_id doesn't match, output is None."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         response = _make_execute_response(
@@ -1133,7 +1133,7 @@ class TestProcessExecuteOnlyResponse:
         """Processes execute-only response with empty metrics."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         response = _make_execute_response(
@@ -1157,7 +1157,7 @@ class TestProcessExecuteOnlyResponse:
         """Cost is divided among examples."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             keep_alive=False,
         )
         response = _make_execute_response(
@@ -1404,7 +1404,7 @@ class TestEvaluate:
         """Examples are processed in batches of batch_size."""
         ev = HybridAPIEvaluator(
             transport=mock_transport,
-            capability_id="cap",
+            tunable_id="cap",
             batch_size=1,  # one example per batch
             keep_alive=False,
         )

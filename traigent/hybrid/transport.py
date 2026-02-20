@@ -46,8 +46,15 @@ class HybridTransport(Protocol):
         """
         ...
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions from external service.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
+                When provided, the server returns the config space for
+                that specific tunable. When omitted, the default is returned.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.

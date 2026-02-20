@@ -12,11 +12,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traigent.utils.cost_calculator import (
+    FALLBACK_MODEL_PRICING,
     TOKENCOST_AVAILABLE,
     CostBreakdown,
     CostCalculator,
     calculate_llm_cost,
     get_cost_calculator,
+    get_model_pricing_per_1k,
     validate_model_support,
 )
 
@@ -685,6 +687,19 @@ class TestConvenienceFunctions:
         mock_logger = MagicMock()
         calc = get_cost_calculator(logger=mock_logger)
         assert isinstance(calc, CostCalculator)
+
+    def test_get_model_pricing_per_1k_known_model(self) -> None:
+        """Model pricing convenience API returns per-1K input/output rates."""
+        input_rate, output_rate = get_model_pricing_per_1k("gpt-4o")
+        expected = FALLBACK_MODEL_PRICING["gpt-4o"]
+        assert input_rate == pytest.approx(expected["input_cost_per_token"] * 1000)
+        assert output_rate == pytest.approx(expected["output_cost_per_token"] * 1000)
+
+    def test_get_model_pricing_per_1k_unknown_model_returns_zero(self) -> None:
+        """Unknown models return zero rates."""
+        input_rate, output_rate = get_model_pricing_per_1k("unknown-model-xyz-123")
+        assert input_rate == 0.0
+        assert output_rate == 0.0
 
 
 class TestEdgeCases:

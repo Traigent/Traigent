@@ -182,7 +182,7 @@ class ExecutionOptions(BaseModel):
     js_parallel_workers: int = 1
     # Hybrid API options
     hybrid_api_endpoint: str | None = None
-    capability_id: str | None = None
+    tunable_id: str | None = None
     hybrid_api_transport: Any | None = None
     hybrid_api_transport_type: str = "auto"
     hybrid_api_batch_size: int = 1
@@ -322,7 +322,7 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     "framework_targets": None,
     "execution_mode": "edge_analytics",
     "hybrid_api_endpoint": None,
-    "capability_id": None,
+    "tunable_id": None,
     "hybrid_api_transport": None,
     "hybrid_api_transport_type": "auto",
     "hybrid_api_batch_size": 1,
@@ -401,7 +401,7 @@ class LegacyOptimizeArgs:
     framework_targets: list[str] | None = None
     execution_mode: str | None = None
     hybrid_api_endpoint: str | None = None
-    capability_id: str | None = None
+    tunable_id: str | None = None
     hybrid_api_transport: Any | None = None
     hybrid_api_transport_type: str | None = None
     hybrid_api_batch_size: int | None = None
@@ -479,7 +479,7 @@ class LegacyOptimizeArgs:
             ("framework_targets", self.framework_targets),
             ("execution_mode", self.execution_mode),
             ("hybrid_api_endpoint", self.hybrid_api_endpoint),
-            ("capability_id", self.capability_id),
+            ("tunable_id", self.tunable_id),
             ("hybrid_api_transport", self.hybrid_api_transport),
             ("hybrid_api_transport_type", self.hybrid_api_transport_type),
             ("hybrid_api_batch_size", self.hybrid_api_batch_size),
@@ -782,7 +782,7 @@ class ResolvedExecutionOptions:
 
     execution_mode: Any
     hybrid_api_endpoint: Any
-    capability_id: Any
+    tunable_id: Any
     hybrid_api_transport: Any
     hybrid_api_transport_type: Any
     hybrid_api_batch_size: Any
@@ -805,7 +805,7 @@ def _resolve_execution_bundle_options(
     execution_bundle: ExecutionOptions | None,
     execution_mode: Any,
     hybrid_api_endpoint: Any,
-    capability_id: Any,
+    tunable_id: Any,
     hybrid_api_transport: Any,
     hybrid_api_transport_type: Any,
     hybrid_api_batch_size: Any,
@@ -828,7 +828,7 @@ def _resolve_execution_bundle_options(
         return ResolvedExecutionOptions(
             execution_mode=execution_mode,
             hybrid_api_endpoint=hybrid_api_endpoint,
-            capability_id=capability_id,
+            tunable_id=tunable_id,
             hybrid_api_transport=hybrid_api_transport,
             hybrid_api_transport_type=hybrid_api_transport_type,
             hybrid_api_batch_size=hybrid_api_batch_size,
@@ -892,10 +892,10 @@ def _resolve_execution_bundle_options(
             execution_bundle.hybrid_api_endpoint,
             defaults,
         ),
-        capability_id=_resolve_option(
-            "capability_id",
-            capability_id,
-            execution_bundle.capability_id,
+        tunable_id=_resolve_option(
+            "tunable_id",
+            tunable_id,
+            execution_bundle.tunable_id,
             defaults,
         ),
         hybrid_api_transport=_resolve_option(
@@ -1643,7 +1643,7 @@ def optimize(
     framework_targets = combined_settings["framework_targets"]
     execution_mode = combined_settings["execution_mode"]
     hybrid_api_endpoint = combined_settings["hybrid_api_endpoint"]
-    capability_id = combined_settings["capability_id"]
+    tunable_id = combined_settings["tunable_id"]
     hybrid_api_transport = combined_settings["hybrid_api_transport"]
     hybrid_api_transport_type = combined_settings["hybrid_api_transport_type"]
     hybrid_api_batch_size = combined_settings["hybrid_api_batch_size"]
@@ -1673,6 +1673,8 @@ def optimize(
     # Config persistence
     auto_load_best_config = combined_settings["auto_load_best"]
     load_from_config = combined_settings["load_from"]
+    # Optimizer limits
+    max_trials_value = combined_settings["max_trials"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1722,7 +1724,7 @@ def optimize(
         execution_bundle,
         execution_mode,
         hybrid_api_endpoint,
-        capability_id,
+        tunable_id,
         hybrid_api_transport,
         hybrid_api_transport_type,
         hybrid_api_batch_size,
@@ -1742,7 +1744,7 @@ def optimize(
     )
     execution_mode = resolved_execution.execution_mode
     hybrid_api_endpoint = resolved_execution.hybrid_api_endpoint
-    capability_id = resolved_execution.capability_id
+    tunable_id = resolved_execution.tunable_id
     hybrid_api_transport = resolved_execution.hybrid_api_transport
     hybrid_api_transport_type = resolved_execution.hybrid_api_transport_type
     hybrid_api_batch_size = resolved_execution.hybrid_api_batch_size
@@ -1847,6 +1849,12 @@ def optimize(
                 constraints, config_space_var_names
             )
 
+        # Remove keys from runtime overrides that are passed explicitly below
+        # to avoid "got multiple values for keyword argument" errors.
+        # TVL budget application can inject max_trials into runtime_overrides
+        # (via _apply_tvl_artifact), but we pass it explicitly as well.
+        combined_runtime_overrides.pop("max_trials", None)
+
         optimized_func = OptimizedFunction(
             func=func,
             eval_dataset=eval_dataset,
@@ -1861,7 +1869,7 @@ def optimize(
             framework_targets=framework_targets,
             execution_mode=execution_mode_enum,
             hybrid_api_endpoint=hybrid_api_endpoint,
-            capability_id=capability_id,
+            tunable_id=tunable_id,
             hybrid_api_transport=hybrid_api_transport,
             hybrid_api_transport_type=hybrid_api_transport_type,
             hybrid_api_batch_size=hybrid_api_batch_size,
@@ -1894,6 +1902,8 @@ def optimize(
             js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
+            # Optimizer limits (extracted from combined_settings)
+            max_trials=max_trials_value,
             **combined_runtime_overrides,
         )
 

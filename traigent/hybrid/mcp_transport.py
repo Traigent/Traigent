@@ -206,10 +206,16 @@ class MCPTransport:
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions via MCP resource.
 
-        Reads the traigent://config-space resource.
+        Reads the traigent://config-space resource, optionally filtered
+        by tunable_id.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -217,7 +223,10 @@ class MCPTransport:
         Raises:
             TransportError: If discovery fails.
         """
-        data = await self._read_resource(CONFIG_SPACE_URI)
+        uri = CONFIG_SPACE_URI
+        if tunable_id is not None:
+            uri = f"{CONFIG_SPACE_URI}?tunable_id={tunable_id}"
+        data = await self._read_resource(uri)
         return ConfigSpaceResponse.from_dict(data)
 
     async def execute(

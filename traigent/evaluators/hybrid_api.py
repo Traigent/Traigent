@@ -83,7 +83,7 @@ class HybridAPIEvaluator(BaseEvaluator):
     Example:
         evaluator = HybridAPIEvaluator(
             api_endpoint="http://agent-service:8080",
-            capability_id="financial_qa",
+            tunable_id="financial_qa",
             batch_size=10,
         )
 
@@ -103,8 +103,8 @@ class HybridAPIEvaluator(BaseEvaluator):
         # MCP options
         mcp_client: ProductionMCPClient | None = None,
         mcp_config: MCPServerConfig | None = None,
-        # Capability options
-        capability_id: str | None = None,
+        # Tunable options
+        tunable_id: str | None = None,
         auto_discover_tvars: bool = True,
         # Execution options
         batch_size: int = 1,
@@ -127,7 +127,7 @@ class HybridAPIEvaluator(BaseEvaluator):
             mcp_client: Existing MCP client for MCP transport.
             mcp_config: MCP server config for MCP transport.
 
-            capability_id: Identifier for the agent capability.
+            tunable_id: Identifier for the tunable.
                 Auto-discovered if not provided.
             auto_discover_tvars: Whether to auto-discover config space.
 
@@ -151,7 +151,7 @@ class HybridAPIEvaluator(BaseEvaluator):
         self._auth_header = auth_header
         self._timeout = timeout
 
-        self._capability_id = capability_id
+        self._tunable_id = tunable_id
         self._auto_discover = auto_discover_tvars
         self._batch_size = max(1, batch_size)
         self._batch_parallelism = max(1, batch_parallelism)
@@ -175,9 +175,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         return self._lifecycle_manager
 
     @property
-    def capability_id(self) -> str | None:
-        """Get the capability ID (may be auto-discovered)."""
-        return self._capability_id
+    def tunable_id(self) -> str | None:
+        """Get the tunable ID (may be auto-discovered)."""
+        return self._tunable_id
 
     @property
     def optimization_spec(self) -> dict[str, Any] | None:
@@ -223,9 +223,9 @@ class HybridAPIEvaluator(BaseEvaluator):
         config_space = await self._discovery.fetch_and_normalize()
         self._optimization_spec = await self._discovery.build_optimization_spec()
 
-        # Update capability_id if not set
-        if self._capability_id is None:
-            self._capability_id = self._discovery.get_capability_id()
+        # Update tunable_id if not set
+        if self._tunable_id is None:
+            self._tunable_id = self._discovery.get_tunable_id()
 
         return config_space
 
@@ -427,7 +427,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Build execute request
         request = HybridExecuteRequest(
-            capability_id=self._capability_id or "default",
+            tunable_id=self._tunable_id or "default",
             config=config,
             inputs=inputs,
             session_id=self._session_id,
@@ -589,7 +589,7 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         # Call evaluate
         eval_request = HybridEvaluateRequest(
-            capability_id=self._capability_id or "default",
+            tunable_id=self._tunable_id or "default",
             execution_id=execute_response.execution_id,
             evaluations=evaluations,
             session_id=self._session_id,

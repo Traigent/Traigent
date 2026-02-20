@@ -47,7 +47,7 @@ async def test_evaluate_progress_callback_propagates_cancelled_error():
 
     evaluator._transport = mock_transport
     evaluator._capabilities = mock_caps
-    evaluator._capability_id = "test"
+    evaluator._tunable_id = "test"
     evaluator._session_id = "sess_1"
 
     # Create a minimal dataset
@@ -85,7 +85,7 @@ async def test_evaluate_outputs_propagates_cancelled_error():
         api_endpoint="http://localhost:9999",
         batch_size=1,
     )
-    evaluator._capability_id = "test"
+    evaluator._tunable_id = "test"
     evaluator._session_id = "sess_1"
 
     mock_transport = AsyncMock()

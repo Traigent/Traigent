@@ -167,6 +167,11 @@ class TrialLifecycle:
                 config_for_run,
                 e,
             )
+            # Give back the trial slot the optimizer consumed in suggest_next_trial
+            if hasattr(orchestrator.optimizer, "_trial_count"):
+                orchestrator.optimizer._trial_count = max(
+                    0, orchestrator.optimizer._trial_count - 1
+                )
             if hasattr(orchestrator, "_abandon_optuna_trial"):
                 orchestrator._abandon_optuna_trial(  # type: ignore[attr-defined]
                     optuna_trial_id,
