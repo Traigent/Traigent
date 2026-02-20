@@ -804,77 +804,44 @@ class TestCostEstimation:
 
         return TraigentHandler(trace_id="test-trace")
 
-    def test_fallback_cost_estimate_gpt4o(self, handler):
-        """Test fallback cost estimation for GPT-4o model."""
-        cost = handler._fallback_cost_estimate("gpt-4o", 1000, 500)
-        # GPT-4o: $2.50/1M input, $10.00/1M output
-        expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_gpt35_turbo(self, handler):
-        """Test fallback cost estimation for GPT-3.5-turbo model."""
-        cost = handler._fallback_cost_estimate("gpt-3.5-turbo", 1000, 500)
-        # GPT-3.5-turbo: $0.50/1M input, $1.50/1M output
-        expected = (1000 * 0.50 + 500 * 1.50) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_claude(self, handler):
-        """Test fallback cost estimation for Claude models."""
-        cost = handler._fallback_cost_estimate("claude-3-5-sonnet", 1000, 500)
-        # Claude-3-5-sonnet: $3.00/1M input, $15.00/1M output
-        expected = (1000 * 3.00 + 500 * 15.00) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_claude_legacy_sonnet(self, handler):
-        """Test fallback resolves legacy claude-3-sonnet via alias."""
-        cost = handler._fallback_cost_estimate("claude-3-sonnet", 1000, 500)
-        # claude-3-sonnet aliases to claude-3-5-sonnet-20241022 ($3.00/$15.00 per 1M)
-        expected = (1000 * 3.00 + 500 * 15.00) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_claude_haiku(self, handler):
-        """Test fallback cost estimation for Claude Haiku."""
-        cost = handler._fallback_cost_estimate("claude-3-haiku", 1000, 500)
-        # Claude-3-haiku: $0.25/1M input, $1.25/1M output
-        expected = (1000 * 0.25 + 500 * 1.25) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_unknown_model(self, handler):
-        """Test fallback cost estimation for unknown model."""
-        cost = handler._fallback_cost_estimate("some-unknown-model", 1000, 500)
-        # Default: $1.00/1M input, $3.00/1M output
-        expected = (1000 * 1.0 + 500 * 3.0) / 1_000_000
-        assert cost == pytest.approx(expected)
-
-    def test_fallback_cost_estimate_case_insensitive(self, handler):
-        """Test that model matching is case-insensitive."""
-        cost_lower = handler._fallback_cost_estimate("gpt-4o", 1000, 500)
-        cost_upper = handler._fallback_cost_estimate("GPT-4O", 1000, 500)
-        assert cost_lower == cost_upper
-
-    def test_estimate_cost_with_litellm_available(self, handler):
-        """Test _estimate_cost when litellm is available and works."""
-        # litellm IS available in test env, so this tests the happy path
-        # For gpt-4o, litellm should return a valid cost
+    def test_estimate_cost_known_model_gpt4o(self, handler):
+        """Test cost estimation for GPT-4o via cost_from_tokens."""
         cost = handler._estimate_cost("gpt-4o", 1000, 500)
-        assert cost > 0, "Should return non-zero cost for known model"
+        assert cost > 0, "Should return positive cost for known model"
 
-    def test_estimate_cost_falls_back_for_unknown_model(self, handler):
-        """Test _estimate_cost falls back for unknown model (litellm returns 0)."""
-        # Use a model name litellm doesn't know - forces fallback path
+    def test_estimate_cost_known_model_gpt35_turbo(self, handler):
+        """Test cost estimation for GPT-3.5-turbo."""
+        cost = handler._estimate_cost("gpt-3.5-turbo", 1000, 500)
+        assert cost > 0, "Should return positive cost for known model"
+
+    def test_estimate_cost_known_model_claude(self, handler):
+        """Test cost estimation for Claude models."""
+        cost = handler._estimate_cost("claude-3-5-sonnet", 1000, 500)
+        assert cost > 0, "Should return positive cost for known model"
+
+    def test_estimate_cost_known_model_claude_haiku(self, handler):
+        """Test cost estimation for Claude Haiku."""
+        cost = handler._estimate_cost("claude-3-haiku", 1000, 500)
+        assert cost > 0, "Should return positive cost for known model"
+
+    def test_estimate_cost_unknown_model_returns_zero(self, handler):
+        """Test _estimate_cost returns 0.0 for unknown model (strict=False)."""
         cost = handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
-        # Should fall back to hardcoded default estimates
-        expected = (1000 * 1.0 + 500 * 3.0) / 1_000_000
-        assert cost == pytest.approx(expected)
+        assert cost == pytest.approx(
+            0.0
+        ), "Unknown model should return 0.0 with strict=False"
 
     def test_estimate_cost_exception_handling(self, handler):
         """Test _estimate_cost handles exceptions gracefully."""
-        # Patch calculate_llm_cost to raise an exception - covers except branch
         with patch(
-            "traigent.utils.cost_calculator.calculate_llm_cost",
+            "traigent.utils.cost_calculator.cost_from_tokens",
             side_effect=Exception("Test error"),
         ):
             cost = handler._estimate_cost("gpt-4o", 1000, 500)
-            # Should fall back to hardcoded estimates via except handler
-            expected = (1000 * 2.50 + 500 * 10.00) / 1_000_000
-            assert cost == pytest.approx(expected)
+            assert cost == pytest.approx(0.0), "Should return 0.0 on exception"
+
+    def test_estimate_cost_case_insensitive(self, handler):
+        """Test that model matching is case-insensitive."""
+        cost_lower = handler._estimate_cost("gpt-4o", 1000, 500)
+        cost_upper = handler._estimate_cost("GPT-4O", 1000, 500)
+        assert cost_lower == pytest.approx(cost_upper, rel=1e-6)

@@ -1800,8 +1800,8 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                             continue
 
         except ImportError:
-            # Fallback: derive from canonical FALLBACK_MODEL_PRICING
-            from traigent.utils.cost_calculator import FALLBACK_MODEL_PRICING
+            # Fallback: derive from canonical ESTIMATION_MODEL_PRICING
+            from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING
 
             provider_prefixes = {
                 "openai": ("gpt-",),
@@ -1812,7 +1812,7 @@ Generated: {datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")}
                     continue
                 prefixes = provider_prefixes[provider]
                 provider_pricing: dict[str, Any] = {}
-                for model, p in FALLBACK_MODEL_PRICING.items():
+                for model, p in ESTIMATION_MODEL_PRICING.items():
                     if any(model.startswith(pfx) for pfx in prefixes):
                         provider_pricing[model] = {
                             "input": p["input_cost_per_token"] * 1000,
