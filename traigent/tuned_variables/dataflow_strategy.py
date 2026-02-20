@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ast
 import logging
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -84,6 +85,13 @@ DEFAULT_SINK_PATTERNS: tuple[SinkPattern, ...] = (
     SinkPattern("embed_query", "embedding"),
     SinkPattern("embed_documents", "embedding"),
     SinkPattern("get_text_embedding", "embedding"),
+)
+
+# Method names that are too generic to match as bare function calls
+# (e.g. `from x import run; run(...)` should NOT be a sink).
+# These are only matched when called as an attribute: `obj.run(...)`.
+_GENERIC_SINK_NAMES: frozenset[str] = frozenset(
+    {"run", "arun", "create", "query", "search", "chat", "batch", "abatch"}
 )
 
 # Class names whose constructors configure a statistical component.
@@ -300,22 +308,10 @@ class _DefUseBuilder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
-        if self._scope_depth == 0:
-            return
-        if isinstance(node.target, ast.Name) and node.value is not None:
-            self.result.add(
-                _Definition(node.target.id, node.target.lineno, node.value, node)
-            )
-        self.generic_visit(node)
+        self._visit_single_target_assign(node.target, node.value, node)
 
     def visit_AugAssign(self, node: ast.AugAssign) -> None:
-        if self._scope_depth == 0:
-            return
-        if isinstance(node.target, ast.Name):
-            self.result.add(
-                _Definition(node.target.id, node.target.lineno, node.value, node)
-            )
-        self.generic_visit(node)
+        self._visit_single_target_assign(node.target, node.value, node)
 
     def visit_For(self, node: ast.For) -> None:
         if self._scope_depth == 0:
@@ -332,15 +328,22 @@ class _DefUseBuilder(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
-        if self._scope_depth == 0:
-            return
-        if isinstance(node.target, ast.Name):
-            self.result.add(
-                _Definition(node.target.id, node.target.lineno, node.value, node)
-            )
-        self.generic_visit(node)
+        self._visit_single_target_assign(node.target, node.value, node)
 
     # -- Helpers -----------------------------------------------------------
+
+    def _visit_single_target_assign(
+        self,
+        target: ast.expr,
+        value: ast.expr | None,
+        stmt: ast.AST,
+    ) -> None:
+        """Shared handler for AnnAssign, AugAssign, and NamedExpr."""
+        if self._scope_depth == 0:
+            return
+        if isinstance(target, ast.Name) and value is not None:
+            self.result.add(_Definition(target.id, target.lineno, value, stmt))
+        self.generic_visit(stmt)
 
     def _record_targets(
         self,
@@ -441,15 +444,22 @@ class _SinkFinder(ast.NodeVisitor):
     # -- Matching ----------------------------------------------------------
 
     def _match_sink(self, node: ast.Call) -> SinkPattern | None:
-        """Check if *node* is a call to a known statistical method."""
+        """Check if *node* is a call to a known statistical method.
+
+        Generic method names (run, query, create, etc.) are only matched
+        when called as an attribute (``obj.run(...)``), not as bare function
+        calls, to avoid false positives like ``subprocess.run()``.
+        """
         func = node.func
         # Method call: obj.method(...)
         if isinstance(func, ast.Attribute):
             method_name = func.attr
             return self._sink_methods.get(method_name)
-        # Module-level call: litellm.completion(...) parsed as Name("completion")
-        # when imported via `from litellm import completion`
+        # Bare function call: completion(...), invoke(...)
+        # Skip generic names to avoid false positives (e.g. `run(cmd)`)
         if isinstance(func, ast.Name):
+            if func.id in _GENERIC_SINK_NAMES:
+                return None
             return self._sink_methods.get(func.id)
         return None
 
@@ -669,13 +679,17 @@ class DataFlowDetectionStrategy:
         func_node: ast.FunctionDef | ast.AsyncFunctionDef,
         existing_tvars: frozenset[str],
     ) -> list[TunedVariableCandidate]:
-        """Walk backward through def-use chains from sink arguments."""
+        """Walk backward through def-use chains from sink arguments.
+
+        Uses BFS (FIFO) to guarantee shortest-hop-first traversal, so each
+        variable gets its best (lowest hop) confidence assignment.
+        """
         best: dict[str, TunedVariableCandidate] = {}
         visited: set[str] = set()
-        worklist = self._init_worklist(sink_args, func_node, best)
+        worklist = self._init_worklist(sink_args, func_node, best, existing_tvars)
 
         while worklist:
-            var_name, hop, sink_info = worklist.pop()
+            var_name, hop, sink_info = worklist.popleft()
 
             if var_name in visited or hop > self._max_hops:
                 continue
@@ -696,11 +710,15 @@ class DataFlowDetectionStrategy:
         sink_args: list[_SinkArgument],
         func_node: ast.AST,
         best: dict[str, TunedVariableCandidate],
-    ) -> list[tuple[str, int, str]]:
+        existing_tvars: frozenset[str],
+    ) -> deque[tuple[str, int, str]]:
         """Build the initial worklist from sink arguments."""
-        worklist: list[tuple[str, int, str]] = []
+        worklist: deque[tuple[str, int, str]] = deque()
         for sa in sink_args:
             if sa.var_name.startswith("__literal__"):
+                # Filter existing_tvars for literal kwargs too
+                if sa.param_name and sa.param_name in existing_tvars:
+                    continue
                 self._emit_literal_kwarg(sa, func_node, best)
             else:
                 worklist.append(
@@ -715,7 +733,7 @@ class DataFlowDetectionStrategy:
         sink_info: str,
         def_use: _DefUseMap,
         visited: set[str],
-        worklist: list[tuple[str, int, str]],
+        worklist: deque[tuple[str, int, str]],
         best: dict[str, TunedVariableCandidate],
     ) -> None:
         """Process all definitions of a variable in the def-use map."""
