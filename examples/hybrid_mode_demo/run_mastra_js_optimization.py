@@ -43,7 +43,9 @@ from traigent.evaluators.base import Dataset, EvaluationExample
 from traigent.optimizers.random import RandomSearchOptimizer
 
 SERVER_URL: Final[str] = os.getenv("MASTRA_JS_BASE_URL", "http://localhost:8080")
-TUNABLE_ID: Final[str | None] = os.getenv("MASTRA_JS_TUNABLE_ID")  # None = auto-select first
+TUNABLE_ID: Final[str | None] = os.getenv(
+    "MASTRA_JS_TUNABLE_ID"
+)  # None = auto-select first
 DATASET_SIZE: Final[int] = int(
     os.getenv("MASTRA_JS_DATASET_SIZE", "100")
 )  # case_001 through case_100

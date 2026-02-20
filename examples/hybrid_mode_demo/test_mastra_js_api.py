@@ -146,10 +146,12 @@ def test_evaluate(execute_data: dict, tunable_id: str):
     # Build evaluations from execute outputs — chain output_id values
     evaluations = []
     for out in execute_data["outputs"]:
-        evaluations.append({
-            "input_id": out["input_id"],
-            "output_id": out["output_id"],
-        })
+        evaluations.append(
+            {
+                "input_id": out["input_id"],
+                "output_id": out["output_id"],
+            }
+        )
 
     request_data = {
         "request_id": "test-002",
