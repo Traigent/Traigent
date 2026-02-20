@@ -1779,10 +1779,18 @@ def optimize(
         combined_runtime_overrides,
     )
 
-    # Optimizer limits – prefer runtime override (e.g. from TVL budget) over default
-    max_trials_value = combined_runtime_overrides.pop(
-        "max_trials", combined_settings["max_trials"]
-    )
+    # Optimizer limits — pop from overrides to avoid duplicate kwargs, then
+    # resolve priority: explicit decorator kwarg > TVL budget > default.
+    tvl_max_trials = combined_runtime_overrides.pop("max_trials", None)
+    if "max_trials" in provided_sources:
+        # User explicitly passed max_trials= to @optimize
+        max_trials_value = combined_settings["max_trials"]
+    elif tvl_max_trials is not None:
+        # TVL spec provided a budget.max_trials
+        max_trials_value = tvl_max_trials
+    else:
+        # Fall back to _OPTIMIZE_DEFAULTS["max_trials"] (50)
+        max_trials_value = combined_settings["max_trials"]
 
     if samples_include_pruned is None:
         samples_include_pruned = True

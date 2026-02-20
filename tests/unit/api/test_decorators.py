@@ -217,6 +217,226 @@ class TestOptimizeDecorator:
         assert "model" in tvl_wrapped.configuration_space
         assert tvl_wrapped.configuration_space["max_tokens"] == [256, 384, 512]
 
+    # ------------------------------------------------------------------
+    # max_trials propagation & TVL budget interaction
+    # ------------------------------------------------------------------
+
+    def test_tvl_budget_max_trials_propagates(self):
+        """TVL spec budget.max_trials must reach OptimizedFunction.
+
+        Regression for the bug where TVL budget max_trials was injected into
+        combined_runtime_overrides via _apply_tvl_artifact, but max_trials was
+        ALSO passed as an explicit keyword — causing a TypeError: got multiple
+        values for keyword argument 'max_trials'.
+        """
+        spec_path = Path(
+            "docs/tvl/tvl-website/client/public/examples/ch2_hello_tvl.tvl.yml"
+        )
+
+        @optimize(tvl_spec=spec_path)
+        def tvl_fn(question: str) -> str:
+            return question
+
+        assert isinstance(tvl_fn, OptimizedFunction)
+        # ch2_hello_tvl.tvl.yml has optimization.budget.max_trials.value: 30
+        assert (
+            tvl_fn.max_trials == 30
+        ), f"TVL budget max_trials=30 should propagate; got {tvl_fn.max_trials}"
+
+    def test_explicit_max_trials_overrides_tvl_budget(self, tmp_path):
+        """Explicit decorator max_trials takes precedence over TVL budget.
+
+        The decorator passes max_trials via record_option into combined_settings
+        while TVL budget adds it via setdefault into combined_runtime_overrides.
+        The explicit value (from the decorator kwarg) should win.
+        """
+        spec_path = tmp_path / "budget_spec.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.budget
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  budgets:
+    max_trials: 20
+""")
+
+        @optimize(tvl_spec=spec_path, max_trials=5)
+        def explicit_fn(q: str) -> str:
+            return q
+
+        assert isinstance(explicit_fn, OptimizedFunction)
+        assert explicit_fn.max_trials == 5, (
+            f"Explicit max_trials=5 should override TVL budget=20; "
+            f"got {explicit_fn.max_trials}"
+        )
+
+    def test_tvl_spec_without_budget_uses_default_max_trials(self, tmp_path):
+        """When TVL spec has no budget section, max_trials falls to default (50)."""
+        spec_path = tmp_path / "no_budget.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.no_budget
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini"]
+objectives:
+  - name: accuracy
+    direction: maximize
+""")
+
+        @optimize(tvl_spec=spec_path)
+        def no_budget_fn(q: str) -> str:
+            return q
+
+        assert isinstance(no_budget_fn, OptimizedFunction)
+        assert no_budget_fn.max_trials == 50, (
+            f"Without budget, max_trials should default to 50; "
+            f"got {no_budget_fn.max_trials}"
+        )
+
+    def test_max_trials_default_without_tvl(self):
+        """Without TVL spec and no explicit max_trials, default is 50."""
+
+        @optimize(configuration_space={"x": [1, 2, 3]})
+        def basic_fn(x: int) -> int:
+            return x
+
+        assert isinstance(basic_fn, OptimizedFunction)
+        assert basic_fn.max_trials == 50
+
+    def test_max_trials_zero_from_decorator(self):
+        """max_trials=0 should be preserved (used for dry-run / short-circuit)."""
+
+        @optimize(configuration_space={"x": [1, 2]}, max_trials=0)
+        def dry_run_fn(x: int) -> int:
+            return x
+
+        assert isinstance(dry_run_fn, OptimizedFunction)
+        assert dry_run_fn.max_trials == 0
+
+    def test_tvl_legacy_budget_max_trials_propagates(self, tmp_path):
+        """Legacy TVL optimization.budget.max_trials must also propagate."""
+        spec_path = tmp_path / "legacy_budget.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.legacy
+configuration_space:
+  model:
+    type: categorical
+    values: ["gpt-4o-mini"]
+objectives:
+  - name: accuracy
+    direction: maximize
+optimization:
+  strategy: random
+  budget:
+    max_trials:
+      value: 15
+""")
+
+        @optimize(tvl_spec=spec_path)
+        def legacy_fn(q: str) -> str:
+            return q
+
+        assert isinstance(legacy_fn, OptimizedFunction)
+        assert (
+            legacy_fn.max_trials == 15
+        ), f"Legacy budget max_trials=15 should propagate; got {legacy_fn.max_trials}"
+
+    def test_tvl_budget_max_trials_with_other_overrides(self, tmp_path):
+        """TVL budget max_trials works alongside other runtime overrides."""
+        spec_path = tmp_path / "mixed_overrides.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.mixed
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 1.0]
+objectives:
+  - name: quality
+    direction: maximize
+exploration:
+  budgets:
+    max_trials: 25
+""")
+
+        @optimize(tvl_spec=spec_path, max_total_examples=200)
+        def mixed_fn(q: str) -> str:
+            return q
+
+        assert isinstance(mixed_fn, OptimizedFunction)
+        assert mixed_fn.max_trials == 25
+        assert mixed_fn.max_total_examples == 200
+
+    def test_async_function_with_tvl_budget_max_trials(self, tmp_path):
+        """TVL budget max_trials should work correctly with async functions."""
+        spec_path = tmp_path / "async_budget.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.async_budget
+tvl_version: "0.9"
+tvars:
+  - name: model
+    type: enum[str]
+    domain: ["gpt-4o-mini"]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  budgets:
+    max_trials: 12
+""")
+
+        @optimize(tvl_spec=spec_path)
+        async def async_fn(q: str) -> str:
+            return q
+
+        assert isinstance(async_fn, OptimizedFunction)
+        assert async_fn.max_trials == 12
+        # The underlying function should still be async-capable
+        assert asyncio.iscoroutinefunction(async_fn.func)
+
+    def test_tvl_budget_with_constraints_and_safety(self, tmp_path):
+        """TVL budget max_trials with constraints and safety_constraints."""
+        spec_path = tmp_path / "constrained_budget.tvl.yml"
+        spec_path.write_text("""tvl:
+  module: test.constrained
+tvl_version: "0.9"
+tvars:
+  - name: temperature
+    type: float
+    domain:
+      range: [0.0, 2.0]
+objectives:
+  - name: accuracy
+    direction: maximize
+exploration:
+  budgets:
+    max_trials: 8
+    timeout_seconds: 60
+""")
+
+        def temp_constraint(temperature: float) -> bool:
+            return temperature <= 1.0
+
+        @optimize(
+            tvl_spec=spec_path,
+            safety_constraints=[temp_constraint],
+        )
+        def constrained_fn(q: str) -> str:
+            return q
+
+        assert isinstance(constrained_fn, OptimizedFunction)
+        assert constrained_fn.max_trials == 8
+        assert constrained_fn.safety_constraints is not None
+
     def test_decorator_wires_evaluation_set_dataset(self, tmp_path):
         """TVL 0.9 evaluation_set.dataset populates eval_dataset when omitted."""
         spec_path = tmp_path / "evalset.tvl.yml"
