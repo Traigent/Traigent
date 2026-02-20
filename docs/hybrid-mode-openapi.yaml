@@ -57,7 +57,7 @@ paths:
                 supports_keep_alive: false
                 supports_streaming: false
                 max_batch_size: 100
-                capability_ids:
+                tunable_ids:
                   - my_agent
         '401':
           description: Unauthorized (missing or invalid bearer token)
@@ -85,6 +85,16 @@ paths:
       tags:
         - Discovery
       parameters:
+        - name: tunable_id
+          in: query
+          required: false
+          description: |
+            Select which tunable's config space to return.
+            If omitted, the server returns the first (or only) tunable.
+            Required when the service exposes multiple tunable_ids.
+          schema:
+            type: string
+            maxLength: 256
         - $ref: '#/components/parameters/TraceParentHeader'
         - $ref: '#/components/parameters/TraceStateHeader'
       responses:
@@ -96,7 +106,7 @@ paths:
                 $ref: '#/components/schemas/ConfigSpaceResponse'
               example:
                 schema_version: '0.9'
-                capability_id: my_agent
+                tunable_id: my_agent
                 tunables:
                   - name: model
                     type: enum
@@ -160,7 +170,7 @@ paths:
               $ref: '#/components/schemas/ExecuteRequest'
             example:
               request_id: 550e8400-e29b-41d4-a716-446655440000
-              capability_id: my_agent
+              tunable_id: my_agent
               config:
                 model: gpt-4o
                 temperature: 0.5
@@ -261,7 +271,7 @@ paths:
               $ref: '#/components/schemas/EvaluateRequest'
             example:
               request_id: 660e8400-e29b-41d4-a716-446655440001
-              capability_id: my_agent
+              tunable_id: my_agent
               execution_id: exec_123456
               evaluations:
                 - input_id: ex_001
@@ -527,9 +537,9 @@ components:
           description: Maximum request payload size (null = unlimited)
           nullable: true
           example: 10485760
-        capability_ids:
+        tunable_ids:
           type: array
-          description: Optional list of capability IDs supported by this service
+          description: Optional list of tunable IDs supported by this service
           maxItems: 100
           items:
             type: string
@@ -883,7 +893,7 @@ components:
       additionalProperties: false
       required:
         - schema_version
-        - capability_id
+        - tunable_id
         - tunables
       properties:
         schema_version:
@@ -891,7 +901,7 @@ components:
           description: TVL schema version
           maxLength: 16
           example: '0.9'
-        capability_id:
+        tunable_id:
           type: string
           description: Identifier for the capability
           maxLength: 256
@@ -1003,7 +1013,7 @@ components:
       description: Request to execute agent with configuration on inputs
       required:
         - request_id
-        - capability_id
+        - tunable_id
         - config
         - inputs
       properties:
@@ -1012,7 +1022,7 @@ components:
           format: uuid
           description: Idempotency key for retry safety. Required for all requests. Retrying with the same request_id and different payload returns 409.
           example: 550e8400-e29b-41d4-a716-446655440000
-        capability_id:
+        tunable_id:
           type: string
           description: Identifier for the agent capability to invoke
           maxLength: 256
@@ -1273,7 +1283,7 @@ components:
       description: Request to evaluate outputs against targets
       required:
         - request_id
-        - capability_id
+        - tunable_id
         - evaluations
       properties:
         request_id:
@@ -1281,7 +1291,7 @@ components:
           format: uuid
           description: Idempotency key for retry safety. Required for all requests. Retrying with the same request_id and different payload returns 409.
           example: 660e8400-e29b-41d4-a716-446655440001
-        capability_id:
+        tunable_id:
           type: string
           description: Identifier for the evaluation capability
           maxLength: 256

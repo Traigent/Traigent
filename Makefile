@@ -211,19 +211,23 @@ sonar-local:  ## Run SonarQube analysis locally (requires sonar-local-start firs
 test-quality:  ## Run test quality analysis pipeline (local)
 	@echo "=== Test Quality Pipeline ==="
 	@echo ""
-	@echo "[1/3] Running assertion linter..."
+	@echo "[1/4] Running assertion linter..."
 	@$(PYTHON) -m tests.optimizer_validation.tools.lint_test_assertions 2>&1 || true
 	@echo ""
-	@echo "[2/3] Running test weakness analyzer..."
+	@echo "[2/4] Running pricing consistency linter..."
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_pricing_consistency 2>&1
+	@echo ""
+	@echo "[3/4] Running test weakness analyzer..."
 	@$(PYTHON) -m tests.optimizer_validation.tools.test_weakness_analyzer --output text 2>&1 || true
 	@echo ""
-	@echo "[3/3] Running LLM test scanner (AST-only)..."
+	@echo "[4/4] Running LLM test scanner (AST-only)..."
 	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner -d $(TEST_DIR)/optimizer_validation -o text
 	@echo ""
 	@echo "Test quality pipeline complete"
 
 test-quality-ci:  ## Run test quality checks for CI (strict mode)
 	@echo "=== CI Test Quality Gates ==="
+	@$(PYTHON) -m tests.optimizer_validation.tools.lint_pricing_consistency
 	@$(PYTHON) -m tests.optimizer_validation.tools.llm_test_scanner \
 		-d $(TEST_DIR)/optimizer_validation -o json -s /tmp/test_quality_report.json
 	@echo "Test quality report saved to /tmp/test_quality_report.json"

@@ -360,7 +360,7 @@ class TestMCPTransportDiscoverConfigSpace:
         """Test config space discovery."""
         config_space = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {"name": "model", "type": "enum", "domain": {"values": ["a", "b"]}},
             ],
@@ -373,7 +373,7 @@ class TestMCPTransportDiscoverConfigSpace:
 
         result = await transport.discover_config_space()
 
-        assert result.capability_id == "test_agent"
+        assert result.tunable_id == "test_agent"
         assert len(result.tvars) == 1
         transport._client.read_resource.assert_called_with(CONFIG_SPACE_URI)
 
@@ -404,7 +404,7 @@ class TestMCPTransportExecute:
         transport._client.call_tool = AsyncMock(return_value=mock_response)
 
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "1", "data": {}}],
         )
@@ -451,7 +451,7 @@ class TestMCPTransportEvaluate:
         transport._client.call_tool = AsyncMock(return_value=eval_response)
 
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[{"input_id": "1", "output": {}, "target": {}}],
         )
         response = await transport.evaluate(request)
@@ -470,7 +470,7 @@ class TestMCPTransportEvaluate:
         transport._client.read_resource = AsyncMock(return_value=mock_response)
 
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[],
         )
 

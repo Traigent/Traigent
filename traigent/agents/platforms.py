@@ -23,11 +23,7 @@ from traigent.utils.validation import CoreValidators, validate_or_raise
 
 # Cloud auth imports - required at runtime for credential management
 try:
-    from traigent.cloud.auth import (
-        AuthCredentials,
-        AuthMode,
-        get_auth_manager,
-    )
+    from traigent.cloud.auth import AuthCredentials, AuthMode, get_auth_manager
 
     _CLOUD_AUTH_AVAILABLE = True
 except (
@@ -734,21 +730,31 @@ class OpenAIAgentExecutor(AgentExecutor):
             return prompt
 
     def _calculate_cost(self, model: str, usage: Any) -> float:
-        """Calculate cost based on token usage with robust fallbacks."""
+        """Calculate cost based on token usage via the canonical CostCalculator."""
         model_mapped = MODEL_ALIASES.get(model, model)
-        # Deterministic per-1k token pricing to match current expectations
-        per_1k_rates = {
-            "gpt-4o-mini": {"prompt": 0.005, "completion": 0.012},
-            "gpt-4o": {"prompt": 0.01, "completion": 0.03},
-            "gpt-4-turbo": {"prompt": 0.01, "completion": 0.03},
-        }
-        rates = per_1k_rates.get(model_mapped.lower(), per_1k_rates["gpt-4o-mini"])
         prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-        cost = (prompt_tokens / 1000) * rates["prompt"] + (
-            completion_tokens / 1000
-        ) * rates["completion"]
-        return float(cost)
+        try:
+            from traigent.utils.cost_calculator import get_cost_calculator
+
+            calc = get_cost_calculator()
+            input_cost, output_cost = calc._calculate_from_tokens(
+                prompt_tokens, completion_tokens, model_mapped
+            )
+            total = float(input_cost + output_cost)
+            if total == 0.0 and (prompt_tokens + completion_tokens) > 0:
+                logger.warning(
+                    "Cost calculation returned 0 for model %s with %d tokens",
+                    model_mapped,
+                    prompt_tokens + completion_tokens,
+                )
+            return total
+        except Exception:
+            logger.warning(
+                "Cost calculation failed for model %s, returning 0",
+                model_mapped,
+            )
+            return 0.0
 
     async def estimate_cost(
         self,

@@ -820,8 +820,15 @@ class TestCostEstimation:
 
     def test_fallback_cost_estimate_claude(self, handler):
         """Test fallback cost estimation for Claude models."""
+        cost = handler._fallback_cost_estimate("claude-3-5-sonnet", 1000, 500)
+        # Claude-3-5-sonnet: $3.00/1M input, $15.00/1M output
+        expected = (1000 * 3.00 + 500 * 15.00) / 1_000_000
+        assert cost == pytest.approx(expected)
+
+    def test_fallback_cost_estimate_claude_legacy_sonnet(self, handler):
+        """Test fallback resolves legacy claude-3-sonnet via alias."""
         cost = handler._fallback_cost_estimate("claude-3-sonnet", 1000, 500)
-        # Claude-3-sonnet: $3.00/1M input, $15.00/1M output
+        # claude-3-sonnet aliases to claude-3-5-sonnet-20241022 ($3.00/$15.00 per 1M)
         expected = (1000 * 3.00 + 500 * 15.00) / 1_000_000
         assert cost == pytest.approx(expected)
 

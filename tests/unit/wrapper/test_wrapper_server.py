@@ -191,7 +191,7 @@ class TestCreateAppRoutes:
     def service(self) -> TraigentService:
         """Create a TraigentService with handlers registered."""
         svc = TraigentService(
-            capability_id="test_svc",
+            tunable_id="test_svc",
             version="1.0",
             supports_keep_alive=True,
         )
@@ -242,7 +242,7 @@ class TestCreateAppRoutes:
         )
         assert send.status == 200
         body = send.body_json
-        assert body["capability_id"] == "test_svc"
+        assert body["tunable_id"] == "test_svc"
         assert len(body["tvars"]) == 1
 
     # --- POST /traigent/v1/execute ---
@@ -563,7 +563,7 @@ class TestKeepAlive404:
     async def test_keep_alive_returns_404_when_session_not_found(self) -> None:
         """Keep-alive for unknown session with keep_alive disabled returns 404."""
         svc = TraigentService(
-            capability_id="test_svc",
+            tunable_id="test_svc",
             supports_keep_alive=False,
         )
         app = create_app(svc)
@@ -661,7 +661,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
-                "capability_id": "default",
+                "tunable_id": "default",
                 "inputs": [{"input_id": "i1", "data": {}}],
             }
         ).encode()
@@ -695,7 +695,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
-                "capability_id": "default",
+                "tunable_id": "default",
                 "timeout_ms": 1000,  # 1 second timeout
                 "inputs": [{"input_id": "i1", "data": {}}],
             }
@@ -726,7 +726,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
-                "capability_id": "default",
+                "tunable_id": "default",
                 "inputs": [{"input_id": "i1", "data": {}}],
             }
         ).encode()
@@ -756,7 +756,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
-                "capability_id": "default",
+                "tunable_id": "default",
                 "timeout_ms": 1000,  # 1 second timeout
                 "evaluations": [{"input_id": "e1", "output": "a", "target": "a"}],
             }
@@ -787,7 +787,7 @@ class TestErrorHandling:
         app = create_app(svc)
         request_body = json.dumps(
             {
-                "capability_id": "default",
+                "tunable_id": "default",
                 "inputs": [{"input_id": "i1", "data": {}}],
             }
         ).encode()

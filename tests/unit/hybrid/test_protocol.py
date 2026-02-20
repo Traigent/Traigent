@@ -37,12 +37,12 @@ class TestHybridExecuteRequest:
     def test_minimal_request(self) -> None:
         """Test creating minimal execute request."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"temperature": 0.7},
             inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
         )
 
-        assert request.capability_id == "test_agent"
+        assert request.tunable_id == "test_agent"
         assert request.config == {"temperature": 0.7}
         assert len(request.inputs) == 1
         assert request.request_id  # Auto-generated
@@ -53,7 +53,7 @@ class TestHybridExecuteRequest:
     def test_to_dict(self) -> None:
         """Test serialization to dictionary."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "gpt-4"},
             inputs=[{"input_id": "1", "data": {}}],
             session_id="sess_123",
@@ -62,7 +62,7 @@ class TestHybridExecuteRequest:
         )
 
         d = request.to_dict()
-        assert d["capability_id"] == "test_agent"
+        assert d["tunable_id"] == "test_agent"
         assert d["config"] == {"model": "gpt-4"}
         assert d["inputs"] == [{"input_id": "1", "data": {}}]
         assert d["session_id"] == "sess_123"
@@ -72,7 +72,7 @@ class TestHybridExecuteRequest:
     def test_to_dict_minimal(self) -> None:
         """Test minimal serialization excludes None fields."""
         request = HybridExecuteRequest(
-            capability_id="test",
+            tunable_id="test",
             config={},
             inputs=[],
         )
@@ -135,8 +135,8 @@ class TestHybridEvaluateRequest:
 
     def test_minimal_request(self) -> None:
         """Test creating minimal evaluate request."""
-        request = HybridEvaluateRequest(capability_id="test")
-        assert request.capability_id == "test"
+        request = HybridEvaluateRequest(tunable_id="test")
+        assert request.tunable_id == "test"
         assert request.request_id  # Auto-generated
         assert request.execution_id is None
         assert request.evaluations is None
@@ -145,7 +145,7 @@ class TestHybridEvaluateRequest:
     def test_to_dict(self) -> None:
         """Test serialization to dictionary."""
         request = HybridEvaluateRequest(
-            capability_id="test",
+            tunable_id="test",
             execution_id="exec_123",
             evaluations=[{"input_id": "1", "output": {}, "target": {}}],
             config={"setting": "value"},
@@ -154,7 +154,7 @@ class TestHybridEvaluateRequest:
         )
 
         d = request.to_dict()
-        assert d["capability_id"] == "test"
+        assert d["tunable_id"] == "test"
         assert d["execution_id"] == "exec_123"
         assert len(d["evaluations"]) == 1
         assert d["config"] == {"setting": "value"}
@@ -317,7 +317,7 @@ class TestConfigSpaceResponse:
         """Test creating config space from dictionary."""
         data = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {"name": "model", "type": "enum", "domain": {"values": ["gpt-4"]}},
                 {"name": "temp", "type": "float", "domain": {"range": [0.0, 1.0]}},
@@ -341,7 +341,7 @@ class TestConfigSpaceResponse:
 
         response = ConfigSpaceResponse.from_dict(data)
         assert response.schema_version == "0.9"
-        assert response.capability_id == "test_agent"
+        assert response.tunable_id == "test_agent"
         assert len(response.tvars) == 2
         assert response.objectives == data["objectives"]
         assert response.exploration == data["exploration"]
@@ -353,7 +353,7 @@ class TestConfigSpaceResponse:
         """Optional optimization sections round-trip via to_dict."""
         response = ConfigSpaceResponse(
             schema_version="0.9",
-            capability_id="test",
+            tunable_id="test",
             tvars=[
                 TVARDefinition(
                     name="model",
@@ -385,7 +385,7 @@ class TestConfigSpaceResponse:
         """Test converting to Traigent config space format."""
         response = ConfigSpaceResponse(
             schema_version="0.9",
-            capability_id="test",
+            tunable_id="test",
             tvars=[
                 TVARDefinition(
                     name="model",
@@ -475,19 +475,19 @@ class TestEvaluateResponseExecutionId:
         assert response.execution_id is None
 
 
-class TestServiceCapabilitiesCapabilityIds:
-    """Test ServiceCapabilities capability_ids field."""
+class TestServiceCapabilitiesTunableIds:
+    """Test ServiceCapabilities tunable_ids field."""
 
-    def test_from_dict_with_capability_ids(self) -> None:
-        """capability_ids is parsed from response dict."""
+    def test_from_dict_with_tunable_ids(self) -> None:
+        """tunable_ids is parsed from response dict."""
         data = {
             "version": "1.0",
-            "capability_ids": ["agent_a", "agent_b"],
+            "tunable_ids": ["agent_a", "agent_b"],
         }
         caps = ServiceCapabilities.from_dict(data)
-        assert caps.capability_ids == ["agent_a", "agent_b"]
+        assert caps.tunable_ids == ["agent_a", "agent_b"]
 
-    def test_from_dict_without_capability_ids(self) -> None:
-        """Missing capability_ids defaults to None."""
+    def test_from_dict_without_tunable_ids(self) -> None:
+        """Missing tunable_ids defaults to None."""
         caps = ServiceCapabilities.from_dict({"version": "1.0"})
-        assert caps.capability_ids is None
+        assert caps.tunable_ids is None

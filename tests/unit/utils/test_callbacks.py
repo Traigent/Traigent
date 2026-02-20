@@ -7,6 +7,7 @@ Tests for progress tracking and callback system for optimization.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 from datetime import UTC, datetime
@@ -201,21 +202,18 @@ class TestProgressBarCallback:
             current_algorithm="grid",
         )
 
-        # First update - will fail due to bug, but we catch it
-        try:
+        # First update - may raise if best_score is None
+        with contextlib.suppress(ValueError, TypeError):
             callback.on_trial_complete(trial_result, progress_with_none_score)
-        except (ValueError, TypeError):
-            pass  # Expected due to source code bug
 
         # Test throttling behavior only
-        callback.last_update = time.time()  # Set to now
-        try:
+        before_update = time.time()
+        callback.last_update = before_update
+        with contextlib.suppress(ValueError, TypeError):
             callback.on_trial_complete(trial_result, progress_with_none_score)
-        except (ValueError, TypeError):
-            pass
 
-        # Verify throttling works (no second attempt to print)
-        assert callback.last_update > 0
+        # Verify throttling: last_update should be >= our set time
+        assert callback.last_update >= before_update
 
     def test_on_trial_complete_with_none_best_score(
         self,

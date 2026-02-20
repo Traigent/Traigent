@@ -22,7 +22,7 @@ class TestInputItemPrivacy:
     def test_input_with_data(self) -> None:
         """Test standard mode: input with data field."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "fast"},
             inputs=[
                 {"input_id": "ex_1", "data": {"query": "What is AI?"}},
@@ -36,7 +36,7 @@ class TestInputItemPrivacy:
     def test_input_without_data_privacy_mode(self) -> None:
         """Test privacy-preserving mode: input with only input_id."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "fast"},
             inputs=[
                 {"input_id": "ex_1"},  # No data field
@@ -53,7 +53,7 @@ class TestInputItemPrivacy:
     def test_mixed_inputs(self) -> None:
         """Test mixed mode: some inputs with data, some without."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "balanced"},
             inputs=[
                 {"input_id": "ex_1", "data": {"query": "test"}},  # With data
@@ -139,7 +139,7 @@ class TestEvaluationItemPrivacy:
     def test_evaluation_with_content(self) -> None:
         """Test standard mode: evaluation with full output and target content."""
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -157,7 +157,7 @@ class TestEvaluationItemPrivacy:
     def test_evaluation_with_ids(self) -> None:
         """Test privacy-preserving mode: evaluation with output_id and target_id."""
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -177,7 +177,7 @@ class TestEvaluationItemPrivacy:
     def test_evaluation_mixed_mode(self) -> None:
         """Test mixed mode: output content with target_id."""
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -229,7 +229,7 @@ class TestSessionIdScoping:
     def test_execute_with_session_id(self) -> None:
         """Test that session_id is included in execute request."""
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "ex_1"}],
             session_id="session_abc123",
@@ -241,7 +241,7 @@ class TestSessionIdScoping:
     def test_evaluate_with_session_id(self) -> None:
         """Test that session_id is included in evaluate request."""
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[
                 {"input_id": "ex_1", "output_id": "out_1", "target_id": "t_1"}
             ],
@@ -273,7 +273,7 @@ class TestPrivacyModeDocumentation:
         """Verify that input_id is the only required field for InputItem."""
         # This should work without data field
         request = HybridExecuteRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             config={},
             inputs=[{"input_id": "required_only"}],
         )
@@ -310,7 +310,7 @@ class TestPrivacyModeDocumentation:
     def test_evaluation_item_flexible_fields(self) -> None:
         """Verify EvaluationItem accepts both content and IDs."""
         request = HybridEvaluateRequest(
-            capability_id="test_agent",
+            tunable_id="test_agent",
             evaluations=[
                 # All content
                 {"input_id": "ex_1", "output": {}, "target": {}},

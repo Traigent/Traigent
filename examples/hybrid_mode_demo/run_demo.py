@@ -74,7 +74,7 @@ def main():
         print("=" * 60)
 
         result = subprocess.run(
-            [sys.executable, str(SCRIPT_DIR / "test_client.py"), SERVER_URL],
+            [sys.executable, str(SCRIPT_DIR / "test_mastra_js_api.py"), SERVER_URL],
             capture_output=False,
         )
 

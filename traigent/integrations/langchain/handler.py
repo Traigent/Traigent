@@ -682,30 +682,18 @@ class TraigentHandler(BaseCallbackHandler):
     def _fallback_cost_estimate(
         self, model: str, input_tokens: int, output_tokens: int
     ) -> float:
-        """Hardcoded fallback cost estimates when litellm is unavailable."""
-        # Costs per 1M tokens (input, output)
-        cost_per_1m = {
-            "gpt-4o": (2.50, 10.00),
-            "gpt-4o-mini": (0.15, 0.60),
-            "gpt-4-turbo": (10.00, 30.00),
-            "gpt-4": (30.00, 60.00),
-            "gpt-3.5-turbo": (0.50, 1.50),
-            "claude-3-opus": (15.00, 75.00),
-            "claude-3-sonnet": (3.00, 15.00),
-            "claude-3-haiku": (0.25, 1.25),
-            "claude-3-5-sonnet": (3.00, 15.00),
-            "claude-3-5-haiku": (0.80, 4.00),
-        }
+        """Fallback cost estimates using the canonical pricing source."""
+        try:
+            from traigent.utils.cost_calculator import _fallback_cost_from_tokens
 
-        # Find matching model by prefix
-        model_lower = model.lower()
-        for model_prefix, (input_cost, output_cost) in cost_per_1m.items():
-            if model_prefix in model_lower:
-                return (
-                    input_tokens * input_cost + output_tokens * output_cost
-                ) / 1_000_000
-
-        # Default fallback for unknown models
+            input_cost, output_cost = _fallback_cost_from_tokens(
+                model, input_tokens, output_tokens
+            )
+            if input_cost > 0 or output_cost > 0:
+                return float(input_cost + output_cost)
+        except Exception:
+            pass
+        # Last resort for totally unknown models
         return (input_tokens * 1.0 + output_tokens * 3.0) / 1_000_000
 
     def get_metrics(self) -> TraigentHandlerMetrics:

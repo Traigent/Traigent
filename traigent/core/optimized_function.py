@@ -431,7 +431,7 @@ class OptimizedFunction:
 
         # Hybrid API evaluator configuration (execution_mode="hybrid_api")
         self.hybrid_api_endpoint = kwargs.pop("hybrid_api_endpoint", None)
-        self.hybrid_api_capability_id = kwargs.pop("capability_id", None)
+        self.hybrid_api_tunable_id = kwargs.pop("tunable_id", None)
         self.hybrid_api_transport = kwargs.pop("hybrid_api_transport", None)
         self.hybrid_api_transport_type = kwargs.pop("hybrid_api_transport_type", "auto")
         self.hybrid_api_batch_size = kwargs.pop("hybrid_api_batch_size", 1)
@@ -1253,7 +1253,7 @@ class OptimizedFunction:
         )
         return {
             "hybrid_api_endpoint": self.hybrid_api_endpoint,
-            "hybrid_api_capability_id": self.hybrid_api_capability_id,
+            "hybrid_api_tunable_id": self.hybrid_api_tunable_id,
             "hybrid_api_transport": self.hybrid_api_transport,
             "hybrid_api_transport_type": self.hybrid_api_transport_type,
             "hybrid_api_batch_size": self.hybrid_api_batch_size,
