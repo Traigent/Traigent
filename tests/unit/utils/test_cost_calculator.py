@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from traigent.utils.cost_calculator import (
-    FALLBACK_MODEL_PRICING,
+    ESTIMATION_MODEL_PRICING,
     TOKENCOST_AVAILABLE,
     CostBreakdown,
     CostCalculator,
@@ -102,12 +102,10 @@ class TestCostCalculatorInitialization:
         assert calculator.enable_caching is False
 
     @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
-    def test_calculator_init_litellm_unavailable_warning(self) -> None:
-        """Test warning is logged when litellm is unavailable."""
-        mock_logger = MagicMock()
-        CostCalculator(logger=mock_logger)  # noqa: F841
-        mock_logger.warning.assert_called_once()
-        assert "litellm not available" in str(mock_logger.warning.call_args)
+    def test_calculator_init_litellm_unavailable_raises(self) -> None:
+        """Test RuntimeError raised when litellm is unavailable (budget safety)."""
+        with pytest.raises(RuntimeError, match="litellm is required"):
+            CostCalculator()
 
 
 class TestCostCalculatorModelMapping:
@@ -383,15 +381,14 @@ class TestCostCalculation:
         return CostCalculator(logger=MagicMock())
 
     @patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False)
-    def test_calculate_cost_litellm_unavailable(
+    def test_calculate_cost_litellm_unavailable_raises(
         self, calculator: CostCalculator
     ) -> None:
-        """Test cost calculation when litellm is unavailable."""
-        result = calculator.calculate_cost(
-            prompt="test", response="response", model_name="gpt-4o"
-        )
-        assert result.total_cost == 0.0
-        assert result.calculation_method == "litellm_unavailable"
+        """Test cost calculation raises when litellm is unavailable (budget safety)."""
+        with pytest.raises(RuntimeError, match="litellm is required"):
+            calculator.calculate_cost(
+                prompt="test", response="response", model_name="gpt-4o"
+            )
 
     def test_calculate_cost_no_model_name(self, calculator: CostCalculator) -> None:
         """Test cost calculation without model name."""
@@ -449,12 +446,14 @@ class TestCostCalculation:
         assert result.output_cost >= 0.0
 
     def test_calculate_cost_with_zero_tokens(self, calculator: CostCalculator) -> None:
-        """Test cost calculation with zero token counts."""
+        """Test cost calculation with zero token counts enters token path."""
         result = calculator.calculate_cost(
             model_name="gpt-4o-mini", input_tokens=0, output_tokens=0
         )
-        # Should not use token_counts method with zero tokens
-        assert result.calculation_method != "token_counts"
+        # Zero tokens now enters the token path (legitimate zero cost)
+        assert result.calculation_method == "token_counts"
+        assert result.input_tokens == 0
+        assert result.output_tokens == 0
 
     def test_calculate_cost_exception_handling(
         self, calculator_with_logger: CostCalculator
@@ -562,23 +561,21 @@ class TestCalculateFromTokens:
         assert isinstance(output_cost, float)
         assert input_cost >= 0.0
         assert output_cost >= 0.0
-        # Should log debug info
-        assert calculator_with_logger.logger.debug.called
 
-    def test_calculate_from_tokens_exception_handling(
+    def test_calculate_from_tokens_raises_for_invalid_model(
         self, calculator_with_logger: CostCalculator
     ) -> None:
-        """Test token-based calculation handles exceptions."""
+        """Test token-based calculation raises for unknown model (budget safety)."""
+        from traigent.utils.cost_calculator import UnknownModelError
+
         with (
             patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", True),
             patch("traigent.utils.cost_calculator.litellm.model_cost", {}),
+            pytest.raises(UnknownModelError),
         ):
-            input_cost, output_cost = calculator_with_logger._calculate_from_tokens(
+            calculator_with_logger._calculate_from_tokens(
                 input_tokens=100, output_tokens=50, model="invalid-model"
             )
-            # Should handle gracefully
-            assert input_cost == 0.0 or isinstance(input_cost, float)
-            assert output_cost == 0.0 or isinstance(output_cost, float)
 
 
 class TestUtilityMethods:
@@ -691,7 +688,7 @@ class TestConvenienceFunctions:
     def test_get_model_pricing_per_1k_known_model(self) -> None:
         """Model pricing convenience API returns per-1K input/output rates."""
         input_rate, output_rate = get_model_pricing_per_1k("gpt-4o")
-        expected = FALLBACK_MODEL_PRICING["gpt-4o"]
+        expected = ESTIMATION_MODEL_PRICING["gpt-4o"]
         assert input_rate == pytest.approx(expected["input_cost_per_token"] * 1000)
         assert output_rate == pytest.approx(expected["output_cost_per_token"] * 1000)
 
@@ -735,12 +732,15 @@ class TestEdgeCases:
         assert isinstance(result, CostBreakdown)
 
     def test_calculate_cost_negative_tokens(self, calculator: CostCalculator) -> None:
-        """Test cost calculation rejects negative token counts."""
+        """Test cost calculation clamps negative tokens to zero."""
         result = calculator.calculate_cost(
             model_name="gpt-4o-mini", input_tokens=-10, output_tokens=50
         )
-        # Should not use token_counts method with negative tokens
-        assert result.calculation_method != "token_counts"
+        # Negative tokens are clamped to 0, positive tokens still priced
+        assert result.calculation_method == "token_counts"
+        assert result.input_tokens == 0
+        assert result.output_tokens == 50
+        assert result.output_cost > 0
 
     def test_fuzzy_match_with_special_characters(
         self, calculator: CostCalculator
@@ -846,17 +846,18 @@ class TestAdditionalLoggerCoverage:
                 # Should log info about single match
                 mock_logger.info.assert_called()
 
-    def test_calculate_from_tokens_fallback_for_unknown_model(self) -> None:
-        """Test token calculation uses fallback for unknown models."""
-        mock_logger = MagicMock()
-        calculator = CostCalculator(logger=mock_logger)
-        # Use an unknown model that's not in litellm or fallback pricing
-        input_cost, output_cost = calculator._calculate_from_tokens(
-            100, 50, "completely-unknown-model-xyz123"
-        )
-        # Fallback returns 0 for unknown models
-        assert input_cost == 0.0
-        assert output_cost == 0.0
+    def test_calculate_from_tokens_raises_for_unknown_model(self) -> None:
+        """Test token calculation raises UnknownModelError for unknown models.
+
+        Budget-critical: returning 0.0 would silently break budget enforcement.
+        """
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        calculator = CostCalculator(logger=MagicMock())
+        with pytest.raises(UnknownModelError):
+            calculator._calculate_from_tokens(
+                100, 50, "completely-unknown-model-xyz123"
+            )
 
     @pytest.mark.skipif(not TOKENCOST_AVAILABLE, reason="litellm not available")
     def test_validate_model_name_fuzzy_match_path(self) -> None:
