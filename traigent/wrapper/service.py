@@ -521,7 +521,6 @@ class TraigentService:
                 )
             return copy.deepcopy(cached_response)
 
-        tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
         inputs = request.get("inputs")
         session_id = request.get("session_id")
@@ -529,10 +528,11 @@ class TraigentService:
         if not isinstance(inputs, list) or len(inputs) == 0:
             raise ValueError("inputs must be a non-empty list")
 
-        # Validate tunable_id matches this service
-        if tunable_id != self.config.tunable_id:
+        # Validate tunable_id matches this service (only when explicitly provided)
+        req_tunable = request.get("tunable_id")
+        if req_tunable is not None and req_tunable != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"tunable_id mismatch: request has '{req_tunable}', "
                 f"service is '{self.config.tunable_id}'"
             )
 
@@ -693,7 +693,6 @@ class TraigentService:
                 )
             return copy.deepcopy(cached_response)
 
-        tunable_id = request.get("tunable_id", self.config.tunable_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
         session_id = request.get("session_id")
@@ -701,10 +700,11 @@ class TraigentService:
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
 
-        # Validate tunable_id matches this service
-        if tunable_id != self.config.tunable_id:
+        # Validate tunable_id matches this service (only when explicitly provided)
+        req_tunable = request.get("tunable_id")
+        if req_tunable is not None and req_tunable != self.config.tunable_id:
             raise ValueError(
-                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"tunable_id mismatch: request has '{req_tunable}', "
                 f"service is '{self.config.tunable_id}'"
             )
 
