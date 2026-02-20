@@ -13,21 +13,21 @@ from pathlib import Path
 from typing import Any
 
 from traigent.hooks.config import HooksConfig, load_hooks_config
-from traigent.utils.cost_calculator import FALLBACK_MODEL_PRICING
+from traigent.utils.cost_calculator import ESTIMATION_MODEL_PRICING
 from traigent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
 def _build_model_cost_per_1k() -> dict[str, float]:
-    """Derive MODEL_COST_PER_1K from the canonical FALLBACK_MODEL_PRICING.
+    """Derive MODEL_COST_PER_1K from the canonical ESTIMATION_MODEL_PRICING.
 
     Computes a blended (input+output)/2 average per-1K-token cost for each
     model, then adds short-name aliases so that user configs in traigent.yml
     using names like ``"gpt-4"`` or ``"claude-3-haiku"`` still resolve.
     """
     result: dict[str, float] = {}
-    for model, pricing in FALLBACK_MODEL_PRICING.items():
+    for model, pricing in ESTIMATION_MODEL_PRICING.items():
         avg_per_token = (
             pricing["input_cost_per_token"] + pricing["output_cost_per_token"]
         ) / 2
@@ -53,7 +53,7 @@ def _build_model_cost_per_1k() -> dict[str, float]:
 
 
 # Model cost estimates per 1K tokens (input + output average).
-# Derived from the canonical FALLBACK_MODEL_PRICING in cost_calculator.py.
+# Derived from the canonical ESTIMATION_MODEL_PRICING in cost_calculator.py.
 MODEL_COST_PER_1K: dict[str, float] = _build_model_cost_per_1k()
 
 # Default tokens per query estimate
