@@ -191,6 +191,7 @@ class TestHandlerFallbackMatchesCalculator:
             "gpt-4o-mini",
             "gpt-4-turbo",
             "gpt-3.5-turbo",
+            "claude-3-sonnet",
             "claude-3-opus",
             "claude-3-haiku",
             "claude-3-5-sonnet",
@@ -324,4 +325,52 @@ class TestIntelligenceFallbackMatchesCalculator:
         assert rates["output"] > 0.0001, (
             f"Normal path output rate {rates['output']} looks like a sample cost, "
             "not a per-1K rate"
+        )
+
+    @pytest.mark.unit
+    def test_normal_and_fallback_paths_agree(self) -> None:
+        """Both pricing paths must return the same rates for overlapping models.
+
+        This catches unit mismatches (e.g. per-1K vs sample-call costs) that
+        independent tests miss because they only exercise one path.
+        """
+        import traigent.utils.cost_calculator as _cc_mod
+        from traigent.analytics.intelligence import CostOptimizationAI
+
+        ai = CostOptimizationAI()
+
+        # Normal path
+        normal = ai.fetch_current_pricing(providers=["openai", "anthropic"])
+
+        # Fallback path
+        saved = _cc_mod.get_model_pricing_per_1k
+        del _cc_mod.get_model_pricing_per_1k
+        try:
+            fallback = ai.fetch_current_pricing(providers=["openai", "anthropic"])
+        finally:
+            _cc_mod.get_model_pricing_per_1k = saved
+
+        # Compare overlapping models
+        mismatches = []
+        for provider in ("openai", "anthropic"):
+            normal_models = normal.get(provider, {})
+            fallback_models = fallback.get(provider, {})
+            overlap = set(normal_models) & set(fallback_models)
+            for model in sorted(overlap):
+                n_in = normal_models[model]["input"]
+                f_in = fallback_models[model]["input"]
+                n_out = normal_models[model]["output"]
+                f_out = fallback_models[model]["output"]
+                in_err = _relative_error(n_in, f_in)
+                out_err = _relative_error(n_out, f_out)
+                if in_err > TOLERANCE or out_err > TOLERANCE:
+                    mismatches.append(
+                        f"{model}: normal=({n_in:.6f},{n_out:.6f}), "
+                        f"fallback=({f_in:.6f},{f_out:.6f}), "
+                        f"err=(in:{in_err:.0%}, out:{out_err:.0%})"
+                    )
+
+        assert not mismatches, (
+            f"Normal and fallback pricing paths disagree >{TOLERANCE:.0%}:\n"
+            + "\n".join(mismatches)
         )

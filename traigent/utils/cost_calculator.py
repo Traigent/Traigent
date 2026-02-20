@@ -66,6 +66,10 @@ FALLBACK_MODEL_PRICING = {
         "input_cost_per_token": 0.8e-6,
         "output_cost_per_token": 4.0e-6,
     },
+    "claude-3-sonnet-20240229": {
+        "input_cost_per_token": 3.0e-6,
+        "output_cost_per_token": 15.0e-6,
+    },
     "claude-3-opus-20240229": {
         "input_cost_per_token": 15.0e-6,
         "output_cost_per_token": 75.0e-6,
@@ -345,8 +349,7 @@ def _normalize_model_for_fallback(model: str) -> str:
 # Legacy model name aliases for fallback pricing lookup.
 # Maps names not in FALLBACK_MODEL_PRICING to their closest canonical equivalent.
 _FALLBACK_ALIASES: dict[str, str] = {
-    "claude-3-sonnet": "claude-3-5-sonnet-20241022",
-    "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
+    "claude-3-sonnet": "claude-3-sonnet-20240229",
 }
 
 
