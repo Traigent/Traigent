@@ -40,7 +40,7 @@
           "type": ["integer", "null"],
           "description": "Maximum request payload size (null = unlimited)"
         },
-        "capability_ids": {
+        "tunable_ids": {
           "type": "array",
           "description": "Optional list of capability IDs supported by this service",
           "items": {
@@ -121,14 +121,14 @@
       "type": "object",
       "title": "ConfigSpaceResponse",
       "description": "Response from config-space discovery endpoint",
-      "required": ["schema_version", "capability_id", "tunables"],
+      "required": ["schema_version", "tunable_id", "tunables"],
       "properties": {
         "schema_version": {
           "type": "string",
           "description": "TVL schema version",
           "examples": ["0.9"]
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the capability"
         },
@@ -473,14 +473,14 @@
       "type": "object",
       "title": "ExecuteRequest",
       "description": "Request to execute agent with configuration on inputs",
-      "required": ["capability_id", "config", "inputs"],
+      "required": ["tunable_id", "config", "inputs"],
       "properties": {
         "request_id": {
           "type": "string",
           "format": "uuid",
           "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the agent capability to invoke"
         },
@@ -711,14 +711,14 @@
       "type": "object",
       "title": "EvaluateRequest",
       "description": "Request to evaluate outputs against targets",
-      "required": ["capability_id"],
+      "required": ["tunable_id"],
       "properties": {
         "request_id": {
           "type": "string",
           "format": "uuid",
           "description": "Idempotency key for retry safety (same request_id + different payload should return 400)"
         },
-        "capability_id": {
+        "tunable_id": {
           "type": "string",
           "description": "Identifier for the evaluation capability"
         },

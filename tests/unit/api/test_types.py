@@ -416,6 +416,7 @@ class TestOptimizationResult:
             timestamp=datetime.now(),
         )
 
+        assert len(result.trials) == 0
         assert result.success_rate == 0.0
 
     def test_best_metrics_property(self):

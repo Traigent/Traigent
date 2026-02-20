@@ -66,13 +66,6 @@ ALLOWLISTED_FILES = {
 
 # Path segments that exclude entire subtrees.
 # Matched as exact directory components (not substrings).
-#
-# "tests" is excluded because test fixtures intentionally contain inline pricing
-# literals to exercise the detection rules themselves (meta-tests would false-fire).
-#
-# "experimental" is excluded by policy: experimental code has relaxed standards
-# while features are prototyped. When experimental code graduates to production,
-# pricing tables must be migrated to cost_calculator.py before moving the file.
 ALLOWLISTED_PATH_SEGMENTS = {"tests", "experimental"}
 
 # --- Detection patterns ---

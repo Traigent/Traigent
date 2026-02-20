@@ -20,8 +20,8 @@ Current transport behavior:
 
 Before running optimization, verify:
 
-1. `GET /traigent/v1/capabilities` returns `version`, correct feature flags, and optionally `capability_ids`.
-2. `GET /traigent/v1/config-space` returns a stable `capability_id` and valid `tunables`.
+1. `GET /traigent/v1/capabilities` returns `version`, correct feature flags, and optionally `tunable_ids`.
+2. `GET /traigent/v1/config-space` returns a stable `tunable_id` and valid `tunables`.
 3. `POST /traigent/v1/execute` enforces capability matching and returns `operational_metrics.total_cost_usd`.
 4. `POST /traigent/v1/evaluate` is implemented when `supports_evaluate=true`.
 5. Optional fields (`constraints`, `objectives`, `exploration`, `promotion_policy`, `defaults`, `measures`) are omitted unless intentionally used.
@@ -90,7 +90,7 @@ def evaluate():
 
 ### Capability ID Validation (Important)
 
-Your service should reject requests where `capability_id` does not match your configured capability.
+Your service should reject requests where `tunable_id` does not match your configured capability.
 This prevents accidental cross-routing in multi-service environments and aligns with Traigent wrapper behavior.
 
 ### Session and ID Management
@@ -138,7 +138,7 @@ The SDK provides a decorator-based wrapper for building services:
 ```python
 from traigent.wrapper import TraigentService
 
-app = TraigentService(capability_id="my_agent")
+app = TraigentService(tunable_id="my_agent")
 
 @app.tunables
 def config_space():
@@ -355,7 +355,7 @@ def capabilities():
 def config_space():
     return jsonify({
         "schema_version": "0.9",
-        "capability_id": "my_agent",
+        "tunable_id": "my_agent",
         "tunables": TUNABLES,
     })
 
@@ -404,7 +404,7 @@ app = FastAPI()
 
 class ExecuteRequest(BaseModel):
     request_id: str | None = None
-    capability_id: str
+    tunable_id: str
     config: dict
     inputs: list[dict]
 
@@ -419,7 +419,7 @@ async def capabilities():
 async def config_space():
     return {
         "schema_version": "0.9",
-        "capability_id": "my_agent",
+        "tunable_id": "my_agent",
         "tunables": [
             {"name": "model", "type": "enum", "domain": {"values": ["fast", "accurate"]}},
         ],
@@ -465,7 +465,7 @@ curl -X POST http://localhost:8080/traigent/v1/execute \
   -H "Content-Type: application/json" \
   -d '{
     "request_id": "550e8400-e29b-41d4-a716-446655440000",
-    "capability_id": "my_agent",
+    "tunable_id": "my_agent",
     "config": {"model": "fast", "temperature": 0.5},
     "inputs": [
       {"input_id": "ex_001", "data": {"query": "Hello"}}
@@ -477,7 +477,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
   -H "Content-Type: application/json" \
   -d '{
     "request_id": "660e8400-e29b-41d4-a716-446655440001",
-    "capability_id": "my_agent",
+    "tunable_id": "my_agent",
     "evaluations": [
       {
         "input_id": "ex_001",
@@ -490,7 +490,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 ### Using the Test Client
 
-See the [test client](../examples/hybrid_mode_demo/test_client.py) for a complete testing script.
+See the [test client](../examples/hybrid_mode_demo/test_mastra_js_api.py) for a complete testing script.
 
 ### Contract Validation (Recommended)
 
@@ -524,7 +524,7 @@ async def test_connection():
     # Test execute
     response = await transport.execute(
         HybridExecuteRequest(
-            capability_id="my_agent",
+            tunable_id="my_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "ex_001", "data": {"query": "test"}}],
         )
@@ -546,7 +546,7 @@ import traigent
 @traigent.optimize(
     execution_mode="hybrid_api",
     hybrid_api_endpoint="http://your-service:8080",
-    capability_id="my_agent",
+    tunable_id="my_agent",
     hybrid_api_auth_header="Bearer <token>",  # Optional
     eval_dataset=my_dataset,
 
@@ -791,13 +791,13 @@ Error: Request timed out after 30000ms
 
 **Solution**: Increase `timeout_ms` in the request or optimize your service.
 
-### `capability_id` Mismatch (400)
+### `tunable_id` Mismatch (400)
 
 ```
-INVALID_REQUEST: capability_id mismatch
+INVALID_REQUEST: tunable_id mismatch
 ```
 
-**Solution**: Send the exact `capability_id` returned by `GET /traigent/v1/config-space`.
+**Solution**: Send the exact `tunable_id` returned by `GET /traigent/v1/config-space`.
 
 ### Upstream Model Quota / 429
 

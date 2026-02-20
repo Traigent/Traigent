@@ -39,7 +39,8 @@ def _build_model_cost_per_1k() -> dict[str, float]:
         "gpt-4": "gpt-4-turbo",
         "gpt-4-32k": "gpt-4-turbo",
         "claude-3-haiku": "claude-3-haiku-20240307",
-        "claude-3-sonnet": "claude-3-sonnet-20240229",
+        "claude-3-sonnet": "claude-3-5-sonnet-20241022",
+        "claude-3-sonnet-20240229": "claude-3-5-sonnet-20241022",
         "claude-3-opus": "claude-3-opus-20240229",
         "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
         "claude-3-5-haiku": "claude-3-5-haiku-20241022",
@@ -170,6 +171,11 @@ class AgentValidator:
         issues.extend(cost_issues)
         warnings.extend(cost_warnings)
 
+        # Tuned variable detection: warn about unoptimized variables
+        # when no configuration_space is configured.
+        if not agent.configuration_space:
+            warnings.extend(self._warn_unoptimized_tvars(agent))
+
         # Calculate estimated cost
         estimated_cost = self._estimate_cost_per_query(agent)
 
@@ -184,6 +190,62 @@ class AgentValidator:
             models_found=agent.models,
             estimated_cost_per_query=estimated_cost,
         )
+
+    def _warn_unoptimized_tvars(self, agent: AgentInfo) -> list[ValidationIssue]:
+        """Detect unoptimized tuned variables and return warnings.
+
+        Only runs when the agent has no configuration_space, giving actionable
+        suggestions rather than errors.
+
+        Args:
+            agent: AgentInfo to inspect.
+
+        Returns:
+            List of warning ValidationIssues (never errors).
+        """
+        try:
+            from traigent.tuned_variables.detection_types import DetectionConfidence
+            from traigent.tuned_variables.detector import TunedVariableDetector
+
+            detector = TunedVariableDetector()
+            results = detector.detect_from_file(agent.file_path, agent.name)
+
+            high_medium = [
+                c
+                for r in results
+                for c in r.candidates
+                if c.confidence
+                in (DetectionConfidence.HIGH, DetectionConfidence.MEDIUM)
+            ]
+
+            if not high_medium:
+                return []
+
+            names = [c.name for c in high_medium]
+            snippets = [
+                c.suggested_range.to_parameter_range_code()
+                for c in high_medium
+                if c.suggested_range
+            ]
+            return [
+                ValidationIssue(
+                    severity="warning",
+                    code="UNOPTIMIZED_TVARS",
+                    message=(
+                        f"No configuration_space set for '{agent.name}', "
+                        f"but {len(high_medium)} tunable variable(s) detected: {names}"
+                    ),
+                    suggestion=(
+                        "Add to @traigent.optimize(configuration_space={...}). "
+                        f"Suggested ranges: {snippets}"
+                    ),
+                )
+            ]
+        except Exception:
+            logger.debug(
+                "Tuned variable detection failed during validation", exc_info=True
+            )
+            return []
 
     def _validate_models(self, agent: AgentInfo) -> list[ValidationIssue]:
         """Validate model constraints.
