@@ -1819,5 +1819,9 @@ from traigent.cli.detect_tvars_command import detect_tvars  # noqa: E402
 
 cli.add_command(detect_tvars)
 
+from traigent.cli.generate_config_command import generate_config  # noqa: E402
+
+cli.add_command(generate_config)
+
 if __name__ == "__main__":
     cli()  # pylint: disable=no-value-for-parameter
