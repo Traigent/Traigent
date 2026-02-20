@@ -31,6 +31,7 @@ class Framework(Enum):
     COHERE = "cohere"
     HUGGINGFACE = "huggingface"
     MISTRAL = "mistral"
+    PYDANTIC_AI = "pydantic_ai"
 
 
 @dataclass
@@ -87,6 +88,7 @@ def _init_registry() -> None:
                 Framework.AZURE_OPENAI: "max_tokens",
                 Framework.COHERE: "max_tokens",
                 Framework.HUGGINGFACE: "max_new_tokens",
+                Framework.PYDANTIC_AI: "max_tokens",
             },
             description="Maximum number of tokens to generate",
         ),
@@ -104,6 +106,7 @@ def _init_registry() -> None:
                 Framework.AZURE_OPENAI: "temperature",
                 Framework.COHERE: "temperature",
                 Framework.HUGGINGFACE: "temperature",
+                Framework.PYDANTIC_AI: "temperature",
             },
             description="Sampling temperature (0-2)",
         ),
@@ -121,6 +124,7 @@ def _init_registry() -> None:
                 Framework.AZURE_OPENAI: "top_p",
                 Framework.COHERE: "p",
                 Framework.HUGGINGFACE: "top_p",
+                Framework.PYDANTIC_AI: "top_p",
             },
             description="Top-p (nucleus) sampling threshold",
         ),
