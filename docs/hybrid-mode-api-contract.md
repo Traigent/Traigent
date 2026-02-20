@@ -213,7 +213,7 @@ Returns service capabilities for the initial handshake.
 
 Notes:
 - `tunable_ids` is optional and useful for multi-tunable services.
-- the canonical tunable used for execution/evaluation remains `tunable_id` returned by `GET /traigent/v1/config-space`.
+- The canonical tunable used for execution/evaluation remains `tunable_id` returned by `GET /traigent/v1/config-space`.
 
 ---
 

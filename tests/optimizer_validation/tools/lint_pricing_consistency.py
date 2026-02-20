@@ -270,7 +270,7 @@ class PricingLinter(ast.NodeVisitor):
                         message=(
                             f"Variable '{name}' looks like a pricing table. "
                             "Ensure it derives from "
-                            "traigent.utils.cost_calculator.FALLBACK_MODEL_PRICING."
+                            "traigent.utils.cost_calculator.ESTIMATION_MODEL_PRICING."
                         ),
                     )
                 )

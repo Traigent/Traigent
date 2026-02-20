@@ -188,6 +188,30 @@ except (ImportError, KeyError, RuntimeError):
     PromptOptimizationResult = _dspy_unavailable  # type: ignore[assignment, misc]
     create_dspy_integration = _dspy_unavailable
 
+# PydanticAI integration
+try:
+    from .pydantic_ai import (
+        PYDANTICAI_AVAILABLE,
+        PydanticAIHandler,
+        PydanticAIPlugin,
+        create_pydantic_ai_handler,
+    )
+
+    PYDANTICAI_INTEGRATION_AVAILABLE = PYDANTICAI_AVAILABLE
+except (ImportError, KeyError, RuntimeError):
+    PYDANTICAI_INTEGRATION_AVAILABLE = False
+    PYDANTICAI_AVAILABLE = False
+
+    def _pydanticai_unavailable(*args: Any, **kwargs: Any) -> Any:
+        raise ImportError(
+            "PydanticAI integration is unavailable. "
+            "Install with: pip install 'pydantic-ai>=1,<2'"
+        )
+
+    PydanticAIHandler = _pydanticai_unavailable  # type: ignore[assignment, misc]
+    PydanticAIPlugin = _pydanticai_unavailable  # type: ignore[assignment, misc]
+    create_pydantic_ai_handler = _pydanticai_unavailable
+
 # Provider-based model selection
 from .providers import (
     get_all_tiers,
@@ -293,6 +317,17 @@ if DSPY_INTEGRATION_AVAILABLE:
             "PromptOptimizationResult",
             "create_dspy_integration",
             "DSPY_AVAILABLE",
+        ]
+    )
+
+# Add PydanticAI exports if available
+if PYDANTICAI_INTEGRATION_AVAILABLE:
+    __all__.extend(
+        [
+            "PydanticAIHandler",
+            "PydanticAIPlugin",
+            "create_pydantic_ai_handler",
+            "PYDANTICAI_AVAILABLE",
         ]
     )
 

@@ -501,6 +501,45 @@ class TestOpenAIAgentExecutor:
             abs(cost_alias - expected) < 1e-10
         ), "Aliased model should produce same cost as canonical name"
 
+    def test_calculate_cost_zero_cost_warning(self):
+        """Test _calculate_cost warns when cost is 0 for nonzero tokens."""
+        from unittest.mock import MagicMock, patch
+
+        executor = OpenAIAgentExecutor()
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        # Force _calculate_from_tokens to return (0, 0) for a "known" model
+        mock_calc = MagicMock()
+        mock_calc._calculate_from_tokens.return_value = (0.0, 0.0)
+        with patch(
+            "traigent.utils.cost_calculator.get_cost_calculator",
+            return_value=mock_calc,
+        ):
+            cost = executor._calculate_cost("gpt-4o", MockUsage())
+            assert cost < 1e-12
+
+    def test_calculate_cost_exception_fallback(self):
+        """Test _calculate_cost returns 0.0 on CostCalculator exception."""
+        from unittest.mock import patch
+
+        executor = OpenAIAgentExecutor()
+
+        class MockUsage:
+            prompt_tokens = 100
+            completion_tokens = 50
+            total_tokens = 150
+
+        with patch(
+            "traigent.utils.cost_calculator.get_cost_calculator",
+            side_effect=RuntimeError("test"),
+        ):
+            cost = executor._calculate_cost("gpt-4o", MockUsage())
+            assert cost < 1e-12
+
     @pytest.mark.asyncio
     async def test_estimate_cost(self, openai_agent_spec):
         """Test cost estimation."""

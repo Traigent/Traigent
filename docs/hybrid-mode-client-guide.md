@@ -490,7 +490,7 @@ curl -X POST http://localhost:8080/traigent/v1/evaluate \
 
 ### Using the Test Client
 
-See the [test client](../examples/hybrid_mode_demo/test_client.py) for a complete testing script.
+See the [test client](../examples/hybrid_mode_demo/test_mastra_js_api.py) for a complete testing script.
 
 ### Contract Validation (Recommended)
 

@@ -1887,6 +1887,12 @@ def optimize(
                 constraints, config_space_var_names
             )
 
+        # Remove keys from runtime overrides that are passed explicitly below
+        # to avoid "got multiple values for keyword argument" errors.
+        # TVL budget application can inject max_trials into runtime_overrides
+        # (via _apply_tvl_artifact), but we pass it explicitly as well.
+        combined_runtime_overrides.pop("max_trials", None)
+
         # Tuned variable auto-detection: when opted in and no config space is set,
         # run AST detection on the function and log suggestions.
         if auto_detect_tvars_value and not configuration_space:
@@ -1939,10 +1945,8 @@ def optimize(
             js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
-            # Optimizer limits (extracted from combined_settings).
-            # TVL apply_budget may inject max_trials into combined_runtime_overrides;
-            # pop it to avoid duplicate keyword argument.
-            max_trials=combined_runtime_overrides.pop("max_trials", max_trials_value),
+            # Optimizer limits (extracted from combined_settings)
+            max_trials=max_trials_value,
             **combined_runtime_overrides,
         )
 

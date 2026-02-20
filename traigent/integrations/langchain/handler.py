@@ -219,7 +219,7 @@ class TraigentHandlerMetrics:
 
             # Sanitize node names for MeasuresDict
             def sanitize(name: str) -> str:
-                return re.sub(r"[^a-zA-Z0-9_]", "_", name)
+                return re.sub(r"\W", "_", name, flags=re.ASCII)
 
             for node, cost in node_costs.items():
                 safe_node = sanitize(node)
@@ -652,49 +652,25 @@ class TraigentHandler(BaseCallbackHandler):
     def _estimate_cost(
         self, model: str, input_tokens: int, output_tokens: int
     ) -> float:
-        """Estimate cost for LLM call.
+        """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        Uses litellm library via cost_calculator, with hardcoded fallback
-        estimates when litellm is unavailable or model is unknown.
+        Uses strict=False so unknown models return 0.0 with a warning
+        instead of raising.
         """
         try:
-            from traigent.utils.cost_calculator import (
-                LITELLM_AVAILABLE,
-                calculate_llm_cost,
+            from traigent.utils.cost_calculator import cost_from_tokens
+
+            input_cost, output_cost = cost_from_tokens(
+                input_tokens, output_tokens, model, strict=False
             )
-
-            # Try litellm-based calculation first
-            if LITELLM_AVAILABLE:
-                result = calculate_llm_cost(
-                    model_name=model,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                )
-                if result.total_cost > 0:
-                    return result.total_cost
-                # litellm returned 0 (unknown model) - fall through to estimates
-
-            # Fallback estimates (per 1M tokens) when litellm unavailable or model unknown
-            return self._fallback_cost_estimate(model, input_tokens, output_tokens)
+            return float(input_cost + output_cost)
         except Exception:
-            return self._fallback_cost_estimate(model, input_tokens, output_tokens)
-
-    def _fallback_cost_estimate(
-        self, model: str, input_tokens: int, output_tokens: int
-    ) -> float:
-        """Fallback cost estimates using the canonical pricing source."""
-        try:
-            from traigent.utils.cost_calculator import _fallback_cost_from_tokens
-
-            input_cost, output_cost = _fallback_cost_from_tokens(
-                model, input_tokens, output_tokens
+            logger.warning(
+                "Cost calculation failed for model %r with %d tokens",
+                model,
+                input_tokens + output_tokens,
             )
-            if input_cost > 0 or output_cost > 0:
-                return float(input_cost + output_cost)
-        except Exception:
-            pass
-        # Last resort for totally unknown models
-        return (input_tokens * 1.0 + output_tokens * 3.0) / 1_000_000
+            return 0.0
 
     def get_metrics(self) -> TraigentHandlerMetrics:
         """Get aggregated metrics from this handler session.
