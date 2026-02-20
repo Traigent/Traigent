@@ -219,7 +219,7 @@ class TraigentHandlerMetrics:
 
             # Sanitize node names for MeasuresDict
             def sanitize(name: str) -> str:
-                return re.sub(r"[^a-zA-Z0-9_]", "_", name)
+                return re.sub(r"\W", "_", name)
 
             for node, cost in node_costs.items():
                 safe_node = sanitize(node)
@@ -692,7 +692,7 @@ class TraigentHandler(BaseCallbackHandler):
             if input_cost > 0 or output_cost > 0:
                 return float(input_cost + output_cost)
         except Exception:
-            pass
+            logger.debug("Cost fallback failed for model %r", model, exc_info=True)
         # Last resort for totally unknown models
         return (input_tokens * 1.0 + output_tokens * 3.0) / 1_000_000
 

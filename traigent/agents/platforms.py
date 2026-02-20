@@ -742,7 +742,7 @@ class OpenAIAgentExecutor(AgentExecutor):
                 prompt_tokens, completion_tokens, model_mapped
             )
             total = float(input_cost + output_cost)
-            if total == 0.0 and (prompt_tokens + completion_tokens) > 0:
+            if total < 1e-10 and (prompt_tokens + completion_tokens) > 0:
                 logger.warning(
                     "Cost calculation returned 0 for model %s with %d tokens",
                     model_mapped,
