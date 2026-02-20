@@ -304,7 +304,7 @@ class TestHTTPTransportMethods:
             transport, "_request", new_callable=AsyncMock, return_value=mock_response
         ):
             request = HybridExecuteRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 config={"model": "fast"},
                 inputs=[{"input_id": "1", "data": {}}],
             )
@@ -683,7 +683,7 @@ class TestHTTPTransportAdditionalMethods:
         """Test discover_config_space method."""
         mock_data = {
             "schema_version": "0.9",
-            "capability_id": "test_agent",
+            "tunable_id": "test_agent",
             "tvars": [
                 {
                     "name": "model",
@@ -698,7 +698,7 @@ class TestHTTPTransportAdditionalMethods:
         ):
             config_space = await transport.discover_config_space()
 
-        assert config_space.capability_id == "test_agent"
+        assert config_space.tunable_id == "test_agent"
         assert len(config_space.tvars) == 1
 
     @pytest.mark.asyncio
@@ -729,7 +729,7 @@ class TestHTTPTransportAdditionalMethods:
             ),
         ):
             request = HybridEvaluateRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 evaluations=[{"input_id": "1", "output": {}, "target": {}}],
             )
             response = await transport.evaluate(request)
@@ -751,7 +751,7 @@ class TestHTTPTransportAdditionalMethods:
             return_value=mock_caps,
         ):
             request = HybridEvaluateRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 evaluations=[],
             )
             with pytest.raises(NotImplementedError):
@@ -794,7 +794,7 @@ class TestHTTPTransportAdditionalMethods:
         mock_request = AsyncMock(return_value=mock_response)
         with patch.object(transport, "_request", mock_request):
             request = HybridExecuteRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 config={},
                 inputs=[],
                 timeout_ms=60000,  # 60 seconds
@@ -829,7 +829,7 @@ class TestHTTPTransportAdditionalMethods:
             patch.object(transport, "_request", mock_request),
         ):
             request = HybridEvaluateRequest(
-                capability_id="test_agent",
+                tunable_id="test_agent",
                 evaluations=[{"input_id": "1", "output": {}, "target": {}}],
                 timeout_ms=45000,
             )

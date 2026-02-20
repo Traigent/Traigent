@@ -7,7 +7,7 @@ their configuration space, execute logic, and evaluation logic.
 Example:
     from traigent.wrapper import TraigentService
 
-    app = TraigentService(capability_id="my_agent")
+    app = TraigentService(tunable_id="my_agent")
 
     @app.tvars
     def config_space():
@@ -61,7 +61,7 @@ class ServiceConfig:
     """Configuration for TraigentService.
 
     Attributes:
-        capability_id: Unique identifier for this capability.
+        tunable_id: Unique identifier for this tunable.
         version: API version string.
         supports_keep_alive: Whether to enable keep-alive support.
         supports_streaming: Whether to enable streaming support.
@@ -75,7 +75,7 @@ class ServiceConfig:
         measures: Optional declared measure names.
     """
 
-    capability_id: str = "default"
+    tunable_id: str = "default"
     version: str = "1.0"
     supports_keep_alive: bool = False
     supports_streaming: bool = False
@@ -118,7 +118,7 @@ class TraigentService:
     directly as a library.
 
     Example:
-        app = TraigentService(capability_id="qa_agent")
+        app = TraigentService(tunable_id="qa_agent")
 
         @app.tvars
         def config_space():
@@ -133,7 +133,7 @@ class TraigentService:
 
     def __init__(
         self,
-        capability_id: str = "default",
+        tunable_id: str = "default",
         version: str = "1.0",
         supports_keep_alive: bool = False,
         supports_streaming: bool = False,
@@ -148,7 +148,7 @@ class TraigentService:
         """Initialize TraigentService.
 
         Args:
-            capability_id: Unique identifier for this capability.
+            tunable_id: Unique identifier for this tunable.
             version: API version string.
             supports_keep_alive: Whether to enable keep-alive support.
             supports_streaming: Whether to enable streaming support.
@@ -161,7 +161,7 @@ class TraigentService:
             measures: Optional declared measure names.
         """
         self.config = ServiceConfig(
-            capability_id=capability_id,
+            tunable_id=tunable_id,
             version=version,
             supports_keep_alive=supports_keep_alive,
             supports_streaming=supports_streaming,
@@ -347,7 +347,7 @@ class TraigentService:
         """Get TVAR definitions.
 
         Returns:
-            Dictionary with schema_version, capability_id, and tunables.
+            Dictionary with schema_version, tunable_id, and tunables.
         """
         if self._cached_tvars is None and self._tvars_handler is not None:
             tvars_dict = self._tvars_handler()
@@ -401,7 +401,7 @@ class TraigentService:
 
         response: dict[str, Any] = {
             "schema_version": self.config.schema_version,
-            "capability_id": self.config.capability_id,
+            "tunable_id": self.config.tunable_id,
             "tunables": tunables,
             "tvars": tunables,  # Backward compatibility alias
             "constraints": constraints or {},
@@ -472,7 +472,7 @@ class TraigentService:
             "max_batch_size": self.config.max_batch_size,
             "max_payload_bytes": None,
             # Explicitly advertise supported capability IDs for multi-capability clients.
-            "capability_ids": [self.config.capability_id],
+            "tunable_ids": [self.config.tunable_id],
         }
 
     def get_health(self) -> dict[str, Any]:
@@ -487,7 +487,7 @@ class TraigentService:
             "version": self.config.version,
             "uptime_seconds": uptime_seconds,
             "details": {
-                "capability_id": self.config.capability_id,
+                "tunable_id": self.config.tunable_id,
                 "active_sessions": len(self._sessions),
             },
         }
@@ -499,7 +499,7 @@ class TraigentService:
         """Handle execute request.
 
         Args:
-            request: Execute request with capability_id, config, inputs.
+            request: Execute request with tunable_id, config, inputs.
 
         Returns:
             Execute response with outputs and metrics.
@@ -521,7 +521,7 @@ class TraigentService:
                 )
             return copy.deepcopy(cached_response)
 
-        capability_id = request.get("capability_id", self.config.capability_id)
+        tunable_id = request.get("tunable_id", self.config.tunable_id)
         config = request.get("config", {})
         inputs = request.get("inputs")
         session_id = request.get("session_id")
@@ -529,11 +529,11 @@ class TraigentService:
         if not isinstance(inputs, list) or len(inputs) == 0:
             raise ValueError("inputs must be a non-empty list")
 
-        # Validate capability_id matches this service
-        if capability_id != self.config.capability_id:
+        # Validate tunable_id matches this service
+        if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"capability_id mismatch: request has '{capability_id}', "
-                f"service is '{self.config.capability_id}'"
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
             )
 
         # Enforce max_batch_size from capabilities
@@ -693,7 +693,7 @@ class TraigentService:
                 )
             return copy.deepcopy(cached_response)
 
-        capability_id = request.get("capability_id", self.config.capability_id)
+        tunable_id = request.get("tunable_id", self.config.tunable_id)
         evaluations = request.get("evaluations", [])
         config = request.get("config", {})
         session_id = request.get("session_id")
@@ -701,11 +701,11 @@ class TraigentService:
         if not isinstance(evaluations, list):
             raise ValueError("evaluations must be a list")
 
-        # Validate capability_id matches this service
-        if capability_id != self.config.capability_id:
+        # Validate tunable_id matches this service
+        if tunable_id != self.config.tunable_id:
             raise ValueError(
-                f"capability_id mismatch: request has '{capability_id}', "
-                f"service is '{self.config.capability_id}'"
+                f"tunable_id mismatch: request has '{tunable_id}', "
+                f"service is '{self.config.tunable_id}'"
             )
 
         # Update session if provided

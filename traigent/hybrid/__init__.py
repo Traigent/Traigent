@@ -23,7 +23,7 @@ Usage:
     # Execute with configuration
     response = await transport.execute(
         HybridExecuteRequest(
-            capability_id="my_agent",
+            tunable_id="my_agent",
             config={"temperature": 0.7},
             inputs=[{"input_id": "1", "data": {...}}],
         )

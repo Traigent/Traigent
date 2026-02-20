@@ -19,10 +19,7 @@ from tests.integration.hybrid.mock_hybrid_server import (
 )
 from traigent.hybrid.discovery import ConfigSpaceDiscovery
 from traigent.hybrid.lifecycle import AgentLifecycleManager
-from traigent.hybrid.protocol import (
-    HybridEvaluateRequest,
-    HybridExecuteRequest,
-)
+from traigent.hybrid.protocol import HybridEvaluateRequest, HybridExecuteRequest
 
 
 class TestHybridModeConfigSpaceDiscovery:
@@ -71,13 +68,13 @@ class TestHybridModeConfigSpaceDiscovery:
 
         # First fetch
         await discovery.fetch()
-        capability_id_1 = discovery.get_capability_id()
+        tunable_id_1 = discovery.get_tunable_id()
 
         # Second fetch should return cached
         await discovery.fetch()
-        capability_id_2 = discovery.get_capability_id()
+        tunable_id_2 = discovery.get_tunable_id()
 
-        assert capability_id_1 == capability_id_2 == "mock_test_agent"
+        assert tunable_id_1 == tunable_id_2 == "mock_test_agent"
 
     @pytest.mark.asyncio
     async def test_discovery_clear_cache(self, transport: MockHTTPTransport) -> None:
@@ -118,7 +115,7 @@ class TestHybridModeExecution:
     ) -> None:
         """Test executing a single example."""
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate", "temperature": 0.3},
             inputs=[{"input_id": "ex_1", "data": {"query": "test question"}}],
         )
@@ -146,7 +143,7 @@ class TestHybridModeExecution:
         ]
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "balanced"},
             inputs=inputs,
         )
@@ -168,7 +165,7 @@ class TestHybridModeExecution:
         session_id = "session_123"
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "ex_1", "data": {}}],
             session_id=session_id,
@@ -189,7 +186,7 @@ class TestHybridModeExecution:
 
         # Fast model - lower cost
         request_fast = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "fast"},
             inputs=inputs,
         )
@@ -200,7 +197,7 @@ class TestHybridModeExecution:
 
         # Accurate model - higher cost
         request_accurate = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate"},
             inputs=inputs,
         )
@@ -230,7 +227,7 @@ class TestHybridModeEvaluation:
     ) -> None:
         """Test evaluating outputs against targets."""
         request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -259,7 +256,7 @@ class TestHybridModeEvaluation:
         """Test two-phase: execute then evaluate workflow."""
         # Phase 1: Execute
         exec_request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate", "temperature": 0.2},
             inputs=[
                 {"input_id": "ex_1", "data": {"query": "What is 2+2?"}},
@@ -281,7 +278,7 @@ class TestHybridModeEvaluation:
         ]
 
         eval_request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             execution_id=exec_response.execution_id,
             evaluations=evaluations,
         )
@@ -339,7 +336,7 @@ class TestHybridModeLifecycle:
 
         # Execute a request to register session on server
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={},
             inputs=[{"input_id": "ex_1", "data": {}}],
             session_id=session_id,
@@ -396,7 +393,7 @@ class TestHybridModeCostControl:
         inputs = [{"input_id": f"ex_{i}", "data": {}} for i in range(10)]
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "balanced"},  # 1x cost multiplier
             inputs=inputs,
         )
@@ -419,7 +416,7 @@ class TestHybridModeCostControl:
             ]
 
             request = HybridExecuteRequest(
-                capability_id="mock_test_agent",
+                tunable_id="mock_test_agent",
                 config={"model": "balanced"},
                 inputs=inputs,
             )
@@ -436,7 +433,7 @@ class TestHybridModeCostControl:
     ) -> None:
         """Test extracting per-example costs from response."""
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate"},  # 2x cost
             inputs=[
                 {"input_id": "ex_1", "data": {}},
@@ -472,7 +469,7 @@ class TestHybridModeBatchControl:
         """Test batch size of 1 (sequential execution)."""
         for i in range(3):
             request = HybridExecuteRequest(
-                capability_id="mock_test_agent",
+                tunable_id="mock_test_agent",
                 config={"model": "fast"},
                 inputs=[{"input_id": f"ex_{i}", "data": {}}],
             )
@@ -489,7 +486,7 @@ class TestHybridModeBatchControl:
         inputs = [{"input_id": f"ex_{i}", "data": {}} for i in range(10)]
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "fast"},
             inputs=inputs,
         )
@@ -511,7 +508,7 @@ class TestHybridModeErrorHandling:
         transport = MockHTTPTransport(server)
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={},
             inputs=[{"input_id": "ex_1", "data": {}}],
         )
@@ -528,7 +525,7 @@ class TestHybridModeErrorHandling:
         transport = MockHTTPTransport(server)
 
         request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             evaluations=[{"input_id": "ex_1", "output": {}, "target": {}}],
         )
 
@@ -623,7 +620,7 @@ class TestHybridModePrivacyPreserving:
 
         # Request with only input_ids, no data
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate", "temperature": 0.3},
             inputs=[
                 {"input_id": "ex_1"},  # No data field
@@ -648,7 +645,7 @@ class TestHybridModePrivacyPreserving:
     ) -> None:
         """Test that privacy mode returns output_id instead of output content."""
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "ex_1", "data": {"query": "test"}}],
             session_id="session_123",
@@ -689,7 +686,7 @@ class TestHybridModePrivacyPreserving:
 
         # Request with only IDs, no content
         request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -725,7 +722,7 @@ class TestHybridModePrivacyPreserving:
         transport = MockHTTPTransport(server)
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "balanced"},
             inputs=[{"input_id": "ex_1", "data": {"query": "test question"}}],
         )
@@ -754,7 +751,7 @@ class TestHybridModePrivacyPreserving:
         server.store_target("target_ex_2", {"expected": "Machine learning..."})
 
         request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             evaluations=[
                 {
                     "input_id": "ex_1",
@@ -791,7 +788,7 @@ class TestHybridModePrivacyPreserving:
 
         # Phase 1: Execute with only input_ids
         exec_request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate", "temperature": 0.2},
             inputs=[
                 {"input_id": "ex_1"},
@@ -811,7 +808,7 @@ class TestHybridModePrivacyPreserving:
 
         # Phase 2: Evaluate with output_ids and target_ids
         eval_request = HybridEvaluateRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             execution_id=exec_response.execution_id,
             evaluations=[
                 {
@@ -846,7 +843,7 @@ class TestHybridModePrivacyPreserving:
         privacy_server.store_input("ex_2", {"query": "test 2"})
 
         request = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate"},  # 2x cost
             inputs=[
                 {"input_id": "ex_1"},
@@ -870,14 +867,14 @@ class TestHybridModePrivacyPreserving:
         """Test that output_ids are scoped to sessions to prevent collisions."""
         # Same input_id but different sessions
         request1 = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "fast"},
             inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
             session_id="session_A",
         )
 
         request2 = HybridExecuteRequest(
-            capability_id="mock_test_agent",
+            tunable_id="mock_test_agent",
             config={"model": "accurate"},
             inputs=[{"input_id": "shared_input", "data": {"query": "test"}}],
             session_id="session_B",

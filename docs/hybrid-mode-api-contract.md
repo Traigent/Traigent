@@ -197,7 +197,7 @@ Returns service capabilities for the initial handshake.
   "supports_streaming": false,
   "max_batch_size": 100,
   "max_payload_bytes": null,
-  "capability_ids": ["my_agent"]
+  "tunable_ids": ["my_agent"]
 }
 ```
 
@@ -209,11 +209,11 @@ Returns service capabilities for the initial handshake.
 | `supports_streaming` | boolean | No | Whether streaming responses are supported |
 | `max_batch_size` | integer | No | Maximum inputs per execute request (default: 100) |
 | `max_payload_bytes` | integer | No | Maximum request payload size (null = unlimited) |
-| `capability_ids` | array[string] | No | Optional list of capability IDs supported by this service |
+| `tunable_ids` | array[string] | No | Optional list of capability IDs supported by this service |
 
 Notes:
-- `capability_ids` is optional and useful for multi-capability services.
-- The canonical capability used for execution/evaluation remains `capability_id` returned by `GET /traigent/v1/config-space`.
+- `tunable_ids` is optional and useful for multi-capability services.
+- The canonical capability used for execution/evaluation remains `tunable_id` returned by `GET /traigent/v1/config-space`.
 
 ---
 
@@ -228,7 +228,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 ```json
 {
   "schema_version": "0.9",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "tunables": [
     {
       "name": "model",
@@ -275,7 +275,7 @@ Returns tunable variable definitions. Traigent uses these to understand what par
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `schema_version` | string | Yes | TVL schema version (currently "0.9") |
-| `capability_id` | string | Yes | Unique identifier for this capability |
+| `tunable_id` | string | Yes | Unique identifier for this capability |
 | `tunables` | array | Yes | List of tunable variable definitions |
 | `constraints` | object \| array | No | Structural and behavioral constraints |
 | `objectives` | array | No | Optional objective definitions (TVL 0.9 JSON format) |
@@ -363,7 +363,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 ```json
 {
   "request_id": "550e8400-e29b-41d4-a716-446655440000",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "config": {
     "model": "gpt-4o",
     "temperature": 0.5,
@@ -393,7 +393,7 @@ Execute the agent with a specific configuration on a batch of inputs.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `request_id` | string | No | Idempotency key (UUID). Auto-generated if not provided |
-| `capability_id` | string | Yes | Identifier for the capability to invoke |
+| `tunable_id` | string | Yes | Identifier for the capability to invoke |
 | `config` | object | Yes | Configuration parameters (tunable values) |
 | `inputs` | array | Yes | List of input examples to process |
 | `session_id` | string | No | Session ID for stateful agents |
@@ -512,7 +512,7 @@ Evaluate outputs against expected targets to measure quality.
 ```json
 {
   "request_id": "660e8400-e29b-41d4-a716-446655440001",
-  "capability_id": "my_agent",
+  "tunable_id": "my_agent",
   "execution_id": "exec_123456",
   "evaluations": [
     {
@@ -535,7 +535,7 @@ Evaluate outputs against expected targets to measure quality.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `request_id` | string | No | Idempotency key (UUID) |
-| `capability_id` | string | Yes | Identifier for the evaluation capability |
+| `tunable_id` | string | Yes | Identifier for the evaluation capability |
 | `execution_id` | string | No | Reference to previous execute (for caching) |
 | `evaluations` | array | No | List of output+target pairs (optional when using execution_id-only workflows) |
 | `config` | object | No | Optional config for evaluation parameters |

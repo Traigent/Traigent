@@ -14,9 +14,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from traigent.hooks.config import (
-    HooksConfig,
-)
+from traigent.hooks.config import HooksConfig
 from traigent.hooks.validator import (
     DEFAULT_TOKENS_PER_QUERY,
     MODEL_COST_PER_1K,
@@ -526,7 +524,7 @@ class TestAgentValidator:
             file_path="test.py",
             configuration_space={
                 "model": "gpt-4o",
-                "max_tokens": 1750,  # Cost around 0.00875, 87.5% of limit (above 80% threshold)
+                "max_tokens": 1400,  # Cost ~0.00875, 87.5% of limit (above 80% threshold)
             },
             objectives=[],
             constraints=[],

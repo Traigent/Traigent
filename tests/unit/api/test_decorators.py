@@ -40,6 +40,10 @@ class TestOptimizeDecorator:
             return f"Result from {model} with temp {temperature}"
 
         assert isinstance(llm_function, OptimizedFunction)
+        assert llm_function.configuration_space == {
+            "model": ["gpt-3.5", "gpt-4"],
+            "temperature": [0.0, 0.5, 1.0],
+        }
 
     def test_decorator_with_default_config(self):
         """Test decorator with default configuration."""
@@ -52,6 +56,7 @@ class TestOptimizeDecorator:
             return batch_size * lr
 
         assert isinstance(training_function, OptimizedFunction)
+        assert training_function.default_config == {"batch_size": 32, "lr": 0.01}
 
     def test_execution_bundle_passes_hybrid_api_transport(self):
         """Execution bundle should preserve preconfigured transport objects."""
@@ -87,6 +92,25 @@ class TestOptimizeDecorator:
 
         assert isinstance(sample_function, OptimizedFunction)
         assert sample_function.hybrid_api_transport is transport
+
+    def test_decorator_max_trials_reaches_optimized_function(self):
+        """Regression: max_trials from decorator must reach OptimizedFunction.
+
+        Bug: max_trials went into combined_settings via record_option but was
+        never extracted, so OptimizedFunction always got the default of 50.
+        """
+
+        @optimize(
+            configuration_space={"x": [1, 2, 3]},
+            max_trials=10,
+        )
+        def sample_function(x: int) -> int:
+            return x
+
+        assert isinstance(sample_function, OptimizedFunction)
+        assert (
+            sample_function.max_trials == 10
+        ), f"max_trials should be 10 (from decorator), got {sample_function.max_trials}"
 
     def test_decorated_function_execution(self):
         """Test that decorated function can still be called normally."""

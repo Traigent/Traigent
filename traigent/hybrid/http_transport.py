@@ -125,6 +125,7 @@ class HTTPTransport:
         path: str,
         json_data: dict[str, Any] | None = None,
         timeout_override: float | None = None,
+        params: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Make HTTP request with error handling.
 
@@ -133,6 +134,7 @@ class HTTPTransport:
             path: URL path (relative to base_url)
             json_data: Optional JSON body
             timeout_override: Optional timeout override for this request
+            params: Optional query parameters
 
         Returns:
             Parsed JSON response.
@@ -156,6 +158,7 @@ class HTTPTransport:
                 method,
                 path,
                 json=json_data,
+                params=params,
                 timeout=timeout,
             )
 
@@ -272,8 +275,13 @@ class HTTPTransport:
             self._capabilities = ServiceCapabilities(version="1.0")
             return self._capabilities
 
-    async def discover_config_space(self) -> ConfigSpaceResponse:
+    async def discover_config_space(
+        self, *, tunable_id: str | None = None
+    ) -> ConfigSpaceResponse:
         """Fetch TVAR definitions from external service.
+
+        Args:
+            tunable_id: Optional tunable ID to fetch config space for.
 
         Returns:
             ConfigSpaceResponse with TVARs and constraints.
@@ -281,7 +289,10 @@ class HTTPTransport:
         Raises:
             TransportError: If discovery fails.
         """
-        data = await self._request("GET", self.CONFIG_SPACE_PATH)
+        params: dict[str, str] | None = None
+        if tunable_id is not None:
+            params = {"tunable_id": tunable_id}
+        data = await self._request("GET", self.CONFIG_SPACE_PATH, params=params)
         return ConfigSpaceResponse.from_dict(data)
 
     async def execute(

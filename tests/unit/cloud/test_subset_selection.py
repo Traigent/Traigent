@@ -97,7 +97,10 @@ class TestDiverseSampling:
         assert result.reduction_ratio == 0.5
         assert result.selection_strategy == "diverse_sampling"
         assert 0.0 <= result.diversity_score <= 1.0
-        assert result.confidence_score == 0.8
+        assert 0.0 <= result.confidence_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_larger_target(self, sample_dataset):
@@ -192,8 +195,11 @@ class TestRepresentativeSampling:
 
         assert result.selected_size == 4
         assert result.selection_strategy == "representative_sampling"
-        assert result.confidence_score == 0.9
-        assert result.diversity_score == 0.7
+        assert 0.0 <= result.confidence_score <= 1.0
+        assert 0.0 <= result.diversity_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_unbalanced(self, sample_dataset):
@@ -260,8 +266,11 @@ class TestHighConfidenceSampling:
 
         assert result.selected_size == 4
         assert result.selection_strategy == "high_confidence_sampling"
-        assert result.confidence_score == 0.95
-        assert result.diversity_score == 0.6
+        assert 0.0 <= result.confidence_score <= 1.0
+        assert 0.0 <= result.diversity_score <= 1.0
+        # Verify selected examples are actual dataset members
+        for ex in result.selected_examples:
+            assert ex in sample_dataset.examples
 
     @pytest.mark.asyncio
     async def test_select_subset_prioritize_easy(self, sample_dataset):

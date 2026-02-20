@@ -21,7 +21,7 @@ from traigent.wrapper.service import TraigentService
 
 def _make_service_with_handlers() -> TraigentService:
     """Create a TraigentService with execute and evaluate handlers that raise CancelledError."""
-    svc = TraigentService(capability_id="test_agent")
+    svc = TraigentService(tunable_id="test_agent")
 
     @svc.tvars
     def config_space() -> dict[str, Any]:
@@ -48,7 +48,7 @@ async def test_handle_execute_propagates_cancelled_error():
 
     request = {
         "request_id": "req_1",
-        "capability_id": "test_agent",
+        "tunable_id": "test_agent",
         "config": {},
         "inputs": [{"input_id": "ex_0", "data": {"question": "hi"}}],
     }
@@ -75,7 +75,7 @@ async def test_handle_evaluate_propagates_cancelled_error():
 
     request = {
         "request_id": "req_2",
-        "capability_id": "test_agent",
+        "tunable_id": "test_agent",
         "config": {},
         "evaluations": [
             {
