@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from traigent.utils.cost_calculator import (
-    FALLBACK_MODEL_PRICING,
+    ESTIMATION_MODEL_PRICING,
     CostCalculator,
     _fallback_cost_from_tokens,
 )
@@ -86,7 +86,7 @@ class TestPlatformsCostMatchesCalculator:
 
 class TestValidatorModelsResolvable:
     """Every model in hooks/validator.MODEL_COST_PER_1K must trace back to
-    FALLBACK_MODEL_PRICING — either directly or as an alias whose cost
+    ESTIMATION_MODEL_PRICING — either directly or as an alias whose cost
     matches a canonical entry.
     """
 
@@ -94,17 +94,17 @@ class TestValidatorModelsResolvable:
     def test_all_validator_models_resolvable(self) -> None:
         from traigent.hooks.validator import MODEL_COST_PER_1K
 
-        # Build set of valid per-1K costs derived from FALLBACK_MODEL_PRICING.
+        # Build set of valid per-1K costs derived from ESTIMATION_MODEL_PRICING.
         # Any alias in MODEL_COST_PER_1K must have a cost matching one of these.
         canonical_per_1k = set()
-        for p in FALLBACK_MODEL_PRICING.values():
+        for p in ESTIMATION_MODEL_PRICING.values():
             avg = (p["input_cost_per_token"] + p["output_cost_per_token"]) / 2
             canonical_per_1k.add(round(avg * 1000, 12))
 
         unresolvable = []
         for model, cost in MODEL_COST_PER_1K.items():
-            # Direct entry in FALLBACK_MODEL_PRICING
-            if model in FALLBACK_MODEL_PRICING:
+            # Direct entry in ESTIMATION_MODEL_PRICING
+            if model in ESTIMATION_MODEL_PRICING:
                 continue
             # Alias — cost must match a canonical entry
             if round(cost, 12) in canonical_per_1k:
@@ -113,8 +113,8 @@ class TestValidatorModelsResolvable:
 
         assert not unresolvable, (
             f"These validator.py models are not traceable to "
-            f"FALLBACK_MODEL_PRICING: {unresolvable}. "
-            f"Add them to FALLBACK_MODEL_PRICING or as aliases in "
+            f"ESTIMATION_MODEL_PRICING: {unresolvable}. "
+            f"Add them to ESTIMATION_MODEL_PRICING or as aliases in "
             f"_build_model_cost_per_1k()."
         )
 
@@ -145,11 +145,11 @@ class TestValidatorCostMatchesCalculator:
         mismatches = []
 
         for model, per_1k_cost in MODEL_COST_PER_1K.items():
-            # Only compare models directly in FALLBACK_MODEL_PRICING.
+            # Only compare models directly in ESTIMATION_MODEL_PRICING.
             # Aliases (gpt-4, gpt-4-32k, etc.) intentionally map to different
             # canonical models for cost estimation, so they'll diverge from
             # what CostCalculator resolves for the alias name.
-            if model not in FALLBACK_MODEL_PRICING:
+            if model not in ESTIMATION_MODEL_PRICING:
                 continue
 
             canonical = _canonical_cost(model)
@@ -198,9 +198,7 @@ class TestHandlerFallbackMatchesCalculator:
 
         mismatches = []
         for model in models_to_test:
-            handler_cost = handler._fallback_cost_estimate(
-                model, INPUT_TOKENS, OUTPUT_TOKENS
-            )
+            handler_cost = handler._estimate_cost(model, INPUT_TOKENS, OUTPUT_TOKENS)
             canonical = _canonical_cost(model)
             if canonical == 0:
                 continue
@@ -257,7 +255,7 @@ class TestIntelligenceFallbackMatchesCalculator:
     Exercises the ImportError fallback in fetch_current_pricing() by
     temporarily removing get_model_pricing_per_1k from the cost_calculator
     module namespace. The fallback derives per-1K rates from
-    FALLBACK_MODEL_PRICING, so the test verifies those match canonical.
+    ESTIMATION_MODEL_PRICING, so the test verifies those match canonical.
     """
 
     @pytest.mark.unit

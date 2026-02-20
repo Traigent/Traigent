@@ -201,7 +201,7 @@ def test_error_visibility_in_cost_calculation():
 
 
 def test_token_estimation_with_tiktoken():
-    """Test improved token estimation using tiktoken."""
+    """No post-call token estimation should occur without usage metadata."""
     from traigent.evaluators.metrics_tracker import CostCalculator
 
     calculator = CostCalculator()
@@ -211,7 +211,8 @@ def test_token_estimation_with_tiktoken():
     prompt_length = 100  # characters
     response_length = 200  # characters
 
-    # This will use tiktoken if available, otherwise fallback
+    # With no token usage metadata and no raw prompt/response text provided,
+    # post-call tracking must not invent token counts heuristically.
     calculator._try_unified_cost_calculation(
         metrics,
         model_name="gpt-4o-mini",
@@ -221,19 +222,10 @@ def test_token_estimation_with_tiktoken():
         response_length=response_length,
     )
 
-    # Verify tokens were estimated
-    assert metrics.tokens.input_tokens > 0
-    assert metrics.tokens.output_tokens > 0
-    assert (
-        metrics.tokens.total_tokens
-        == metrics.tokens.input_tokens + metrics.tokens.output_tokens
-    )
-
-    # With better estimation, should be roughly 0.25 * length
-    assert (
-        metrics.tokens.input_tokens <= prompt_length // 2
-    )  # Should be less than simple /4
-    assert metrics.tokens.output_tokens <= response_length // 2
+    assert metrics.tokens.input_tokens == 0
+    assert metrics.tokens.output_tokens == 0
+    assert metrics.tokens.total_tokens == 0
+    assert metrics.cost.total_cost == 0.0
 
 
 @pytest.mark.asyncio

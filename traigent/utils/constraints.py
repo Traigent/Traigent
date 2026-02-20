@@ -531,10 +531,10 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
             )
             pass  # Fall through to fallback
 
-        # Method 2: Fallback to FALLBACK_MODEL_PRICING from cost_calculator
+        # Method 2: Fallback to ESTIMATION_MODEL_PRICING from cost_calculator
         try:
             from traigent.utils.cost_calculator import (
-                FALLBACK_MODEL_PRICING,
+                ESTIMATION_MODEL_PRICING,
                 _normalize_model_for_fallback,
             )
 
@@ -542,7 +542,7 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
 
             # Try exact match first
             pricing = None
-            for key, value in FALLBACK_MODEL_PRICING.items():
+            for key, value in ESTIMATION_MODEL_PRICING.items():
                 if key.lower() == base_model:
                     pricing = value
                     break
@@ -550,7 +550,7 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
             # Try prefix matching - prefer longest match
             if not pricing:
                 best_match_len = 0
-                for model_key, model_pricing in FALLBACK_MODEL_PRICING.items():
+                for model_key, model_pricing in ESTIMATION_MODEL_PRICING.items():
                     key_lower = model_key.lower()
                     if base_model.startswith(key_lower):
                         if len(key_lower) > best_match_len:
@@ -570,7 +570,7 @@ def model_cost_constraint(max_cost_per_1k_tokens: float = 0.1) -> ResourceConstr
                 return float(avg_cost_per_1k * (max_tokens / 1000))
 
         except ImportError:
-            pass  # FALLBACK_MODEL_PRICING not available
+            pass  # ESTIMATION_MODEL_PRICING not available
 
         # Ultimate fallback: Unknown model - return infinity to FAIL the constraint
         # This prevents unknown models from silently passing cost checks

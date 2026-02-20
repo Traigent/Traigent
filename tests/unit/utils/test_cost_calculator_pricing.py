@@ -149,8 +149,8 @@ class TestGetModelTokenPricing:
             assert method != "litellm"
 
     def test_fallback_dict_match(self) -> None:
-        """Model in FALLBACK_MODEL_PRICING → uses fallback_dict method."""
-        # gpt-4-turbo is in FALLBACK_MODEL_PRICING
+        """Model in ESTIMATION_MODEL_PRICING → uses fallback_dict method."""
+        # gpt-4-turbo is in ESTIMATION_MODEL_PRICING
         # Disable litellm to force fallback path
         with patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False):
             inp, out, method = get_model_token_pricing("gpt-4-turbo")
