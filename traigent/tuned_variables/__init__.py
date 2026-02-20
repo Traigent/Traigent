@@ -9,6 +9,7 @@ This module provides utilities for working with tunable variables including:
 
 from __future__ import annotations
 
+from .dataflow_strategy import DataFlowDetectionStrategy
 from .detection_strategies import (
     ASTDetectionStrategy,
     DetectionStrategy,
@@ -37,6 +38,7 @@ __all__ = [
     "discover_callables_by_decorator",
     "filter_by_signature",
     # Tuned variable detection (new)
+    "DataFlowDetectionStrategy",
     "ASTDetectionStrategy",
     "CandidateType",
     "DetectionConfidence",
