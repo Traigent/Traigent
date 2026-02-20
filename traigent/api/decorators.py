@@ -358,6 +358,8 @@ _OPTIMIZE_DEFAULTS: dict[str, Any] = {
     # Config persistence (Phase 1 of optimization-persistency feature)
     "auto_load_best": False,  # Auto-load best config on decoration
     "load_from": None,  # Explicit path to load config from
+    # Tuned variable auto-detection
+    "auto_detect_tvars": False,  # Log suggestions when no configuration_space is set
 }
 
 _DIRECT_OPTION_KEYS = frozenset(_OPTIMIZE_DEFAULTS.keys())
@@ -1334,6 +1336,40 @@ def _normalize_config_space_and_defaults(
     return normalized_space, default_config, constraints
 
 
+def _suggest_detected_tvars(func: Callable[..., Any]) -> None:
+    """Run AST-based detection on ``func`` and log suggested tunable variables.
+
+    Only called when ``auto_detect_tvars=True`` and no ``configuration_space``
+    was provided. Logs suggestions at INFO level without blocking execution.
+    """
+    try:
+        from traigent.tuned_variables.detector import TunedVariableDetector
+
+        detector = TunedVariableDetector()
+        result = detector.detect_from_callable(func)
+        if result.count == 0:
+            return
+
+        suggestions = [
+            f"{c.name} ({c.candidate_type.value}, {c.confidence.value} confidence)"
+            + (
+                f" → {c.suggested_range.to_parameter_range_code()}"
+                if c.suggested_range
+                else ""
+            )
+            for c in result.candidates
+        ]
+        logger.info(
+            "auto_detect_tvars: detected %d tunable variable(s) in '%s'. "
+            "Consider adding to configuration_space: %s",
+            result.count,
+            func.__name__,
+            suggestions,
+        )
+    except Exception:
+        logger.debug("auto_detect_tvars: detection failed", exc_info=True)
+
+
 def optimize(
     *,
     objectives: list[str] | ObjectiveSchema | None = None,
@@ -1675,6 +1711,8 @@ def optimize(
     load_from_config = combined_settings["load_from"]
     # Optimizer limits
     max_trials_value = combined_settings["max_trials"]
+    # Tuned variable auto-detection
+    auto_detect_tvars_value = combined_settings["auto_detect_tvars"]
 
     defaults = dict(_OPTIMIZE_DEFAULTS)
 
@@ -1854,6 +1892,11 @@ def optimize(
         # TVL budget application can inject max_trials into runtime_overrides
         # (via _apply_tvl_artifact), but we pass it explicitly as well.
         combined_runtime_overrides.pop("max_trials", None)
+
+        # Tuned variable auto-detection: when opted in and no config space is set,
+        # run AST detection on the function and log suggestions.
+        if auto_detect_tvars_value and not configuration_space:
+            _suggest_detected_tvars(func)
 
         optimized_func = OptimizedFunction(
             func=func,
