@@ -1939,8 +1939,10 @@ def optimize(
             js_runtime_config=js_runtime_config,
             # TVL promotion gate for statistical best-config selection
             promotion_gate=promotion_gate,
-            # Optimizer limits (extracted from combined_settings)
-            max_trials=max_trials_value,
+            # Optimizer limits (extracted from combined_settings).
+            # TVL apply_budget may inject max_trials into combined_runtime_overrides;
+            # pop it to avoid duplicate keyword argument.
+            max_trials=combined_runtime_overrides.pop("max_trials", max_trials_value),
             **combined_runtime_overrides,
         )
 
