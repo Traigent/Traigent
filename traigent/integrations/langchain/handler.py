@@ -219,7 +219,7 @@ class TraigentHandlerMetrics:
 
             # Sanitize node names for MeasuresDict
             def sanitize(name: str) -> str:
-                return re.sub(r"\W", "_", name)
+                return re.sub(r"\W", "_", name, flags=re.ASCII)
 
             for node, cost in node_costs.items():
                 safe_node = sanitize(node)
