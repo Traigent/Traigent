@@ -633,3 +633,90 @@ class TestHopToConfidence:
 
     def test_hop_4_is_low(self) -> None:
         assert _hop_to_confidence(4) == DetectionConfidence.LOW
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for Codex review fixes
+# ---------------------------------------------------------------------------
+
+
+class TestCodexReviewFixes:
+    """Tests for bugs identified in the Codex code review."""
+
+    @pytest.fixture()
+    def strategy(self) -> DataFlowDetectionStrategy:
+        return DataFlowDetectionStrategy()
+
+    def test_generic_bare_name_not_matched(self, strategy) -> None:
+        """P1: Bare `run(cmd)` should NOT be a sink (too generic)."""
+        src = _dedent("""
+            def fn():
+                cmd = "ls -la"
+                result = run(cmd)
+                return result
+        """)
+        candidates = strategy.detect(src, "fn")
+        assert (
+            candidates == []
+        ), f"Bare run() should not be a sink; got {_names(candidates)}"
+
+    def test_generic_attribute_still_matched(self, strategy) -> None:
+        """P1: `obj.run(cmd)` should still be a sink (attribute context)."""
+        src = _dedent("""
+            def fn():
+                prompt = "hello"
+                result = chain.run(prompt)
+                return result
+        """)
+        candidates = strategy.detect(src, "fn")
+        names = _names(candidates)
+        assert "prompt" in names, f"chain.run() should be a sink; got {names}"
+
+    def test_generic_query_bare_not_matched(self, strategy) -> None:
+        """P1: Bare `query(sql)` should NOT be a sink."""
+        src = _dedent("""
+            def fn():
+                sql = "SELECT 1"
+                result = query(sql)
+                return result
+        """)
+        candidates = strategy.detect(src, "fn")
+        assert (
+            candidates == []
+        ), f"Bare query() should not be a sink; got {_names(candidates)}"
+
+    def test_bfs_shortest_hop_wins(self, strategy) -> None:
+        """P2: BFS ensures shortest hop is processed first.
+
+        x is reachable at hop 0 via model=x and at hop 2 via temperature=y -> z -> x.
+        With BFS, x should get HIGH confidence (hop 0), not MEDIUM (hop 2).
+        """
+        src = _dedent("""
+            def fn():
+                x = 0.7
+                z = x
+                y = z
+                llm.invoke(model=x, temperature=y)
+        """)
+        candidates = strategy.detect(src, "fn")
+        c = _by_name(candidates, "x")
+        assert c is not None, f"x not detected; got {_names(candidates)}"
+        assert (
+            c.confidence == DetectionConfidence.HIGH
+        ), f"x should be HIGH (hop 0 via model=x), got {c.confidence}"
+
+    def test_existing_tvars_filters_literal_kwargs(self, strategy) -> None:
+        """P3: existing_tvars should filter literal kwargs too."""
+        src = _dedent("""
+            def fn():
+                result = llm.invoke(temperature=0.7, model="gpt-4")
+                return result
+        """)
+        candidates = strategy.detect(
+            src, "fn", context={"existing_tvars": {"temperature"}}
+        )
+        names = _names(candidates)
+        assert (
+            "temperature" not in names
+        ), f"Literal kwarg 'temperature' should be filtered; got {names}"
+        assert "model" in names, f"model should still be detected; got {names}"
