@@ -287,6 +287,7 @@ def _reconstruct_safety(sc: SafetySpec) -> Any:
     """
     from traigent.api.safety import (
         bias_score,
+        custom_safety,
         faithfulness,
         hallucination_rate,
         safety_score,
@@ -299,6 +300,7 @@ def _reconstruct_safety(sc: SafetySpec) -> Any:
         "toxicity_score": toxicity_score,
         "bias_score": bias_score,
         "safety_score": safety_score,
+        "custom_safety": custom_safety,
     }
     metric_or_factory = metrics.get(sc.metric_name)
     if metric_or_factory is None:
