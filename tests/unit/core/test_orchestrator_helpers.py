@@ -1003,6 +1003,27 @@ class TestExtractCostFromResults:
         assert examples is None
         assert abs(cost - 0.07) < 0.001
 
+    def test_hybrid_result_cost_key_extraction(self):
+        """Hybrid-style example metrics with `cost` are summed correctly."""
+
+        class MockHybridExample:
+            def __init__(self, cost):
+                self.metrics = {"cost": cost}
+
+        class MockHybridResult:
+            def __init__(self):
+                self.example_results = [
+                    MockHybridExample(0.011),
+                    MockHybridExample(0.013),
+                    MockHybridExample(0.017),
+                ]
+                self.aggregated_metrics = {"cost": 0.999}  # Must not override examples
+
+        result = MockHybridResult()
+        examples, cost = extract_cost_from_results(result, None, "trial_hybrid_cost_key")
+        assert examples == 3
+        assert abs(cost - 0.041) < 0.0001
+
     def test_total_examples_override(self):
         """Test that total_examples overrides example_results count."""
 

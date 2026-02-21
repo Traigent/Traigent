@@ -90,3 +90,20 @@ def test_unknown_model_with_usage_warns(caplog) -> None:
     assert metrics.tokens.total_tokens == 150
     assert metrics.cost.total_cost == 0.0
     assert any("Unknown model" in r.message for r in caplog.records)
+
+
+def test_unknown_model_strict_accounting_false_integration_path(
+    monkeypatch,
+    caplog,
+) -> None:
+    """Unknown model with strict mode disabled should warn and stay non-fatal."""
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", "false")
+    usage = SimpleNamespace(prompt_tokens=120, completion_tokens=30, total_tokens=150)
+    response = SimpleNamespace(usage=usage)
+
+    with caplog.at_level(logging.WARNING):
+        metrics = extract_llm_metrics(response, model_name="nonexistent-model-for-test")
+
+    assert metrics.tokens.total_tokens == 150
+    assert metrics.cost.total_cost == 0.0
+    assert any("Unknown model" in r.message for r in caplog.records)
