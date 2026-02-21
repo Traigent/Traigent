@@ -709,6 +709,8 @@ class HybridAPIEvaluator(BaseEvaluator):
 
         aggregated: dict[str, float] = {
             "cost": total_cost,
+            # Keep canonical trial-level key for downstream extractors.
+            "total_cost": total_cost,
             "success_rate": sum(1 for r in results if r.success) / len(results),
         }
 

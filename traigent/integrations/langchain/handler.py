@@ -654,17 +654,25 @@ class TraigentHandler(BaseCallbackHandler):
     ) -> float:
         """Estimate cost for LLM call via the canonical cost_from_tokens().
 
-        Uses strict=False so unknown models return 0.0 with a warning
-        instead of raising.
+        In default mode, unknown models return 0.0 with a warning.
+        When TRAIGENT_STRICT_COST_ACCOUNTING=true, unknown models raise.
         """
+        from traigent.utils.env_config import is_strict_cost_accounting
+
+        strict_cost_accounting = is_strict_cost_accounting()
         try:
             from traigent.utils.cost_calculator import cost_from_tokens
 
             input_cost, output_cost = cost_from_tokens(
-                input_tokens, output_tokens, model, strict=False
+                input_tokens,
+                output_tokens,
+                model,
+                strict=strict_cost_accounting,
             )
             return float(input_cost + output_cost)
         except Exception:
+            if strict_cost_accounting:
+                raise
             logger.warning(
                 "Cost calculation failed for model %r with %d tokens",
                 model,

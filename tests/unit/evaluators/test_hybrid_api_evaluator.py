@@ -688,6 +688,7 @@ class TestComputeAggregatedMetrics:
         ]
         agg = ev._compute_aggregated_metrics(results, total_cost=0.05)
         assert agg["cost"] == 0.05
+        assert agg["total_cost"] == 0.05
         assert agg["success_rate"] == 0.5
 
     def test_all_successful(self, ev: HybridAPIEvaluator) -> None:

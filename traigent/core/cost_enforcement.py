@@ -17,6 +17,8 @@ Environment Variables:
     TRAIGENT_COST_WARNING_THRESHOLD: Warn at this fraction of limit (default: 0.5)
     TRAIGENT_MOCK_LLM: Bypass all cost tracking when "true" (no real LLM costs)
     TRAIGENT_REQUIRE_COST_TRACKING: Raise exception if cost extraction fails (default: false)
+    TRAIGENT_STRICT_COST_ACCOUNTING: Fail fast for unknown/missing runtime costs
+        (default: false)
     TRAIGENT_COST_DIVERGENCE_THRESHOLD: Log warning if actual/estimated ratio exceeds
         this value (default: 2.0, meaning 2x divergence triggers warning)
 """
@@ -227,6 +229,17 @@ class CostEnforcer:
         there are no real LLM API costs to track.
         """
         return os.getenv("TRAIGENT_MOCK_LLM", "false").lower() == "true"
+
+    @staticmethod
+    def _require_cost_tracking() -> bool:
+        """Return True when missing runtime cost must raise immediately."""
+        require_tracking = (
+            os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower() == "true"
+        )
+        strict_accounting = (
+            os.environ.get("TRAIGENT_STRICT_COST_ACCOUNTING", "").lower() == "true"
+        )
+        return require_tracking or strict_accounting
 
     def _check_mixing(self, is_async: bool) -> None:
         """Log when switching between sync and async method usage."""
@@ -725,7 +738,8 @@ Options:
 
         Raises:
             CostTrackingRequiredError: If cost is None and
-                TRAIGENT_REQUIRE_COST_TRACKING=true.
+                TRAIGENT_REQUIRE_COST_TRACKING=true or
+                TRAIGENT_STRICT_COST_ACCOUNTING=true.
             ValueError: If a negative cost is provided.
         """
         self._check_mixing(is_async=False)
@@ -770,13 +784,11 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if (
-                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
-                    == "true"
-                ):
+                if self._require_cost_tracking():
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
-                        "TRAIGENT_REQUIRE_COST_TRACKING=true. "
+                        "TRAIGENT_REQUIRE_COST_TRACKING=true or "
+                        "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
                         "Set to 'false' or fix cost extraction."
                     )
                 if not self._unknown_cost_mode:
@@ -991,7 +1003,8 @@ Options:
 
         Raises:
             CostTrackingRequiredError: If cost is None and
-                TRAIGENT_REQUIRE_COST_TRACKING=true.
+                TRAIGENT_REQUIRE_COST_TRACKING=true or
+                TRAIGENT_STRICT_COST_ACCOUNTING=true.
             ValueError: If a negative cost is provided.
         """
         self._check_mixing(is_async=True)
@@ -1038,13 +1051,11 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if (
-                    os.environ.get("TRAIGENT_REQUIRE_COST_TRACKING", "").lower()
-                    == "true"
-                ):
+                if self._require_cost_tracking():
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
-                        "TRAIGENT_REQUIRE_COST_TRACKING=true. "
+                        "TRAIGENT_REQUIRE_COST_TRACKING=true or "
+                        "TRAIGENT_STRICT_COST_ACCOUNTING=true. "
                         "Set to 'false' or fix cost extraction."
                     )
                 if not self._unknown_cost_mode:
