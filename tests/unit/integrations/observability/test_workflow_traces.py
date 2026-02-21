@@ -9,6 +9,7 @@ Tests for Traigent workflow traces with LangGraph visualization support.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -783,12 +784,13 @@ class TestWorkflowTracesTracker:
             auto_send=False,
         )
 
-        tracker.add_span(
-            span_id="span_001",
-            span_name="Test Node",
-            span_type="node",
-            start_time=datetime.now(UTC),
-        )
+        with caplog.at_level(logging.WARNING):
+            tracker.add_span(
+                span_id="span_001",
+                span_name="Test Node",
+                span_type="node",
+                start_time=datetime.now(UTC),
+            )
 
         assert "No active trial context" in caplog.text
 
@@ -877,7 +879,8 @@ class TestConvenienceFunctions:
         """Test setup_workflow_tracing when OTEL not available."""
         monkeypatch.setattr(wt_module, "OTEL_AVAILABLE", False)
 
-        result = wt_module.setup_workflow_tracing()
+        with caplog.at_level(logging.WARNING):
+            result = wt_module.setup_workflow_tracing()
 
         assert result is None
         assert "OpenTelemetry not available" in caplog.text
@@ -1599,6 +1602,7 @@ class TestFlushSpansWithoutContext:
             )
         ]
 
-        tracker._flush_spans()
+        with caplog.at_level(logging.WARNING):
+            tracker._flush_spans()
 
         assert "No trace context" in caplog.text

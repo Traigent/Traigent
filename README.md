@@ -19,6 +19,18 @@ Traigent optimizes LLM applications by running multiple trials across configurat
 
 ---
 
+## Navigation
+
+| | |
+| --- | --- |
+| **Get started** | [Installation](docs/getting-started/installation.md) · [5-minute tutorial](docs/getting-started/GETTING_STARTED.md) · [Quick Example](#-quick-example-see-tuned-variables-in-action) |
+| **User guides** | [Injection Modes](docs/user-guide/injection_modes.md) · [Configuration Spaces](docs/user-guide/configuration-spaces.md) · [Tuned Variables](docs/user-guide/tuned_variables.md) · [Evaluation](docs/user-guide/evaluation_guide.md) |
+| **Advanced** | [Agent Optimization](docs/user-guide/agent_optimization.md) · [Optuna Integration](docs/user-guide/optuna_integration.md) · [JS Bridge](docs/guides/js-bridge.md) |
+| **API reference** | [Decorator Reference](docs/api-reference/decorator-reference.md) · [Constraint DSL](docs/features/constraint-dsl.md) |
+| **Contributing** | [Contributing Guide](docs/contributing/CONTRIBUTING.md) · [Architecture](docs/architecture/ARCHITECTURE.md) |
+
+---
+
 Start with the curated experiments in `examples/`—each scenario ships with a README plus ready-to-run commands (including the required `export` statements) so you can iterate locally without guessing the setup.
 
 > 💡 **Interactive Demos & Use Cases**: Advanced examples, use-cases, playground UI, and demos have been moved to [TraigentDemo](https://github.com/Traigent/TraigentDemo). The core SDK examples remain in `examples/` and `walkthrough/`.

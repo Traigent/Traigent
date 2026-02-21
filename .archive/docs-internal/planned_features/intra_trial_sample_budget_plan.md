@@ -165,4 +165,3 @@ Out of scope for this iteration: advanced sampler implementations (stratified/cu
 - [ ] Telemetry/logging + configuration validation.
 - [ ] Documentation updates (README, CLI help, architecture doc).
 - [ ] Full test suite green.
-
