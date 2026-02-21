@@ -903,7 +903,7 @@ components:
           example: '0.9'
         tunable_id:
           type: string
-          description: Identifier for the capability
+          description: Identifier for the tunable
           maxLength: 256
           example: my_agent
         tunables:
@@ -1024,7 +1024,7 @@ components:
           example: 550e8400-e29b-41d4-a716-446655440000
         tunable_id:
           type: string
-          description: Identifier for the agent capability to invoke
+          description: Identifier for the agent tunable to invoke
           maxLength: 256
           example: my_agent
         config:
@@ -1293,7 +1293,7 @@ components:
           example: 660e8400-e29b-41d4-a716-446655440001
         tunable_id:
           type: string
-          description: Identifier for the evaluation capability
+          description: Identifier for the evaluation tunable
           maxLength: 256
           example: my_agent
         execution_id:

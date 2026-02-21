@@ -88,9 +88,9 @@ def evaluate():
     return jsonify({...})
 ```
 
-### Capability ID Validation (Important)
+### Tunable ID Validation (Important)
 
-Your service should reject requests where `tunable_id` does not match your configured capability.
+Your service should reject requests where `tunable_id` does not match your configured tunable.
 This prevents accidental cross-routing in multi-service environments and aligns with Traigent wrapper behavior.
 
 ### Session and ID Management
