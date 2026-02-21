@@ -18,16 +18,50 @@ from __future__ import annotations
 import asyncio
 import os
 import random
+from unittest.mock import patch
 
 import pytest
 
 # Ensure mock mode is disabled for these tests
 os.environ["TRAIGENT_MOCK_LLM"] = "false"
 
-from traigent.core.cost_enforcement import CostEnforcer, CostEnforcerConfig, Permit
+from traigent.core.cost_enforcement import (
+    CostEnforcer,
+    CostEnforcerConfig,
+    CostTrackingRequiredError,
+    Permit,
+)
 
 # Tolerance for floating point comparisons
 FLOAT_TOLERANCE = 1e-10
+
+
+UNKNOWN_COST_PARALLEL_PAIRWISE_CASES = [
+    pytest.param(
+        False,
+        False,
+        False,
+        id="require-off_strict-off_pre-release-off",
+    ),
+    pytest.param(
+        False,
+        True,
+        True,
+        id="require-off_strict-on_pre-release-on",
+    ),
+    pytest.param(
+        True,
+        False,
+        True,
+        id="require-on_strict-off_pre-release-on",
+    ),
+    pytest.param(
+        True,
+        True,
+        False,
+        id="require-on_strict-on_pre-release-off",
+    ),
+]
 
 
 @pytest.fixture(autouse=True)
@@ -457,6 +491,78 @@ class TestParallelBudgetBoundaries:
 
         for permit in permits:
             await enforcer.release_permit_async(permit)
+
+
+class TestParallelUnknownCostCTD:
+    """Pairwise unknown-cost coverage in true parallel execution."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("require_tracking", "strict_accounting", "pre_release_half"),
+        UNKNOWN_COST_PARALLEL_PAIRWISE_CASES,
+    )
+    async def test_unknown_cost_parallel_pairwise(
+        self,
+        require_tracking: bool,
+        strict_accounting: bool,
+        pre_release_half: bool,
+    ) -> None:
+        """Verify strictness + permit lifecycle under concurrent unknown costs."""
+        with patch.dict(
+            os.environ,
+            {
+                "TRAIGENT_MOCK_LLM": "false",
+                "TRAIGENT_REQUIRE_COST_TRACKING": str(require_tracking).lower(),
+                "TRAIGENT_STRICT_COST_ACCOUNTING": str(strict_accounting).lower(),
+            },
+            clear=False,
+        ):
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=1.0,
+                    estimated_cost_per_trial=0.10,
+                    fallback_trial_limit=10,
+                )
+            )
+
+            permits: list[Permit] = []
+            for _ in range(6):
+                permit = await enforcer.acquire_permit_async()
+                assert permit.is_granted
+                permits.append(permit)
+
+            assert enforcer.get_status().in_flight_count == 6
+
+            if pre_release_half:
+                for permit in permits[:3]:
+                    assert await enforcer.release_permit_async(permit) is True
+                assert enforcer.get_status().in_flight_count == 3
+
+            async def track_unknown(permit: Permit) -> Exception | None:
+                try:
+                    await enforcer.track_cost_async(None, permit=permit)
+                    return None
+                except Exception as exc:  # pragma: no cover - asserted below
+                    return exc
+
+            results = await asyncio.gather(*[track_unknown(p) for p in permits])
+
+            should_raise = require_tracking or strict_accounting
+            if should_raise:
+                assert all(
+                    isinstance(result, CostTrackingRequiredError)
+                    for result in results
+                )
+                assert enforcer.get_status().unknown_cost_mode is False
+            else:
+                assert all(result is None for result in results)
+                assert enforcer.get_status().unknown_cost_mode is True
+
+            status = enforcer.get_status()
+            assert status.trial_count == len(permits)
+            assert status.in_flight_count == 0
+            assert status.reserved_cost_usd == pytest.approx(0.0)
+            assert len(enforcer._active_permits) == 0
 
 
 class TestParallelHighConcurrency:
