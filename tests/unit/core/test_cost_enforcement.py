@@ -312,19 +312,36 @@ class TestCostEnforcerUnknownCostCTD:
             },
             clear=False,
         ):
-            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
-            permit = _create_mock_permit()
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=1.0,
+                    estimated_cost_per_trial=0.2,
+                    fallback_trial_limit=5,
+                )
+            )
+            permit = enforcer.acquire_permit()
+            assert permit.is_granted
+            assert enforcer.get_status().in_flight_count == 1
             if permit_pre_released:
-                assert permit.mark_released() is True
+                assert enforcer.release_permit(permit) is True
+                assert enforcer.get_status().in_flight_count == 0
+            else:
+                assert enforcer.get_status().in_flight_count == 1
 
             should_raise = require_tracking or strict_accounting
             if should_raise:
                 with pytest.raises(CostTrackingRequiredError):
                     enforcer.track_cost(None, permit=permit)
-                assert enforcer.get_status().unknown_cost_mode is False
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is False
             else:
                 enforcer.track_cost(None, permit=permit)
-                assert enforcer.get_status().unknown_cost_mode is True
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is True
+
+            assert status.trial_count == 1
+            assert status.in_flight_count == 0
+            assert status.reserved_cost_usd == pytest.approx(0.0)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -347,19 +364,36 @@ class TestCostEnforcerUnknownCostCTD:
             },
             clear=False,
         ):
-            enforcer = CostEnforcer(CostEnforcerConfig(fallback_trial_limit=5))
-            permit = _create_mock_permit()
+            enforcer = CostEnforcer(
+                CostEnforcerConfig(
+                    limit=1.0,
+                    estimated_cost_per_trial=0.2,
+                    fallback_trial_limit=5,
+                )
+            )
+            permit = await enforcer.acquire_permit_async()
+            assert permit.is_granted
+            assert enforcer.get_status().in_flight_count == 1
             if permit_pre_released:
-                assert permit.mark_released() is True
+                assert await enforcer.release_permit_async(permit) is True
+                assert enforcer.get_status().in_flight_count == 0
+            else:
+                assert enforcer.get_status().in_flight_count == 1
 
             should_raise = require_tracking or strict_accounting
             if should_raise:
                 with pytest.raises(CostTrackingRequiredError):
                     await enforcer.track_cost_async(None, permit=permit)
-                assert enforcer.get_status().unknown_cost_mode is False
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is False
             else:
                 await enforcer.track_cost_async(None, permit=permit)
-                assert enforcer.get_status().unknown_cost_mode is True
+                status = enforcer.get_status()
+                assert status.unknown_cost_mode is True
+
+            assert status.trial_count == 1
+            assert status.in_flight_count == 0
+            assert status.reserved_cost_usd == pytest.approx(0.0)
 
 
 class TestCostEnforcerThreadSafety:

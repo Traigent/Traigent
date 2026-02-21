@@ -81,10 +81,10 @@ def test_get_jwt_secret_uses_override(monkeypatch):
     """Custom development override should take precedence."""
     _reset_env(monkeypatch)
     monkeypatch.setenv("ENVIRONMENT", "development")
-    monkeypatch.setenv("TRAIGENT_DEV_JWT_SECRET", "custom-dev-secret")
+    monkeypatch.setenv("TRAIGENT_DEV_JWT_SECRET", "custom-dev-key")
 
-    secret = env_config.get_jwt_secret()
-    assert secret == "custom-dev-secret"
+    jwt_value = env_config.get_jwt_secret()  # pragma: allowlist secret
+    assert jwt_value == "custom-dev-key"
 
 
 def test_get_env_var_masks_value_in_logs(monkeypatch, caplog):
@@ -99,3 +99,18 @@ def test_get_env_var_masks_value_in_logs(monkeypatch, caplog):
     assert retrieved == value
     assert key in caplog.text
     assert value not in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("true", True),
+        ("TRUE", True),
+        ("false", False),
+        ("", False),
+    ],
+)
+def test_is_strict_cost_accounting(monkeypatch, raw_value, expected):
+    """Strict cost accounting flag should parse bool-like env values."""
+    monkeypatch.setenv("TRAIGENT_STRICT_COST_ACCOUNTING", raw_value)
+    assert env_config.is_strict_cost_accounting() is expected
