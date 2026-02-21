@@ -1,24 +1,7 @@
-"""
-Intelligent LLM Cost Calculator with Fuzzy Model Matching
+"""LLM cost calculation utilities.
 
-This module provides comprehensive cost calculation for LLM API calls with:
-- Exact model name mapping for litellm compatibility
-- Fuzzy matching with substring search and semantic validation
-- Intelligent date/version parsing and selection
-- Caching for performance optimization
-- Graceful fallback with informative logging
-
-Usage:
-    from traigent.utils.cost_calculator import CostCalculator
-
-    calculator = CostCalculator()
-    cost = calculator.calculate_cost(
-        prompt="Your prompt here",
-        response="Model response",
-        model_name="claude-3-haiku"
-    )
-
-This module can be copied to other repositories for consistent cost calculation.
+Runtime pricing is resolved via litellm's native model registry and alias map.
+Pre-estimation keeps a separate conservative fallback table.
 """
 
 # Traceability: CONC-Layer-Core CONC-Quality-Performance CONC-Quality-Observability FUNC-ANALYTICS REQ-ANLY-011 SYNC-Observability
@@ -29,7 +12,9 @@ import re
 import threading
 import warnings
 from dataclasses import dataclass
+from json import loads
 from typing import Any
+from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +38,45 @@ TOKENCOST_AVAILABLE = LITELLM_AVAILABLE
 # Canonical model name constants (referenced in ESTIMATION_MODEL_PRICING and aliases)
 _GPT35_TURBO = "gpt-3.5-turbo"
 _GPT4O = "gpt-4o"
+
+# Convenience aliases registered into litellm's native alias map.
+# These are intentionally limited to informal shorthands and legacy names.
+_CONVENIENCE_ALIASES: dict[str, str] = {
+    "claude-haiku": "claude-3-haiku-20240307",
+    "claude-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-opus": "claude-3-opus-20240229",
+    "claude3-haiku": "claude-3-haiku-20240307",
+    "claude3-sonnet": "claude-3-sonnet-20240229",
+    "claude3-opus": "claude-3-opus-20240229",
+    "claude-3-haiku": "claude-3-haiku-20240307",
+    "claude-3-sonnet": "claude-3-sonnet-20240229",
+    "claude-3-opus": "claude-3-opus-20240229",
+    "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
+    "claude-3-5-haiku": "claude-3-5-haiku-20241022",
+    "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
+    "claude-4-sonnet": "claude-sonnet-4-20250514",
+    "claude-4-opus": "claude-opus-4-20250514",
+    "gpt4": _GPT4O,
+    "gpt-3.5": _GPT35_TURBO,
+    "gpt3.5": _GPT35_TURBO,
+}
+
+
+def _register_convenience_aliases() -> None:
+    """Register Traigent's convenience aliases in litellm.model_alias_map."""
+    if not LITELLM_AVAILABLE:
+        return
+
+    alias_map = getattr(litellm, "model_alias_map", None)
+    if not isinstance(alias_map, dict):
+        litellm.model_alias_map = {}
+        alias_map = litellm.model_alias_map
+
+    for alias, target in _CONVENIENCE_ALIASES.items():
+        alias_map.setdefault(alias, target)
+
+
+_register_convenience_aliases()
 
 # Estimation pricing for pre-optimization cost estimation (per-token costs).
 # Post-call cost tracking uses litellm exclusively via cost_from_tokens().
@@ -203,6 +227,95 @@ def _is_model_known_to_litellm(model: str) -> bool:
             return True
 
     return False
+
+
+def _resolve_litellm_alias(model: str) -> str:
+    """Resolve model aliases through litellm.model_alias_map if present."""
+    normalized = _normalize_model_name(model)
+    if not LITELLM_AVAILABLE:
+        return normalized
+
+    alias_map = getattr(litellm, "model_alias_map", None)
+    if not isinstance(alias_map, dict):
+        return normalized
+
+    candidates = (model, normalized, model.lower(), normalized.lower())
+    for candidate in candidates:
+        mapped = alias_map.get(candidate)
+        if isinstance(mapped, str) and mapped:
+            return mapped
+
+    return normalized
+
+
+_OPENROUTER_MODEL_INDEX_CACHE: dict[str, tuple[float, float]] | None = None
+_OPENROUTER_CACHE_LOCK = threading.Lock()
+_OPENROUTER_MODELS_ENDPOINT = "https://openrouter.ai/api/v1/models"
+
+
+def _fetch_openrouter_models() -> dict[str, tuple[float, float]]:
+    """Fetch OpenRouter model pricing index.
+
+    Returns a map of lowercase model identifiers to per-token rates:
+    ``{model_id: (input_cost_per_token, output_cost_per_token)}``
+    """
+    request = Request(
+        _OPENROUTER_MODELS_ENDPOINT,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": "traigent-cost-calculator/1.0",
+        },
+    )
+    with urlopen(request, timeout=5.0) as response:  # nosec B310
+        payload = loads(response.read().decode("utf-8"))
+    data = payload.get("data", []) if isinstance(payload, dict) else []
+
+    index: dict[str, tuple[float, float]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        model_id = item.get("id")
+        pricing = item.get("pricing", {})
+        if not isinstance(model_id, str) or not isinstance(pricing, dict):
+            continue
+        try:
+            input_rate = float(pricing.get("prompt", 0.0))
+            output_rate = float(pricing.get("completion", 0.0))
+        except (TypeError, ValueError):
+            continue
+
+        if input_rate < 0 or output_rate < 0:
+            continue
+
+        key = model_id.lower()
+        index[key] = (input_rate, output_rate)
+        if "/" in key:
+            bare_model = key.split("/", 1)[1]
+            index.setdefault(bare_model, (input_rate, output_rate))
+
+    return index
+
+
+def _try_openrouter_pricing(model: str) -> tuple[float, float] | None:
+    """Try resolving per-token model pricing from OpenRouter's public API."""
+    if os.environ.get("TRAIGENT_OFFLINE_MODE", "").lower() == "true":
+        return None
+
+    global _OPENROUTER_MODEL_INDEX_CACHE
+    if _OPENROUTER_MODEL_INDEX_CACHE is None:
+        with _OPENROUTER_CACHE_LOCK:
+            if _OPENROUTER_MODEL_INDEX_CACHE is None:
+                try:
+                    _OPENROUTER_MODEL_INDEX_CACHE = _fetch_openrouter_models()
+                except Exception:
+                    logger.debug("OpenRouter pricing fetch failed", exc_info=True)
+                    _OPENROUTER_MODEL_INDEX_CACHE = {}
+
+    normalized = _normalize_model_name(model).lower()
+    cache = _OPENROUTER_MODEL_INDEX_CACHE
+    if cache is None:
+        return None
+    return cache.get(model.lower()) or cache.get(normalized)
 
 
 def _try_litellm_prompt_cost(
@@ -525,10 +638,8 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
        Models that return ``(0, 0)`` are NOT treated as free — falls through
        to heuristic tier (EMA will correct after the first trial).
     2. **Fallback dict**: prefix-matching against ``ESTIMATION_MODEL_PRICING``.
-       Does NOT apply ``EXACT_MODEL_MAPPING`` — intentionally skipped so that
-       e.g. ``gpt-4`` stays in the EXPENSIVE tier rather than being downgraded
-       to ``gpt-4o`` (MID tier). The mapping is correct for runtime cost
-       calculation but wrong for conservative pre-estimation.
+       Does NOT apply convenience aliases so that e.g. ``gpt-4`` stays in
+       the EXPENSIVE tier rather than being downgraded to ``gpt-4o`` (MID tier).
     3. **Heuristic tier**: regex-based classification into EXPENSIVE / MID / CHEAP.
 
     Args:
@@ -559,7 +670,7 @@ def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
                 exc_info=True,
             )
 
-    # --- Tier 2: Fallback dict (prefix matching, no EXACT_MODEL_MAPPING) ---
+    # --- Tier 2: Fallback dict (prefix matching, no alias remapping) ---
     normalized = _normalize_model_for_fallback(model_name)
     # Use _quiet=True to log at DEBUG during estimation (not WARNING)
     input_cost_fb, output_cost_fb = _estimation_cost_from_tokens(
@@ -610,35 +721,15 @@ class CostBreakdown:
 
 
 class CostCalculator:
-    """Intelligent LLM cost calculator with fuzzy model matching."""
+    """LLM cost calculator.
 
-    # Exact model name mappings (high confidence)
-    EXACT_MODEL_MAPPING = {
-        # Claude models - map user-friendly names to litellm expected names
-        "claude-3-haiku": "claude-3-haiku-20240307",
-        "claude-3-sonnet": "claude-3-sonnet-20240229",
-        "claude-3-opus": "claude-3-opus-20240229",
-        "claude-3-5-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-3-5-haiku": "claude-3-5-haiku-20241022",
-        "claude-3-7-sonnet": "claude-3-7-sonnet-20250219",
-        "claude-4-sonnet": "claude-sonnet-4-20250514",
-        "claude-4-opus": "claude-opus-4-20250514",
-        # Add latest versions for convenience
-        # Use dated aliases for pricing compatibility (litellm pricing coverage).
-        "claude-haiku": "claude-3-haiku-20240307",
-        "claude-sonnet": "claude-3-5-sonnet-20241022",
-        "claude-opus": "claude-3-opus-20240229",
-        # OpenAI models are usually fine as-is but add common aliases
-        "gpt-3.5": _GPT35_TURBO,
-        "gpt-4": _GPT4O,
-        "gpt4": _GPT4O,
-        "gpt3.5": _GPT35_TURBO,
-        "gpt-4o-mini": "gpt-4o-mini",  # GPT-4o mini model for cost-effective usage
-        # Common alternative spellings
-        "claude3-haiku": "claude-3-haiku-20240307",
-        "claude3-sonnet": "claude-3-sonnet-20240229",
-        "claude3-opus": "claude-3-opus-20240229",
-    }
+    Runtime pricing should resolve through ``cost_from_tokens()`` using litellm
+    aliases and pricing tables. Mapping/fuzzy helpers are kept for legacy
+    compatibility with non-token paths and diagnostics.
+    """
+
+    # Legacy compatibility alias (prefer module-level _CONVENIENCE_ALIASES)
+    EXACT_MODEL_MAPPING = dict(_CONVENIENCE_ALIASES)
 
     # Model family defaults for generic names
     FAMILY_DEFAULTS = {
@@ -699,8 +790,8 @@ class CostCalculator:
         if not model_name:
             return CostBreakdown(calculation_method="no_model_name")
 
-        mapped_model = self._map_model_name(model_name)
-        effective_model = mapped_model or model_name
+        normalized_model = _normalize_model_name(model_name)
+        effective_model = _resolve_litellm_alias(normalized_model)
 
         result = CostBreakdown(
             model_used=model_name, mapped_model=effective_model or ""
@@ -763,11 +854,22 @@ class CostCalculator:
         return model_name
 
     def _map_model_name(self, model_name: str) -> str | None:
-        """Map user-friendly model names to litellm-compatible names with fuzzy matching."""
+        """Map model names to litellm-compatible names (legacy helper)."""
         if not model_name:
             return None
 
-        # Step 1: Try exact mapping
+        # Step 1: litellm-native alias resolution
+        resolved = _resolve_litellm_alias(model_name)
+        if resolved != _normalize_model_name(model_name):
+            if self.logger:
+                self.logger.debug(
+                    "litellm alias mapping: %r -> %r",
+                    model_name,
+                    resolved,
+                )
+            return resolved
+
+        # Step 2: Try exact compatibility mapping
         exact_match = self.EXACT_MODEL_MAPPING.get(model_name)
         if exact_match:
             if self.logger:
@@ -776,7 +878,7 @@ class CostCalculator:
                 )
             return exact_match
 
-        # Step 2: Try with normalized name (strip provider prefix)
+        # Step 3: Try with normalized name (strip provider prefix)
         normalized = self._normalize_model_name(model_name)
         if normalized != model_name:
             exact_match = self.EXACT_MODEL_MAPPING.get(normalized)
@@ -787,7 +889,7 @@ class CostCalculator:
                     )
                 return exact_match
 
-        # Step 3: Try family defaults for generic names
+        # Step 4: Try family defaults for generic names
         family_match = self.FAMILY_DEFAULTS.get(model_name)
         if family_match:
             if self.logger:
@@ -796,7 +898,7 @@ class CostCalculator:
                 )
             return family_match
 
-        # Step 4: Try fuzzy matching
+        # Step 5: Try fuzzy matching (legacy behavior)
         return self._fuzzy_match_model(model_name)
 
     def _fuzzy_match_model(self, user_model: str) -> str | None:
@@ -1085,13 +1187,14 @@ def cost_from_tokens(
         logger.warning("litellm not available — returning zero cost")
         return 0.0, 0.0
 
-    # Resolve model name through exact mapping
-    # (e.g., "claude-3-haiku" -> "claude-3-haiku-20240307")
     normalized = _normalize_model_name(model)
-    mapped = CostCalculator.EXACT_MODEL_MAPPING.get(normalized, normalized)
+    alias_resolved = _resolve_litellm_alias(normalized)
 
-    # Build unique candidate list preserving priority order
-    candidates = list(dict.fromkeys([mapped, normalized, model]))
+    # Build unique candidate list preserving priority order.
+    candidates = [
+        candidate for candidate in [model, normalized, alias_resolved] if candidate
+    ]
+    candidates = list(dict.fromkeys(candidates))
 
     # Step 1: Try litellm.cost_per_token (handles provider prefixes internally)
     for candidate in candidates:
@@ -1122,11 +1225,20 @@ def cost_from_tokens(
                 float(output_tokens * output_cpt),
             )
 
-    # Model not found in any litellm pricing source
+    # Step 3: OpenRouter fallback (optional online pricing source)
+    openrouter_pricing = _try_openrouter_pricing(model)
+    if openrouter_pricing is not None:
+        input_rate, output_rate = openrouter_pricing
+        return (
+            float(input_tokens * input_rate),
+            float(output_tokens * output_rate),
+        )
+
+    # Model not found in litellm or OpenRouter
     if strict:
         raise UnknownModelError(
-            f"Model '{model}' has no pricing in litellm. "
-            "Use strict=False for pre-estimation or add the model to litellm."
+            f"Model '{model}' has no pricing in litellm/OpenRouter. "
+            "Use strict=False for pre-estimation or register model pricing."
         )
 
     logger.warning("Unknown model %r — returning zero cost (strict=False)", model)

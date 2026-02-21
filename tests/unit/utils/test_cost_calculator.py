@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+import traigent.utils.cost_calculator as cc
 from traigent.utils.cost_calculator import (
     ESTIMATION_MODEL_PRICING,
     TOKENCOST_AVAILABLE,
@@ -1000,3 +1001,56 @@ class TestFamilyDefaults:
     def test_family_defaults_gpt_3_5(self, calculator: CostCalculator) -> None:
         """Test family default for 'gpt-3.5'."""
         assert calculator._map_model_name("gpt-3.5") == "gpt-3.5-turbo"
+
+
+class TestOpenRouterPricingFallback:
+    """Tests for OpenRouter pricing cache and offline behavior."""
+
+    @pytest.fixture(autouse=True)
+    def reset_cache(self):
+        old_cache = cc._OPENROUTER_MODEL_INDEX_CACHE
+        cc._OPENROUTER_MODEL_INDEX_CACHE = None
+        try:
+            yield
+        finally:
+            cc._OPENROUTER_MODEL_INDEX_CACHE = old_cache
+
+    def test_try_openrouter_pricing_skips_when_offline(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "true")
+        assert cc._try_openrouter_pricing("any-model") is None
+
+    def test_try_openrouter_pricing_uses_cache(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        cc._OPENROUTER_MODEL_INDEX_CACHE = {"a/model": (1e-6, 2e-6)}
+        assert cc._try_openrouter_pricing("a/model") == (1e-6, 2e-6)
+
+    def test_try_openrouter_pricing_fetch_failure_returns_none(
+        self, monkeypatch
+    ) -> None:
+        monkeypatch.setenv("TRAIGENT_OFFLINE_MODE", "false")
+        cc._OPENROUTER_MODEL_INDEX_CACHE = None
+        with patch.object(cc, "_fetch_openrouter_models", side_effect=RuntimeError):
+            assert cc._try_openrouter_pricing("unknown-model") is None
+            # Failure should cache an empty dict to avoid repeated retries.
+            assert cc._OPENROUTER_MODEL_INDEX_CACHE == {}
+
+    def test_fetch_openrouter_models_parses_payload(self) -> None:
+        payload = {
+            "data": [
+                {
+                    "id": "anthropic/claude-sonnet-4.6",
+                    "pricing": {"prompt": "0.000003", "completion": "0.000015"},
+                }
+            ]
+        }
+        mock_response = MagicMock()
+        mock_response.read.return_value = str(payload).replace("'", '"').encode("utf-8")
+        mock_context = MagicMock()
+        mock_context.__enter__.return_value = mock_response
+        mock_context.__exit__.return_value = None
+
+        with patch.object(cc, "urlopen", return_value=mock_context):
+            parsed = cc._fetch_openrouter_models()
+
+        assert parsed["anthropic/claude-sonnet-4.6"] == (3e-6, 15e-6)
+        assert parsed["claude-sonnet-4.6"] == (3e-6, 15e-6)

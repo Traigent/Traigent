@@ -119,7 +119,7 @@ def _emit_cost_warning_once() -> None:
             f"Cost estimates are approximations based on {CYAN}litellm{RESET} library pricing.\n"
             f"Actual billing is determined by your LLM provider.\n\n"
             f"{BOLD}Configuration:{RESET}\n"
-            f"  - Custom model mappings: {CYAN}traigent/utils/cost_calculator.py{RESET} (EXACT_MODEL_MAPPING)\n"
+            f"  - Convenience aliases:   {CYAN}litellm.model_alias_map{RESET} (via cost_calculator)\n"
             f"  - Disable for testing:   {CYAN}TRAIGENT_MOCK_LLM=true{RESET}\n"
             f"  - Full details:          {CYAN}DISCLAIMER.md{RESET}\n"
         )
@@ -130,7 +130,7 @@ def _emit_cost_warning_once() -> None:
             "Cost estimates are approximations based on litellm library pricing.\n"
             "Actual billing is determined by your LLM provider.\n\n"
             "Configuration:\n"
-            "  - Custom model mappings: traigent/utils/cost_calculator.py (EXACT_MODEL_MAPPING)\n"
+            "  - Convenience aliases:   litellm.model_alias_map (via cost_calculator)\n"
             "  - Disable for testing:   TRAIGENT_MOCK_LLM=true\n"
             "  - Full details:          DISCLAIMER.md\n"
         )

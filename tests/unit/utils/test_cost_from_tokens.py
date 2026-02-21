@@ -18,11 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from traigent.utils.cost_calculator import (
-    CostCalculator,
-    UnknownModelError,
-    cost_from_tokens,
-)
+from traigent.utils.cost_calculator import UnknownModelError, cost_from_tokens
 
 
 class TestCostFromTokensKnownModels:
@@ -67,7 +63,7 @@ class TestCostFromTokensKnownModels:
 
 
 class TestCostFromTokensModelResolution:
-    """Tests for model name resolution (EXACT_MODEL_MAPPING + normalization)."""
+    """Tests for model name resolution (litellm aliases + normalization)."""
 
     def test_provider_prefixed_model(self) -> None:
         """Provider-prefixed model resolves correctly."""
@@ -77,8 +73,8 @@ class TestCostFromTokensModelResolution:
         assert cost_prefixed[0] == pytest.approx(cost_plain[0], rel=1e-6)
         assert cost_prefixed[1] == pytest.approx(cost_plain[1], rel=1e-6)
 
-    def test_exact_model_mapping(self) -> None:
-        """Short model names resolve via EXACT_MODEL_MAPPING."""
+    def test_convenience_alias_resolution(self) -> None:
+        """Short model names resolve through litellm alias registration."""
         # "claude-3-haiku" maps to "claude-3-haiku-20240307"
         input_cost, output_cost = cost_from_tokens(100, 50, "claude-3-haiku")
         assert (
@@ -117,9 +113,17 @@ class TestCostFromTokensModelResolution:
 class TestCostFromTokensUnknownModels:
     """Tests for unknown models (strict vs non-strict)."""
 
+    @pytest.fixture(autouse=True)
+    def disable_openrouter_lookup(self) -> None:
+        """Keep unknown-model tests deterministic (no external network lookup)."""
+        with patch(
+            "traigent.utils.cost_calculator._try_openrouter_pricing", return_value=None
+        ):
+            yield
+
     def test_unknown_model_strict_raises(self) -> None:
         """Unknown model with strict=True raises UnknownModelError."""
-        with pytest.raises(UnknownModelError, match="no pricing in litellm"):
+        with pytest.raises(UnknownModelError, match="no pricing in litellm/OpenRouter"):
             cost_from_tokens(100, 50, "totally-nonexistent-model-xyz")
 
     def test_unknown_model_nonstrict_returns_zero(self) -> None:
@@ -227,3 +231,26 @@ class TestCostFromTokensEdgeCases:
             input_cost, output_cost = cost_from_tokens(100, 50, "gpt-4o")
             assert input_cost == pytest.approx(100 * 2.5e-6)
             assert output_cost == pytest.approx(50 * 10.0e-6)
+
+
+class TestCostFromTokensOpenRouterFallback:
+    """Tests for OpenRouter fallback resolution."""
+
+    def test_unknown_model_uses_openrouter_before_raising(self) -> None:
+        with patch(
+            "traigent.utils.cost_calculator._try_openrouter_pricing",
+            return_value=(3.0e-6, 15.0e-6),
+        ):
+            input_cost, output_cost = cost_from_tokens(100, 50, "brand-new-model")
+            assert input_cost == pytest.approx(100 * 3.0e-6)
+            assert output_cost == pytest.approx(50 * 15.0e-6)
+
+    def test_known_model_does_not_call_openrouter(self) -> None:
+        with patch(
+            "traigent.utils.cost_calculator._try_openrouter_pricing",
+            return_value=(3.0e-6, 15.0e-6),
+        ) as openrouter_mock:
+            input_cost, output_cost = cost_from_tokens(100, 50, "gpt-4o")
+            assert input_cost > 0
+            assert output_cost > 0
+            openrouter_mock.assert_not_called()
