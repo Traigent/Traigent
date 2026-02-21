@@ -40,6 +40,8 @@ def disable_mock_mode() -> None:
     # Also clear strict mode by default
     if "TRAIGENT_REQUIRE_COST_TRACKING" in os.environ:
         del os.environ["TRAIGENT_REQUIRE_COST_TRACKING"]
+    if "TRAIGENT_STRICT_COST_ACCOUNTING" in os.environ:
+        del os.environ["TRAIGENT_STRICT_COST_ACCOUNTING"]
 
 
 class TestSequentialCostEnforcement:

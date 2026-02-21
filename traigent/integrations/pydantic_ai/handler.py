@@ -254,14 +254,22 @@ class PydanticAIHandler:
         """Estimate cost using the canonical cost_from_tokens path."""
         if input_tokens == 0 and output_tokens == 0:
             return 0.0
+        from traigent.utils.env_config import is_strict_cost_accounting
+
+        strict_cost_accounting = is_strict_cost_accounting()
         try:
             from traigent.utils.cost_calculator import cost_from_tokens
 
             input_cost, output_cost = cost_from_tokens(
-                input_tokens, output_tokens, self._model_name or "unknown", strict=False
+                input_tokens,
+                output_tokens,
+                self._model_name or "unknown",
+                strict=strict_cost_accounting,
             )
             return float(input_cost + output_cost)
         except Exception:
+            if strict_cost_accounting:
+                raise
             logger.debug(
                 "Cost estimation failed for model %s", self._model_name, exc_info=True
             )
