@@ -968,7 +968,7 @@ class TestExactModelMappings:
 
     def test_map_model_name_latest_versions(self, calculator: CostCalculator) -> None:
         """Test mapping for latest version shortcuts."""
-        assert calculator._map_model_name("claude-haiku") == "claude-3-haiku-latest"
+        assert calculator._map_model_name("claude-haiku") == "claude-3-haiku-20240307"
         assert calculator._map_model_name("claude-sonnet") == "claude-3-5-sonnet-latest"
         assert calculator._map_model_name("claude-opus") == "claude-3-opus-latest"
 

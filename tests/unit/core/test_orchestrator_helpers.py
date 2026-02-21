@@ -990,6 +990,19 @@ class TestExtractCostFromResults:
         assert examples is None
         assert abs(cost - 0.10) < 0.001
 
+    def test_aggregated_metrics_cost_key_fallback(self):
+        """Falls back to aggregated_metrics['cost'] when total_cost is absent."""
+
+        class MockResult:
+            def __init__(self):
+                self.example_results = None
+                self.aggregated_metrics = {"cost": 0.07}
+
+        result = MockResult()
+        examples, cost = extract_cost_from_results(result, None, "trial_1")
+        assert examples is None
+        assert abs(cost - 0.07) < 0.001
+
     def test_total_examples_override(self):
         """Test that total_examples overrides example_results count."""
 
