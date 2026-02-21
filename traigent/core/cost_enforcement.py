@@ -751,6 +751,10 @@ Options:
             permit.mark_released()  # Mark for consistency
             return
 
+        # Read environment-driven strictness once per call.
+        # Keep this outside the lock to minimize lock hold time.
+        require_cost_tracking = self._require_cost_tracking()
+
         with self._lock:
             # Check if permit was already released (e.g., via exception path)
             # Done under lock to prevent race condition where two concurrent
@@ -784,7 +788,7 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if self._require_cost_tracking():
+                if require_cost_tracking:
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
                         "TRAIGENT_REQUIRE_COST_TRACKING=true or "
@@ -1016,6 +1020,10 @@ Options:
             permit.mark_released()  # Mark for consistency
             return
 
+        # Read environment-driven strictness once per call.
+        # Keep this outside the lock to minimize lock hold time.
+        require_cost_tracking = self._require_cost_tracking()
+
         # Use single RLock for both sync and async (Gemini recommendation)
         # Critical section is fast, no I/O
         with self._lock:
@@ -1051,7 +1059,7 @@ Options:
 
             # Handle unknown cost with optional strict mode
             if cost is None:
-                if self._require_cost_tracking():
+                if require_cost_tracking:
                     raise CostTrackingRequiredError(
                         f"Cost extraction failed for {trial_desc} but "
                         "TRAIGENT_REQUIRE_COST_TRACKING=true or "
