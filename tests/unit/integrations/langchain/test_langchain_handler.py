@@ -831,13 +831,16 @@ class TestCostEstimation:
             0.0
         ), "Unknown model should return 0.0 with strict=False"
 
-    def test_estimate_cost_unknown_model_raises_in_strict_mode(self, handler):
+    def test_estimate_cost_unknown_model_raises_in_strict_mode(self):
         """Strict cost accounting raises for unknown model pricing."""
+        from traigent.integrations.langchain.handler import TraigentHandler
         from traigent.utils.cost_calculator import UnknownModelError
 
         with patch.dict(
             "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
         ):
+            # strict mode is latched at handler construction
+            handler = TraigentHandler(trace_id="test-trace")
             with pytest.raises(UnknownModelError):
                 handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
 
@@ -855,3 +858,30 @@ class TestCostEstimation:
         cost_lower = handler._estimate_cost("gpt-4o", 1000, 500)
         cost_upper = handler._estimate_cost("GPT-4O", 1000, 500)
         assert cost_lower == pytest.approx(cost_upper, rel=1e-6)
+
+    def test_strict_mode_is_latched_at_handler_init(self):
+        """Strict flag changes after init do not alter existing handler behavior."""
+        from traigent.integrations.langchain.handler import TraigentHandler
+        from traigent.utils.cost_calculator import UnknownModelError
+
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
+        ):
+            non_strict_handler = TraigentHandler(trace_id="test-trace-nonstrict")
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            assert (
+                non_strict_handler._estimate_cost("unknown-model-xyz-123", 1000, 500)
+                == 0.0
+            )
+
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "true"}, clear=False
+        ):
+            strict_handler = TraigentHandler(trace_id="test-trace-strict")
+        with patch.dict(
+            "os.environ", {"TRAIGENT_STRICT_COST_ACCOUNTING": "false"}, clear=False
+        ):
+            with pytest.raises(UnknownModelError):
+                strict_handler._estimate_cost("unknown-model-xyz-123", 1000, 500)

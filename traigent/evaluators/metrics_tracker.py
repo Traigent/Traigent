@@ -978,6 +978,7 @@ def _calculate_cost_for_metrics(
             model_name,
             original_prompt,
             response_text,
+            strict_cost_accounting=strict_cost_accounting,
         )
     except Exception as e:
         logger.error(
@@ -1017,10 +1018,11 @@ def _compute_cost(
     model_name: str,
     original_prompt: Any,
     response_text: str | None,
+    *,
+    strict_cost_accounting: bool,
 ) -> None:
     """Compute cost using cost_from_tokens (preferred) or legacy text path."""
     from traigent.utils.cost_calculator import cost_from_tokens
-    from traigent.utils.env_config import is_strict_cost_accounting
 
     # Ensure total tokens computed
     if metrics.tokens.total_tokens == 0:
@@ -1030,7 +1032,6 @@ def _compute_cost(
 
     if metrics.tokens.input_tokens > 0 or metrics.tokens.output_tokens > 0:
         # Preferred path: use canonical cost_from_tokens directly
-        strict_cost_accounting = is_strict_cost_accounting()
         input_cost, output_cost = cost_from_tokens(
             metrics.tokens.input_tokens,
             metrics.tokens.output_tokens,
@@ -1119,7 +1120,15 @@ class CostCalculator:
         prompt_length: int | None = None,
         response_length: int | None = None,
     ) -> None:
-        _compute_cost(metrics, model_name, original_prompt, response_text)
+        from traigent.utils.env_config import is_strict_cost_accounting
+
+        _compute_cost(
+            metrics,
+            model_name,
+            original_prompt,
+            response_text,
+            strict_cost_accounting=is_strict_cost_accounting(),
+        )
 
 
 class MetricsCalculator:

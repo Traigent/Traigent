@@ -76,6 +76,10 @@ class PydanticAIHandler:
         self._lock = threading.Lock()
         self._runs: list[AgentRunMetrics] = []
         self._model_name = self._extract_model_name(agent)
+        from traigent.utils.env_config import is_strict_cost_accounting
+
+        # Latch strict mode at handler creation for consistent per-run behavior.
+        self._strict_cost_accounting = is_strict_cost_accounting()
 
     # -----------------------------------------------------------------
     # Public run wrappers
@@ -254,9 +258,7 @@ class PydanticAIHandler:
         """Estimate cost using the canonical cost_from_tokens path."""
         if input_tokens == 0 and output_tokens == 0:
             return 0.0
-        from traigent.utils.env_config import is_strict_cost_accounting
-
-        strict_cost_accounting = is_strict_cost_accounting()
+        strict_cost_accounting = self._strict_cost_accounting
         try:
             from traigent.utils.cost_calculator import cost_from_tokens
 
