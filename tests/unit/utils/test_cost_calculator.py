@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,9 +12,13 @@ from traigent.utils.cost_calculator import (
     CostBreakdown,
     CostCalculator,
     UnknownModelError,
+    _fallback_cost_from_tokens,
+    calculate_completion_cost,
     calculate_llm_cost,
+    calculate_prompt_cost,
     get_cost_calculator,
     get_model_pricing_per_1k,
+    get_model_token_pricing,
     validate_model_support,
 )
 
@@ -112,6 +116,18 @@ class TestCostCalculatorCalculateCost:
             )
             assert result.total_cost > 0
 
+    def test_calculate_cost_logs_unexpected_exception(self) -> None:
+        mock_logger = MagicMock()
+        calculator = CostCalculator(logger=mock_logger)
+        with patch.object(calculator, "_populate_cost", side_effect=RuntimeError("boom")):
+            result = calculator.calculate_cost(
+                model_name="gpt-4o",
+                input_tokens=100,
+                output_tokens=50,
+            )
+        assert result.calculation_method == "error_RuntimeError"
+        mock_logger.warning.assert_called_once()
+
 
 class TestCustomPricingAndValidation:
     @pytest.fixture(autouse=True)
@@ -169,6 +185,25 @@ class TestCustomPricingAndValidation:
         result = calculator.validate_model_name("missing-model-zzz")
         assert result["not_found"] is True
 
+    def test_validate_model_name_none_and_empty(self) -> None:
+        calculator = CostCalculator()
+        assert calculator.validate_model_name(None)["not_found"] is True
+        assert calculator.validate_model_name("")["not_found"] is True
+
+    def test_validate_model_name_litellm_unavailable(self) -> None:
+        calculator = CostCalculator()
+        with patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", False):
+            result = calculator.validate_model_name("gpt-4o")
+        assert result["error"] == "litellm library not available"
+        assert result["available"] is False
+
+    def test_validate_model_name_custom_pricing_invalid(self, monkeypatch) -> None:
+        monkeypatch.setenv("TRAIGENT_CUSTOM_MODEL_PRICING_JSON", "{bad-json")
+        calculator = CostCalculator()
+        result = calculator.validate_model_name("foo-model")
+        assert result["not_found"] is True
+        assert "invalid JSON" in result["error"]
+
     def test_clear_cache_resets_custom_pricing_cache(self, monkeypatch) -> None:
         monkeypatch.setenv(
             "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",
@@ -210,3 +245,109 @@ class TestConvenienceFunctions:
         input_per_1k, output_per_1k = get_model_pricing_per_1k("unknown-model-xyz")
         assert input_per_1k == 0.0
         assert output_per_1k == 0.0
+
+
+class TestPricingHelpers:
+    def test_get_model_token_pricing_empty_raises(self) -> None:
+        with pytest.raises(UnknownModelError, match="has no known pricing"):
+            get_model_token_pricing("")
+
+    def test_get_model_token_pricing_known_model_zero_rate_path(self) -> None:
+        mock_litellm = MagicMock()
+        mock_litellm.cost_per_token.return_value = (0.0, 0.0)
+        with (
+            patch("traigent.utils.cost_calculator.litellm", mock_litellm),
+            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+            patch("traigent.utils.cost_calculator.LITELLM_AVAILABLE", True),
+        ):
+            inp, out, method = get_model_token_pricing("known-zero-model")
+        assert inp == 0.0
+        assert out == 0.0
+        assert method == "litellm"
+
+    def test_fallback_cost_from_tokens_paths(self) -> None:
+        exact = _fallback_cost_from_tokens("gpt-4o", 100, 50, _quiet=True)
+        alias = _fallback_cost_from_tokens("claude-3-sonnet", 100, 50, _quiet=True)
+        prefix = _fallback_cost_from_tokens("gpt-4o-2024-08-06", 100, 50, _quiet=True)
+        reverse_prefix = _fallback_cost_from_tokens("gpt-4", 100, 50, _quiet=True)
+        unknown = _fallback_cost_from_tokens("unknown-model", 100, 50, _quiet=True)
+        assert exact[0] > 0
+        assert alias[0] > 0
+        assert prefix[0] > 0
+        assert reverse_prefix[0] > 0
+        assert unknown == (0.0, 0.0)
+
+
+class TestDeprecatedPromptCompletionCost:
+    @pytest.fixture(autouse=True)
+    def reset_custom_cache(self):
+        old_cache = cc._CUSTOM_PRICING_CACHE
+        old_key = cc._CUSTOM_PRICING_CACHE_KEY
+        cc._CUSTOM_PRICING_CACHE = None
+        cc._CUSTOM_PRICING_CACHE_KEY = None
+        try:
+            yield
+        finally:
+            cc._CUSTOM_PRICING_CACHE = old_cache
+            cc._CUSTOM_PRICING_CACHE_KEY = old_key
+
+    def test_calculate_prompt_cost_with_message_list(self) -> None:
+        with (
+            patch("traigent.utils.cost_calculator.litellm.token_counter", return_value=17),
+            patch("traigent.utils.cost_calculator.litellm.cost_per_token", return_value=(17e-6, 0.0)),
+            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+        ):
+            cost = calculate_prompt_cost(
+                [{"role": "user", "content": "hello"}],
+                "gpt-4o",
+            )
+        assert cost == pytest.approx(17e-6)
+
+    def test_calculate_prompt_cost_unknown_raises_after_litellm_failure(self) -> None:
+        with patch(
+            "traigent.utils.cost_calculator._try_litellm_prompt_cost",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(UnknownModelError, match="has no known pricing"):
+                calculate_prompt_cost("hello", "unknown-model-z")
+
+    def test_calculate_prompt_cost_uses_custom_pricing(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",
+            '{"custom-model":{"input_cost_per_token":1e-6,"output_cost_per_token":2e-6}}',
+        )
+        with patch(
+            "traigent.utils.cost_calculator._try_litellm_prompt_cost",
+            return_value=(None, 123),
+        ):
+            cost = calculate_prompt_cost("hello", "custom-model")
+        assert cost == pytest.approx(123e-6)
+
+    def test_calculate_completion_cost_known_zero_model_branch(self) -> None:
+        with (
+            patch("traigent.utils.cost_calculator.litellm.token_counter", return_value=12),
+            patch("traigent.utils.cost_calculator.litellm.cost_per_token", return_value=(0.0, 0.0)),
+            patch("traigent.utils.cost_calculator._is_model_known_to_litellm", return_value=True),
+        ):
+            cost = calculate_completion_cost("world", "gpt-4o")
+        assert cost == 0.0
+
+    def test_calculate_completion_cost_unknown_raises_after_litellm_failure(self) -> None:
+        with patch(
+            "traigent.utils.cost_calculator._try_litellm_completion_cost",
+            side_effect=RuntimeError("boom"),
+        ):
+            with pytest.raises(UnknownModelError, match="has no known pricing"):
+                calculate_completion_cost("world", "unknown-model-z")
+
+    def test_calculate_completion_cost_uses_custom_pricing(self, monkeypatch) -> None:
+        monkeypatch.setenv(
+            "TRAIGENT_CUSTOM_MODEL_PRICING_JSON",
+            '{"custom-model":{"input_cost_per_token":1e-6,"output_cost_per_token":2e-6}}',
+        )
+        with patch(
+            "traigent.utils.cost_calculator._try_litellm_completion_cost",
+            return_value=(None, 77),
+        ):
+            cost = calculate_completion_cost("world", "custom-model")
+        assert cost == pytest.approx(154e-6)
