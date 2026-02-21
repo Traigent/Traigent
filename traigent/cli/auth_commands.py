@@ -29,6 +29,7 @@ from rich.table import Table
 
 from traigent.cloud.auth import AuthManager
 from traigent.config.backend_config import BackendConfig
+from traigent.core.constants import MAX_RETRIES
 from traigent.utils.logging import get_logger
 
 console = Console()
@@ -196,7 +197,10 @@ class TraigentAuthCLI:
 
         # Use resilient client for API key creation
         client = ResilientClient(
-            max_retries=3, base_delay=1.0, max_delay=10.0, jitter_factor=0.1
+            max_retries=MAX_RETRIES,
+            base_delay=1.0,
+            max_delay=10.0,
+            jitter_factor=0.1,
         )
 
         async def create_api_key() -> str | None:

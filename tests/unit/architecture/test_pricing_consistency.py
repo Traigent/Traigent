@@ -15,7 +15,7 @@ import pytest
 from traigent.utils.cost_calculator import (
     ESTIMATION_MODEL_PRICING,
     CostCalculator,
-    _fallback_cost_from_tokens,
+    UnknownModelError,
 )
 
 # Tolerance for pricing comparisons (20% — tight enough to catch real drift,
@@ -42,9 +42,12 @@ def _relative_error(actual: float, expected: float) -> float:
 def _canonical_cost(model: str) -> float:
     """Compute canonical cost for model using CostCalculator."""
     calc = CostCalculator()
-    input_cost, output_cost = calc._calculate_from_tokens(
-        INPUT_TOKENS, OUTPUT_TOKENS, model
-    )
+    try:
+        input_cost, output_cost = calc._calculate_from_tokens(
+            INPUT_TOKENS, OUTPUT_TOKENS, model
+        )
+    except UnknownModelError:
+        return 0.0
     return float(input_cost + output_cost)
 
 
@@ -185,6 +188,7 @@ class TestHandlerFallbackMatchesCalculator:
         from traigent.integrations.langchain.handler import TraigentHandler
 
         handler = TraigentHandler.__new__(TraigentHandler)
+        handler._strict_cost_accounting = False
 
         models_to_test = [
             "gpt-4o",

@@ -89,9 +89,6 @@ ESTIMATION_MODEL_PRICING = {
     },
 }
 
-# Backward-compat alias (external code may import the old name)
-FALLBACK_MODEL_PRICING = ESTIMATION_MODEL_PRICING
-
 # Warn-once cache to de-noise fallback pricing warnings (thread-safe)
 _warned_models: set[str] = set()
 _warned_models_lock = threading.Lock()
@@ -581,10 +578,6 @@ def _estimation_cost_from_tokens(
         )
 
     return 0.0, 0.0
-
-
-# Backward-compat alias
-_fallback_cost_from_tokens = _estimation_cost_from_tokens
 
 
 def get_model_token_pricing(model_name: str) -> tuple[float, float, str]:
